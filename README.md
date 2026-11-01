@@ -34,3 +34,7 @@ Read [SKILL.md](SKILL.md) for the loop, the workflow arguments and what to do wh
 ## License
 
 MIT
+
+## Explainer
+
+`docs/explainer.html` explains the loop in plain words, for people who will not run it. It is a page fragment for a host that adds the HTML skeleton.

@@ -1,0 +1,270 @@
+<title>The PR Relay</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column; a wide diagram band; a stepper card that walks one real PR. */
+:root {
+  --bg: #f3f6f8;
+  --surface: #ffffff;
+  --ink: #15212b;
+  --muted: #55636f;
+  --line: #c9d3db;
+  --accent: #1f5fae;
+  --pass: #1d7a4e;
+  --fix: #a35a00;
+  --human: #7a3d9e;
+  --tint-accent: #e3ecf8;
+  --tint-pass: #e0f1e8;
+  --tint-fix: #f8ead6;
+  --tint-human: #efe4f6;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f171e; --surface: #16212b; --ink: #e6edf2; --muted: #9aa9b5; --line: #2c3a46;
+    --accent: #7fb0ee; --pass: #5fc493; --fix: #e3a457; --human: #c79be3;
+    --tint-accent: #1a2c42; --tint-pass: #14301f; --tint-fix: #352611; --tint-human: #2c1d38;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f171e; --surface: #16212b; --ink: #e6edf2; --muted: #9aa9b5; --line: #2c3a46;
+  --accent: #7fb0ee; --pass: #5fc493; --fix: #e3a457; --human: #c79be3;
+  --tint-accent: #1a2c42; --tint-pass: #14301f; --tint-fix: #352611; --tint-human: #2c1d38;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 17px/1.6 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 64px;
+}
+main { max-width: 760px; margin: 0 auto; display: grid; gap: 48px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(2.2rem, 6vw, 3.4rem); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 1.6rem; font-weight: 700; }
+h3 { font-size: 1.1rem; font-weight: 700; }
+p { margin: 0; }
+section { display: grid; gap: 16px; }
+.lede { font-size: 1.2rem; color: var(--muted); max-width: 62ch; }
+.lede strong { color: var(--ink); }
+code, .mono { font-family: var(--mono); font-size: 0.86em; }
+
+.diagram { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px 12px; }
+.diagram svg { display: block; width: 100%; min-width: 640px; height: auto; }
+.diagram text { font-family: var(--body); }
+.caption { font-size: 0.95rem; color: var(--muted); }
+
+.cast { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.role { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.role .who { font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.04em; color: var(--muted); }
+.role p { font-size: 0.98rem; }
+.role.agent { border-top: 4px solid var(--accent); }
+.role.check { border-top: 4px solid var(--pass); }
+.role.fixer { border-top: 4px solid var(--fix); }
+.role.person { border-top: 4px solid var(--human); }
+
+.stepper { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.track { display: flex; gap: 4px; padding: 14px 16px 0; }
+.track button { flex: 1; height: 8px; border: 0; border-radius: 4px; background: var(--line); cursor: pointer; padding: 0; }
+.track button[aria-current="step"] { background: var(--accent); }
+.track button.done { background: var(--pass); }
+.track button:focus-visible, .nav button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.panel { padding: 18px 20px 8px; display: grid; gap: 10px; min-height: 230px; align-content: start; }
+.badge { justify-self: start; font-family: var(--mono); font-size: 0.78rem; padding: 3px 10px; border-radius: 999px; }
+.badge.agent { background: var(--tint-accent); color: var(--accent); }
+.badge.check { background: var(--tint-pass); color: var(--pass); }
+.badge.fixer { background: var(--tint-fix); color: var(--fix); }
+.badge.person { background: var(--tint-human); color: var(--human); }
+.panel .said { border-left: 3px solid var(--line); padding-left: 12px; color: var(--muted); font-style: italic; }
+.nav { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 20px 18px; }
+.nav button { font: 600 0.95rem var(--body); padding: 9px 18px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); cursor: pointer; }
+.nav button.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+.nav button:disabled { opacity: 0.4; cursor: default; }
+.nav .count { font-family: var(--mono); font-size: 0.85rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.rules { display: grid; gap: 14px; margin: 0; padding: 0; list-style: none; }
+.rules li { display: grid; grid-template-columns: 28px 1fr; gap: 12px; align-items: start; }
+.rules .dot { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-family: var(--mono); font-size: 0.8rem; font-weight: 600; }
+.rules li:nth-child(odd) .dot { background: var(--tint-accent); color: var(--accent); }
+.rules li:nth-child(even) .dot { background: var(--tint-pass); color: var(--pass); }
+
+.you { background: var(--tint-human); border-radius: 14px; padding: 20px; display: grid; gap: 10px; }
+.you ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+
+.numbers { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.numbers div { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: grid; gap: 2px; }
+.numbers b { font-family: var(--display); font-size: 1.8rem; font-variant-numeric: tabular-nums; }
+.numbers span { font-size: 0.92rem; color: var(--muted); }
+footer { font-size: 0.92rem; color: var(--muted); }
+a { color: var(--accent); }
+@media (prefers-reduced-motion: no-preference) { .panel { transition: opacity .2s; } }
+</style>
+
+<main>
+  <header style="display:grid; gap:14px">
+    <h1>The PR relay</h1>
+    <p class="lede">How Pingwright gets built: every change is a small pull request that passes through <strong>a relay of separate agents</strong>. One builds it, one tests it from scratch, one tries to break it, one fixes what they found, and only then do you merge it. No agent ever checks its own work.</p>
+  </header>
+
+  <section aria-labelledby="loop">
+    <h2 id="loop">The loop, in one picture</h2>
+    <div class="diagram" role="img" aria-label="Plan, then build, then test and review side by side. If either finds a problem, a fixer repairs it and test and review run again. When both are clean, the PR is opened, the review bots are answered, CI goes green, and you merge.">
+      <svg viewBox="0 0 900 300" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+          </marker>
+        </defs>
+        <g fill="none" stroke="var(--muted)" stroke-width="2" marker-end="url(#arrow)">
+          <path d="M112 150 H150"/>
+          <path d="M262 150 C 290 150 290 95 318 95"/>
+          <path d="M262 150 C 290 150 290 205 318 205"/>
+          <path d="M430 95 C 458 95 458 150 486 150"/>
+          <path d="M430 205 C 458 205 458 150 486 150"/>
+          <path d="M598 150 H636"/>
+          <path d="M748 150 H786"/>
+          <path d="M542 178 C 542 268 374 268 374 236" stroke="var(--fix)" stroke-dasharray="6 5"/>
+        </g>
+        <g font-size="15" text-anchor="middle">
+          <rect x="12" y="122" width="100" height="56" rx="10" fill="var(--tint-human)" stroke="var(--human)"/>
+          <text x="62" y="146" fill="var(--ink)" font-weight="700">Plan</text>
+          <text x="62" y="166" fill="var(--muted)" font-size="12">reviewed first</text>
+
+          <rect x="150" y="122" width="112" height="56" rx="10" fill="var(--tint-accent)" stroke="var(--accent)"/>
+          <text x="206" y="146" fill="var(--ink)" font-weight="700">Build</text>
+          <text x="206" y="166" fill="var(--muted)" font-size="12">one branch</text>
+
+          <rect x="318" y="67" width="112" height="56" rx="10" fill="var(--tint-pass)" stroke="var(--pass)"/>
+          <text x="374" y="91" fill="var(--ink)" font-weight="700">Test</text>
+          <text x="374" y="111" fill="var(--muted)" font-size="12">clean copy</text>
+
+          <rect x="318" y="177" width="112" height="56" rx="10" fill="var(--tint-pass)" stroke="var(--pass)"/>
+          <text x="374" y="201" fill="var(--ink)" font-weight="700">Review</text>
+          <text x="374" y="221" fill="var(--muted)" font-size="12">tries to break it</text>
+
+          <rect x="486" y="122" width="112" height="56" rx="10" fill="var(--surface)" stroke="var(--ink)"/>
+          <text x="542" y="146" fill="var(--ink)" font-weight="700">Clean?</text>
+          <text x="542" y="166" fill="var(--muted)" font-size="12">no big problems</text>
+
+          <rect x="636" y="122" width="112" height="56" rx="10" fill="var(--tint-accent)" stroke="var(--accent)"/>
+          <text x="692" y="146" fill="var(--ink)" font-weight="700">Open PR</text>
+          <text x="692" y="166" fill="var(--muted)" font-size="12">answer the bots</text>
+
+          <rect x="786" y="122" width="102" height="56" rx="10" fill="var(--tint-human)" stroke="var(--human)"/>
+          <text x="837" y="146" fill="var(--ink)" font-weight="700">You merge</text>
+          <text x="837" y="166" fill="var(--muted)" font-size="12">green CI only</text>
+
+          <text x="458" y="288" fill="var(--fix)" font-size="13" font-weight="700">not clean: a fixer repairs it, then test and review run again</text>
+        </g>
+      </svg>
+    </div>
+    <p class="caption">Test and review run at the same time, on the same commit. The dashed loop can go round up to four times. After that, a person decides.</p>
+  </section>
+
+  <section aria-labelledby="cast">
+    <h2 id="cast">Who does what</h2>
+    <div class="cast">
+      <div class="role agent"><span class="who">BUILDER</span><h3>Writes the change</h3><p>Follows one entry in the plan. Adds a test, then breaks the feature on purpose to prove the test notices.</p></div>
+      <div class="role check"><span class="who">TESTER</span><h3>Starts from scratch</h3><p>Downloads a fresh copy and runs every check. It changes nothing, so "works on my machine" can't slip through.</p></div>
+      <div class="role check"><span class="who">REVIEWER</span><h3>Looks for trouble</h3><p>A stronger model reads the change against the plan and the design. It ranks each problem: blocker, major or minor.</p></div>
+      <div class="role fixer"><span class="who">FIXER</span><h3>Repairs, or argues back</h3><p>Fixes blockers and majors. If it thinks a finding is wrong, it has to say why, with evidence.</p></div>
+      <div class="role agent"><span class="who">PR AGENT</span><h3>Talks to the bots</h3><p>Opens the pull request, files small findings as issues for later, and replies to every review-bot comment.</p></div>
+      <div class="role person"><span class="who">YOU</span><h3>Make the calls</h3><p>Approve the plan, approve rule changes, and own merging, releases and publishing. Agents never merge.</p></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="walk">
+    <h2 id="walk">Follow one real PR</h2>
+    <p>T03 in the 0.3.0 plan: a cookie rule said "stored by the browser" even when the cookie was already there before. Step through what happened.</p>
+    <div class="stepper">
+      <div class="track" role="tablist" aria-label="Steps" id="track"></div>
+      <div class="panel" id="panel" aria-live="polite"></div>
+      <div class="nav">
+        <button type="button" id="back">Back</button>
+        <span class="count" id="count"></span>
+        <button type="button" class="primary" id="next">Next</button>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="why">
+    <h2 id="why">Why it works</h2>
+    <ul class="rules">
+      <li><span class="dot">1</span><p><strong>Small pieces.</strong> Each PR does one thing from the plan, so a reviewer can hold all of it in mind.</p></li>
+      <li><span class="dot">2</span><p><strong>No marking your own homework.</strong> The builder, tester and reviewer are different agents with different instructions. Mistakes one makes, another tends to catch.</p></li>
+      <li><span class="dot">3</span><p><strong>Tests that can fail.</strong> Every change needs a test that fails when the change is removed. "Passes for the wrong reason" is the most common real problem reviewers find.</p></li>
+      <li><span class="dot">4</span><p><strong>Waves.</strong> PRs in the same wave touch different files, so several are built at once without stepping on each other.</p></li>
+      <li><span class="dot">5</span><p><strong>Small stuff waits.</strong> Minor findings become issues and get fixed in batches later, so the loop doesn't drag on over nits.</p></li>
+    </ul>
+  </section>
+
+  <section class="you" aria-labelledby="human">
+    <h2 id="human">Where you step in</h2>
+    <ul>
+      <li>You agree the plan before anything is built.</li>
+      <li>You approve anything that changes a hard rule. For example, payments on real stores stay a human step unless you sign off.</li>
+      <li>You see every merge happen in your own session. Merges need green CI and a bot's approval.</li>
+      <li>Publishing to npm is yours, with your one-time code.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="nums">
+    <h2 id="nums">So far</h2>
+    <div class="numbers">
+      <div><b>141</b><span>Pingwright PRs merged this way</span></div>
+      <div><b>5</b><span>review rounds the 0.3.0 plan needed before it was solid</span></div>
+      <div><b>4</b><span>0.3.0 fixes built in parallel, 1 to 2 rounds each</span></div>
+      <div><b>16</b><span>small findings from the 0.4 plan review, filed as issues instead of extra rounds</span></div>
+    </div>
+  </section>
+
+  <footer>The loop is packaged as a Claude Code skill in <span class="mono">alfhen/agent-pr-pipeline</span>.</footer>
+</main>
+
+<script>
+const steps = [
+  { who: 'agent', tag: 'BUILDER', title: 'Build the fix', body: 'The builder reads plan entry T03, changes how cookie evidence is worded, adds a fixture page where page script sets the cookie first, and writes a test that should fail on the old code. The plan asks every builder to prove that by removing the fix on purpose; the reviewer checks it.' },
+  { who: 'check', tag: 'TESTER + REVIEWER, ROUND 1', title: 'Tests pass, the reviewer objects', body: 'The tester downloads a fresh copy: everything passes. At the same time the reviewer finds a major problem.', said: 'A cookie that was deleted and then set again would read as "already set", because the check looks at any earlier snapshot, not the latest one.' },
+  { who: 'fixer', tag: 'FIXER', title: 'Repair it', body: 'The fixer changes the check so a cookie that was deleted and set again is not called "already set", and pushes a new commit on the same branch. It never rewrites history.' },
+  { who: 'check', tag: 'TESTER + REVIEWER, ROUND 2', title: 'Clean', body: 'A new tester and a new reviewer look again. Tests pass and there are no blockers or majors. One small finding is filed as an issue for later.' },
+  { who: 'agent', tag: 'PR AGENT', title: 'Open the PR, answer the bots', body: 'The PR agent opens PR #544, says how it was tested and that it took 2 review rounds, and waits for the review bots. Gitar approves.' },
+  { who: 'person', tag: 'YOU', title: 'Merge', body: 'CI is green on the exact commit that was checked, and a bot approved, so your session squash-merges it and deletes the branch. Then the next wave can start.' },
+];
+let at = 0;
+const track = document.getElementById('track');
+const panel = document.getElementById('panel');
+const count = document.getElementById('count');
+const back = document.getElementById('back');
+const next = document.getElementById('next');
+steps.forEach((s, i) => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.setAttribute('role', 'tab');
+  b.setAttribute('aria-label', `Step ${i + 1}: ${s.title}`);
+  b.addEventListener('click', () => show(i));
+  track.appendChild(b);
+});
+function esc(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+function show(i) {
+  at = i;
+  const s = steps[i];
+  panel.innerHTML = `<span class="badge ${s.who}">${esc(s.tag)}</span><h3>${esc(s.title)}</h3><p>${esc(s.body)}</p>${s.said ? `<p class="said">${esc(s.said)}</p>` : ''}`;
+  [...track.children].forEach((b, j) => {
+    b.classList.toggle('done', j < i);
+    if (j === i) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+  });
+  count.textContent = `${i + 1} of ${steps.length}`;
+  back.disabled = i === 0;
+  next.disabled = i === steps.length - 1;
+}
+back.addEventListener('click', () => at > 0 && show(at - 1));
+next.addEventListener('click', () => at < steps.length - 1 && show(at + 1));
+show(0);
+</script>
