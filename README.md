@@ -1,0 +1,36 @@
+# agent-pr-pipeline
+
+A Claude Code skill for building a release as a series of small PRs. Separate agents implement, test from a clean clone, review adversarially, fix, open the PR and answer the review bots. The main session merges.
+
+It grew out of building [Pingwright](https://github.com/alfhen/pingwright) 0.1 to 0.4 this way: more than 140 PRs, each one through the same loop.
+
+## Install
+
+Copy the folder into your skills directory:
+
+```bash
+git clone https://github.com/alfhen/agent-pr-pipeline.git ~/.claude/skills/agent-pr-pipeline
+```
+
+Or, for one project, into `.claude/skills/agent-pr-pipeline` in that repo.
+
+## Use
+
+Ask Claude Code to plan and build a release or a set of issues with this skill. It will:
+
+1. triage the issues against the code,
+2. write a plan with waves, Touches and Acceptance lines, and put the plan through review,
+3. run each wave with `workflow/pr-pipeline.js`,
+4. merge ready PRs with `scripts/merge-wave.sh` after you can see them.
+
+Read [SKILL.md](SKILL.md) for the loop, the workflow arguments and what to do when a step fails.
+
+## Needs
+
+- Claude Code with the Workflow tool (multi-agent workflows) and `gh` signed in.
+- A review bot on the repo, such as CodeRabbit or Gitar. One approval is the merge gate.
+- CI that runs the same checks the agents run.
+
+## License
+
+MIT
