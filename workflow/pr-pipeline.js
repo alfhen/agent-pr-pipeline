@@ -47,6 +47,31 @@ const STEPS = Object.assign({
 if (!REPO || !TMP || !PLAN || !Array.isArray(A.prs)) throw new Error('args needs repo, tmp, plan and prs')
 if (!GOALS) throw new Error('args needs goals: the path to the product goals document (see templates/goals.md). The pipeline does not start without one.')
 
+const SKILL_STEPS = ['impl', 'test', 'review', 'arch', 'product', 'fix', 'open', 'botAnswer', 'landFix', 'preflight']
+const SECURITY_SKILL = A.securitySkill || 'security-review'
+const checkSkills = (map, where) => {
+  for (const [step, names] of Object.entries(map || {})) {
+    if (!SKILL_STEPS.includes(step)) throw new Error(`${where}: unknown step "${step}". Use one of: ${SKILL_STEPS.join(', ')}`)
+    if (!Array.isArray(names) || !names.every(n => typeof n === 'string' && /^[\w.-]+(:[\w.-]+)?$/.test(n))) {
+      throw new Error(`${where}.${step} must be a list of skill names, for example ["humanizer:humanizer"]`)
+    }
+  }
+}
+checkSkills(A.skills, 'skills')
+A.prs.forEach(pr => checkSkills(pr.skills, `prs[${pr.id}].skills`))
+const skillsFor = (step, pr) => {
+  const names = [...((A.skills || {})[step] || []), ...(((pr && pr.skills) || {})[step] || [])]
+  if (step === 'review' && pr && pr.sensitive) names.push(SECURITY_SKILL)
+  return [...new Set(names)]
+}
+const withSkills = (step, pr, prompt) => {
+  const names = skillsFor(step, pr)
+  if (!names.length) return prompt
+  return `Before you do anything else, load these skills with the Skill tool: ${names.map(n => `\`${n}\``).join(', ')}. Follow them where they apply to your job below. If a skill cannot be loaded, go on without it and say so in your answer.
+
+${prompt}`
+}
+
 const roundsFor = pr => pr.maxRounds || (pr.kind === 'plan' ? (A.planRounds || 2) : (A.maxRounds || 4))
 const reviewStep = pr => (pr.kind === 'plan' || pr.kind === 'docs') ? STEPS.reviewDocs : STEPS.review
 const productRuns = pr => A.productReview !== false && (pr.kind === 'plan' || (A.productReview === 'all' && pr.kind !== 'docs'))
@@ -321,10 +346,10 @@ async function reviewLoop(pr, startRound, history, minors, archState) {
     const wantArch = archRuns(pr) && (round === startRound || archState.last === 'needs-change')
     const wantProduct = productRuns(pr) && round === startRound
     const [test, review, arch, product] = await parallel([
-      () => agent(testPrompt(pr, round), opts(STEPS.test, { label: `test:${pr.id}#${round}`, phase: 'Test', schema: TEST })),
-      () => agent(reviewPrompt(pr, round, history), opts(reviewStep(pr), { label: `review:${pr.id}#${round}`, phase: 'Review', schema: REVIEW })),
-      () => wantArch ? agent(archPrompt(pr, round), opts(STEPS.arch, { label: `arch:${pr.id}#${round}`, phase: 'Architecture', schema: ARCHREV })) : Promise.resolve(null),
-      () => wantProduct ? agent(productPrompt(pr, round), opts(STEPS.product, { label: `product:${pr.id}#${round}`, phase: 'Product fit', schema: PRODUCT })) : Promise.resolve(null),
+      () => agent(withSkills('test', pr, testPrompt(pr, round)), opts(STEPS.test, { label: `test:${pr.id}#${round}`, phase: 'Test', schema: TEST })),
+      () => agent(withSkills('review', pr, reviewPrompt(pr, round, history)), opts(reviewStep(pr), { label: `review:${pr.id}#${round}`, phase: 'Review', schema: REVIEW })),
+      () => wantArch ? agent(withSkills('arch', pr, archPrompt(pr, round)), opts(STEPS.arch, { label: `arch:${pr.id}#${round}`, phase: 'Architecture', schema: ARCHREV })) : Promise.resolve(null),
+      () => wantProduct ? agent(withSkills('product', pr, productPrompt(pr, round)), opts(STEPS.product, { label: `product:${pr.id}#${round}`, phase: 'Product fit', schema: PRODUCT })) : Promise.resolve(null),
     ])
     if (!test || !review) return { signedOff: false, reason: 'tester or reviewer failed' }
     if (wantArch && !arch) return { signedOff: false, reason: 'architecture reviewer failed' }
@@ -354,29 +379,29 @@ async function reviewLoop(pr, startRound, history, minors, archState) {
     log(`${pr.id} round ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (test.pass && blocking.length === 0) return { signedOff: true, headSha: test.headSha || review.headSha }
     if (round === startRound + max - 1) return { signedOff: false, reason: 'rounds exhausted', lastFindings: blocking, lastTest: test }
-    await agent(fixPrompt(pr, test, blocking, round), opts(STEPS.fix, { label: `fix:${pr.id}#${round}`, phase: 'Fix', isolation: 'worktree' }))
+    await agent(withSkills('fix', pr, fixPrompt(pr, test, blocking, round)), opts(STEPS.fix, { label: `fix:${pr.id}#${round}`, phase: 'Fix', isolation: 'worktree' }))
   }
 }
 
 async function runPR(pr) {
   if (pr.landFix) {
-    const r = await agent(landFixPrompt(pr), opts(STEPS.landFix, { label: `landfix:${pr.id}`, phase: 'Land fix', isolation: 'worktree', schema: LANDFIX }))
+    const r = await agent(withSkills('landFix', pr, landFixPrompt(pr)), opts(STEPS.landFix, { label: `landfix:${pr.id}`, phase: 'Land fix', isolation: 'worktree', schema: LANDFIX }))
     return { id: pr.id, prNumber: pr.prNumber, ready: !!(r && r.readyToMerge), headSha: r && r.headSha, notes: r && r.notes }
   }
   const history = pr.resume ? pr.resume.history || [] : []
   const minors = pr.resume ? pr.resume.minors || [] : []
   let impl = { problems: '' }
   if (pr.resume && (pr.resume.findings || []).length) {
-    await agent(fixPrompt(pr, null, pr.resume.findings, history.length), opts(STEPS.fix, { label: `fix:${pr.id}#${history.length}`, phase: 'Fix', isolation: 'worktree' }))
+    await agent(withSkills('fix', pr, fixPrompt(pr, null, pr.resume.findings, history.length)), opts(STEPS.fix, { label: `fix:${pr.id}#${history.length}`, phase: 'Fix', isolation: 'worktree' }))
   } else if (!pr.skipImpl && !pr.resume) {
-    impl = await agent(implPrompt(pr), opts(STEPS.impl, { label: `implement:${pr.id}`, phase: 'Implement', isolation: 'worktree', schema: IMPL }))
+    impl = await agent(withSkills('impl', pr, implPrompt(pr)), opts(STEPS.impl, { label: `implement:${pr.id}`, phase: 'Implement', isolation: 'worktree', schema: IMPL }))
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl }
   }
   const archState = { last: null, reports: [], product: null }
   let loop = await reviewLoop(pr, history.length + 1, history, minors, archState)
   if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: archState.reports, product: archState.product }
 
-  const opened = await agent(openPrompt(pr, history, minors, { architecture: archState.reports, product: archState.product }), opts(STEPS.open, { label: `open:${pr.id}`, phase: 'Open PR', schema: OPEN }))
+  const opened = await agent(withSkills('open', pr, openPrompt(pr, history, minors, { architecture: archState.reports, product: archState.product })), opts(STEPS.open, { label: `open:${pr.id}`, phase: 'Open PR', schema: OPEN }))
   if (!opened || !opened.prNumber) return { id: pr.id, ready: false, reason: 'PR not opened', history }
   const n = opened.prNumber
 
@@ -385,7 +410,7 @@ async function runPR(pr) {
   if (!wait) return { id: pr.id, ready: false, reason: 'bot wait failed', history, prNumber: n, headSha }
   let answer = null
   if (wait.openComments > 0) {
-    answer = await agent(answerPrompt(pr, n), opts(STEPS.botAnswer, { label: `botanswer:${pr.id}`, phase: 'Bots', isolation: 'worktree', schema: ANSWER }))
+    answer = await agent(withSkills('botAnswer', pr, answerPrompt(pr, n)), opts(STEPS.botAnswer, { label: `botanswer:${pr.id}`, phase: 'Bots', isolation: 'worktree', schema: ANSWER }))
     if (!answer) return { id: pr.id, ready: false, reason: 'bot answer failed', history, prNumber: n, headSha }
     if (answer.codeChanged && answer.headSha) headSha = answer.headSha
     if (answer.substantiveChange) {
@@ -405,7 +430,7 @@ async function runPR(pr) {
 
 const needsGoals = A.prs.some(pr => !pr.landFix)
 if (needsGoals) {
-  const pre = await agent(preflightPrompt(), opts(STEPS.preflight, { label: 'preflight:goals', phase: 'Preflight', schema: PREFLIGHT }))
+  const pre = await agent(withSkills('preflight', null, preflightPrompt()), opts(STEPS.preflight, { label: 'preflight:goals', phase: 'Preflight', schema: PREFLIGHT }))
   if (!pre || !pre.ok) {
     const missing = pre ? pre.missing.join(', ') : 'the preflight agent did not answer'
     log(`refused: ${GOALS} is missing or incomplete (${missing})`)

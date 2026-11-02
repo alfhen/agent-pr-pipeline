@@ -101,8 +101,10 @@ Load the workflow-authoring skill if the session has a Workflow tool. Run `workf
   "bots": "CodeRabbit (login coderabbitai) and Gitar (login contains \"gitar\")",
   "milestone": "1.2.0",
   "steps": { "review": { "model": "opus", "effort": "high" } },
+  "skills": { "impl": ["laravel-idioms:laravel-idioms"], "open": ["humanizer:humanizer"] },
   "prs": [
-    { "id": "T01", "title": "Short PR title", "branch": "fix/short-name", "kind": "code", "notes": "Build plan entry T01. Settle minor #123. PR body: Closes #45 on its own line." }
+    { "id": "T01", "title": "Short PR title", "branch": "fix/short-name", "kind": "code", "notes": "Build plan entry T01. Settle minor #123. PR body: Closes #45 on its own line." },
+    { "id": "T02", "title": "Sign webhook payloads", "branch": "feat/webhook-signing", "sensitive": true, "notes": "Build plan entry T02." }
   ]
 }
 ```
@@ -110,6 +112,7 @@ Load the workflow-authoring skill if the session has a Workflow tool. Run `workf
 - `checks` are the **fast** checks. Agents also run the e2e files the PR adds or changes (`e2ePattern`, run with `e2eCommand`). The full e2e suite runs only in CI, so CI must run it on every PR.
 - `architecture`: the document the architecture reviewer checks against (defaults to `spec`). Set `"architectureReview": false` to turn the step off.
 - `goals` (**required**): the product goals document. Without it the workflow throws before any agent starts, and a preflight agent refuses the wave if the file has no Goals or Non-goals items. `productReview: false` turns off the review step, not this requirement. `"productReview": "all"` also runs it on code PRs; `false` turns it off.
+- `skills`: which skills each step's agent loads before it starts. See "Pair skills with steps" below. Default: none.
 - `kind`: `code` (default), `docs` or `plan`. Docs and plan PRs get a Sonnet reviewer at high effort instead of Opus. Plan PRs stop after `planRounds` (default 2); fix what is left by hand, then rerun with `skipImpl`.
 
 Models and effort per step (override any of them in `steps`):
@@ -127,9 +130,26 @@ Models and effort per step (override any of them in `steps`):
 | `botWait` | haiku | low |
 | `botAnswer`, `landFix` | sonnet | medium |
 
-PR options: `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `resume: { history, minors, findings }` to continue a PR whose rounds ran out. `landFix: true` with `prNumber` runs only the land-fix agent for that PR. `architectureDecision: "..."` carries a person's answer to an architecture escalation into every agent's brief for that PR; the architecture reviewer then checks the PR follows it and does not escalate the same question again. `productDecision: "..."` carries a person's answer to a product-fit escalation in the same way.
+PR options: `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `resume: { history, minors, findings }` to continue a PR whose rounds ran out. `landFix: true` with `prNumber` runs only the land-fix agent for that PR. `architectureDecision: "..."` carries a person's answer to an architecture escalation into every agent's brief for that PR; the architecture reviewer then checks the PR follows it and does not escalate the same question again. `productDecision: "..."` carries a person's answer to a product-fit escalation in the same way. `sensitive: true` adds a security-review skill to this PR's reviewer (see below). `skills: { ... }` adds skills for this PR only, on top of the wave's `skills`.
 
 The result has one object per PR: `ready`, `prNumber`, `headSha` (the commit the pipeline checked, or the answer agent's push), `land` (the `<pr>:<sha>` pair for the land script), `approvedBy`, `rounds`, `history`, `architecture` (each verdict with its new concepts), `issues`, and `reason` when not ready. With `reason: needs human: architecture` it also has `escalation`: the question, options, recommendation and why. `ready` means the PR is open and the bots are answered; merging is the land script's job.
+
+### Pair skills with steps
+
+`skills` maps a step name to a list of skill names. Each agent of that step gets an instruction, at the start of its prompt, to load those skills with the Skill tool before it works. The step names are `impl`, `test`, `review`, `arch`, `product`, `fix`, `open`, `botAnswer`, `landFix` and `preflight`. `review` covers the reviewer of every kind of PR, also the `reviewDocs` model. The bot waiter gets no skills. An unknown step name stops the workflow before any agent starts.
+
+A PR with `sensitive: true` (auth, secrets, payments, user data, anything that runs untrusted input) adds a security-review skill to its reviewer only. The default skill is `security-review`; set `securitySkill` to use another one.
+
+Recommended pairing:
+
+| Skill | Steps | Why |
+| --- | --- | --- |
+| The stack's idiom skill (for example `laravel-idioms:laravel-idioms`) | `impl`, `fix`, `review` | The writer and the reviewer apply the same conventions. |
+| A docs-lookup skill (for example `context7-mcp`) | `impl` | The implementer checks the current API of a library instead of guessing. |
+| A writing-style skill (for example `humanizer:humanizer`) | `open`, and `impl`, `fix`, `review` of docs and plan PRs (per-PR `skills`) | PR text and docs read plainly. |
+| A security-review skill | `review` of PRs marked `sensitive: true` | A focused security pass where the risk is. |
+
+Each loaded skill costs thousands of tokens per agent, in every round. Pair a skill only where it changes the result. Leave `test`, `arch`, `product`, `landFix` and `preflight` without skills unless you saw them miss something a skill covers.
 
 ### Notes that work
 
@@ -151,6 +171,7 @@ After a wave, watch CI on the default branch before starting the next wave or ta
 | --- | --- |
 | `rounds exhausted` with one small finding left | Fix it yourself on the branch, push, and rerun that PR with `skipImpl: true` and `maxRounds: 1` or 2. |
 | `rounds exhausted` with several findings | Rerun with `resume` and the last findings, or rethink the plan entry. |
+| `unknown step "..."` or `must be a list of skill names` | Fix `skills` in the arguments: use the step names above, and a list of names even for one skill. |
 | `tester or reviewer failed` or agents failed on a usage limit | Resume the same run with `resumeFromRunId`; finished agents replay from cache. |
 | A CI e2e job fails in files the PR does not touch | Rerun the job once. If it fails on the default branch too, it is not this PR's problem: file it. |
 | Bot rate-limited | One bot's approval is enough. If none approved, wait or ask the person. |
