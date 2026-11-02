@@ -32,8 +32,9 @@ const TRIAGES = {
 let evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'README.md'] }
 let corruptPut = false
 // Merge safety: ids the gate holds, ids the agent calls person, and ids where an agent fails or answers badly.
-const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), gateOdd: new Set() }
-const agent = async (prompt, o) => {
+const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), gateOdd: new Set(), headMoved: new Set() }
+const lastHead = {}
+const agentRaw = async (prompt, o) => {
   calls.push({ label: o.label, model: o.model, effort: o.effort, agentType: o.agentType, isolation: o.isolation, prompt })
   const id = o.label.split(':')[1].split('#')[0]
   if (o.label.startsWith('preflight')) return preflight
@@ -45,7 +46,7 @@ const agent = async (prompt, o) => {
     return land.gated.has(id) ? { exitCode: 1, output: 'GATED #1: scripts/merge-pr.sh' } : { exitCode: 0, output: 'not gated #1' }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#botstatus')) {
-    return land.statusDown.has(id) ? { exitCode: 1, output: 'bot-status: cannot read the reviews' } : { exitCode: 0, output: JSON.stringify({ head: 'h', approvedBy: ['gitar-bot'], openThreads: 0 }) }
+    return land.statusDown.has(id) ? { exitCode: 1, output: 'bot-status: cannot read the reviews' } : { exitCode: 0, output: JSON.stringify({ head: land.headMoved.has(id) ? 'moved' : lastHead[id], approvedBy: ['gitar-bot'], openThreads: 0 }) }
   }
   if (o.label.startsWith('io:')) {
     if (o.label.endsWith('#put')) {
@@ -93,6 +94,11 @@ const agent = async (prompt, o) => {
   if (o.label.startsWith('botanswer')) return { codeChanged: id !== 'W1', headSha: 'sha-answer-' + id, closesIssues: id === 'C2' ? [21] : [], notes: 'anchored the regex' }
   if (o.label.startsWith('landfix')) return { readyToMerge: true, headSha: 'abc', notes: 'ok' }
   return null
+}
+const agent = async (prompt, o) => {
+  const out = await agentRaw(prompt, o)
+  if (out && out.headSha) lastHead[o.label.split(':')[1].split('#')[0]] = out.headSha
+  return out
 }
 const parallel = async thunks => Promise.all(thunks.map(t => t().catch(() => null)))
 const log = () => {}
@@ -669,6 +675,22 @@ await check('merge safety: a PR that stops for a person or for rounds gets no la
   const x = await landRun({}, only('E1', 'P1', 'G3'))
   for (const id of ['E1', 'P1', 'G3']) { assert.equal(x[id].ready, false); assert.equal(x[id].land, undefined) }
   assert.deepEqual(ran(/^(safety:|io:.*#gate)/), [])
+})
+await check('merge safety: a resumed PR and a PR with a maintainer decision land without :auto and never reach the agent', async () => {
+  const x = await landRun({}, [
+    { id: 'C1', title: 't', branch: 'b1', resume: { history: [], minors: [], findings: [] } },
+    { id: 'C2', title: 't', branch: 'b2', architectureDecision: 'use A' },
+    { id: 'W1', title: 't', branch: 'b17', productDecision: 'in scope' },
+  ])
+  for (const id of ['C1', 'C2', 'W1']) { assert.equal(x[id].ready, true, id); assert.equal(suffix(x[id]), '', id); assert.equal(x[id].landMode, 'person', id) }
+  assert.deepEqual(ran(/^(safety:|io:.*#gate)/), [])
+})
+await check('merge safety: a bot status for another head stops the PR', async () => {
+  const x = await landRun({ headMoved: ['C1'] }, only('C1', 'D1'))
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /head moved/)
+  assert.equal(x.C1.land, undefined)
+  assert.equal(x.D1.ready, true)
 })
 await check('merge safety: the gate and the agent run last, on the sha after the docs step and the bot answers', async () => {
   const x = await landRun({}, only('G1', 'C2', 'B1'))

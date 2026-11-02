@@ -46,7 +46,7 @@ flowchart LR
   LP --> EV[Last step of the workflow: evaluator, and redactor for another repo]
   LA --> EV
   EV --> S[Land script: CI green, bot cleared, gate again. Agent merge only with :auto, else the maintainer]
-  S -- conflict or red CI --> X[Land-fix agent] --> G
+  S -- conflict or red CI --> X[Land-fix agent] --> W
   S --> FB[Maintainer approves, main session adds land problems, file-feedback.sh files the items]
   S --> RL[After the last wave: release.sh, only when every check passes]
 ```

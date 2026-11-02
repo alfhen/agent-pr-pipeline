@@ -537,9 +537,9 @@ const productMinors = product => product.verdict === 'notes'
   ? product.entries.filter(e => e.fit !== 'serves-goal' && e.fit !== 'neutral')
       .map(e => ({ severity: 'minor', title: `Product fit: ${e.entry} (${e.fit})`, detail: `${e.note || ''} Suggestion: ${e.suggestion || 'keep'}.` }))
   : []
-const ioPrompt = (pr, command, head) => `Task: run one command and return its exit code and output.
+const ioPrompt = (pr, command) => `Task: run one command and return its exit code and output.
 Plugin folder: ${PLUGIN_ROOT}. Run scripts only from this folder, never from a clone of ${REPO}.
-Command: \`${command}\`${head ? `\nExpected head: ${head}. If the output names another head, return exitCode 1 and say so in the output.` : ''}
+Command: \`${command}\`
 Return exitCode and output.`
 const briefCommand = (pr, mode, entry) => `bash ${PLUGIN_ROOT}/scripts/quick-brief.sh ${mode} ${REPO} ${pr.quick.issue}${mode === 'put' ? ` --b64 ${base64(entry)} --sum ${cksum(entry)}` : ''}`
 
@@ -596,8 +596,9 @@ ${prBlock(pr)}`
 async function landFor(pr, n, sha) {
   const pair = `${n}:${sha}`
   const person = (why, more) => ({ land: pair, landMode: 'person', landWhy: why, ...more })
+  if (pr.resume || pr.architectureDecision || pr.productDecision) return person('the PR had exhausted rounds or an escalation')
   if (!PLUGIN_ROOT) return person('pluginRoot missing: no gate or safety check ran')
-  const gate = await call('io', pr, ioPrompt(pr, `bash ${PLUGIN_ROOT}/scripts/gate-files.sh ${REPO} ${n}`, sha), `io:${pr.id}#gate`, { phase: 'Merge safety', schema: IO })
+  const gate = await call('io', pr, ioPrompt(pr, `bash ${PLUGIN_ROOT}/scripts/gate-files.sh ${REPO} ${n}`), `io:${pr.id}#gate`, { phase: 'Merge safety', schema: IO })
   if (!gate || gate.exitCode !== 0 || !/^not gated/m.test(gate.output)) return person(`gate: ${gate ? gate.output.trim() : 'pipeline-io failed'}`)
   if (pr.quickState && /^Triage: .*risk high/m.test(pr.quickState.brief)) return person('the quick-fix triage says high risk')
   const verdict = await call('safety', pr, safetyPrompt(pr, n, sha), `safety:${pr.id}#land`, { schema: SAFETY })
@@ -700,9 +701,10 @@ async function bots(pr, n, headSha, issues, history, minors) {
   if (!PLUGIN_ROOT) return { ok: false, reason: 'pluginRoot missing: the bot step needs it to run the status script', headSha }
   const wait = await call('botWait', pr, waitPrompt(pr, n), `botwait:${pr.id}`, { schema: WAIT })
   if (!wait) return { ok: false, reason: 'bot wait failed', headSha }
-  const st = await call('io', pr, ioPrompt(pr, statusCommand(n), headSha), `io:${pr.id}#botstatus`, { phase: 'Bots', schema: IO })
+  const st = await call('io', pr, ioPrompt(pr, statusCommand(n)), `io:${pr.id}#botstatus`, { phase: 'Bots', schema: IO })
   const status = st && st.exitCode === 0 ? jsonLine(st.output) : null
   if (!status || !Array.isArray(status.approvedBy)) return { ok: false, reason: `bot status failed: ${st ? st.output.trim() : 'pipeline-io failed'}`, headSha, wait }
+  if (status.head !== headSha) return { ok: false, reason: `bot status: head moved (${status.head} is not ${headSha})`, headSha, wait }
   wait.approvedBy = status.approvedBy
   if (!(wait.openComments > 0)) return { ok: true, headSha, wait }
   const answer = await call('botAnswer', pr, answerPrompt(pr, n, issues), `botanswer:${pr.id}`, { schema: ANSWER })
