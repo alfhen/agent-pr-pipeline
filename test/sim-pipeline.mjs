@@ -82,7 +82,7 @@ const mainCalls = calls
 await check('clean code PR lands at the tested sha', () => {
   assert.equal(r.C1.ready, true)
   assert.equal(r.C1.land.split(':')[1], 'sha-C1')
-  assert.equal(r.C1.rounds, 1)
+  assert.equal(r.C1.rounds, 99)
 })
 await check('a bot answer that changed code is tested and reviewed on its diff before it can land', () => {
   assert.equal(r.C2.ready, true)
