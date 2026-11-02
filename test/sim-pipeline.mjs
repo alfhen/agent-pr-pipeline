@@ -46,7 +46,7 @@ const agentRaw = async (prompt, o) => {
     return land.gated.has(id) ? { exitCode: 1, output: 'GATED #1: scripts/merge-pr.sh' } : { exitCode: 0, output: 'not gated #1' }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#botstatus')) {
-    return land.statusDown.has(id) ? { exitCode: 1, output: 'bot-status: cannot read the reviews' } : { exitCode: 0, output: JSON.stringify({ head: land.headMoved.has(id) ? 'moved' : lastHead[id], approvedBy: ['gitar-bot'], openThreads: 0 }) }
+    return land.statusDown.has(id) ? { exitCode: 1, output: 'bot-status: cannot read the reviews' } : { exitCode: 0, output: JSON.stringify({ head: land.headMoved.has(id) ? 'moved' : lastHead[id], approvedBy: ['gitar-bot'], seenHead: ['gitar-bot'], openThreads: 0 }) }
   }
   if (o.label.startsWith('io:')) {
     if (o.label.endsWith('#put')) {
@@ -183,8 +183,8 @@ await check('plan PR stops after planRounds', () => {
 })
 await check('land fix runs the land fixer, then waits for and answers the bots on the new head', () => {
   assert.equal(r.L1.ready, true)
-  assert.deepEqual(mainCalls.filter(c => c.label.includes(':L1')).map(c => c.label), ['landfix:L1', 'botwait:L1', 'io:L1#botstatus', 'botanswer:L1', 'test:L1#bots1', 'botreview:L1#1', 'io:L1#gate', 'safety:L1#land'])
-  assert.equal(r.L1.land, '7:sha-L1-bots1:auto')
+  assert.deepEqual(mainCalls.filter(c => c.label.includes(':L1')).map(c => c.label), ['landfix:L1', 'botwait:L1', 'io:L1#botstatus', 'botanswer:L1', 'test:L1#bots1', 'botreview:L1#1'])
+  assert.equal(r.L1.land, '7:sha-L1-bots1')
 })
 await check('architecture escalate stops the PR with the question', () => {
   assert.equal(r.E1.ready, false)
@@ -704,16 +704,17 @@ await check('merge safety: the gate and the agent run last, on the sha after the
     assert.ok(order.indexOf(`io:${id}#gate`) > order.findLastIndex(l => /^(open|docs|botanswer|botreview|test|fix|review)/.test(l)), id)
   }
 })
-await check('merge safety: a land-fixed PR and a skipImpl rerun get the gate and the agent again on the new head, and :auto is never carried over', async () => {
+await check('merge safety: a land-fixed PR and a skipImpl rerun land without :auto and never reach the gate or the agent', async () => {
   const x = await landRun({}, only('L1', 'P3'))
-  assert.equal(x.L1.land, '7:sha-L1-bots1:auto')
-  assert.equal(suffix(x.P3), 'auto')
-  assert.match(calls.find(c => c.label === 'safety:L1#land').prompt, /Judge the head sha-L1-bots1\./)
-  assert.ok(calls.some(c => c.label === 'io:P3#gate') && calls.some(c => c.label === 'safety:P3#land'))
-  const y = await landRun({ gated: ['L1', 'P3'] }, only('L1', 'P3'))
-  assert.equal(suffix(y.L1), '')
-  assert.equal(suffix(y.P3), '')
-  assert.deepEqual(ran(/safety:/), [])
+  for (const id of ['L1', 'P3']) { assert.equal(x[id].ready, true, id); assert.equal(suffix(x[id]), '', id); assert.equal(x[id].landMode, 'person', id) }
+  assert.equal(x.L1.land, '7:sha-L1-bots1')
+  assert.match(x.L1.landWhy, /land fix/)
+  assert.match(x.P3.landWhy, /skipImpl/)
+  assert.deepEqual(ran(/^(safety:|io:.*#gate)/), [])
+})
+await check('merge safety: a normal clean first run still gets :auto', async () => {
+  const x = await landRun({}, only('C1'))
+  assert.equal(suffix(x.C1), 'auto')
 })
 await check('merge safety: the gate command runs from pluginRoot on the PR, and the agent is the read-only merge-safety role on opus/high', async () => {
   await landRun({}, only('C1'))
@@ -724,12 +725,12 @@ await check('merge safety: the gate command runs from pluginRoot on the PR, and 
   assert.equal(`${s.agentType} ${s.model}/${s.effort}`, 'agent-pr-pipeline:merge-safety opus/high')
   assert.match(s.prompt, /pull request #\d+/)
 })
-await check('merge safety: a stored quick brief with high risk lands as person without asking the agent', async () => {
+await check('merge safety: a quick-fix skipImpl rerun with a high-risk stored brief lands as person without asking the agent', async () => {
   briefs.QHR = 'Touches: src/h.js\nAcceptance: h test\nTriage: size M, risk high, new concepts: none'
   const x = await landRun({}, [{ id: 'QHR', quick: { issue: 90 }, branch: 'fix/QHR', skipImpl: true }], { pluginRoot: '/plug' })
   assert.equal(x.QHR.ready, true)
   assert.equal(suffix(x.QHR), '')
-  assert.match(x.QHR.landWhy, /high risk/)
+  assert.match(x.QHR.landWhy, /skipImpl/)
   assert.deepEqual(ran(/^safety:/), [])
 })
 await check('merge safety: without pluginRoot no PR is :auto', async () => {

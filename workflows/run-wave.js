@@ -592,11 +592,13 @@ Return verdict (safe or person) and why.
 ${prBlock(pr)}`
 
 // Builds every land value. The gate and the merge-safety agent run on the sha that goes into the value, so
-// a new head (land fix, rerun) never inherits :auto from an earlier sha. Only a clean gate and a safe verdict give :auto.
+// a new head (land fix, rerun) never inherits :auto from an earlier sha. Fail closed: only a normal first run, a clean gate and a safe verdict give :auto.
 async function landFor(pr, n, sha) {
   const pair = `${n}:${sha}`
   const person = (why, more) => ({ land: pair, landMode: 'person', landWhy: why, ...more })
-  if (pr.resume || pr.architectureDecision || pr.productDecision) return person('the PR had exhausted rounds or an escalation')
+  const rerunReason = pr.landFix ? 'a land fix run' : pr.resume ? 'a resume run after exhausted rounds' : pr.skipImpl ? 'a skipImpl rerun'
+    : pr.architectureDecision || pr.productDecision ? 'a run after an escalation' : null
+  if (rerunReason) return person(`${rerunReason}: only a normal first run can get :auto`)
   if (!PLUGIN_ROOT) return person('pluginRoot missing: no gate or safety check ran')
   const gate = await call('io', pr, ioPrompt(pr, `bash ${PLUGIN_ROOT}/scripts/gate-files.sh ${REPO} ${n}`), `io:${pr.id}#gate`, { phase: 'Merge safety', schema: IO })
   if (!gate || gate.exitCode !== 0 || !/^not gated/m.test(gate.output)) return person(`gate: ${gate ? gate.output.trim() : 'pipeline-io failed'}`)

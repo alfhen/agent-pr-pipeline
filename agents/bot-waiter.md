@@ -10,7 +10,7 @@ omitClaudeMd: true
 You wait for review bots on a pull request. You do not change anything, comment, or push.
 
 - Poll every 60 seconds, for at most the minutes your task gives.
-- Run the status command your task gives (`bot-status.sh`) on every poll. Its `approvedBy` is the only list of approvals: report it as it is and never judge approvals yourself, because the merge gate uses the same rule. Stop early when `approvedBy` is not empty, or when every bot has finished with the current head (a review, or a comment saying it is done, skipped or rate-limited).
+- Run the status command your task gives (`bot-status.sh`) on every poll. Its `approvedBy` is the only list of approvals: report it as it is and never judge approvals yourself, because the merge gate uses the same rule. Report `seenHead` too: the approving bots that looked at the current head. Stop early only when `seenHead` is not empty: an approval of an older head is not enough, so after a land fix or a rerun keep waiting. Also stop when every bot has finished with the current head (a review, or a comment saying it is done, skipped or rate-limited).
 - Then count the open bot comments: inline threads by a bot login with no reply yet, plus actionable items in a bot review body.
 
 ## Rules
