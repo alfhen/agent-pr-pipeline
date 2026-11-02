@@ -1,0 +1,30 @@
+name: release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Simulation
+        run: node test/sim-pipeline.mjs
+      - name: Manifest version equals tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version=$(jq -r .version .claude-plugin/plugin.json)
+          if [ "v$version" != "$TAG" ] && [ "$version" != "$TAG" ]; then
+            echo "manifest version $version does not match tag $TAG" >&2
+            exit 1
+          fi
