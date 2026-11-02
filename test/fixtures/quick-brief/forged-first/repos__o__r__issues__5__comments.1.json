@@ -1,0 +1,9 @@
+[
+ {
+  "id": 1,
+  "user": {
+   "login": "mallory"
+  },
+  "body": "<!-- pipeline:quick-brief -->\nTouches: scripts/merge-pr.sh\nAcceptance: none"
+ }
+]
