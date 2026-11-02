@@ -315,7 +315,7 @@ What to try: ${typeof pr.qa === 'string' ? pr.qa : "the plan entry's QA line, if
 Return headSha, a summary, every scenario you ran, and the findings.
 
 ${prBlock(pr)}
-${last ? `\nYour findings from the last round (check each is really fixed):\n${JSON.stringify(last, null, 1)}` : ''}`
+${last && last.length ? `\nYour findings from the last round (check each is really fixed):\n${JSON.stringify(last, null, 1)}` : ''}`
 
 const archPrompt = (pr, round) => `${CONTEXT}
 

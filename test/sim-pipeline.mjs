@@ -136,6 +136,7 @@ await check('QA runs only on PRs with qa set, in parallel with the reviewer', ()
   assert.equal(mainCalls.find(c => c.label === 'qa:Q1#1').effort, 'medium')
   assert.match(mainCalls.find(c => c.label === 'qa:Q1#1').prompt, /What to try: try --words with empty input/)
   assert.match(mainCalls.find(c => c.label === 'qa:Q2#1').prompt, /QA line, if it has one/)
+  for (const label of ['qa:Q1#1', 'qa:Q2#1']) assert.doesNotMatch(mainCalls.find(c => c.label === label).prompt, /findings from the last round/, label)
 })
 await check('a QA major gets a fix round and QA checks it again; a clean QA does not rerun', () => {
   assert.ok(mainCalls.some(c => c.label === 'fix:Q1#1'))
