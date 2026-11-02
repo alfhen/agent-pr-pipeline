@@ -14,6 +14,7 @@ export const meta = {
     { title: 'Docs', detail: 'after sign-off, an agent updates the docs the change affects; a short round checks the new head' },
     { title: 'Open PR', detail: 'open the PR and file minor findings as issues' },
     { title: 'Bots', detail: 'a small agent waits for the review bots; another answers them only if they commented' },
+    { title: 'Merge safety', detail: 'for each ready PR: a script checks the gated paths; for a PR it does not hold, a stronger model decides safe or person; only safe PRs get the :auto land suffix' },
     { title: 'Land fix', detail: 'only for PRs passed with landFix: resolve a conflict or a CI failure' },
     { title: 'Evaluate', detail: 'after the last PR, an agent turns the wave into feedback items about the pipeline; for another repo a second agent strips that repo\'s details' },
   ],
@@ -54,6 +55,7 @@ const STEPS = Object.assign({
   qa: { model: 'sonnet', effort: 'medium' },
   triage: { model: 'opus', effort: 'high' },
   io: { model: 'haiku', effort: 'low' },
+  safety: { model: 'opus', effort: 'high' },
   evaluate: { model: 'sonnet', effort: 'medium' },
   redact: { model: 'haiku', effort: 'low' },
 }, A.steps || {})
@@ -124,6 +126,7 @@ const ROLES = {
   triage: { agent: 'triager', phase: 'Triage', skills: null },
   io: { agent: 'pipeline-io', phase: 'Triage', skills: null },
   productEntry: { agent: 'product-reviewer', phase: 'Product fit', model: 'product', skills: 'product', clone: true },
+  safety: { agent: 'merge-safety', phase: 'Merge safety', skills: null, clone: true },
   evaluate: { agent: 'evaluator', phase: 'Evaluate', skills: null },
   redact: { agent: 'feedback-redactor', phase: 'Evaluate', skills: null },
 }
@@ -293,6 +296,11 @@ const LANDFIX = {
   required: ['readyToMerge', 'notes'],
 }
 
+const SAFETY = {
+  type: 'object',
+  properties: { verdict: { type: 'string', enum: ['safe', 'person'] }, why: { type: 'string' } },
+  required: ['verdict', 'why'],
+}
 const TRIAGE = {
   type: 'object',
   properties: {
@@ -442,10 +450,11 @@ Review history: ${JSON.stringify(rounds)}
 Architecture, product and docs: ${JSON.stringify(arch || [])}
 Minor findings: ${JSON.stringify(minors, null, 1)}`
 
+const statusCommand = n => `bash ${PLUGIN_ROOT}/scripts/bot-status.sh ${REPO} ${n}`
 const waitPrompt = (pr, n) => `Task: wait for the review bots on pull request #${n} in ${REPO}, for at most ${BOT_WAIT_MIN} minutes.
 Bots: ${BOTS}.
-Poll with \`gh pr view ${n} -R ${REPO} --json headRefOid,reviews\` and \`gh pr checks ${n} -R ${REPO}\`. A review counts only if its commit is the current head (\`.reviews[].commit.oid\` equals \`headRefOid\`). Inline threads: \`gh api repos/${REPO}/pulls/${n}/comments\`.
-Return approvedBy (bot logins whose latest review is APPROVED on the current head), openComments, timedOut, and one line of notes.`
+Status command, from the plugin folder ${PLUGIN_ROOT} (never from a clone of ${REPO}): \`${statusCommand(n)}\`. It prints one JSON line with head, approvedBy, seenHead and openThreads. Run it on every poll. approvedBy is the only list of approvals: report it as it is, and never judge approvals yourself. Stop early only when seenHead is not empty; otherwise wait until every bot has finished with the current head or the time limit passes. Inline threads: \`gh api repos/${REPO}/pulls/${n}/comments\`.
+Return approvedBy, openComments, timedOut, and one line of notes.`
 
 const answerPrompt = (pr, n, issues) => `${ctx(pr)}
 
@@ -568,6 +577,39 @@ async function quickSetup(pr) {
   return { pr: quick, minors: productMinors(product), product: state, triage }
 }
 
+const jsonLine = text => {
+  const line = String(text).split('\n').map(l => l.trim()).find(l => l.startsWith('{'))
+  try { return line ? JSON.parse(line) : null } catch (e) { return null }
+}
+
+const safetyPrompt = (pr, n, sha) => `${ctx(pr)}
+
+Task: decide whether pull request #${n} is safe for an agent to merge. The path gate passed. Judge the head ${sha}.
+1. Check \`gh api repos/${REPO}/pulls/${n}\`: its head sha must be ${sha}. If not, answer person.
+2. Clone it: ${cloneTo(`safety-${pr.id}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`. Read the plan entry or quick-fix entry for this PR.
+Return verdict (safe or person) and why.
+
+${prBlock(pr)}`
+
+// Builds every land value. The gate and the merge-safety agent run on the sha that goes into the value, so
+// a new head (land fix, rerun) never inherits :auto from an earlier sha. Fail closed: only a normal first run, a clean gate and a safe verdict give :auto.
+async function landFor(pr, n, sha) {
+  const pair = `${n}:${sha}`
+  const person = (why, more) => ({ land: pair, landMode: 'person', landWhy: why, ...more })
+  const rerunReason = pr.landFix ? 'a land fix run' : pr.resume ? 'a resume run after exhausted rounds' : pr.skipImpl ? 'a skipImpl rerun'
+    : pr.architectureDecision || pr.productDecision ? 'a run after an escalation' : null
+  if (rerunReason) return person(`${rerunReason}: only a normal first run can get :auto`)
+  if (!PLUGIN_ROOT) return person('pluginRoot missing: no gate or safety check ran')
+  const gate = await call('io', pr, ioPrompt(pr, `bash ${PLUGIN_ROOT}/scripts/gate-files.sh ${REPO} ${n}`), `io:${pr.id}#gate`, { phase: 'Merge safety', schema: IO })
+  if (!gate || gate.exitCode !== 0 || !/^not gated/m.test(gate.output)) return person(`gate: ${gate ? gate.output.trim() : 'pipeline-io failed'}`)
+  if (pr.quickState && /^Triage: .*risk high/m.test(pr.quickState.brief)) return person('the quick-fix triage says high risk')
+  const verdict = await call('safety', pr, safetyPrompt(pr, n, sha), `safety:${pr.id}#land`, { schema: SAFETY })
+  if (!verdict) return person('the merge-safety agent failed')
+  const safety = { verdict: verdict.verdict, why: verdict.why }
+  if (verdict.verdict !== 'safe') return person(`merge-safety: ${verdict.why}`, { safety })
+  return { land: `${pair}:auto`, landMode: 'auto', landWhy: verdict.why, safety }
+}
+
 async function reviewLoop(pr, startRound, history, minors, archState) {
   const max = roundsFor(pr)
   for (let round = startRound; round < startRound + max; round++) {
@@ -658,8 +700,14 @@ async function botCheck(pr, fromSha, answer, history, minors) {
 }
 
 async function bots(pr, n, headSha, issues, history, minors) {
+  if (!PLUGIN_ROOT) return { ok: false, reason: 'pluginRoot missing: the bot step needs it to run the status script', headSha }
   const wait = await call('botWait', pr, waitPrompt(pr, n), `botwait:${pr.id}`, { schema: WAIT })
   if (!wait) return { ok: false, reason: 'bot wait failed', headSha }
+  const st = await call('io', pr, ioPrompt(pr, statusCommand(n)), `io:${pr.id}#botstatus`, { phase: 'Bots', schema: IO })
+  const status = st && st.exitCode === 0 ? jsonLine(st.output) : null
+  if (!status || !Array.isArray(status.approvedBy)) return { ok: false, reason: `bot status failed: ${st ? st.output.trim() : 'pipeline-io failed'}`, headSha, wait }
+  if (status.head !== headSha) return { ok: false, reason: `bot status: head moved (${status.head} is not ${headSha})`, headSha, wait }
+  wait.approvedBy = status.approvedBy
   if (!(wait.openComments > 0)) return { ok: true, headSha, wait }
   const answer = await call('botAnswer', pr, answerPrompt(pr, n, issues), `botanswer:${pr.id}`, { schema: ANSWER })
   if (!answer) return { ok: false, reason: 'bot answer failed', headSha, wait }
@@ -740,8 +788,9 @@ async function runPR(input) {
     const history = []
     const b = await bots(pr, n, r.headSha, [], history, [])
     if (!b.ok) return { id: pr.id, prNumber: n, ready: false, reason: b.reason, headSha: b.headSha, lastFindings: b.lastFindings, history, notes: r.notes }
+    const landing = await landFor(pr, n, b.headSha)
     return {
-      id: pr.id, prNumber: n, ready: true, headSha: b.headSha, land: `${n}:${b.headSha}`, notes: r.notes,
+      id: pr.id, prNumber: n, ready: true, headSha: b.headSha, ...landing, notes: r.notes,
       approvedBy: b.wait.approvedBy || [], botNotes: b.wait.notes, codeChangedByBots: !!(b.answer && b.answer.codeChanged),
       lateMinors: b.lateMinors || [], history,
     }
@@ -775,9 +824,10 @@ async function runPR(input) {
   if (!b.ok) return { id: pr.id, ready: false, reason: b.reason, history, prNumber: n, headSha: b.headSha, lastFindings: b.lastFindings }
   const { wait, answer } = b
   const headSha = b.headSha
+  const landing = await landFor(pr, n, headSha)
   return {
     id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl, headSha,
-    land: `${n}:${headSha}`,
+    ...landing,
     approvedBy: (wait && wait.approvedBy) || [], botNotes: wait && wait.notes,
     codeChangedByBots: !!(answer && answer.codeChanged), closesIssues: (answer && answer.closesIssues) || [], lateMinors: b.lateMinors || [],
     docs,

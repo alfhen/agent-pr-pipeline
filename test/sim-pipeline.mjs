@@ -31,11 +31,23 @@ const TRIAGES = {
 }
 let evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'README.md'] }
 let corruptPut = false
-const agent = async (prompt, o) => {
+// Merge safety: ids the gate holds, ids the agent calls person, and ids where an agent fails or answers badly.
+const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), gateOdd: new Set(), headMoved: new Set() }
+const lastHead = {}
+const agentRaw = async (prompt, o) => {
   calls.push({ label: o.label, model: o.model, effort: o.effort, agentType: o.agentType, isolation: o.isolation, prompt })
   const id = o.label.split(':')[1].split('#')[0]
   if (o.label.startsWith('preflight')) return preflight
   if (o.label.startsWith('triage')) return TRIAGES[id]
+  if (o.label.startsWith('safety')) return land.safetyDown.has(id) ? null : land.person.has(id) ? { verdict: 'person', why: 'renames the --all flag' } : { verdict: 'safe', why: 'internal change' }
+  if (o.label.startsWith('io:') && o.label.endsWith('#gate')) {
+    if (land.gateDown.has(id)) return null
+    if (land.gateOdd.has(id)) return { exitCode: 0, output: 'GATED #1: scripts/x.sh' }
+    return land.gated.has(id) ? { exitCode: 1, output: 'GATED #1: scripts/merge-pr.sh' } : { exitCode: 0, output: 'not gated #1' }
+  }
+  if (o.label.startsWith('io:') && o.label.endsWith('#botstatus')) {
+    return land.statusDown.has(id) ? { exitCode: 1, output: 'bot-status: cannot read the reviews' } : { exitCode: 0, output: JSON.stringify({ head: land.headMoved.has(id) ? 'moved' : lastHead[id], approvedBy: ['gitar-bot'], seenHead: ['gitar-bot'], openThreads: 0 }) }
+  }
   if (o.label.startsWith('io:')) {
     if (o.label.endsWith('#put')) {
       const posted = Buffer.from(/--b64 (\S+)/.exec(prompt)[1], 'base64').toString('utf8')
@@ -78,10 +90,15 @@ const agent = async (prompt, o) => {
   if (o.label.startsWith('docs')) return ['G1', 'G2', 'G3'].includes(id) ? { changed: true, headSha: 'docs-' + id, files: ['README.md'], summary: 's' } : { changed: false, summary: 'already right' }
   if (o.label.startsWith('review')) return { summary: 's', findings: id === 'P1' || ['QS', 'QY'].includes(id) || (id === 'QF' && round === '1') ? [{ severity: 'major', title: 'x', detail: 'd' }] : [{ severity: 'minor', title: 'm', detail: 'd' }] }
   if (o.label.startsWith('open')) return { prNumber: 100 + calls.length, prUrl: 'u', issuesCreated: id === 'C2' ? ['https://github.com/o/r/issues/21'] : [] }
-  if (o.label.startsWith('botwait')) return id === 'C1' && failWait ? null : { approvedBy: ['gitar-bot'], openComments: ['C2', 'L1', 'B1', 'W1'].includes(id) ? 2 : 0 }
+  if (o.label.startsWith('botwait')) return id === 'C1' && failWait ? null : { approvedBy: ['the-waiter-says-so'], openComments: ['C2', 'L1', 'B1', 'W1'].includes(id) ? 2 : 0 }
   if (o.label.startsWith('botanswer')) return { codeChanged: id !== 'W1', headSha: 'sha-answer-' + id, closesIssues: id === 'C2' ? [21] : [], notes: 'anchored the regex' }
   if (o.label.startsWith('landfix')) return { readyToMerge: true, headSha: 'abc', notes: 'ok' }
   return null
+}
+const agent = async (prompt, o) => {
+  const out = await agentRaw(prompt, o)
+  if (out && out.headSha) lastHead[o.label.split(':')[1].split('#')[0]] = out.headSha
+  return out
 }
 const parallel = async thunks => Promise.all(thunks.map(t => t().catch(() => null)))
 const log = () => {}
@@ -105,7 +122,7 @@ const PRS = [
   { id: 'B1', title: 't', branch: 'b16' },
   { id: 'W1', title: 't', branch: 'b17' },
 ]
-const base = { repo: 'o/r', tmp: '/x', plan: 'docs/p.md', architecture: 'docs/design.md', goals: 'docs/goals.md', prs: PRS }
+const base = { repo: 'o/r', tmp: '/x', plan: 'docs/p.md', architecture: 'docs/design.md', goals: 'docs/goals.md', pluginRoot: '/plug', prs: PRS }
 const GOOD = { ok: true, exists: true, goals: 3, nonGoals: 2, missing: [] }
 let lastResult
 const simulate = async (args, pre = GOOD) => {
@@ -124,6 +141,7 @@ const mainResult = lastResult
 await check('clean code PR lands at the tested sha', () => {
   assert.equal(r.C1.ready, true)
   assert.equal(r.C1.land.split(':')[1], 'sha-C1')
+  assert.equal(r.C1.land.split(':')[2], 'auto')
   assert.equal(r.C1.rounds, 1)
 })
 await check('a bot answer that changed code is tested and reviewed on its diff before it can land', () => {
@@ -165,7 +183,7 @@ await check('plan PR stops after planRounds', () => {
 })
 await check('land fix runs the land fixer, then waits for and answers the bots on the new head', () => {
   assert.equal(r.L1.ready, true)
-  assert.deepEqual(mainCalls.filter(c => c.label.includes(':L1')).map(c => c.label), ['landfix:L1', 'botwait:L1', 'botanswer:L1', 'test:L1#bots1', 'botreview:L1#1'])
+  assert.deepEqual(mainCalls.filter(c => c.label.includes(':L1')).map(c => c.label), ['landfix:L1', 'botwait:L1', 'io:L1#botstatus', 'botanswer:L1', 'test:L1#bots1', 'botreview:L1#1'])
   assert.equal(r.L1.land, '7:sha-L1-bots1')
 })
 await check('architecture escalate stops the PR with the question', () => {
@@ -256,8 +274,12 @@ await check('no skill instruction without a skills argument', () => {
 failWait = true
 const w = await simulate(base)
 failWait = false
-await check('the bot waiter counts only reviews on the current head', () => {
-  assert.match(mainCalls.find(c => c.label === 'botwait:C1').prompt, /latest review is APPROVED on the current head/)
+await check('without pluginRoot the PR stops at the bot step and no waiter runs', async () => {
+  const { pluginRoot, ...noRoot } = base
+  const nr = await simulate({ ...noRoot, prs: PRS.filter(p => p.id === 'C1') })
+  assert.equal(nr.C1.ready, false)
+  assert.match(nr.C1.reason, /^pluginRoot missing/)
+  assert.ok(!calls.some(c => /^(botwait|io|safety):/.test(c.label)))
 })
 await check('failed bot wait is not ready', () => {
   assert.equal(w.C1.ready, false)
@@ -420,7 +442,7 @@ const frontmatter = name => {
   const text = readFileSync(new URL(`agents/${name}.md`, root), 'utf8')
   return Object.fromEntries(text.split('---')[1].trim().split('\n').map(l => [l.slice(0, l.indexOf(':')), l.slice(l.indexOf(':') + 1).trim()]))
 }
-const AGENT_OF = { botreview: 'reviewer', qa: 'qa', docsfix: 'docs-writer', implement: 'implementer', test: 'tester', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight', triage: 'triager', io: 'pipeline-io', evaluate: 'evaluator', redact: 'feedback-redactor' }
+const AGENT_OF = { botreview: 'reviewer', qa: 'qa', docsfix: 'docs-writer', implement: 'implementer', test: 'tester', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight', triage: 'triager', io: 'pipeline-io', safety: 'merge-safety', evaluate: 'evaluator', redact: 'feedback-redactor' }
 const WRITERS = ['implementer', 'fixer', 'docs-writer', 'bot-answerer', 'land-fixer']
 await simulate(base)
 await check('every call names its role agent from the plugin', () => {
@@ -542,8 +564,9 @@ await check('quick: the goals path reaches the triager and the entry check', () 
   assert.match(forPr('QM', /^product/)[0].prompt, /docs\/goals\.md/)
 })
 await check('quick: pluginRoot reaches every pipeline-io prompt, which names the script and the plugin folder rule', () => {
-  const io = quickCalls.filter(c => c.label.startsWith('io:'))
+  const io = quickCalls.filter(c => /^io:[^#]*#(get|put)$/.test(c.label))
   assert.ok(io.length > 0)
+  for (const c of quickCalls.filter(c => c.label.startsWith('io:'))) assert.ok(c.prompt.includes('Plugin folder: /plug'), c.label)
   for (const c of io) {
     assert.ok(c.prompt.includes('bash /plug/scripts/quick-brief.sh'), c.label)
     assert.match(c.prompt, /never from a clone of o\/r/)
@@ -613,6 +636,129 @@ await check('quick: quick state stays off the caller options', () => {
 })
 await check('quick: a plan is optional for a quick-only wave and required otherwise', async () => {
   await assert.rejects(() => run({ ...quickBase, prs: [...quickBase.prs.slice(0, 1), { id: 'X', title: 't', branch: 'x' }] }, agent, parallel, log), /needs plan/)
+})
+
+// Merge safety: the :auto suffix and the bot status.
+const only = (...ids) => PRS.filter(p => ids.includes(p.id))
+const landRun = async (cfg, prs, extra = {}) => {
+  for (const [k, ids] of Object.entries(cfg)) land[k] = new Set(ids)
+  try { return await simulate({ ...base, ...extra, prs }) } finally { for (const k of Object.keys(land)) land[k] = new Set() }
+}
+const ran = (re) => calls.filter(c => re.test(c.label)).map(c => c.label)
+const suffix = x => x.land.split(':').slice(2).join(':')
+await check('merge safety: :auto only when the gate passed and the agent said safe', async () => {
+  const x = await landRun({ gated: ['D1'], person: ['C2'] }, only('C1', 'D1', 'C2', 'W1'))
+  assert.equal(suffix(x.C1), 'auto')
+  assert.equal(suffix(x.W1), 'auto')
+  assert.equal(suffix(x.D1), '')
+  assert.equal(suffix(x.C2), '')
+  assert.deepEqual([x.C1.landMode, x.D1.landMode, x.C2.landMode], ['auto', 'person', 'person'])
+  assert.match(x.D1.landWhy, /^gate: GATED #1: scripts\/merge-pr\.sh/)
+  assert.match(x.C2.landWhy, /renames the --all flag/)
+  assert.deepEqual(x.C2.safety, { verdict: 'person', why: 'renames the --all flag' })
+  for (const v of Object.values(x)) assert.match(v.land, /^\d+:[^:]+(:auto)?$/)
+})
+await check('merge safety: a gated PR never reaches the merge-safety agent', async () => {
+  await landRun({ gated: ['D1'] }, only('C1', 'D1'))
+  assert.deepEqual(ran(/:D1#(gate|land)$/), ['io:D1#gate'])
+  assert.deepEqual(ran(/:C1#(gate|land)$/), ['io:C1#gate', 'safety:C1#land'])
+})
+await check('merge safety: a gate that fails to run, a gate with no "not gated" answer and a failed agent give no :auto', async () => {
+  const x = await landRun({ gateDown: ['C1'], gateOdd: ['C2'], safetyDown: ['W1'] }, only('C1', 'C2', 'W1'))
+  assert.equal(land.gateOdd.size, 0)
+  for (const id of ['C1', 'C2', 'W1']) { assert.equal(x[id].ready, true); assert.equal(suffix(x[id]), '', id) }
+  assert.match(x.C1.landWhy, /pipeline-io failed/)
+  assert.match(x.W1.landWhy, /merge-safety agent failed/)
+  assert.deepEqual(ran(/:(C1|C2)#land$/), [])
+})
+await check('merge safety: a PR that stops for a person or for rounds gets no land value, gate or agent', async () => {
+  const x = await landRun({}, only('E1', 'P1', 'G3'))
+  for (const id of ['E1', 'P1', 'G3']) { assert.equal(x[id].ready, false); assert.equal(x[id].land, undefined) }
+  assert.deepEqual(ran(/^(safety:|io:.*#gate)/), [])
+})
+await check('merge safety: a resumed PR and a PR with a maintainer decision land without :auto and never reach the agent', async () => {
+  const x = await landRun({}, [
+    { id: 'C1', title: 't', branch: 'b1', resume: { history: [], minors: [], findings: [] } },
+    { id: 'C2', title: 't', branch: 'b2', architectureDecision: 'use A' },
+    { id: 'W1', title: 't', branch: 'b17', productDecision: 'in scope' },
+  ])
+  for (const id of ['C1', 'C2', 'W1']) { assert.equal(x[id].ready, true, id); assert.equal(suffix(x[id]), '', id); assert.equal(x[id].landMode, 'person', id) }
+  assert.deepEqual(ran(/^(safety:|io:.*#gate)/), [])
+})
+await check('merge safety: a bot status for another head stops the PR', async () => {
+  const x = await landRun({ headMoved: ['C1'] }, only('C1', 'D1'))
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /head moved/)
+  assert.equal(x.C1.land, undefined)
+  assert.equal(x.D1.ready, true)
+})
+await check('merge safety: the gate and the agent run last, on the sha after the docs step and the bot answers', async () => {
+  const x = await landRun({}, only('G1', 'C2', 'B1'))
+  assert.equal(x.G1.land.split(':')[1], 'sha-G1-docs1')
+  assert.match(calls.find(c => c.label === 'safety:G1#land').prompt, /Judge the head sha-G1-docs1\./)
+  assert.match(calls.find(c => c.label === 'safety:C2#land').prompt, /Judge the head sha-C2-bots1\./)
+  assert.match(calls.find(c => c.label === 'safety:B1#land').prompt, /Judge the head sha-B1-bots2\./)
+  for (const id of ['G1', 'C2', 'B1']) {
+    const order = calls.filter(c => c.label.includes(`:${id}`)).map(c => c.label)
+    assert.deepEqual(order.slice(-2), [`io:${id}#gate`, `safety:${id}#land`], id)
+    assert.ok(order.indexOf(`io:${id}#gate`) > order.findLastIndex(l => /^(open|docs|botanswer|botreview|test|fix|review)/.test(l)), id)
+  }
+})
+await check('merge safety: a land-fixed PR and a skipImpl rerun land without :auto and never reach the gate or the agent', async () => {
+  const x = await landRun({}, only('L1', 'P3'))
+  for (const id of ['L1', 'P3']) { assert.equal(x[id].ready, true, id); assert.equal(suffix(x[id]), '', id); assert.equal(x[id].landMode, 'person', id) }
+  assert.equal(x.L1.land, '7:sha-L1-bots1')
+  assert.match(x.L1.landWhy, /land fix/)
+  assert.match(x.P3.landWhy, /skipImpl/)
+  assert.deepEqual(ran(/^(safety:|io:.*#gate)/), [])
+})
+await check('merge safety: a normal clean first run still gets :auto', async () => {
+  const x = await landRun({}, only('C1'))
+  assert.equal(suffix(x.C1), 'auto')
+})
+await check('merge safety: the gate command runs from pluginRoot on the PR, and the agent is the read-only merge-safety role on opus/high', async () => {
+  await landRun({}, only('C1'))
+  const gate = calls.find(c => c.label === 'io:C1#gate')
+  assert.match(gate.prompt, /bash \/plug\/scripts\/gate-files\.sh o\/r \d+/)
+  assert.match(gate.prompt, /never from a clone of o\/r/)
+  const s = calls.find(c => c.label === 'safety:C1#land')
+  assert.equal(`${s.agentType} ${s.model}/${s.effort}`, 'agent-pr-pipeline:merge-safety opus/high')
+  assert.match(s.prompt, /pull request #\d+/)
+})
+await check('merge safety: a quick-fix skipImpl rerun with a high-risk stored brief lands as person without asking the agent', async () => {
+  briefs.QHR = 'Touches: src/h.js\nAcceptance: h test\nTriage: size M, risk high, new concepts: none'
+  const x = await landRun({}, [{ id: 'QHR', quick: { issue: 90 }, branch: 'fix/QHR', skipImpl: true }], { pluginRoot: '/plug' })
+  assert.equal(x.QHR.ready, true)
+  assert.equal(suffix(x.QHR), '')
+  assert.match(x.QHR.landWhy, /skipImpl/)
+  assert.deepEqual(ran(/^safety:/), [])
+})
+await check('merge safety: without pluginRoot no PR is :auto', async () => {
+  const { pluginRoot, ...noRoot } = base
+  calls = []; preflight = GOOD
+  const out = await run({ ...noRoot, prs: only('C1', 'C2') }, agent, parallel, log)
+  assert.ok(out.prs.every(p => !p.ready && !(p.land || '').endsWith(':auto')))
+})
+
+await check('bot status: approvedBy comes from the script through pipeline-io, not from the waiter', async () => {
+  const x = await landRun({}, only('C1'))
+  assert.deepEqual(x.C1.approvedBy, ['gitar-bot'])
+  const st = calls.find(c => c.label === 'io:C1#botstatus')
+  assert.match(st.prompt, /bash \/plug\/scripts\/bot-status\.sh o\/r \d+/)
+  assert.match(st.prompt, /never from a clone of o\/r/)
+  assert.equal(st.agentType, 'agent-pr-pipeline:pipeline-io')
+  const wait = calls.find(c => c.label === 'botwait:C1')
+  assert.ok(wait.prompt.includes('bash /plug/scripts/bot-status.sh o/r '))
+  assert.doesNotMatch(wait.prompt, /latest review is APPROVED/)
+  assert.match(wait.prompt, /Stop early only when seenHead is not empty/)
+  assert.doesNotMatch(wait.prompt, /check-runs/)
+  assert.ok(calls.findIndex(c => c.label === 'io:C1#botstatus') > calls.findIndex(c => c.label === 'botwait:C1'))
+})
+await check('bot status: a failed status script stops the PR before the land gate', async () => {
+  const x = await landRun({ statusDown: ['C1'] }, only('C1'))
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /^bot status failed: bot-status: cannot read the reviews/)
+  assert.deepEqual(ran(/^(safety:|io:.*#gate)/), [])
 })
 
 // Land gate: scripts/bot-approval.jq on fixture reviews and comments.

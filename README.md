@@ -1,15 +1,15 @@
 # agent-pr-pipeline
 
-A Claude Code plugin for building a release as a series of small PRs. Separate role agents implement, test from a clean clone, review adversarially, fix, update the docs, open the PR and answer the review bots. The main session merges.
+A Claude Code plugin for building a release as a series of small PRs. Separate role agents implement, test from a clean clone, review adversarially, fix, update the docs, open the PR and answer the review bots. The main session merges, or the maintainer does when the PR is gated or the merge-safety agent says `person`.
 
 It grew out of building [Tagreeve](https://github.com/alfhen/tagreeve) (first called Pingwright) 0.1 to 0.4 this way: more than 150 PRs, each one through the same loop.
 
 ## What is in it
 
 - **Skills.** `pr-pipeline` runs the loop: plan, waves, land and merge. `write-goals` interviews the maintainer and writes the product goals document that the pipeline needs before its first run.
-- **Role agents.** `implementer`, `tester`, `reviewer`, `qa`, `arch-reviewer`, `product-reviewer`, `fixer`, `docs-writer`, `docs-reviewer`, `pr-opener`, `bot-waiter`, `bot-answerer`, `land-fixer`, `goals-preflight`, `evaluator` and `feedback-redactor`. Each has its own rules, model, effort and the smallest tool set its role needs.
+- **Role agents.** `implementer`, `tester`, `reviewer`, `qa`, `arch-reviewer`, `product-reviewer`, `fixer`, `docs-writer`, `docs-reviewer`, `pr-opener`, `bot-waiter`, `bot-answerer`, `land-fixer`, `merge-safety`, `goals-preflight`, `evaluator` and `feedback-redactor`. Each has its own rules, model, effort and the smallest tool set its role needs.
 - **Workflow.** `run-wave` runs one wave of PRs through the loop with the role agents.
-- **Scripts and templates.** The land and merge scripts, the goals check, `scripts/file-feedback.sh`, and the plan, goals and `AGENTS.md` templates.
+- **Scripts and templates.** The land and merge scripts, `scripts/release.sh`, the goals check, `scripts/file-feedback.sh`, and the plan, goals and `AGENTS.md` templates.
 
 ## Install
 
@@ -50,7 +50,7 @@ Ask Claude Code to plan and build a release or a set of issues with the pipeline
 1. triage the issues against the code,
 2. write a plan with waves, Touches and Acceptance lines, and put the plan through review,
 3. run each wave with the `run-wave` workflow,
-4. land the ready PRs with `scripts/land-wave.sh`, which merges only the commit the pipeline checked, with green CI and a review bot's approval (or its comments answered and nothing new raised),
+4. land the ready PRs with `scripts/land-wave.sh`. It merges only the commit the pipeline checked, with green CI and a review bot's approval (or its comments answered and nothing new raised). First a script checks the changed files against the gated paths, and the merge-safety agent decides `safe` or `person` for the rest. A rerun PR (land fix, resume or decision rerun) skips both and is never merged with `--auto`,
 5. show the maintainer the feedback items from the end-of-run evaluation and, after approval, file them with `scripts/file-feedback.sh`. For a wave in another repo, a redactor and a denylist keep that repo's details out of the issues.
 
 Read [skills/pr-pipeline/SKILL.md](skills/pr-pipeline/SKILL.md) for the loop, the workflow arguments, the role agents, cost and caching, and what to do when a step fails.
@@ -68,7 +68,8 @@ Read [skills/pr-pipeline/SKILL.md](skills/pr-pipeline/SKILL.md) for the loop, th
 - Simulate the workflow with a fake `agent()`: `node test/sim-pipeline.mjs`. Run it after every change to `workflows/run-wave.js` or `agents/`. Script tests: `node --test test/*.test.mjs`.
 - Run the checks in [AGENTS.md](AGENTS.md) before you push. The `ci` workflow runs the same checks on every PR.
 - The `release` workflow runs when a release is published. It runs the simulation and checks that the manifest version matches the tag.
-- `.github/pipeline.json` lists the gated paths of this repo. A PR that touches one is merged by the maintainer, never by an agent. `templates/pipeline.json` is the starting file for another repo.
+- `.github/pipeline.json` lists the gated paths of this repo and sets `autoRelease`. A PR that touches a gated path is merged by the maintainer, never by an agent. `templates/pipeline.json` is the starting file for another repo.
+- `scripts/release.sh` makes a release from the main session after the last wave. It runs only when `autoRelease` is true and its checks pass. The skill lists the checks.
 
 ## Explainer
 
