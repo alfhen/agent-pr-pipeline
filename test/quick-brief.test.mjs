@@ -10,7 +10,7 @@ const root = new URL('../', import.meta.url).pathname
 const SCRIPT = join(root, 'scripts/quick-brief.sh')
 const ENTRY = 'Touches: src/a.js\nAcceptance: node --test passes'
 
-const run = (fixture, mode = 'get', extra = []) => {
+const run = (fixture, mode = 'get', extra = [], entryArgs) => {
   const dir = mkdtempSync(join(tmpdir(), 'quick-brief-test-'))
   const bin = join(dir, 'bin')
   mkdirSync(bin)
@@ -18,7 +18,7 @@ const run = (fixture, mode = 'get', extra = []) => {
   const log = join(dir, 'log')
   const entry = join(dir, 'entry.md')
   writeFileSync(entry, ENTRY)
-  const r = spawnSync('bash', [SCRIPT, mode, 'o/r', '5', ...(mode === 'put' ? [entry] : []), ...extra], {
+  const r = spawnSync('bash', [SCRIPT, mode, 'o/r', '5', ...(mode === 'put' ? (entryArgs ?? [entry]) : []), ...extra], {
     encoding: 'utf8',
     env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: join(root, 'test/fixtures/quick-brief', fixture), FAKE_GH_LOG: log },
   })
@@ -70,5 +70,39 @@ test('put posts nothing when a trusted brief exists and prints that one', () => 
 test('put refuses when two trusted briefs exist', () => {
   const r = run('two-trusted', 'put')
   assert.equal(r.status, 2)
+  assert.equal(r.posts.length, 0)
+})
+
+const b64 = s => Buffer.from(s).toString('base64')
+const sumOf = s => {
+  const out = spawnSync('cksum', { input: s, encoding: 'utf8' }).stdout.trim().split(/\s+/)
+  return `${out[0]}:${out[1]}`
+}
+
+test('put --b64 with a correct sum posts the marker and the decoded entry once', () => {
+  const r = run('other-account', 'put', [], ['--b64', b64(ENTRY), '--sum', sumOf(ENTRY)])
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(r.posts.length, 1)
+  assert.match(r.posts[0], /^POST \/repos\/o\/r\/issues\/5\/comments body=<!-- pipeline:quick-brief -->/)
+  assert.ok(r.posts[0].includes('Touches: src/a.js'))
+  assert.equal(r.stdout.trim(), ENTRY)
+})
+
+test('put --b64 with a wrong sum exits 65 and posts nothing', () => {
+  const r = run('other-account', 'put', [], ['--b64', b64(ENTRY), '--sum', sumOf(ENTRY + 'x')])
+  assert.equal(r.status, 65)
+  assert.equal(r.posts.length, 0)
+  assert.match(r.stderr, /checksum/)
+})
+
+test('put --b64 without --sum exits 65 and posts nothing', () => {
+  const r = run('other-account', 'put', [], ['--b64', b64(ENTRY)])
+  assert.equal(r.status, 65)
+  assert.equal(r.posts.length, 0)
+})
+
+test('put --b64 with truncated base64 posts nothing', () => {
+  const r = run('other-account', 'put', [], ['--b64', b64(ENTRY).slice(0, 20), '--sum', sumOf(ENTRY)])
+  assert.notEqual(r.status, 0)
   assert.equal(r.posts.length, 0)
 })
