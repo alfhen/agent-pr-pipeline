@@ -2,6 +2,7 @@ export const meta = {
   name: 'agent-pr-pipeline',
   description: 'Build, test, review and fix one wave of PRs, open them and answer the review bots; each step a separate agent',
   phases: [
+    { title: 'Preflight', detail: 'check the goals document exists and has goals and non-goals' },
     { title: 'Implement', detail: 'one agent builds each PR on its own branch' },
     { title: 'Test', detail: 'a second agent runs the fast checks and the PR\'s own e2e from a clean clone' },
     { title: 'Review', detail: 'a stronger model reviews the diff adversarially' },
@@ -21,7 +22,7 @@ const TMP = A.tmp
 const PLAN = A.plan
 const SPEC = A.spec || ''
 const ARCH = A.architecture || SPEC
-const GOALS = A.goals || SPEC
+const GOALS = A.goals
 const FAST_CHECKS = A.checks || ['pnpm install --frozen-lockfile', 'pnpm lint', 'pnpm typecheck', 'pnpm test']
 const E2E_PATTERN = A.e2ePattern || '\\.e2e\\.test\\.ts$'
 const E2E_COMMAND = A.e2eCommand || 'pnpm exec vitest run {files}'
@@ -35,6 +36,7 @@ const STEPS = Object.assign({
   review: { model: 'opus', effort: 'high' },
   arch: { model: 'opus', effort: 'high' },
   product: { model: 'opus', effort: 'high' },
+  preflight: { model: 'haiku', effort: 'low' },
   reviewDocs: { model: 'sonnet', effort: 'high' },
   fix: { model: 'sonnet', effort: 'medium' },
   open: { model: 'sonnet', effort: 'low' },
@@ -43,10 +45,11 @@ const STEPS = Object.assign({
   landFix: { model: 'sonnet', effort: 'medium' },
 }, A.steps || {})
 if (!REPO || !TMP || !PLAN || !Array.isArray(A.prs)) throw new Error('args needs repo, tmp, plan and prs')
+if (!GOALS) throw new Error('args needs goals: the path to the product goals document (see templates/goals.md). The pipeline does not start without one.')
 
 const roundsFor = pr => pr.maxRounds || (pr.kind === 'plan' ? (A.planRounds || 2) : (A.maxRounds || 4))
 const reviewStep = pr => (pr.kind === 'plan' || pr.kind === 'docs') ? STEPS.reviewDocs : STEPS.review
-const productRuns = pr => !!GOALS && A.productReview !== false && (pr.kind === 'plan' || (A.productReview === 'all' && pr.kind !== 'docs'))
+const productRuns = pr => A.productReview !== false && (pr.kind === 'plan' || (A.productReview === 'all' && pr.kind !== 'docs'))
 const archRuns = pr => pr.kind !== 'docs' && !!ARCH && A.architectureReview !== false
 const decided = pr => (pr.architectureDecision ? `\nArchitecture decision by the maintainer for this PR (settled; follow it): ${pr.architectureDecision}` : '')
   + (pr.productDecision ? `\nProduct scope decision by the maintainer for this PR (settled; follow it): ${pr.productDecision}` : '')
@@ -148,6 +151,17 @@ const PRODUCT = {
     },
   },
   required: ['verdict', 'summary', 'entries'],
+}
+const PREFLIGHT = {
+  type: 'object',
+  properties: {
+    ok: { type: 'boolean' },
+    exists: { type: 'boolean' },
+    goals: { type: 'number' },
+    nonGoals: { type: 'number' },
+    missing: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['ok', 'exists', 'missing'],
 }
 const OPEN = {
   type: 'object',
@@ -295,6 +309,12 @@ Your job: bring PR #${pr.prNumber} (${pr.branch}) to a mergeable state with gree
 4. Wait for CI on the new head (\`gh pr checks ${pr.prNumber} -R ${REPO} --watch --interval 30\`). Stop when it is MERGEABLE and green, or after 3 attempts.
 Return readyToMerge, headSha and notes.`
 
+const preflightPrompt = () => `Check that the product goals document exists and is usable. Do not change anything.
+1. Read ${GOALS} on the default branch of ${REPO}: \`gh api repos/${REPO}/contents/${GOALS} --jq .content | base64 --decode\`. If that fails, the file does not exist.
+2. Find a heading named Goals and a heading named Non-goals (any heading level; "Non goals" and "Out of scope" count as Non-goals). Count the list items under each. An item that is still a template placeholder in angle brackets (<...>) does not count.
+3. ok is true only if the file exists, both headings exist, and each has at least one item.
+Return ok, exists, the two counts, and missing: a short list of what is absent (for example "file", "Goals section", "Non-goals items").`
+
 async function reviewLoop(pr, startRound, history, minors, archState) {
   const max = roundsFor(pr)
   for (let round = startRound; round < startRound + max; round++) {
@@ -376,4 +396,13 @@ async function runPR(pr) {
   }
 }
 
+const needsGoals = A.prs.some(pr => !pr.landFix)
+if (needsGoals) {
+  const pre = await agent(preflightPrompt(), opts(STEPS.preflight, { label: 'preflight:goals', phase: 'Preflight', schema: PREFLIGHT }))
+  if (!pre || !pre.ok) {
+    const missing = pre ? pre.missing.join(', ') : 'the preflight agent did not answer'
+    log(`refused: ${GOALS} is missing or incomplete (${missing})`)
+    return A.prs.map(pr => ({ id: pr.id, ready: false, refused: true, reason: `goals document missing or incomplete: ${missing}. Write ${GOALS} (see templates/goals.md) and run again.` }))
+  }
+}
 return await parallel(A.prs.map(pr => () => runPR(pr)))

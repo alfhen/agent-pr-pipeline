@@ -50,6 +50,7 @@ Summary: a plan is reviewed first, including whether it still serves the product
 
 ## Before the first run in a repo
 
+- **Write the goals document first. The pipeline refuses to start without it.** Copy `templates/goals.md` to the repo (for example `docs/goals.md`) and fill in the Goals and Non-goals sections, at least one item each. Only the maintainer writes it. Check it with `scripts/check-goals.sh <owner/repo> docs/goals.md`; the workflow runs the same check as its first step and refuses every PR in the wave if the file is missing or incomplete.
 - Add the loop to the repo's `AGENTS.md` (or `CLAUDE.md`). `templates/AGENTS-section.md` is a starting point. Workers read it, so hard rules go there once instead of in every prompt.
 - Install at least one review bot on the repo (CodeRabbit, Gitar or similar). An approval from one of them is the merge gate.
 - Know the check commands (install, lint, typecheck, unit, e2e) and how long e2e takes.
@@ -108,7 +109,7 @@ Load the workflow-authoring skill if the session has a Workflow tool. Run `workf
 
 - `checks` are the **fast** checks. Agents also run the e2e files the PR adds or changes (`e2ePattern`, run with `e2eCommand`). The full e2e suite runs only in CI, so CI must run it on every PR.
 - `architecture`: the document the architecture reviewer checks against (defaults to `spec`). Set `"architectureReview": false` to turn the step off.
-- `goals`: the product goals and non-goals the product-fit reviewer checks plans against (defaults to `spec`). `"productReview": "all"` also runs it on code PRs; `false` turns it off.
+- `goals` (**required**): the product goals document. Without it the workflow throws before any agent starts, and a preflight agent refuses the wave if the file has no Goals or Non-goals items. `productReview: false` turns off the review step, not this requirement. `"productReview": "all"` also runs it on code PRs; `false` turns it off.
 - `kind`: `code` (default), `docs` or `plan`. Docs and plan PRs get a Sonnet reviewer at high effort instead of Opus. Plan PRs stop after `planRounds` (default 2); fix what is left by hand, then rerun with `skipImpl`.
 
 Models and effort per step (override any of them in `steps`):
@@ -120,6 +121,7 @@ Models and effort per step (override any of them in `steps`):
 | `review` | opus | high |
 | `arch` | opus | high |
 | `product` (plans) | opus | high |
+| `preflight` | haiku | low |
 | `reviewDocs` (docs and plan PRs) | sonnet | high |
 | `open` | sonnet | low |
 | `botWait` | haiku | low |
@@ -152,6 +154,7 @@ After a wave, watch CI on the default branch before starting the next wave or ta
 | `tester or reviewer failed` or agents failed on a usage limit | Resume the same run with `resumeFromRunId`; finished agents replay from cache. |
 | A CI e2e job fails in files the PR does not touch | Rerun the job once. If it fails on the default branch too, it is not this PR's problem: file it. |
 | Bot rate-limited | One bot's approval is enough. If none approved, wait or ask the person. |
+| `refused: goals document missing or incomplete` | Write or finish the goals document (`templates/goals.md`) in its own PR, merge it, and run again. Do not work around it: the product-fit review has nothing to check against without it. |
 | `needs human: product` | Show the person the question and the per-entry suggestions. Their answer goes in `productDecision`; if it changes the goals, update the goals document in its own small PR first. Cut or deferred entries move out of the plan, with their issues moved to a later milestone. |
 | `needs human: architecture` | Show the person the escalation's question, options and recommendation, as a decision to make, not a fix to approve. If the answer changes the architecture, update the architecture document first (its own small PR). Then rerun the PR with `architectureDecision` set; if its branch exists, add `skipImpl: true` or `resume`. |
 | `LAND FIX #n` from the land script | The PR conflicts or a check is red. Run the workflow with `landFix: true` for that PR; it merges the default branch in or fixes CI. Never rebase a pushed branch. |
@@ -172,5 +175,7 @@ After a wave, watch CI on the default branch before starting the next wave or ta
 - `workflow/pr-pipeline.js`: the workflow script.
 - `scripts/land-wave.sh`: wait for CI and merge a wave, reporting PRs that need a land fix.
 - `scripts/merge-pr.sh`, `scripts/merge-wave.sh`: guarded squash-merge from the main session.
+- `templates/goals.md`: the goals document skeleton. Required before the first run.
+- `scripts/check-goals.sh`: check the goals document before a run.
 - `templates/plan.md`: plan document skeleton.
 - `templates/AGENTS-section.md`: the loop as repo rules.
