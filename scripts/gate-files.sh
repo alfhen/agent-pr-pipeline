@@ -25,10 +25,11 @@ list=$(jq -c 'if all(.[]; type == "array") then add // [] else error("pages") en
 [ "$(jq length <<<"$list")" -lt 3000 ] || gated "3000 changed files or more, the list may be cut"
 
 hit=$(jq -r --argjson gates "$gates" '
-  def rx: gsub("(?<c>[.+^${}()|\\[\\]\\\\])"; "\\" + .c)
+  def rx: (if endswith("/") then . + "**" else . end)
+    | gsub("(?<c>[.+^${}()|\\[\\]\\\\])"; "\\" + .c)
     | gsub("\\*\\*/"; "\u0001") | gsub("\\*\\*"; "\u0002") | gsub("\\*"; "\u0003") | gsub("\\?"; "\u0004")
-    | gsub("\u0001"; "(.*/)?") | gsub("\u0002"; ".*") | gsub("\u0003"; "[^/]*") | gsub("\u0004"; "[^/]")
-    | "^" + . + "$";
+    | gsub("\u0001"; "([\\s\\S]*/)?") | gsub("\u0002"; "[\\s\\S]*") | gsub("\u0003"; "[^/]*") | gsub("\u0004"; "[^/]")
+    | "\\A" + . + "\\z";
   [.[] | (.filename, (.previous_filename // empty))] | unique
   | map(select(. as $f | any($gates[]; . as $g | $f | test($g | rx)))) | join(", ")' <<<"$list") \
   || gated "cannot match the changed files"

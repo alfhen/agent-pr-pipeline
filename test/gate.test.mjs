@@ -33,6 +33,7 @@ const setup = ({ files = 'clean', settings = 'repo', merging = true, scripts = f
   const contents = `${P}__contents__.github__pipeline.json.json`
   if (settings === 'repo') copyFileSync(join(FX, 'pipeline.json'), join(fx, contents))
   if (settings === 'error') put(fx, `${contents.replace(/.json$/, '')}.GET.error`, 'fake-gh: server error (HTTP 500)')
+  if (settings === 'slash') put(fx, contents, { gates: ['docs/'] })
   if (settings === 'bad') put(fx, contents, '{"gates": "scripts/**"}')
   if (files) for (const f of readdirSync(join(FX, 'files')).filter((n) => n.startsWith(`${files}.`))) {
     copyFileSync(join(FX, 'files', f), join(fx, `${PULL}__files.${f.split('.')[1]}.json`))
@@ -280,4 +281,16 @@ test('bot-approval: an empty-body review with a new inline finding on the head b
   assert.equal(last.body, '')
   assert.ok(f.comments.some((c) => c.pull_request_review_id === last.id && c.in_reply_to_id === null))
   assert.deepEqual(approvals('finding-after-approval.json'), [])
+})
+
+test('gate: a path with a newline under a gated folder is gated', () => {
+  const r = run(setup({ files: 'newline' }), 'gate-files.sh', ['o/r', '7'])
+  assert.equal(r.code, 1)
+  assert.match(r.out, /GATED #7/)
+})
+
+test('gate: a gate ending in a slash holds everything under it', () => {
+  const r = run(setup({ files: 'slash', settings: 'slash' }), 'gate-files.sh', ['o/r', '7'])
+  assert.equal(r.code, 1)
+  assert.match(r.out, /docs\/a\.md/)
 })
