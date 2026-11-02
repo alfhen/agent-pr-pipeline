@@ -7,7 +7,7 @@ It grew out of building [Tagreeve](https://github.com/alfhen/tagreeve) (first ca
 ## What is in it
 
 - **Skills.** `pr-pipeline` runs the loop: plan, waves, land and merge. `write-goals` interviews the maintainer and writes the product goals document that the pipeline needs before its first run.
-- **Role agents.** `implementer`, `tester`, `reviewer`, `arch-reviewer`, `product-reviewer`, `fixer`, `docs-writer`, `docs-reviewer`, `pr-opener`, `bot-waiter`, `bot-answerer`, `land-fixer` and `goals-preflight`. Each has its own rules, model, effort and the smallest tool set its role needs.
+- **Role agents.** `implementer`, `tester`, `reviewer`, `qa`, `arch-reviewer`, `product-reviewer`, `fixer`, `docs-writer`, `docs-reviewer`, `pr-opener`, `bot-waiter`, `bot-answerer`, `land-fixer` and `goals-preflight`. Each has its own rules, model, effort and the smallest tool set its role needs.
 - **Workflow.** `run-wave` runs one wave of PRs through the loop with the role agents.
 - **Scripts and templates.** The land and merge scripts, the goals check, and the plan, goals and `AGENTS.md` templates.
 

@@ -7,6 +7,7 @@ export const meta = {
     { title: 'Test', detail: 'a second agent runs the fast checks and the PR\'s own e2e from a clean clone' },
     { title: 'Review', detail: 'a stronger model reviews the diff adversarially' },
     { title: 'Product fit', detail: 'a stronger model checks a plan against the product goals and non-goals, and asks a person when it diverges' },
+    { title: 'QA', detail: 'an agent uses the built feature like a user and checks it does what the plan entry and the docs say' },
     { title: 'Architecture', detail: 'a stronger model checks the PR against the architecture, and asks a person when the architecture itself should change' },
     { title: 'Fix', detail: 'an agent fixes blockers, majors and failing checks' },
     { title: 'Docs', detail: 'after sign-off, an agent updates the docs the change affects; a short round checks the new head' },
@@ -45,11 +46,12 @@ const STEPS = Object.assign({
   botAnswer: { model: 'sonnet', effort: 'medium' },
   landFix: { model: 'sonnet', effort: 'medium' },
   docs: { model: 'sonnet', effort: 'medium' },
+  qa: { model: 'sonnet', effort: 'medium' },
 }, A.steps || {})
 if (!REPO || !TMP || !PLAN || !Array.isArray(A.prs)) throw new Error('args needs repo, tmp, plan and prs')
 if (!GOALS) throw new Error('args needs goals: the path to the product goals document (see templates/goals.md). The pipeline does not start without one.')
 
-const SKILL_STEPS = ['impl', 'test', 'review', 'arch', 'product', 'fix', 'docs', 'open', 'botAnswer', 'landFix', 'preflight']
+const SKILL_STEPS = ['impl', 'test', 'review', 'qa', 'arch', 'product', 'fix', 'docs', 'open', 'botAnswer', 'landFix', 'preflight']
 const SECURITY_SKILL = A.securitySkill || 'security-review'
 const checkSkills = (map, where) => {
   for (const [step, names] of Object.entries(map || {})) {
@@ -79,6 +81,7 @@ const reviewStep = pr => (pr.kind === 'plan' || pr.kind === 'docs') ? STEPS.revi
 const productRuns = pr => A.productReview !== false && (pr.kind === 'plan' || (A.productReview === 'all' && pr.kind !== 'docs'))
 const docsRuns = pr => pr.kind !== 'docs' && pr.kind !== 'plan' && A.docsUpdate !== false && pr.docsUpdate !== false
 const DOCS_ROUNDS = A.docsRounds || 2
+const qaRuns = pr => pr.kind !== 'docs' && pr.kind !== 'plan' && A.qa !== false && pr.qa !== false && (A.qa === 'all' || !!pr.qa)
 const archRuns = pr => pr.kind !== 'docs' && !!ARCH && A.architectureReview !== false
 const decided = pr => (pr.architectureDecision ? `\nArchitecture decision by the maintainer for this PR (settled; follow it): ${pr.architectureDecision}` : '')
   + (pr.productDecision ? `\nProduct scope decision by the maintainer for this PR (settled; follow it): ${pr.productDecision}` : '')
@@ -87,6 +90,7 @@ const ROLES = {
   impl: { agent: 'implementer', phase: 'Implement', isolation: 'worktree' },
   test: { agent: 'tester', phase: 'Test' },
   review: { agent: 'reviewer', phase: 'Review' },
+  qa: { agent: 'qa', phase: 'QA' },
   arch: { agent: 'arch-reviewer', phase: 'Architecture' },
   product: { agent: 'product-reviewer', phase: 'Product fit' },
   fix: { agent: 'fixer', phase: 'Fix', isolation: 'worktree' },
@@ -166,6 +170,28 @@ const ARCHREV = {
     },
   },
   required: ['verdict', 'summary', 'newConcepts'],
+}
+const QA = {
+  type: 'object',
+  properties: {
+    headSha: { type: 'string' }, summary: { type: 'string' },
+    scenarios: {
+      type: 'array',
+      items: { type: 'object', properties: { name: { type: 'string' }, command: { type: 'string' }, expected: { type: 'string' }, actual: { type: 'string' }, pass: { type: 'boolean' } }, required: ['name', 'pass'] },
+    },
+    findings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          severity: { type: 'string', enum: ['blocker', 'major', 'minor'] },
+          title: { type: 'string' }, command: { type: 'string' }, expected: { type: 'string' }, actual: { type: 'string' }, detail: { type: 'string' },
+        },
+        required: ['severity', 'title', 'detail'],
+      },
+    },
+  },
+  required: ['summary', 'scenarios', 'findings'],
 }
 const PRODUCT = {
   type: 'object',
@@ -281,6 +307,16 @@ Return the verdict, a short summary, one row per entry, and the escalation (for 
 
 ${prBlock(pr)}`
 
+const qaPrompt = (pr, round, last) => `${CONTEXT}
+
+Task: try the change on the branch like a user, and check it does what the plan entry and the docs say.
+Clone it: ${cloneTo(`qa-${pr.id}-r${round}`, pr)}. Install with \`${FAST_CHECKS[0]}\`. The diff is \`git diff origin/HEAD...HEAD\`.
+What to try: ${typeof pr.qa === 'string' ? pr.qa : "the plan entry's QA line, if it has one, and its Acceptance line"}. Then add your own cases.
+Return headSha, a summary, every scenario you ran, and the findings.
+
+${prBlock(pr)}
+${last ? `\nYour findings from the last round (check each is really fixed):\n${JSON.stringify(last, null, 1)}` : ''}`
+
 const archPrompt = (pr, round) => `${CONTEXT}
 
 Task: review the branch for architecture against ${ARCH}.
@@ -390,15 +426,18 @@ async function reviewLoop(pr, startRound, history, minors, archState) {
   for (let round = startRound; round < startRound + max; round++) {
     const wantArch = archRuns(pr) && (round === startRound || archState.last === 'needs-change')
     const wantProduct = productRuns(pr) && round === startRound
-    const [test, review, arch, product] = await parallel([
+    const wantQa = qaRuns(pr) && (round === startRound || archState.qaOpen.length > 0)
+    const [test, review, arch, product, qa] = await parallel([
       () => call('test', pr, testPrompt(pr, round), `test:${pr.id}#${round}`, { schema: TEST }),
       () => call('review', pr, reviewPrompt(pr, round, history), `review:${pr.id}#${round}`, { schema: REVIEW }),
       () => wantArch ? call('arch', pr, archPrompt(pr, round), `arch:${pr.id}#${round}`, { schema: ARCHREV }) : Promise.resolve(null),
       () => wantProduct ? call('product', pr, productPrompt(pr, round), `product:${pr.id}#${round}`, { schema: PRODUCT }) : Promise.resolve(null),
+      () => wantQa ? call('qa', pr, qaPrompt(pr, round, archState.qaOpen), `qa:${pr.id}#${round}`, { schema: QA }) : Promise.resolve(null),
     ])
     if (!test || !review) return { signedOff: false, reason: 'tester or reviewer failed' }
     if (wantArch && !arch) return { signedOff: false, reason: 'architecture reviewer failed' }
     if (wantProduct && !product) return { signedOff: false, reason: 'product reviewer failed' }
+    if (wantQa && !qa) return { signedOff: false, reason: 'QA agent failed' }
     if (product) {
       archState.product = { round, verdict: product.verdict, summary: product.summary, entries: product.entries }
       log(`${pr.id} round ${round}: product ${product.verdict}`)
@@ -418,8 +457,14 @@ async function reviewLoop(pr, startRound, history, minors, archState) {
       ? ((arch.findings && arch.findings.length) ? arch.findings : [{ title: 'Architecture review asked for changes', detail: arch.summary }])
           .map(f => Object.assign({ severity: 'major', source: 'architecture' }, f))
       : []
-    const blocking = review.findings.filter(f => f.severity !== 'minor').concat(archFindings)
-    minors.push(...review.findings.filter(f => f.severity === 'minor'))
+    const qaFindings = qa ? qa.findings.map(f => Object.assign({ source: 'qa' }, f)) : []
+    if (qa) {
+      archState.qaOpen = qaFindings.filter(f => f.severity !== 'minor')
+      archState.qa.push({ round, summary: qa.summary, scenarios: qa.scenarios.length, failed: qa.scenarios.filter(s => !s.pass).map(s => s.name) })
+      log(`${pr.id} round ${round}: QA ${qa.scenarios.length} scenarios, ${archState.qaOpen.length} blockers/majors`)
+    }
+    const blocking = review.findings.filter(f => f.severity !== 'minor').concat(archFindings, archState.qaOpen)
+    minors.push(...review.findings.filter(f => f.severity === 'minor'), ...qaFindings.filter(f => f.severity === 'minor'))
     history.push({ round, testPass: test.pass, failingChecks: test.checks.filter(c => !c.pass).map(c => c.name), blockersAndMajors: blocking.map(f => `${f.severity}: ${f.title}`) })
     log(`${pr.id} round ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (test.pass && blocking.length === 0) return { signedOff: true, headSha: test.headSha || review.headSha }
@@ -449,10 +494,33 @@ async function docsStep(pr, signedSha, history, minors) {
   }
 }
 
+async function bots(pr, n, headSha) {
+  const wait = await call('botWait', pr, waitPrompt(pr, n), `botwait:${pr.id}`, { schema: WAIT })
+  if (!wait) return { ok: false, reason: 'bot wait failed', headSha }
+  if (!(wait.openComments > 0)) return { ok: true, headSha, wait }
+  const answer = await call('botAnswer', pr, answerPrompt(pr, n), `botanswer:${pr.id}`, { schema: ANSWER })
+  if (!answer) return { ok: false, reason: 'bot answer failed', headSha, wait }
+  return { ok: true, headSha: answer.codeChanged && answer.headSha ? answer.headSha : headSha, wait, answer }
+}
+
 async function runPR(pr) {
   if (pr.landFix) {
+    const n = pr.prNumber
     const r = await call('landFix', pr, landFixPrompt(pr), `landfix:${pr.id}`, { schema: LANDFIX })
-    return { id: pr.id, prNumber: pr.prNumber, ready: !!(r && r.readyToMerge), headSha: r && r.headSha, notes: r && r.notes }
+    if (!r || !r.readyToMerge) return { id: pr.id, prNumber: n, ready: false, reason: 'land fix not ready', headSha: r && r.headSha, notes: r && r.notes }
+    const b = await bots(pr, n, r.headSha)
+    if (!b.ok) return { id: pr.id, prNumber: n, ready: false, reason: b.reason, headSha: b.headSha, notes: r.notes }
+    let headSha = b.headSha
+    const history = []
+    if (b.answer && b.answer.substantiveChange) {
+      const loop = await reviewLoop(pr, 1, history, [], { last: null, reports: [], product: null, qa: [], qaOpen: [] })
+      if (!loop.signedOff) return { id: pr.id, prNumber: n, ready: false, reason: `after bots: ${loop.reason}`, history, lastFindings: loop.lastFindings, escalation: loop.escalation }
+      headSha = loop.headSha
+    }
+    return {
+      id: pr.id, prNumber: n, ready: true, headSha, land: `${n}:${headSha}`, notes: r.notes,
+      approvedBy: b.wait.approvedBy || [], botNotes: b.wait.notes, codeChangedByBots: !!(b.answer && b.answer.codeChanged), history,
+    }
   }
   const history = pr.resume ? pr.resume.history || [] : []
   const minors = pr.resume ? pr.resume.minors || [] : []
@@ -463,7 +531,7 @@ async function runPR(pr) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl }
   }
-  const archState = { last: null, reports: [], product: null }
+  const archState = { last: null, reports: [], product: null, qa: [], qaOpen: [] }
   let loop = await reviewLoop(pr, history.length + 1, history, minors, archState)
   if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: archState.reports, product: archState.product }
 
@@ -479,19 +547,14 @@ async function runPR(pr) {
   if (!opened || !opened.prNumber) return { id: pr.id, ready: false, reason: 'PR not opened', history }
   const n = opened.prNumber
 
-  let headSha = loop.headSha
-  const wait = await call('botWait', pr, waitPrompt(pr, n), `botwait:${pr.id}`, { schema: WAIT })
-  if (!wait) return { id: pr.id, ready: false, reason: 'bot wait failed', history, prNumber: n, headSha }
-  let answer = null
-  if (wait.openComments > 0) {
-    answer = await call('botAnswer', pr, answerPrompt(pr, n), `botanswer:${pr.id}`, { schema: ANSWER })
-    if (!answer) return { id: pr.id, ready: false, reason: 'bot answer failed', history, prNumber: n, headSha }
-    if (answer.codeChanged && answer.headSha) headSha = answer.headSha
-    if (answer.substantiveChange) {
-      loop = await reviewLoop(pr, history.length + 1, history, minors, archState)
-      if (!loop.signedOff) return { id: pr.id, ready: false, reason: `after bots: ${loop.reason}`, history, prNumber: n, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: archState.reports, product: archState.product }
-      headSha = loop.headSha
-    }
+  const b = await bots(pr, n, loop.headSha)
+  if (!b.ok) return { id: pr.id, ready: false, reason: b.reason, history, prNumber: n, headSha: b.headSha }
+  const { wait, answer } = b
+  let headSha = b.headSha
+  if (answer && answer.substantiveChange) {
+    loop = await reviewLoop(pr, history.length + 1, history, minors, archState)
+    if (!loop.signedOff) return { id: pr.id, ready: false, reason: `after bots: ${loop.reason}`, history, prNumber: n, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: archState.reports, product: archState.product }
+    headSha = loop.headSha
   }
   return {
     id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl, headSha,
@@ -499,7 +562,7 @@ async function runPR(pr) {
     approvedBy: (wait && wait.approvedBy) || [], botNotes: wait && wait.notes,
     codeChangedByBots: !!(answer && answer.codeChanged),
     docs,
-    issues: opened.issuesCreated || [], rounds: history.length, history, architecture: archState.reports, product: archState.product, implProblems: impl.problems || '',
+    issues: opened.issuesCreated || [], rounds: history.length, history, architecture: archState.reports, product: archState.product, qa: archState.qa, implProblems: impl.problems || '',
   }
 }
 

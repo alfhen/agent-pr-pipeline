@@ -18,11 +18,13 @@ flowchart LR
   I --> T[Test from a clean clone]
   I --> R[Adversarial review]
   I --> AR[Architecture review]
+  I -. QA line or qa .-> Q[QA: use it like a user]
   AR -- escalate --> H[Person decides the architecture]
   H --> I
   T --> D{Tests pass and no blockers or majors?}
   R --> D
   AR -- fits or needs-change --> D
+  Q --> D
   D -- no --> F[Fix] --> T
   F --> R
   D -- yes --> DA[Docs agent updates the affected docs]
@@ -37,23 +39,24 @@ flowchart LR
   S -- conflict or red CI --> X[Land-fix agent] --> S
 ```
 
-Summary: a plan is reviewed first, including whether it still serves the product's goals. Then different agents build, test, review for bugs and review for architecture each PR until it is clean, or until a person settles an architecture question. A docs agent then brings the docs in line, and a short round checks its commits. Then the PR is opened, the bots are answered, and a script in the main session merges it.
+Summary: a plan is reviewed first, including whether it still serves the product's goals. Then different agents build, test, review for bugs, review for architecture and (where the plan asks) try each PR like a user until it is clean, or until a person settles an architecture question. A docs agent then brings the docs in line, and a short round checks its commits. Then the PR is opened, the bots are answered, and a script in the main session merges it.
 
 ## The loop for one PR
 
 1. **Implement.** A worker agent builds one plan entry on its own branch, with unit tests and the acceptance test. It breaks the feature on purpose to see the test fail, then restores it. It runs the fast checks and the e2e files the PR adds or changes, pushes the branch, and does not open a PR.
 2. **Test from a clean clone.** A second agent clones the branch fresh and runs the fast checks (install, lint, types, unit tests) and the PR's own e2e files. It changes no code. A clean clone catches what a dirty worktree hides: missing files, lockfile drift, a test that only passes with local state. The full e2e suite is CI's job.
 3. **Adversarial review.** A third agent, on a stronger model, reads the diff against the spec and the plan entry. It ranks findings as blocker, major or minor. It runs in parallel with the tester.
-4. **Architecture review.** In round 1, in parallel with the tester and the adversarial reviewer, an Opus agent reads the architecture document, the plan and the diff. It lists every new concept the PR introduces (module, record type or field, command, flag, config file, dependency, boundary, place where state lives) and gives one verdict:
+4. **QA.** For a code PR whose plan entry has a **QA:** line (the main session sets `qa` on it) or with `"qa": "all"`, a Sonnet agent at medium effort uses the built feature like a user, in parallel with the reviewer. It runs the acceptance case, then edge cases, error paths, combinations with existing options and what the docs promise, and gives the command, the expected and the actual result for each finding. Its blockers and majors go to the fix agent; it runs again in the next round only if it found any. It does not read the code for bugs or rerun the test suite.
+5. **Architecture review.** In round 1, in parallel with the tester and the adversarial reviewer, an Opus agent reads the architecture document, the plan and the diff. It lists every new concept the PR introduces (module, record type or field, command, flag, config file, dependency, boundary, place where state lives) and gives one verdict:
    - **fits:** nothing to do.
    - **needs-change:** the PR goes against the architecture in a way the PR can fix. Its findings count as majors for the fix agent, and it checks again in the next round.
    - **escalate:** the architecture itself should change, because the PR or the plan shows the structure will not hold for what comes next, or the PR needs a decision that is not the PR's to make. The PR stops with `needs human: architecture`, a question, options and a recommendation. A person decides; the PR resumes with that decision.
    Docs-only PRs skip it. Plan PRs get it too: a plan is where new concepts usually first appear.
-5. **Fix.** If a check failed or there are blockers or majors, a fix agent adds commits to the same branch. It never force-pushes. If it thinks a finding is wrong, it says why with evidence. Then steps 2 and 3 run again (and 4, if it asked for changes). Stop after `maxRounds` (default 4; plan PRs 2); then a person decides.
-6. **Docs.** After a code PR signs off, a docs agent reads the diff and finds every doc the change makes wrong or incomplete: README, markdown docs, and the docs site if there is one. It updates only those places, on the same branch, and builds the site if it can. If nothing needs a change, it pushes nothing and the PR goes on. If it pushed, the tester and a Sonnet docs reviewer check the new head. If they find problems, the docs writer fixes them in the docs only and reverts any code change, and the check runs again (`docsRounds`, default 2). The code fixer never runs in this step, so code that passed review cannot change without review. So the sha the land script merges is always one the pipeline checked. Docs and plan PRs skip this step.
-7. **Open the PR.** An agent opens a ready PR and files every minor finding as an issue (label `review-minor`). The PR body says which docs the PR updates.
-8. **Bots.** A small agent (Haiku, low effort) waits for the review bots and counts their open comments. Only if there are any does an answer agent run: it fixes the point or says why not, on every thread. If its changes are substantive, the loop runs again.
-9. **Land and merge.** The main session runs `${CLAUDE_PLUGIN_ROOT}/scripts/land-wave.sh` with the `<pr>:<sha>` pairs from the workflow result. It waits for CI and squash-merges only when the PR's head is still the commit the pipeline checked, every check passed, and the latest review by a review bot is an approval. It deletes the branch only after GitHub shows MERGED. A PR that conflicts or has a red check is reported as `LAND FIX`, and a land-fix agent handles only that PR.
+6. **Fix.** If a check failed or there are blockers or majors, a fix agent adds commits to the same branch. It never force-pushes. If it thinks a finding is wrong, it says why with evidence. Then steps 2 and 3 run again (and 4 and 5, if they asked for changes). Stop after `maxRounds` (default 4; plan PRs 2); then a person decides.
+7. **Docs.** After a code PR signs off, a docs agent reads the diff and finds every doc the change makes wrong or incomplete: README, markdown docs, and the docs site if there is one. It updates only those places, on the same branch, and builds the site if it can. If nothing needs a change, it pushes nothing and the PR goes on. If it pushed, the tester and a Sonnet docs reviewer check the new head. If they find problems, the docs writer fixes them in the docs only and reverts any code change, and the check runs again (`docsRounds`, default 2). The code fixer never runs in this step, so code that passed review cannot change without review. So the sha the land script merges is always one the pipeline checked. Docs and plan PRs skip this step.
+8. **Open the PR.** An agent opens a ready PR and files every minor finding as an issue (label `review-minor`). The PR body says which docs the PR updates.
+9. **Bots.** A small agent (Haiku, low effort) waits for the review bots and counts their open comments. Only if there are any does an answer agent run: it fixes the point or says why not, on every thread. If its changes are substantive, the loop runs again.
+10. **Land and merge.** The main session runs `${CLAUDE_PLUGIN_ROOT}/scripts/land-wave.sh` with the `<pr>:<sha>` pairs from the workflow result. It waits for CI and squash-merges only when the PR's head is still the commit the pipeline checked, every check passed, and the latest review by a review bot is an approval. It deletes the branch only after GitHub shows MERGED. A PR that conflicts or has a red check is reported as `LAND FIX`. A land-fix agent handles only that PR; then the bots are waited for and answered on its new head, like in step 9.
 
 ## Before the first run in a repo
 
@@ -123,6 +126,7 @@ The workflow starts every agent as its role agent (`agentType: "agent-pr-pipelin
 - `checks` are the **fast** checks. Agents also run the e2e files the PR adds or changes (`e2ePattern`, run with `e2eCommand`). The full e2e suite runs only in CI, so CI must run it on every PR.
 - `architecture`: the document the architecture reviewer checks against (defaults to `spec`). Set `"architectureReview": false` to turn the step off.
 - `goals` (**required**): the product goals document. Without it the workflow throws before any agent starts, and a preflight agent refuses the wave if the file has no Goals or Non-goals items. `productReview: false` turns off the review step, not this requirement. `"productReview": "all"` also runs it on code PRs; `false` turns it off.
+- `qa`: `"all"` runs the QA agent on every code PR; `false` turns it off. Without it, QA runs only on PRs with `qa` set. Set `qa: true` on each PR whose plan entry has a QA line, or `qa: "<what to try>"` to give the agent its cases directly.
 - `docs`: where the docs are, for example `["README.md", "docs/", "site/"]`. Without it the docs agent finds them. `docsBuild`: the command that builds the docs site, if any. `docsUpdate: false` turns the docs step off for the wave (or for one PR). `docsRounds`: rounds for the docs check (default 2).
 - `skills`: which skills each step's agent loads before it starts. See "Pair skills with steps" below. Default: none.
 - `kind`: `code` (default), `docs` or `plan`. Docs and plan PRs get a Sonnet reviewer at high effort instead of Opus. Plan PRs stop after `planRounds` (default 2); fix what is left by hand, then rerun with `skipImpl`.
@@ -131,7 +135,7 @@ Models and effort per step are in the table under "Role agents". Override a step
 
 PR options: `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `resume: { history, minors, findings }` to continue a PR whose rounds ran out. `landFix: true` with `prNumber` runs only the land-fix agent for that PR. `architectureDecision: "..."` carries a person's answer to an architecture escalation into every agent's brief for that PR; the architecture reviewer then checks the PR follows it and does not escalate the same question again. `productDecision: "..."` carries a person's answer to a product-fit escalation in the same way. `sensitive: true` adds a security-review skill to this PR's reviewer (see below). `skills: { ... }` adds skills for this PR only, on top of the wave's `skills`. `docsUpdate: false` skips the docs step for this PR.
 
-The result has one object per PR: `ready`, `prNumber`, `headSha` (the commit the pipeline checked, or the answer agent's push), `land` (the `<pr>:<sha>` pair for the land script), `approvedBy`, `rounds`, `history`, `architecture` (each verdict with its new concepts), `docs` (whether the docs agent changed anything, the files and a summary), `issues`, and `reason` when not ready. With `reason: needs human: architecture` it also has `escalation`: the question, options, recommendation and why. `ready` means the PR is open and the bots are answered; merging is the land script's job.
+The result has one object per PR: `ready`, `prNumber`, `headSha` (the commit the pipeline checked, or the answer agent's push), `land` (the `<pr>:<sha>` pair for the land script), `approvedBy`, `rounds`, `history`, `architecture` (each verdict with its new concepts), `docs` (whether the docs agent changed anything, the files and a summary), `qa` (each QA round: its summary, the number of scenarios and the failed ones), `issues`, and `reason` when not ready. With `reason: needs human: architecture` it also has `escalation`: the question, options, recommendation and why. `ready` means the PR is open and the bots are answered; merging is the land script's job.
 
 ### Role agents
 
@@ -145,6 +149,7 @@ Each step runs as one agent definition from the plugin. Its body holds the role'
 | `arch` | `arch-reviewer` | opus | high | Bash, Read, Glob, Grep, Skill |
 | `product` | `product-reviewer` | opus | high | Bash, Read, Glob, Grep, Skill |
 | `fix` | `fixer` | sonnet | medium | all but Agent; own worktree |
+| `qa` | `qa` | sonnet | medium | all but Edit, Write, NotebookEdit and Agent, so it keeps a browser tool if one is connected |
 | `docs` | `docs-writer` | sonnet | medium | all but Agent; own worktree |
 | docs check | `docs-reviewer` | sonnet | high | Bash, Read, Glob, Grep, Skill |
 | `open` | `pr-opener` | sonnet | low | Bash, Read, Skill |
@@ -187,6 +192,7 @@ Recommended pairing:
 | Skill | Steps | Why |
 | --- | --- | --- |
 | The stack's idiom skill (for example `laravel-idioms:laravel-idioms`) | `impl`, `fix`, `review` | The writer and the reviewer apply the same conventions. |
+| A browser or web-app testing skill | `qa`, for web apps | The QA agent can drive the page instead of only the API. |
 | A docs-lookup skill (for example `context7-mcp`) | `impl` | The implementer checks the current API of a library instead of guessing. |
 | A writing-style skill (for example `humanizer:humanizer`) | `open`, `docs`, and `impl`, `fix`, `review` of docs and plan PRs (per-PR `skills`) | PR text and docs read plainly. |
 | A security-review skill | `review` of PRs marked `sensitive: true` | A focused security pass where the risk is. |
@@ -203,7 +209,7 @@ Each loaded skill costs thousands of tokens per agent, in every round. Pair a sk
 
 ## Step 3: land and merge from the main session
 
-Workers never merge. Run `${CLAUDE_PLUGIN_ROOT}/scripts/land-wave.sh <owner/repo> <pr>:<sha> <pr>:<sha> ...` with the `land` values from the workflow result. It waits for CI on each PR in order and calls `merge-pr.sh` (in the same folder), which refuses unless the PR is MERGEABLE, its head is still that sha, every check passed (and there is at least one), and the latest review by a bot login (`BOT_LOGINS` regex, default `coderabbit|gitar|[bot]`) is an approval. The branch is deleted only after GitHub shows MERGED. On `LAND FIX #n`, run the workflow with `{ "id": ..., "branch": ..., "prNumber": n, "landFix": true }`, then run the land script again.
+Workers never merge. Run `${CLAUDE_PLUGIN_ROOT}/scripts/land-wave.sh <owner/repo> <pr>:<sha> <pr>:<sha> ...` with the `land` values from the workflow result. It waits for CI on each PR in order and calls `merge-pr.sh` (in the same folder), which refuses unless the PR is MERGEABLE, its head is still that sha, every check passed (and there is at least one), and the latest review by a bot login (`BOT_LOGINS` regex, default `coderabbit|gitar|[bot]`) is an approval. The branch is deleted only after GitHub shows MERGED. On `LAND FIX #n`, run the workflow with `{ "id": ..., "branch": ..., "prNumber": n, "landFix": true }`. The land fixer brings the PR to green; then the bot waiter and, if the bots commented, the answer agent run on the new head. Land the PR with the `land` value from that result.
 
 After a wave, watch CI on the default branch before starting the next wave or tagging.
 
@@ -214,7 +220,8 @@ After a wave, watch CI on the default branch before starting the next wave or ta
 | `rounds exhausted` with one small finding left | Fix it yourself on the branch, push, and rerun that PR with `skipImpl: true` and `maxRounds: 1` or 2. |
 | `rounds exhausted` with several findings | Rerun with `resume` and the last findings, or rethink the plan entry. |
 | `unknown step "..."` or `must be a list of skill names` | Fix `skills` in the arguments: use the step names above, and a list of names even for one skill. |
-| `tester or reviewer failed` or agents failed on a usage limit | Resume the same run with `resumeFromRunId`; finished agents replay from cache. |
+| `tester or reviewer failed`, `QA agent failed`, or agents failed on a usage limit | Resume the same run with `resumeFromRunId`; finished agents replay from cache. |
+| `Workflow aborted` in a headless session (`claude -p`) | Claude Code stops background tasks 10 minutes after the session's last turn, and a bot wait often takes longer. Start headless runs with `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, then resume the session (`claude -p --resume <session>`) and the run (`resumeFromRunId`). |
 | A CI e2e job fails in files the PR does not touch | Rerun the job once. If it fails on the default branch too, it is not this PR's problem: file it. |
 | Bot rate-limited | One bot's approval is enough. If none approved, wait or ask the person. |
 | `refused: goals document missing or incomplete` | Write or finish the goals document with the `agent-pr-pipeline:write-goals` skill (or from the template) in its own PR, merge it, and run again. Do not work around it: the product-fit review has nothing to check against without it. |
@@ -225,7 +232,7 @@ After a wave, watch CI on the default branch before starting the next wave or ta
 | Two PRs in a wave conflict in the same doc | The land script reports `LAND FIX`; the land-fix agent merges the default branch in. To avoid it, list the docs a plan entry changes in its Touches line, so the plan puts those entries in different waves. |
 | `HEAD MOVED #n` from the land script | Someone pushed after the pipeline checked the PR (a bot autofix, a person, a late agent push). Run the workflow for that PR with `skipImpl: true` so the new head is tested and reviewed, then land it with the new sha. |
 | `bot wait failed` or `bot answer failed` | The PR is open but its bot comments were not read or answered. Rerun the workflow for the PR with `skipImpl: true`; the review rounds replay from cache when nothing changed. |
-| `LAND FIX #n` from the land script | The PR conflicts or a check is red. Run the workflow with `landFix: true` for that PR; it merges the default branch in or fixes CI. Never rebase a pushed branch. |
+| `LAND FIX #n` from the land script | The PR conflicts or a check is red. Run the workflow with `landFix: true` for that PR; it merges the default branch in or fixes CI, then answers the bots on the new head. Never rebase a pushed branch. |
 | No bot approves | The land script stops with `not merged`. Ask the bot to review again, or let the person review and merge by hand. |
 | An agent's shell refuses compound git commands | Put the commands in a script file and run the file. |
 

@@ -59,6 +59,7 @@ flowchart LR
 - <Edge cases and what the output says in each.>
 Regression test: <the unit and e2e tests, with fixture inputs>.
 Acceptance: <the command that passes>, and <the test> fails on the old code because <reason>.
+QA: <optional. What a person would try by hand: commands, inputs, combinations with existing options. Leave it out for refactors and internal changes.>
 
 ### Wave 2
 

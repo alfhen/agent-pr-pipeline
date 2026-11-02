@@ -31,11 +31,14 @@ const agent = async (prompt, o) => {
     const major = id === 'G3' || (id === 'G2' && round === '1')
     return { summary: 's', findings: major ? [{ severity: 'major', title: 'docs say the flag is --all, code has --every', detail: 'd' }] : [] }
   }
+  if (o.label.startsWith('qa')) return (id === 'Q1' && round === '1')
+    ? { summary: 's', scenarios: [{ name: '--words with empty input', command: "printf '' | tally --words", expected: '0', actual: '1', pass: false }], findings: [{ severity: 'major', title: 'empty input prints 1', detail: 'd' }, { severity: 'minor', title: 'help wording', detail: 'd' }] }
+    : { summary: 's', scenarios: [{ name: 'acceptance', pass: true }], findings: [] }
   if (o.label.startsWith('docsfix')) return { changed: true, headSha: 'docsfix-' + id, files: ['README.md'], summary: 's' }
   if (o.label.startsWith('docs')) return ['G1', 'G2', 'G3'].includes(id) ? { changed: true, headSha: 'docs-' + id, files: ['README.md'], summary: 's' } : { changed: false, summary: 'already right' }
   if (o.label.startsWith('review')) return { summary: 's', findings: id === 'P1' ? [{ severity: 'major', title: 'x', detail: 'd' }] : [{ severity: 'minor', title: 'm', detail: 'd' }] }
   if (o.label.startsWith('open')) return { prNumber: 100 + calls.length, prUrl: 'u', issuesCreated: [] }
-  if (o.label.startsWith('botwait')) return id === 'C1' && failWait ? null : { approvedBy: ['gitar-bot'], openComments: id === 'C2' ? 2 : 0 }
+  if (o.label.startsWith('botwait')) return id === 'C1' && failWait ? null : { approvedBy: ['gitar-bot'], openComments: id === 'C2' || id === 'L1' ? 2 : 0 }
   if (o.label.startsWith('botanswer')) return { codeChanged: true, substantiveChange: false, headSha: 'sha-answer-' + id }
   if (o.label.startsWith('landfix')) return { readyToMerge: true, headSha: 'abc', notes: 'ok' }
   return null
@@ -57,6 +60,8 @@ const PRS = [
   { id: 'G2', title: 't', branch: 'b11' },
   { id: 'G3', title: 't', branch: 'b12' },
   { id: 'G4', title: 't', branch: 'b13', docsUpdate: false },
+  { id: 'Q1', title: 't', branch: 'b14', qa: 'try --words with empty input' },
+  { id: 'Q2', title: 't', branch: 'b15', qa: true, qaNote: 'clean' },
 ]
 const base = { repo: 'o/r', tmp: '/x', plan: 'docs/p.md', architecture: 'docs/design.md', goals: 'docs/goals.md', prs: PRS }
 const GOOD = { ok: true, exists: true, goals: 3, nonGoals: 2, missing: [] }
@@ -92,9 +97,10 @@ await check('plan PR stops after planRounds', () => {
   assert.equal(r.P1.history.length, 2)
   assert.equal(r.P1.product.verdict, 'aligned')
 })
-await check('land fix runs only the land-fix agent', () => {
+await check('land fix runs the land fixer, then waits for and answers the bots on the new head', () => {
   assert.equal(r.L1.ready, true)
-  assert.deepEqual(mainCalls.filter(c => c.label.includes(':L1')).map(c => c.label), ['landfix:L1'])
+  assert.deepEqual(mainCalls.filter(c => c.label.includes(':L1')).map(c => c.label), ['landfix:L1', 'botwait:L1', 'botanswer:L1'])
+  assert.equal(r.L1.land, '7:sha-answer-L1')
 })
 await check('architecture escalate stops the PR with the question', () => {
   assert.equal(r.E1.ready, false)
@@ -121,7 +127,30 @@ await check('preflight runs once on haiku/low', () => {
 })
 await check('docs agent runs on code PRs only, and not when a PR turns it off', () => {
   const ran = new Set(mainCalls.filter(c => c.label.startsWith('docs:')).map(c => c.label.split(':')[1]))
-  assert.deepEqual([...ran].sort(), ['C1', 'C2', 'G1', 'G2', 'G3', 'N1'])
+  assert.deepEqual([...ran].sort(), ['C1', 'C2', 'G1', 'G2', 'G3', 'N1', 'Q1', 'Q2'])
+})
+await check('QA runs only on PRs with qa set, in parallel with the reviewer', () => {
+  const ran = new Set(mainCalls.filter(c => c.label.startsWith('qa:')).map(c => c.label.split(':')[1].split('#')[0]))
+  assert.deepEqual([...ran].sort(), ['Q1', 'Q2'])
+  assert.equal(mainCalls.find(c => c.label === 'qa:Q1#1').model, 'sonnet')
+  assert.equal(mainCalls.find(c => c.label === 'qa:Q1#1').effort, 'medium')
+  assert.match(mainCalls.find(c => c.label === 'qa:Q1#1').prompt, /What to try: try --words with empty input/)
+  assert.match(mainCalls.find(c => c.label === 'qa:Q2#1').prompt, /QA line, if it has one/)
+})
+await check('a QA major gets a fix round and QA checks it again; a clean QA does not rerun', () => {
+  assert.ok(mainCalls.some(c => c.label === 'fix:Q1#1'))
+  assert.match(mainCalls.find(c => c.label === 'fix:Q1#1').prompt, /empty input prints 1/)
+  assert.match(mainCalls.find(c => c.label === 'qa:Q1#2').prompt, /Your findings from the last round[\s\S]*empty input prints 1/)
+  assert.equal(r.Q1.ready, true)
+  assert.deepEqual(r.Q1.qa.map(q => q.failed.length), [1, 0])
+  assert.match(mainCalls.find(c => c.label === 'open:Q1').prompt, /help wording/)
+  assert.ok(!mainCalls.some(c => c.label === 'qa:Q2#2'))
+})
+await check('qa "all" runs QA on every code PR, never on docs or plan PRs', async () => {
+  await simulate({ ...base, qa: 'all' })
+  const ran = new Set(calls.filter(c => c.label.startsWith('qa:')).map(c => c.label.split(':')[1].split('#')[0]))
+  assert.ok(ran.has('C1') && ran.has('G4'))
+  assert.ok(!ran.has('D1') && !ran.has('P1') && !ran.has('L1'))
 })
 await check('unchanged docs keep the reviewed sha and skip the re-check', () => {
   assert.equal(r.C1.docs.changed, false)
@@ -191,7 +220,7 @@ const prsWithSkills = PRS.map(pr =>
     : pr.id === 'D1' ? { ...pr, skills: { impl: ['humanizer:humanizer'], review: ['humanizer:humanizer'] } }
       : pr)
 await simulate({ ...base, skills: SKILLS, prs: prsWithSkills })
-const STEP_OF = { docs: 'docs', docsfix: 'docs', docsreview: 'docs', implement: 'impl', test: 'test', review: 'review', arch: 'arch', product: 'product', fix: 'fix', open: 'open', botwait: 'botWait', botanswer: 'botAnswer', landfix: 'landFix', preflight: 'preflight' }
+const STEP_OF = { qa: 'qa', docs: 'docs', docsfix: 'docs', docsreview: 'docs', implement: 'impl', test: 'test', review: 'review', arch: 'arch', product: 'product', fix: 'fix', open: 'open', botwait: 'botWait', botanswer: 'botAnswer', landfix: 'landFix', preflight: 'preflight' }
 const expected = c => {
   const step = STEP_OF[c.label.split(':')[0]]
   const id = c.label.split(':')[1].split('#')[0]
@@ -206,7 +235,7 @@ const loaded = c => {
 }
 await check('skill instruction appears only in the configured steps', () => {
   const seen = new Set(calls.map(c => STEP_OF[c.label.split(':')[0]]))
-  for (const step of ['impl', 'test', 'review', 'arch', 'product', 'fix', 'docs', 'open', 'botWait', 'botAnswer', 'landFix', 'preflight']) assert.ok(seen.has(step), `simulation never ran ${step}`)
+  for (const step of ['impl', 'test', 'review', 'qa', 'arch', 'product', 'fix', 'docs', 'open', 'botWait', 'botAnswer', 'landFix', 'preflight']) assert.ok(seen.has(step), `simulation never ran ${step}`)
   for (const c of calls) {
     assert.deepEqual(loaded(c), expected(c), c.label)
     if (!loaded(c).length) assert.ok(!c.prompt.includes('Skill tool'), c.label)
@@ -236,7 +265,7 @@ const frontmatter = name => {
   const text = readFileSync(new URL(`agents/${name}.md`, root), 'utf8')
   return Object.fromEntries(text.split('---')[1].trim().split('\n').map(l => [l.slice(0, l.indexOf(':')), l.slice(l.indexOf(':') + 1).trim()]))
 }
-const AGENT_OF = { docsfix: 'docs-writer', implement: 'implementer', test: 'tester', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight' }
+const AGENT_OF = { qa: 'qa', docsfix: 'docs-writer', implement: 'implementer', test: 'tester', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight' }
 const WRITERS = ['implementer', 'fixer', 'docs-writer', 'bot-answerer', 'land-fixer']
 await simulate(base)
 await check('every call names its role agent from the plugin', () => {
@@ -268,10 +297,12 @@ await check('only the tester, bot waiter and preflight leave out CLAUDE.md', () 
   }
 })
 await check('read-only agents have no edit tools', () => {
-  for (const name of [...new Set(Object.values(AGENT_OF))].filter(n => !WRITERS.includes(n))) {
+  for (const name of [...new Set(Object.values(AGENT_OF))].filter(n => !WRITERS.includes(n) && n !== 'qa')) {
     const tools = frontmatter(name).tools
     assert.ok(tools && !/\b(Edit|Write|NotebookEdit|Agent)\b/.test(tools), name)
   }
+  assert.equal(frontmatter('qa').tools, undefined, 'qa keeps browser and other MCP tools')
+  assert.deepEqual(frontmatter('qa').disallowedTools.split(', ').sort(), ['Agent', 'Edit', 'NotebookEdit', 'Write'])
   for (const name of WRITERS) assert.match(frontmatter(name).disallowedTools || '', /\bAgent\b/, name)
 })
 await check('agentPrefix "" uses bare agent names', async () => {
