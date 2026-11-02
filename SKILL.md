@@ -12,8 +12,12 @@ flowchart LR
   P[Plan PR] --> I[Implement]
   I --> T[Test from a clean clone]
   I --> R[Adversarial review]
+  I --> AR[Architecture review]
+  AR -- escalate --> H[Person decides the architecture]
+  H --> I
   T --> D{Tests pass and no blockers or majors?}
   R --> D
+  AR -- fits or needs-change --> D
   D -- no --> F[Fix] --> T
   F --> R
   D -- yes --> O[Open PR, file minors]
@@ -24,17 +28,22 @@ flowchart LR
   S -- conflict or red CI --> X[Land-fix agent] --> S
 ```
 
-Summary: a plan is reviewed first; then each PR is built, tested and reviewed by different agents until it is clean, opened, answered where the bots commented, and merged by a script in the main session.
+Summary: a plan is reviewed first; then each PR is built, tested, reviewed for bugs and reviewed for architecture by different agents until it is clean (or a person settles an architecture question), opened, answered where the bots commented, and merged by a script in the main session.
 
 ## The loop for one PR
 
 1. **Implement.** A worker agent builds one plan entry on its own branch, with unit tests and the acceptance test. It breaks the feature on purpose to see the test fail, then restores it. It runs the fast checks and the e2e files the PR adds or changes, pushes the branch, and does not open a PR.
 2. **Test from a clean clone.** A second agent clones the branch fresh and runs the fast checks (install, lint, types, unit tests) and the PR's own e2e files. It changes no code. A clean clone catches what a dirty worktree hides: missing files, lockfile drift, a test that only passes with local state. The full e2e suite is CI's job.
 3. **Adversarial review.** A third agent, on a stronger model, reads the diff against the spec and the plan entry. It ranks findings as blocker, major or minor. It runs in parallel with the tester.
-4. **Fix.** If a check failed or there are blockers or majors, a fix agent adds commits to the same branch. It never force-pushes. If it thinks a finding is wrong, it says why with evidence. Then steps 2 and 3 run again. Stop after `maxRounds` (default 4; plan PRs 2); then a person decides.
-5. **Open the PR.** An agent opens a ready PR and files every minor finding as an issue (label `review-minor`).
-6. **Bots.** A small agent (Haiku, low effort) waits for the review bots and counts their open comments. Only if there are any does an answer agent run: it fixes the point or says why not, on every thread. If its changes are substantive, the loop runs again.
-7. **Land and merge.** The main session runs `scripts/land-wave.sh`. It waits for CI and squash-merges only when CI is green on the exact head commit and a review bot approved. It deletes the branch only after GitHub shows MERGED. A PR that conflicts or has a red check is reported as `LAND FIX`, and a land-fix agent handles only that PR.
+4. **Architecture review.** In round 1, in parallel with the tester and the adversarial reviewer, an Opus agent reads the architecture document, the plan and the diff. It lists every new concept the PR introduces (module, record type or field, command, flag, config file, dependency, boundary, place where state lives) and gives one verdict:
+   - **fits:** nothing to do.
+   - **needs-change:** the PR goes against the architecture in a way the PR can fix. Its findings count as majors for the fix agent, and it checks again in the next round.
+   - **escalate:** the architecture itself should change, because the PR or the plan shows the structure will not hold for what comes next, or the PR needs a decision that is not the PR's to make. The PR stops with `needs human: architecture`, a question, options and a recommendation. A person decides; the PR resumes with that decision.
+   Docs-only PRs skip it. Plan PRs get it too: a plan is where new concepts usually first appear.
+5. **Fix.** If a check failed or there are blockers or majors, a fix agent adds commits to the same branch. It never force-pushes. If it thinks a finding is wrong, it says why with evidence. Then steps 2 and 3 run again (and 4, if it asked for changes). Stop after `maxRounds` (default 4; plan PRs 2); then a person decides.
+6. **Open the PR.** An agent opens a ready PR and files every minor finding as an issue (label `review-minor`).
+7. **Bots.** A small agent (Haiku, low effort) waits for the review bots and counts their open comments. Only if there are any does an answer agent run: it fixes the point or says why not, on every thread. If its changes are substantive, the loop runs again.
+8. **Land and merge.** The main session runs `scripts/land-wave.sh`. It waits for CI and squash-merges only when CI is green on the exact head commit and a review bot approved. It deletes the branch only after GitHub shows MERGED. A PR that conflicts or has a red check is reported as `LAND FIX`, and a land-fix agent handles only that PR.
 
 ## Before the first run in a repo
 
@@ -68,6 +77,7 @@ Load the workflow-authoring skill if the session has a Workflow tool. Run `workf
   "tmp": "/absolute/temp/folder",
   "plan": "docs/plan-1.2.md",
   "spec": "docs/design.md",
+  "architecture": "docs/architecture.md",
   "context": "Project facts and hard rules every agent needs, in a few lines.",
   "checks": ["pnpm install --frozen-lockfile", "pnpm lint", "pnpm typecheck", "pnpm test"],
   "e2ePattern": "\\.e2e\\.test\\.ts$",
@@ -85,6 +95,7 @@ Load the workflow-authoring skill if the session has a Workflow tool. Run `workf
 ```
 
 - `checks` are the **fast** checks. Agents also run the e2e files the PR adds or changes (`e2ePattern`, run with `e2eCommand`). The full e2e suite runs only in CI, so CI must run it on every PR.
+- `architecture`: the document the architecture reviewer checks against (defaults to `spec`). Set `"architectureReview": false` to turn the step off.
 - `kind`: `code` (default), `docs` or `plan`. Docs and plan PRs get a Sonnet reviewer at high effort instead of Opus. Plan PRs stop after `planRounds` (default 2); fix what is left by hand, then rerun with `skipImpl`.
 
 Models and effort per step (override any of them in `steps`):
@@ -94,14 +105,15 @@ Models and effort per step (override any of them in `steps`):
 | `impl`, `fix` | sonnet | medium |
 | `test` | sonnet | low |
 | `review` | opus | high |
+| `arch` | opus | high |
 | `reviewDocs` (docs and plan PRs) | sonnet | high |
 | `open` | sonnet | low |
 | `botWait` | haiku | low |
 | `botAnswer`, `landFix` | sonnet | medium |
 
-PR options: `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `resume: { history, minors, findings }` to continue a PR whose rounds ran out. `landFix: true` with `prNumber` runs only the land-fix agent for that PR.
+PR options: `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `resume: { history, minors, findings }` to continue a PR whose rounds ran out. `landFix: true` with `prNumber` runs only the land-fix agent for that PR. `architectureDecision: "..."` carries a person's answer to an escalation into every agent's brief for that PR; the architecture reviewer then checks the PR follows it and does not escalate the same question again.
 
-The result has one object per PR: `ready`, `prNumber`, `approvedBy`, `rounds`, `history`, `issues` and `reason` when not ready. `ready` means the PR is open and the bots are answered; merging is the land script's job.
+The result has one object per PR: `ready`, `prNumber`, `approvedBy`, `rounds`, `history`, `architecture` (each verdict with its new concepts), `issues`, and `reason` when not ready. With `reason: needs human: architecture` it also has `escalation`: the question, options, recommendation and why. `ready` means the PR is open and the bots are answered; merging is the land script's job.
 
 ### Notes that work
 
@@ -126,6 +138,7 @@ After a wave, watch CI on the default branch before starting the next wave or ta
 | `tester or reviewer failed` or agents failed on a usage limit | Resume the same run with `resumeFromRunId`; finished agents replay from cache. |
 | A CI e2e job fails in files the PR does not touch | Rerun the job once. If it fails on the default branch too, it is not this PR's problem: file it. |
 | Bot rate-limited | One bot's approval is enough. If none approved, wait or ask the person. |
+| `needs human: architecture` | Show the person the escalation's question, options and recommendation, as a decision to make, not a fix to approve. If the answer changes the architecture, update the architecture document first (its own small PR). Then rerun the PR with `architectureDecision` set; if its branch exists, add `skipImpl: true` or `resume`. |
 | `LAND FIX #n` from the land script | The PR conflicts or a check is red. Run the workflow with `landFix: true` for that PR; it merges the default branch in or fixes CI. Never rebase a pushed branch. |
 | No bot approves | The land script stops with `not merged`. Ask the bot to review again, or let the person review and merge by hand. |
 | An agent's shell refuses compound git commands | Put the commands in a script file and run the file. |

@@ -5,6 +5,7 @@ export const meta = {
     { title: 'Implement', detail: 'one agent builds each PR on its own branch' },
     { title: 'Test', detail: 'a second agent runs the fast checks and the PR\'s own e2e from a clean clone' },
     { title: 'Review', detail: 'a stronger model reviews the diff adversarially' },
+    { title: 'Architecture', detail: 'a stronger model checks the PR against the architecture, and asks a person when the architecture itself should change' },
     { title: 'Fix', detail: 'an agent fixes blockers, majors and failing checks' },
     { title: 'Open PR', detail: 'open the PR and file minor findings as issues' },
     { title: 'Bots', detail: 'a small agent waits for the review bots; another answers them only if they commented' },
@@ -18,6 +19,7 @@ const REPO = A.repo
 const TMP = A.tmp
 const PLAN = A.plan
 const SPEC = A.spec || ''
+const ARCH = A.architecture || SPEC
 const FAST_CHECKS = A.checks || ['pnpm install --frozen-lockfile', 'pnpm lint', 'pnpm typecheck', 'pnpm test']
 const E2E_PATTERN = A.e2ePattern || '\\.e2e\\.test\\.ts$'
 const E2E_COMMAND = A.e2eCommand || 'pnpm exec vitest run {files}'
@@ -29,6 +31,7 @@ const STEPS = Object.assign({
   impl: { model: 'sonnet', effort: 'medium' },
   test: { model: 'sonnet', effort: 'low' },
   review: { model: 'opus', effort: 'high' },
+  arch: { model: 'opus', effort: 'high' },
   reviewDocs: { model: 'sonnet', effort: 'high' },
   fix: { model: 'sonnet', effort: 'medium' },
   open: { model: 'sonnet', effort: 'low' },
@@ -40,6 +43,8 @@ if (!REPO || !TMP || !PLAN || !Array.isArray(A.prs)) throw new Error('args needs
 
 const roundsFor = pr => pr.maxRounds || (pr.kind === 'plan' ? (A.planRounds || 2) : (A.maxRounds || 4))
 const reviewStep = pr => (pr.kind === 'plan' || pr.kind === 'docs') ? STEPS.reviewDocs : STEPS.review
+const archRuns = pr => pr.kind !== 'docs' && !!ARCH && A.architectureReview !== false
+const decided = pr => pr.architectureDecision ? `\nArchitecture decision by the maintainer for this PR (settled; follow it): ${pr.architectureDecision}` : ''
 const opts = (step, extra) => Object.assign({ model: step.model, effort: step.effort }, extra)
 
 const CONTEXT = `You are working on ${REPO} (https://github.com/${REPO}).
@@ -57,7 +62,7 @@ Working rules:
 
 const fastText = FAST_CHECKS.map(c => `\`${c}\``).join(', ')
 const ownE2e = `the e2e test files this branch adds or changes (\`git diff --name-only origin/HEAD...HEAD | grep -E '${E2E_PATTERN}'\`), run with \`${E2E_COMMAND}\` where {files} is that list; skip this when the list is empty. The full e2e suite is CI's job: do not run it`
-const prBlock = pr => `PR: ${pr.id} - ${pr.title}\nBranch: ${pr.branch}\nKind: ${pr.kind || 'code'}\nNotes for this PR:\n${pr.notes || '(none)'}`
+const prBlock = pr => `PR: ${pr.id} - ${pr.title}\nBranch: ${pr.branch}\nKind: ${pr.kind || 'code'}\nNotes for this PR:\n${pr.notes || '(none)'}${decided(pr)}`
 
 const IMPL = {
   type: 'object',
@@ -92,6 +97,26 @@ const REVIEW = {
     },
   },
   required: ['summary', 'findings'],
+}
+const ARCHREV = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', enum: ['fits', 'needs-change', 'escalate'] },
+    summary: { type: 'string' },
+    newConcepts: {
+      type: 'array',
+      items: { type: 'object', properties: { name: { type: 'string' }, where: { type: 'string' }, fits: { type: 'boolean' }, note: { type: 'string' } }, required: ['name', 'fits'] },
+    },
+    findings: {
+      type: 'array',
+      items: { type: 'object', properties: { title: { type: 'string' }, file: { type: 'string' }, detail: { type: 'string' }, suggestedFix: { type: 'string' } }, required: ['title', 'detail'] },
+    },
+    escalation: {
+      type: 'object',
+      properties: { question: { type: 'string' }, options: { type: 'array', items: { type: 'string' } }, recommendation: { type: 'string' }, why: { type: 'string' } },
+    },
+  },
+  required: ['verdict', 'summary', 'newConcepts'],
 }
 const OPEN = {
   type: 'object',
@@ -155,6 +180,20 @@ Rank each finding: blocker (wrong, unsafe, or the acceptance test does not prove
 ${history.length ? `Earlier rounds (check their blockers and majors are really fixed):\n${JSON.stringify(history, null, 1)}` : ''}
 Delete the clone when done. Return headSha, a summary and the findings.`
 
+const archPrompt = (pr, round) => `${CONTEXT}
+
+${prBlock(pr)}
+
+Your job: review branch ${pr.branch} for architecture. You are not looking for bugs; another reviewer does that. Do not change code or push anything.
+Clone it: \`rm -rf ${TMP}/arch-${pr.id}-r${round} && git clone https://github.com/${REPO}.git ${TMP}/arch-${pr.id}-r${round} && cd ${TMP}/arch-${pr.id}-r${round} && git checkout ${pr.branch}\`. Read ${ARCH} (the architecture), ${PLAN} (the plan entry and its neighbours), the full diff (\`git diff origin/HEAD...HEAD\`) and enough of the code around it to see the existing structure.
+1. List every new concept the PR introduces: a new module or package, a new record type or field, a new step, flag, command or config file, a new dependency, a new process or network boundary, a new place where state lives. For each, say where it is and whether it fits the architecture as written.
+2. Decide one verdict:
+   - fits: the PR stays inside the architecture, or extends it the way the architecture already expects.
+   - needs-change: the PR goes against the architecture in a way this PR can fix (wrong layer, a duplicate concept, a dependency in the wrong direction, a rule from the architecture doc broken). Give concrete findings with a suggested fix.
+   - escalate: the architecture itself should change, because this PR (or the plan around it) shows that the current structure will not hold well for the planned or likely next changes, or because the PR needs a decision that is not this PR's to make. Do not escalate for something a fix can settle. Write the question for the maintainer, 2 to 4 options, your recommendation and why.
+${pr.architectureDecision ? 'The maintainer already decided the architecture question for this PR (see above). Do not escalate it again; check the PR follows the decision.' : ''}
+Delete the clone when done. Return the verdict, a short summary, the new concepts, the findings (for needs-change) and the escalation (for escalate).`
+
 const fixPrompt = (pr, test, findings, round) => `${CONTEXT}
 
 ${prBlock(pr)}
@@ -170,14 +209,15 @@ Findings:
 ${JSON.stringify(findings, null, 1)}
 Return a short summary of each fix, and any finding you disagree with and why.`
 
-const openPrompt = (pr, rounds, minors) => `${CONTEXT}
+const openPrompt = (pr, rounds, minors, arch) => `${CONTEXT}
 
 ${prBlock(pr)}
 
 Your job: open the pull request for ${pr.branch} and file minor findings. Do not change code.
 1. File each minor finding below as a GitHub issue with label ${LABEL} (\`gh issue create -R ${REPO} --label ${LABEL}${MILESTONE}\`). Skip duplicates of each other and of open issues. Body: the finding, the file, and "Found in review of ${pr.id}."
-2. Open a ready PR to the default branch if none exists: \`gh pr create -R ${REPO} --head ${pr.branch}\`, title "${pr.title}". Body: what it does, how it is tested, "Review: no blockers or majors after round N." (N from the history), links to the issues you filed, and each \`Closes #N\` on its own line.
+2. Open a ready PR to the default branch if none exists: \`gh pr create -R ${REPO} --head ${pr.branch}\`, title "${pr.title}". Body: what it does, how it is tested, "Review: no blockers or majors after round N." (N from the history), one line with the architecture verdict and the new concepts if the history has them, links to the issues you filed, and each \`Closes #N\` on its own line.
 Review history: ${JSON.stringify(rounds)}
+Architecture review: ${JSON.stringify(arch || [])}
 Minor findings: ${JSON.stringify(minors, null, 1)}
 Return prNumber, prUrl and the issues you created.`
 
@@ -209,15 +249,27 @@ Your job: bring PR #${pr.prNumber} (${pr.branch}) to a mergeable state with gree
 4. Wait for CI on the new head (\`gh pr checks ${pr.prNumber} -R ${REPO} --watch --interval 30\`). Stop when it is MERGEABLE and green, or after 3 attempts.
 Return readyToMerge, headSha and notes.`
 
-async function reviewLoop(pr, startRound, history, minors) {
+async function reviewLoop(pr, startRound, history, minors, archState) {
   const max = roundsFor(pr)
   for (let round = startRound; round < startRound + max; round++) {
-    const [test, review] = await parallel([
+    const wantArch = archRuns(pr) && (round === startRound || archState.last === 'needs-change')
+    const [test, review, arch] = await parallel([
       () => agent(testPrompt(pr, round), opts(STEPS.test, { label: `test:${pr.id}#${round}`, phase: 'Test', schema: TEST })),
       () => agent(reviewPrompt(pr, round, history), opts(reviewStep(pr), { label: `review:${pr.id}#${round}`, phase: 'Review', schema: REVIEW })),
+      () => wantArch ? agent(archPrompt(pr, round), opts(STEPS.arch, { label: `arch:${pr.id}#${round}`, phase: 'Architecture', schema: ARCHREV })) : Promise.resolve(null),
     ])
     if (!test || !review) return { signedOff: false, reason: 'tester or reviewer failed' }
-    const blocking = review.findings.filter(f => f.severity !== 'minor')
+    if (wantArch && !arch) return { signedOff: false, reason: 'architecture reviewer failed' }
+    if (arch) {
+      archState.last = arch.verdict
+      archState.reports.push({ round, verdict: arch.verdict, summary: arch.summary, newConcepts: arch.newConcepts })
+      log(`${pr.id} round ${round}: architecture ${arch.verdict}`)
+      if (arch.verdict === 'escalate') return { signedOff: false, reason: 'needs human: architecture', escalation: arch.escalation, architecture: arch }
+    }
+    const archFindings = arch && arch.verdict === 'needs-change'
+      ? (arch.findings || []).map(f => Object.assign({ severity: 'major', source: 'architecture' }, f))
+      : []
+    const blocking = review.findings.filter(f => f.severity !== 'minor').concat(archFindings)
     minors.push(...review.findings.filter(f => f.severity === 'minor'))
     history.push({ round, testPass: test.pass, failingChecks: test.checks.filter(c => !c.pass).map(c => c.name), blockersAndMajors: blocking.map(f => `${f.severity}: ${f.title}`) })
     log(`${pr.id} round ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
@@ -241,10 +293,11 @@ async function runPR(pr) {
     impl = await agent(implPrompt(pr), opts(STEPS.impl, { label: `implement:${pr.id}`, phase: 'Implement', isolation: 'worktree', schema: IMPL }))
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl }
   }
-  let loop = await reviewLoop(pr, history.length + 1, history, minors)
-  if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings }
+  const archState = { last: null, reports: [] }
+  let loop = await reviewLoop(pr, history.length + 1, history, minors, archState)
+  if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: archState.reports }
 
-  const opened = await agent(openPrompt(pr, history, minors), opts(STEPS.open, { label: `open:${pr.id}`, phase: 'Open PR', schema: OPEN }))
+  const opened = await agent(openPrompt(pr, history, minors, archState.reports), opts(STEPS.open, { label: `open:${pr.id}`, phase: 'Open PR', schema: OPEN }))
   if (!opened || !opened.prNumber) return { id: pr.id, ready: false, reason: 'PR not opened', history }
   const n = opened.prNumber
 
@@ -253,7 +306,7 @@ async function runPR(pr) {
   if (wait && wait.openComments > 0) {
     answer = await agent(answerPrompt(pr, n), opts(STEPS.botAnswer, { label: `botanswer:${pr.id}`, phase: 'Bots', isolation: 'worktree', schema: ANSWER }))
     if (answer && answer.substantiveChange) {
-      loop = await reviewLoop(pr, history.length + 1, history, minors)
+      loop = await reviewLoop(pr, history.length + 1, history, minors, archState)
       if (!loop.signedOff) return { id: pr.id, ready: false, reason: `after bots: ${loop.reason}`, history, prNumber: n }
     }
   }
@@ -261,7 +314,7 @@ async function runPR(pr) {
     id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl,
     approvedBy: (wait && wait.approvedBy) || [], botNotes: wait && wait.notes,
     codeChangedByBots: !!(answer && answer.codeChanged),
-    issues: opened.issuesCreated || [], rounds: history.length, history, implProblems: impl.problems || '',
+    issues: opened.issuesCreated || [], rounds: history.length, history, architecture: archState.reports, implProblems: impl.problems || '',
   }
 }
 
