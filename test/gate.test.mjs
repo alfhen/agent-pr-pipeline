@@ -45,6 +45,7 @@ const setup = ({ files = 'clean', settings = 'repo', merging = true, scripts = f
   put(fx, `${P}__commits__${SHA}__check-runs.json`, { check_runs: [
     { name: 'ci', status: 'completed', conclusion: 'success' },
     { name: 'gitar', status: 'completed', conclusion: 'success' }] })
+  put(fx, `${P}__commits__${SHA}__status.json`, { state: 'success', statuses: [] })
   put(fx, `${PULL}__reviews.json`, [{ id: 1, user: { login: 'gitar-bot[bot]' }, state: 'APPROVED', body: '', commit_id: SHA, submitted_at: '2026-01-01T10:00:00Z' }])
   put(fx, `${PULL}__comments.json`, [])
   return { dir, bin, fx, scriptDir, log: join(dir, 'log') }
@@ -313,4 +314,39 @@ test('gate: a gate ending in a slash holds everything under it', () => {
   const r = run(setup({ files: 'slash', settings: 'slash' }), 'gate-files.sh', ['o/r', '7'])
   assert.equal(r.code, 1)
   assert.match(r.out, /docs\/a\.md/)
+})
+
+const withStatus = (s, state) => put(s.fx, `${P}__commits__${SHA}__status.json`, { state, statuses: [{ context: 'ext/ci', state }] })
+
+for (const state of ['failure', 'error', 'pending']) {
+  test(`merge-pr: a ${state} commit status blocks the merge while check runs pass`, () => {
+    const s = setup({ files: 'clean' }); withStatus(s, state)
+    const r = run(s, 'merge-pr.sh', ['--person', 'o/r', '7', SHA, 'feat/x'])
+    assert.equal(r.code, 1)
+    assert.match(r.out, new RegExp(`ext/ci:${state}`))
+    assert.equal(merges(r).length, 0)
+  })
+}
+
+test('merge-pr: a passing commit status with passing check runs merges', () => {
+  const s = setup({ files: 'clean' }); withStatus(s, 'success')
+  const r = run(s, 'merge-pr.sh', ['--person', 'o/r', '7', SHA, 'feat/x'])
+  assert.equal(r.code, 0, r.out)
+  assert.equal(merges(r).length, 1)
+})
+
+test('land-wave: a failing commit status stops the wave with LAND FIX', () => {
+  const s = setup({ files: 'clean' }); withStatus(s, 'failure')
+  const r = run(s, 'land-wave.sh', ['--person', 'o/r', `7:${SHA}`])
+  assert.equal(r.code, 3)
+  assert.match(r.out, /LAND FIX #7.*ext\/ci/)
+  assert.equal(merges(r).length, 0)
+})
+
+test('land-wave: a pending commit status is waited for, then reported as still running', () => {
+  const s = setup({ files: 'clean' }); withStatus(s, 'pending')
+  const r = run(s, 'land-wave.sh', ['--person', 'o/r', `7:${SHA}`])
+  assert.equal(r.code, 4)
+  assert.match(r.out, /WAITING #7/)
+  assert.equal(merges(r).length, 0)
 })

@@ -22,7 +22,8 @@ for arg in "$@"; do
     pull=$(gh api "repos/$R/pulls/$pr") || { echo "cannot read #$pr"; exit 5; }
     head=$(jq -r .head.sha <<<"$pull")
     runs=$(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100" | jq -s -c '[.[].check_runs[]]')
-    pending=$(jq '[.[] | select(.status != "completed")] | length' <<<"$runs")
+    sts=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100" | jq -s -c '[.[].statuses[]]')
+    pending=$(jq -n --argjson r "$runs" --argjson s "${sts:-[]}" '[$r[] | select(.status != "completed")] + [$s[] | select(.state == "pending")] | length')
     [ "$pending" = "0" ] && break
     sleep "$pause"
   done
@@ -34,7 +35,8 @@ for arg in "$@"; do
   done
   if [ "$head" != "$sha" ]; then echo "HEAD MOVED #$pr: checked ${sha:0:7}, now ${head:0:7}. Check the new head before merging."; exit 6; fi
   runs=$(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100" | jq -s -c '[.[].check_runs[]]')
-  failing=$(jq -r '[.[] | select(.conclusion | IN("failure", "timed_out", "action_required")) | .name] | join(",")' <<<"$runs")
+  sts=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100" | jq -s -c '[.[].statuses[]]')
+  failing=$(jq -n -r --argjson r "$runs" --argjson s "${sts:-[]}" '[$r[] | select(.conclusion | IN("failure", "timed_out", "action_required")) | .name] + [$s[] | select(.state | IN("failure", "error")) | .context] | join(",")')
   if [ "$state" = "CONFLICTING" ] || [ -n "$failing" ]; then
     echo "LAND FIX #$pr state=$state failing=[$failing]"; exit 3
   fi
