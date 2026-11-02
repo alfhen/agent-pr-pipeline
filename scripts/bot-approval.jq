@@ -7,7 +7,14 @@
 # back as a new review there. A CHANGES_REQUESTED without a later APPROVED from the same bot always blocks.
 . as $in
 | [$in.comments[] | select(.in_reply_to_id != null) | .in_reply_to_id] as $answered
-| [$in.reviews[] | select(.user.login | test($in.bots))]
+| [$in.reviews[]
+    | select(.user.login | test($in.bots))
+    # A COMMENTED review with an empty body and no new top-level inline comment only carries thread
+    # replies and holds no verdict. An empty body alone is not enough: Gitar's finding reviews are empty.
+    | . as $rv
+    | select($rv.state != "COMMENTED"
+        or (($rv.body // "") | test("\\S"))
+        or ([$in.comments[] | select(.pull_request_review_id == $rv.id and .in_reply_to_id == null)] | length) > 0)]
 | group_by(.user.login)
 | map(sort_by(.submitted_at)
     | . as $mine
