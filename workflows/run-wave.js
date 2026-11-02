@@ -1,5 +1,5 @@
 export const meta = {
-  name: 'agent-pr-pipeline',
+  name: 'run-wave',
   description: 'Build, test, review and fix one wave of PRs, open them and answer the review bots; each step a separate agent',
   phases: [
     { title: 'Preflight', detail: 'check the goals document exists and has goals and non-goals' },
@@ -82,24 +82,36 @@ const DOCS_ROUNDS = A.docsRounds || 2
 const archRuns = pr => pr.kind !== 'docs' && !!ARCH && A.architectureReview !== false
 const decided = pr => (pr.architectureDecision ? `\nArchitecture decision by the maintainer for this PR (settled; follow it): ${pr.architectureDecision}` : '')
   + (pr.productDecision ? `\nProduct scope decision by the maintainer for this PR (settled; follow it): ${pr.productDecision}` : '')
-const opts = (step, extra) => Object.assign({ model: step.model, effort: step.effort }, extra)
+const AGENT_PREFIX = A.agentPrefix === undefined ? 'agent-pr-pipeline:' : A.agentPrefix
+const ROLES = {
+  impl: { agent: 'implementer', phase: 'Implement', isolation: 'worktree' },
+  test: { agent: 'tester', phase: 'Test' },
+  review: { agent: 'reviewer', phase: 'Review' },
+  arch: { agent: 'arch-reviewer', phase: 'Architecture' },
+  product: { agent: 'product-reviewer', phase: 'Product fit' },
+  fix: { agent: 'fixer', phase: 'Fix', isolation: 'worktree' },
+  docs: { agent: 'docs-writer', phase: 'Docs', isolation: 'worktree' },
+  docsReview: { agent: 'docs-reviewer', phase: 'Docs', skills: 'docs', model: 'reviewDocs' },
+  open: { agent: 'pr-opener', phase: 'Open PR' },
+  botWait: { agent: 'bot-waiter', phase: 'Bots', skills: null },
+  botAnswer: { agent: 'bot-answerer', phase: 'Bots', isolation: 'worktree' },
+  landFix: { agent: 'land-fixer', phase: 'Land fix', isolation: 'worktree' },
+  preflight: { agent: 'goals-preflight', phase: 'Preflight' },
+}
+const call = (role, pr, prompt, label, extra) => {
+  const r = ROLES[role]
+  const skillStep = r.skills === undefined ? role : r.skills
+  const step = role === 'review' ? reviewStep(pr) : STEPS[r.model || role]
+  return agent(skillStep ? withSkills(skillStep, pr, prompt) : prompt, Object.assign(
+    { agentType: AGENT_PREFIX + r.agent, model: step.model, effort: step.effort, label, phase: r.phase },
+    r.isolation ? { isolation: r.isolation } : {},
+    extra))
+}
 
-const CONTEXT = `You are working on ${REPO} (https://github.com/${REPO}).
-${SPEC ? `The spec is ${SPEC}. ` : ''}The current plan is ${PLAN}. The plan entry for your PR (its section, with its Touches and Acceptance lines) is your brief, plus the notes below. The plan's "Rules for every PR" section applies, and so do AGENTS.md or CLAUDE.md in the repo.
-
-${A.context || ''}
-
-Working rules:
-- Temporary files go under ${TMP}/<your label>/. Never use /tmp.
-- Git: never push to the default branch, never force-push, never merge, never tag, never publish a package, never create a release, unless your task says so. Push only the feature branch named in your task.
-- Stay in the scope of your PR. Do not build later PRs.
-- Commit messages, docs and PR text: plain, short sentences.
-- Code comments only for why, hidden constraints, or properties a refactor must keep.
-- Match the style of the code around you.`
-
-const fastText = FAST_CHECKS.map(c => `\`${c}\``).join(', ')
-const ownE2e = `the e2e test files this branch adds or changes (\`git diff --name-only --diff-filter=d origin/HEAD...HEAD | grep -E '${E2E_PATTERN}'\`), run with \`${E2E_COMMAND}\` where {files} is that list; skip this when the list is empty. The full e2e suite is CI's job: do not run it`
-const prBlock = pr => `PR: ${pr.id} - ${pr.title}\nBranch: ${pr.branch}\nKind: ${pr.kind || 'code'}\nNotes for this PR:\n${pr.notes || '(none)'}${decided(pr)}`
+const CONTEXT = `Repo: ${REPO} (https://github.com/${REPO}).
+${SPEC ? `Spec: ${SPEC}\n` : ''}Plan: ${PLAN}. The plan entry for this PR (its section, with its Touches and Acceptance lines) is the brief, plus the notes below. The plan's "Rules for every PR" section applies, and so do AGENTS.md or CLAUDE.md in the repo.
+Temporary files go under ${TMP}/<your label>/. Never use /tmp.
+${A.context || ''}`
 
 const IMPL = {
   type: 'object',
@@ -226,156 +238,135 @@ const LANDFIX = {
   required: ['readyToMerge', 'notes'],
 }
 
-const freshBranch = (prefix, pr, n) => `\`git fetch origin && git checkout -B ${prefix}-${pr.id}-r${n} origin/${pr.branch}\` (a new local name, because another worktree may hold ${pr.branch}). Push with \`git push origin HEAD:${pr.branch}\`. Never force-push.`
+const fastText = FAST_CHECKS.map(c => `\`${c}\``).join(', ')
+const ownE2e = `the e2e test files this branch adds or changes (\`git diff --name-only --diff-filter=d origin/HEAD...HEAD | grep -E '${E2E_PATTERN}'\`), run with \`${E2E_COMMAND}\` where {files} is that list; skip this when the list is empty. Do not run the full e2e suite`
+const prBlock = pr => `PR: ${pr.id} - ${pr.title}\nBranch: ${pr.branch}\nKind: ${pr.kind || 'code'}\nNotes for this PR:\n${pr.notes || '(none)'}${decided(pr)}`
+const cloneTo = (dir, pr) => `\`rm -rf ${TMP}/${dir} && git clone https://github.com/${REPO}.git ${TMP}/${dir} && cd ${TMP}/${dir} && git checkout ${pr.branch}\``
+const freshBranch = (prefix, pr, n) => `\`git fetch origin && git checkout -B ${prefix}-${pr.id}-r${n} origin/${pr.branch}\` (a new local name, because another worktree may hold ${pr.branch}). Push with \`git push origin HEAD:${pr.branch}\`.`
 
 const implPrompt = pr => `${CONTEXT}
 
-${prBlock(pr)}
+Task: implement this PR.
+1. You are in a fresh git worktree. Run \`git fetch origin && git checkout -B ${pr.branch} origin/HEAD\`. If ${pr.branch} already exists on origin from an earlier attempt, build on it: \`git checkout -B ${pr.branch} origin/${pr.branch}\`.
+2. Read ${SPEC ? `${SPEC}, ` : ''}${PLAN} and the code you will change.
+3. Checks: ${fastText}, and ${ownE2e}.
+4. Commit and \`git push -u origin ${pr.branch}\`.
+Return pushed, branch, headSha, a short summary, whether the acceptance test passed, and any problems or open questions.
 
-Your job: implement this PR.
-1. You are in a fresh git worktree. Run \`git fetch origin && git checkout -B ${pr.branch} origin/HEAD\`. If ${pr.branch} already exists on origin from an earlier attempt, build on it instead: \`git checkout -B ${pr.branch} origin/${pr.branch}\`.
-2. Read ${SPEC ? `${SPEC} and ` : ''}${PLAN} and the code you will change.
-3. Build the PR with unit tests and the test named in its Acceptance line. Keep it small and in scope.
-4. Run ${fastText}, and ${ownE2e}. Make sure the acceptance test fails for the right reason: break the feature locally, see the test fail, restore it.
-5. Commit and \`git push -u origin ${pr.branch}\`. Do not open a PR.
-Return pushed, branch, headSha, a short summary, whether the acceptance test passed, and any problems or open questions.`
+${prBlock(pr)}`
 
 const testPrompt = (pr, round) => `${CONTEXT}
 
-${prBlock(pr)}
-
-Your job: test branch ${pr.branch} from a clean clone. Do not change code.
+Task: test the branch from a clean clone.
 1. \`rm -rf ${TMP}/test-${pr.id}-r${round} && git clone --branch ${pr.branch} https://github.com/${REPO}.git ${TMP}/test-${pr.id}-r${round}\` and cd there.
-2. Run in order and capture output: ${fastText}. Then run ${ownE2e}. Run every step even if an earlier one fails, when possible.
-3. Check that the acceptance test from the plan exists and ran (was not skipped).
-4. Delete the clone when done.
-Return pass (true only if every step passed), headSha, and one entry per check with the failing log excerpt (the relevant 40 lines).`
+2. Run in order: ${fastText}. Then run ${ownE2e}.
+Return pass, headSha, and one entry per check with the failing log excerpt.
+
+${prBlock(pr)}`
 
 const reviewPrompt = (pr, round, history) => `${CONTEXT}
 
-${prBlock(pr)}
+Task: review the branch against ${SPEC ? `${SPEC} and ` : ''}${PLAN}.
+Clone it: ${cloneTo(`review-${pr.id}-r${round}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`.
+Return headSha, a summary and the findings.
 
-Your job: review branch ${pr.branch} adversarially against ${SPEC ? `${SPEC} and ` : ''}${PLAN}. Do not change code or push anything.
-Clone it: \`rm -rf ${TMP}/review-${pr.id}-r${round} && git clone https://github.com/${REPO}.git ${TMP}/review-${pr.id}-r${round} && cd ${TMP}/review-${pr.id}-r${round} && git checkout ${pr.branch}\`. Read the full diff (\`git diff origin/HEAD...HEAD\`) and the touched files in full. You may run single tests to check a suspicion.
-Look for: correctness bugs and drift from the spec and the plan entry; security and privacy problems; scope creep; tests that pass for the wrong reason (assertions that cannot fail, skipped tests, mocks that hide the behaviour, timing that makes a test vacuous); broken project rules; claims the PR makes without evidence.
-Rank each finding: blocker (wrong, unsafe, or the acceptance test does not prove the feature), major (must fix before merge), minor (fine as a follow-up issue). Be concrete: file, what is wrong, how to fix. No style nits. Default to no finding when unsure.${pr.kind === 'plan' ? ' This is a plan document: anything an implementer can settle without changing the plan\'s intent is minor.' : ''}
-${history.length ? `Earlier rounds (check their blockers and majors are really fixed):\n${JSON.stringify(history, null, 1)}` : ''}
-Delete the clone when done. Return headSha, a summary and the findings.`
+${prBlock(pr)}
+${history.length ? `\nEarlier rounds (check their blockers and majors are really fixed):\n${JSON.stringify(history, null, 1)}` : ''}`
 
 const productPrompt = (pr, round) => `${CONTEXT}
 
-${prBlock(pr)}
+Task: check that ${pr.kind === 'plan' ? 'this plan' : 'this PR'} stays true to the product goals in ${GOALS}.
+Clone it: ${cloneTo(`product-${pr.id}-r${round}`, pr)}. Read ${GOALS}, then the ${pr.kind === 'plan' ? 'plan in the diff' : 'diff and its plan entry'} (\`git diff origin/HEAD...HEAD\`).
+Return the verdict, a short summary, one row per entry, and the escalation (for escalate).
 
-Your job: check that ${pr.kind === 'plan' ? 'this plan' : 'this PR'} stays true to the product. You are not looking for bugs or architecture problems; other reviewers do that. Do not change anything or push.
-Clone it: \`rm -rf ${TMP}/product-${pr.id}-r${round} && git clone https://github.com/${REPO}.git ${TMP}/product-${pr.id}-r${round} && cd ${TMP}/product-${pr.id}-r${round} && git checkout ${pr.branch}\`. Read the product goals and non-goals in ${GOALS} (and the README's own description of the product), then the ${pr.kind === 'plan' ? 'plan in the diff' : 'diff and its plan entry'}.
-1. For each plan entry (or for the PR as a whole), say which stated goal it serves, or that it is neutral, widens the product in a direction the goals do not mention, or touches a stated non-goal. Watch for scope creep that looks harmless: a second interface next to the main one, a hosted service, a new audience, a feature that mostly helps a different product category, or effort spent on polish that no goal asks for.
-2. Suggest for each: keep, trim, defer, cut, or change-goals (the goals should change, not the plan).
-3. Decide one verdict:
-   - aligned: every entry serves a goal or is neutral.
-   - notes: small drift that does not change what the product is. These become minor issues; the plan goes on.
-   - escalate: at least one entry widens the scope, touches a non-goal, or means the goals should change. A person decides product scope, never an agent. Write one question for the maintainer, your recommendation and why.
-${pr.productDecision ? 'The maintainer already decided the scope question for this PR (see above). Do not escalate it again; check the plan follows the decision.' : ''}
-Delete the clone when done. Return the verdict, a short summary, one row per entry, and the escalation (for escalate).`
+${prBlock(pr)}`
 
 const archPrompt = (pr, round) => `${CONTEXT}
 
-${prBlock(pr)}
+Task: review the branch for architecture against ${ARCH}.
+Clone it: ${cloneTo(`arch-${pr.id}-r${round}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`.
+Return the verdict, a short summary, the new concepts, the findings (for needs-change) and the escalation (for escalate).
 
-Your job: review branch ${pr.branch} for architecture. You are not looking for bugs; another reviewer does that. Do not change code or push anything.
-Clone it: \`rm -rf ${TMP}/arch-${pr.id}-r${round} && git clone https://github.com/${REPO}.git ${TMP}/arch-${pr.id}-r${round} && cd ${TMP}/arch-${pr.id}-r${round} && git checkout ${pr.branch}\`. Read ${ARCH} (the architecture), ${PLAN} (the plan entry and its neighbours), the full diff (\`git diff origin/HEAD...HEAD\`) and enough of the code around it to see the existing structure.
-1. List every new concept the PR introduces: a new module or package, a new record type or field, a new step, flag, command or config file, a new dependency, a new process or network boundary, a new place where state lives. For each, say where it is and whether it fits the architecture as written.
-2. Decide one verdict:
-   - fits: the PR stays inside the architecture, or extends it the way the architecture already expects.
-   - needs-change: the PR goes against the architecture in a way this PR can fix (wrong layer, a duplicate concept, a dependency in the wrong direction, a rule from the architecture doc broken). Give concrete findings with a suggested fix.
-   - escalate: the architecture itself should change, because this PR (or the plan around it) shows that the current structure will not hold well for the planned or likely next changes, or because the PR needs a decision that is not this PR's to make. Do not escalate for something a fix can settle. Write the question for the maintainer, 2 to 4 options, your recommendation and why.
-${pr.architectureDecision ? 'The maintainer already decided the architecture question for this PR (see above). Do not escalate it again; check the PR follows the decision.' : ''}
-Delete the clone when done. Return the verdict, a short summary, the new concepts, the findings (for needs-change) and the escalation (for escalate).`
+${prBlock(pr)}`
 
 const fixPrompt = (pr, test, findings, round) => `${CONTEXT}
 
+Task: fix the branch after review round ${round}.
+1. You are in a fresh git worktree. ${freshBranch('fix', pr, round)}
+2. Checks: ${fastText}, and ${ownE2e}.
+Return a short summary of each fix, and any finding you disagree with and why.
+
 ${prBlock(pr)}
 
-Your job: fix branch ${pr.branch} after review round ${round}.
-1. You are in a fresh git worktree. ${freshBranch('fix', pr, round)}
-2. Fix every blocker and major below, and every failing check. If you think a finding is wrong, do not ignore it: fix it, or explain why with evidence in your answer.
-3. Run ${fastText}, and ${ownE2e}.
-4. Commit and push with \`git push origin HEAD:${pr.branch}\`.
 Failing checks:
 ${JSON.stringify((test && test.checks || []).filter(c => !c.pass), null, 1)}
 Findings:
-${JSON.stringify(findings, null, 1)}
-Return a short summary of each fix, and any finding you disagree with and why.`
+${JSON.stringify(findings, null, 1)}`
 
 const docsWhere = A.docs && A.docs.length
   ? `The docs of this repo are: ${A.docs.join(', ')}.`
   : 'Find the docs yourself: README files, markdown under docs/ or similar, and a docs site if there is one (its source folder, for example docs/, site/ or website/, or HTML pages).'
 const docsPrompt = (pr, signedSha) => `${CONTEXT}
 
-${prBlock(pr)}
-
-Your job: bring the docs in line with this PR. The code passed review at ${signedSha || 'the branch head'}; do not change code or tests.
+Task: bring the docs in line with this PR. The code passed review at ${signedSha || 'the branch head'}.
 1. You are in a fresh git worktree. ${freshBranch('docs', pr, 0)}
-2. Read the full diff (\`git diff origin/HEAD...HEAD\`). List what a user or contributor sees differently: commands, flags, options, config, output, defaults, errors, install steps, behaviour, architecture.
-3. ${docsWhere} Find every place that now says something wrong, or leaves out something a reader needs, because of this PR. Start with the docs the plan entry's Touches line names. Other PRs in this wave are built at the same time, so say in notes when you change a doc that Touches does not name.
-4. Update only those places. Match the style of each file. Do not rewrite text the PR does not affect, and add a new page only when a new user-facing feature has no home. Leave CHANGELOG and release notes alone unless the plan entry or the notes say otherwise.
-5. ${A.docsBuild ? `Build the docs site with \`${A.docsBuild}\` and fix what you broke.` : 'If the repo has a docs site build command, run it and fix what you broke.'} Run ${fastText}.
-6. If you changed anything, commit and push with \`git push origin HEAD:${pr.branch}\`. If nothing needs a change, push nothing.
-Return changed, headSha (\`git rev-parse HEAD\` after your push), the files you changed, a short summary, and, when nothing changed, why the docs are already right.`
+2. ${docsWhere}
+3. ${A.docsBuild ? `Build the docs site with \`${A.docsBuild}\`.` : 'If the repo has a docs site build command, run it.'} Checks: ${fastText}.
+Return changed, headSha (\`git rev-parse HEAD\` after your push), the files you changed, a short summary, and notes.
+
+${prBlock(pr)}`
 
 const docsReviewPrompt = (pr, round, signedSha, docs) => `${CONTEXT}
 
+Task: check the docs commits on the branch.
+Clone it: ${cloneTo(`docsreview-${pr.id}-r${round}`, pr)}. The docs changes are \`git diff ${signedSha || 'origin/HEAD'}..HEAD\`; the code they describe is \`git diff origin/HEAD...HEAD\`.
+Return headSha, a summary and the findings.
+
 ${prBlock(pr)}
 
-Your job: check the docs commits on branch ${pr.branch}. The code already passed review; another agent then updated the docs. Do not change anything or push.
-Clone it: \`rm -rf ${TMP}/docsreview-${pr.id}-r${round} && git clone https://github.com/${REPO}.git ${TMP}/docsreview-${pr.id}-r${round} && cd ${TMP}/docsreview-${pr.id}-r${round} && git checkout ${pr.branch}\`. Read the docs changes (\`git diff ${signedSha || 'origin/HEAD'}..HEAD\`) and the code diff they describe (\`git diff origin/HEAD...HEAD\`).
-Look for: docs that say something the code does not do, examples that would fail, places the PR affects that the docs agent missed, a broken docs site build or links, and any change to code or tests (a blocker: this step changes docs only).
-Docs agent summary: ${JSON.stringify(docs)}
-Rank findings blocker, major or minor as in a code review. No style nits. Delete the clone when done. Return headSha, a summary and the findings.`
+Docs agent summary: ${JSON.stringify(docs)}`
 
 const openPrompt = (pr, rounds, minors, arch) => `${CONTEXT}
 
+Task: open the pull request for ${pr.branch} and file the minor findings.
+1. Issues: \`gh issue create -R ${REPO} --label ${LABEL}${MILESTONE}\`. Body ends with "Found in review of ${pr.id}."
+2. PR: \`gh pr create -R ${REPO} --head ${pr.branch}\`, title "${pr.title}". Include "Review: no blockers or majors after round N." (N from the history).
+Return prNumber, prUrl and the issues you created.
+
 ${prBlock(pr)}
 
-Your job: open the pull request for ${pr.branch} and file minor findings. Do not change code.
-1. File each minor finding below as a GitHub issue with label ${LABEL} (\`gh issue create -R ${REPO} --label ${LABEL}${MILESTONE}\`). Skip duplicates of each other and of open issues. Body: the finding, the file, and "Found in review of ${pr.id}."
-2. Open a ready PR to the default branch if none exists: \`gh pr create -R ${REPO} --head ${pr.branch}\`, title "${pr.title}". Body: what it does, how it is tested, which docs it updates, "Review: no blockers or majors after round N." (N from the history), one line with the architecture verdict and the new concepts, and for a plan one line with the product-fit verdict, if those reviews ran, links to the issues you filed, and each \`Closes #N\` on its own line.
 Review history: ${JSON.stringify(rounds)}
 Architecture, product and docs: ${JSON.stringify(arch || [])}
-Minor findings: ${JSON.stringify(minors, null, 1)}
-Return prNumber, prUrl and the issues you created.`
+Minor findings: ${JSON.stringify(minors, null, 1)}`
 
-const waitPrompt = (pr, n) => `Wait for the review bots on pull request #${n} in ${REPO}. Do not change anything, comment, or push.
+const waitPrompt = (pr, n) => `Task: wait for the review bots on pull request #${n} in ${REPO}, for at most ${BOT_WAIT_MIN} minutes.
 Bots: ${BOTS}.
-Every 60 seconds, for at most ${BOT_WAIT_MIN} minutes, run \`gh pr view ${n} -R ${REPO} --json reviews\` and \`gh pr checks ${n} -R ${REPO}\`. Stop early when a bot has an APPROVED review and its check has finished, or when every bot has finished (a review, or a comment saying it is done, skipped or rate-limited).
-Then count the open bot comments: inline threads (\`gh api repos/${REPO}/pulls/${n}/comments\`) by a bot login with no reply yet, plus actionable items in a bot review body.
-Return approvedBy (bot logins with an APPROVED review), openComments (that count), timedOut, and one line of notes.`
+Poll with \`gh pr view ${n} -R ${REPO} --json reviews\` and \`gh pr checks ${n} -R ${REPO}\`. Inline threads: \`gh api repos/${REPO}/pulls/${n}/comments\`.
+Return approvedBy (bot logins with an APPROVED review), openComments, timedOut, and one line of notes.`
 
 const answerPrompt = (pr, n) => `${CONTEXT}
 
-${prBlock(pr)}
-
-Your job: answer the review bots on pull request #${n}.
+Task: answer the review bots on pull request #${n}.
 1. You are in a fresh git worktree. ${freshBranch('bots', pr, 0)}
-2. For each bot comment without a reply: decide if it is right. If right, fix it. Reply on the thread (\`gh api repos/${REPO}/pulls/${n}/comments/<id>/replies -f body=...\`) in one or two sentences: what you changed, or why not. Answer review-body items in one PR comment per bot.
-3. If you changed code, run ${fastText}, and ${ownE2e}; commit and push.
-Set substantiveChange true if your changes alter behaviour beyond small fixes.
-Return threads addressed, whether code changed, substantiveChange, headSha (\`git rev-parse HEAD\` after your last push), and notes.`
+2. Reply on a thread with \`gh api repos/${REPO}/pulls/${n}/comments/<id>/replies -f body=...\`.
+3. Checks if you changed code: ${fastText}, and ${ownE2e}.
+Return threads addressed, whether code changed, substantiveChange, headSha (\`git rev-parse HEAD\` after your last push), and notes.
+
+${prBlock(pr)}`
 
 const landFixPrompt = pr => `${CONTEXT}
 
-${prBlock(pr)}
-
-Your job: bring PR #${pr.prNumber} (${pr.branch}) to a mergeable state with green CI. Do not merge it.
+Task: bring PR #${pr.prNumber} (${pr.branch}) to a mergeable state with green CI.
 1. You are in a fresh git worktree. ${freshBranch('land', pr, 0)}
-2. If the PR conflicts: \`git merge origin/HEAD\`, resolve keeping both sides' intent (lockfiles: take the default branch's version and reinstall), run ${fastText}, and ${ownE2e}, commit and push.
-3. If a CI job failed: read the log (\`gh run view <run> -R ${REPO} --log-failed\`), fix small causes, push. Rerun a flaky network failure once with \`gh run rerun <run> --failed\`.
-4. Wait for CI on the new head (\`gh pr checks ${pr.prNumber} -R ${REPO} --watch --interval 30\`). Stop when it is MERGEABLE and green, or after 3 attempts.
-Return readyToMerge, headSha and notes.`
+2. Conflict: \`git merge origin/HEAD\`, then ${fastText}, and ${ownE2e}.
+3. CI: \`gh run view <run> -R ${REPO} --log-failed\`; rerun a flaky network failure with \`gh run rerun <run> --failed\`.
+4. Wait: \`gh pr checks ${pr.prNumber} -R ${REPO} --watch --interval 30\`.
+Return readyToMerge, headSha and notes.
 
-const preflightPrompt = () => `Check that the product goals document exists and is usable. Do not change anything.
-1. Read ${GOALS} on the default branch of ${REPO}: \`gh api repos/${REPO}/contents/${GOALS} --jq .content | base64 --decode\`. If that fails, the file does not exist.
-2. Find a heading named Goals and a heading named Non-goals (any heading level; "Non goals" and "Out of scope" count as Non-goals). Count the list items under each. An item that is still a template placeholder in angle brackets (<...>) does not count.
-3. ok is true only if the file exists, both headings exist, and each has at least one item.
+${prBlock(pr)}`
+
+const preflightPrompt = () => `Task: check the goals document ${GOALS} on the default branch of ${REPO}.
+Read it with \`gh api repos/${REPO}/contents/${GOALS} --jq .content | base64 --decode\`. If that fails, the file does not exist.
 Return ok, exists, the two counts, and missing: a short list of what is absent (for example "file", "Goals section", "Non-goals items").`
 
 async function reviewLoop(pr, startRound, history, minors, archState) {
@@ -384,10 +375,10 @@ async function reviewLoop(pr, startRound, history, minors, archState) {
     const wantArch = archRuns(pr) && (round === startRound || archState.last === 'needs-change')
     const wantProduct = productRuns(pr) && round === startRound
     const [test, review, arch, product] = await parallel([
-      () => agent(withSkills('test', pr, testPrompt(pr, round)), opts(STEPS.test, { label: `test:${pr.id}#${round}`, phase: 'Test', schema: TEST })),
-      () => agent(withSkills('review', pr, reviewPrompt(pr, round, history)), opts(reviewStep(pr), { label: `review:${pr.id}#${round}`, phase: 'Review', schema: REVIEW })),
-      () => wantArch ? agent(withSkills('arch', pr, archPrompt(pr, round)), opts(STEPS.arch, { label: `arch:${pr.id}#${round}`, phase: 'Architecture', schema: ARCHREV })) : Promise.resolve(null),
-      () => wantProduct ? agent(withSkills('product', pr, productPrompt(pr, round)), opts(STEPS.product, { label: `product:${pr.id}#${round}`, phase: 'Product fit', schema: PRODUCT })) : Promise.resolve(null),
+      () => call('test', pr, testPrompt(pr, round), `test:${pr.id}#${round}`, { schema: TEST }),
+      () => call('review', pr, reviewPrompt(pr, round, history), `review:${pr.id}#${round}`, { schema: REVIEW }),
+      () => wantArch ? call('arch', pr, archPrompt(pr, round), `arch:${pr.id}#${round}`, { schema: ARCHREV }) : Promise.resolve(null),
+      () => wantProduct ? call('product', pr, productPrompt(pr, round), `product:${pr.id}#${round}`, { schema: PRODUCT }) : Promise.resolve(null),
     ])
     if (!test || !review) return { signedOff: false, reason: 'tester or reviewer failed' }
     if (wantArch && !arch) return { signedOff: false, reason: 'architecture reviewer failed' }
@@ -417,19 +408,19 @@ async function reviewLoop(pr, startRound, history, minors, archState) {
     log(`${pr.id} round ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (test.pass && blocking.length === 0) return { signedOff: true, headSha: test.headSha || review.headSha }
     if (round === startRound + max - 1) return { signedOff: false, reason: 'rounds exhausted', lastFindings: blocking, lastTest: test }
-    await agent(withSkills('fix', pr, fixPrompt(pr, test, blocking, round)), opts(STEPS.fix, { label: `fix:${pr.id}#${round}`, phase: 'Fix', isolation: 'worktree' }))
+    await call('fix', pr, fixPrompt(pr, test, blocking, round), `fix:${pr.id}#${round}`)
   }
 }
 
 async function docsStep(pr, signedSha, history, minors) {
-  const docs = await agent(withSkills('docs', pr, docsPrompt(pr, signedSha)), opts(STEPS.docs, { label: `docs:${pr.id}`, phase: 'Docs', isolation: 'worktree', schema: DOCS }))
+  const docs = await call('docs', pr, docsPrompt(pr, signedSha), `docs:${pr.id}`, { schema: DOCS })
   if (!docs) return { ok: false, reason: 'docs agent failed' }
   log(`${pr.id} docs: ${docs.changed ? (docs.files || []).join(', ') : 'no change'}`)
   if (!docs.changed) return { ok: true, headSha: signedSha, docs }
   for (let round = 1; round <= DOCS_ROUNDS; round++) {
     const [test, review] = await parallel([
-      () => agent(withSkills('test', pr, testPrompt(pr, `docs${round}`)), opts(STEPS.test, { label: `test:${pr.id}#docs${round}`, phase: 'Docs', schema: TEST })),
-      () => agent(withSkills('docs', pr, docsReviewPrompt(pr, round, signedSha, docs)), opts(STEPS.reviewDocs, { label: `docsreview:${pr.id}#${round}`, phase: 'Docs', schema: REVIEW })),
+      () => call('test', pr, testPrompt(pr, `docs${round}`), `test:${pr.id}#docs${round}`, { phase: 'Docs', schema: TEST }),
+      () => call('docsReview', pr, docsReviewPrompt(pr, round, signedSha, docs), `docsreview:${pr.id}#${round}`, { schema: REVIEW }),
     ])
     if (!test || !review) return { ok: false, reason: 'docs check failed to run', docs }
     const blocking = review.findings.filter(f => f.severity !== 'minor')
@@ -438,22 +429,22 @@ async function docsStep(pr, signedSha, history, minors) {
     log(`${pr.id} docs round ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (test.pass && blocking.length === 0) return { ok: true, headSha: test.headSha || review.headSha, docs }
     if (round === DOCS_ROUNDS) return { ok: false, reason: 'docs check: rounds exhausted', lastFindings: blocking, docs }
-    await agent(withSkills('fix', pr, fixPrompt(pr, test, blocking, `docs${round}`)), opts(STEPS.fix, { label: `fix:${pr.id}#docs${round}`, phase: 'Fix', isolation: 'worktree' }))
+    await call('fix', pr, fixPrompt(pr, test, blocking, `docs${round}`), `fix:${pr.id}#docs${round}`)
   }
 }
 
 async function runPR(pr) {
   if (pr.landFix) {
-    const r = await agent(withSkills('landFix', pr, landFixPrompt(pr)), opts(STEPS.landFix, { label: `landfix:${pr.id}`, phase: 'Land fix', isolation: 'worktree', schema: LANDFIX }))
+    const r = await call('landFix', pr, landFixPrompt(pr), `landfix:${pr.id}`, { schema: LANDFIX })
     return { id: pr.id, prNumber: pr.prNumber, ready: !!(r && r.readyToMerge), headSha: r && r.headSha, notes: r && r.notes }
   }
   const history = pr.resume ? pr.resume.history || [] : []
   const minors = pr.resume ? pr.resume.minors || [] : []
   let impl = { problems: '' }
   if (pr.resume && (pr.resume.findings || []).length) {
-    await agent(withSkills('fix', pr, fixPrompt(pr, null, pr.resume.findings, history.length)), opts(STEPS.fix, { label: `fix:${pr.id}#${history.length}`, phase: 'Fix', isolation: 'worktree' }))
+    await call('fix', pr, fixPrompt(pr, null, pr.resume.findings, history.length), `fix:${pr.id}#${history.length}`)
   } else if (!pr.skipImpl && !pr.resume) {
-    impl = await agent(withSkills('impl', pr, implPrompt(pr)), opts(STEPS.impl, { label: `implement:${pr.id}`, phase: 'Implement', isolation: 'worktree', schema: IMPL }))
+    impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl }
   }
   const archState = { last: null, reports: [], product: null }
@@ -468,16 +459,16 @@ async function runPR(pr) {
     docs = { changed: d.docs.changed, files: d.docs.files || [], summary: d.docs.summary }
   }
 
-  const opened = await agent(withSkills('open', pr, openPrompt(pr, history, minors, { architecture: archState.reports, product: archState.product, docs })), opts(STEPS.open, { label: `open:${pr.id}`, phase: 'Open PR', schema: OPEN }))
+  const opened = await call('open', pr, openPrompt(pr, history, minors, { architecture: archState.reports, product: archState.product, docs }), `open:${pr.id}`, { schema: OPEN })
   if (!opened || !opened.prNumber) return { id: pr.id, ready: false, reason: 'PR not opened', history }
   const n = opened.prNumber
 
   let headSha = loop.headSha
-  const wait = await agent(waitPrompt(pr, n), opts(STEPS.botWait, { label: `botwait:${pr.id}`, phase: 'Bots', schema: WAIT }))
+  const wait = await call('botWait', pr, waitPrompt(pr, n), `botwait:${pr.id}`, { schema: WAIT })
   if (!wait) return { id: pr.id, ready: false, reason: 'bot wait failed', history, prNumber: n, headSha }
   let answer = null
   if (wait.openComments > 0) {
-    answer = await agent(withSkills('botAnswer', pr, answerPrompt(pr, n)), opts(STEPS.botAnswer, { label: `botanswer:${pr.id}`, phase: 'Bots', isolation: 'worktree', schema: ANSWER }))
+    answer = await call('botAnswer', pr, answerPrompt(pr, n), `botanswer:${pr.id}`, { schema: ANSWER })
     if (!answer) return { id: pr.id, ready: false, reason: 'bot answer failed', history, prNumber: n, headSha }
     if (answer.codeChanged && answer.headSha) headSha = answer.headSha
     if (answer.substantiveChange) {
@@ -498,7 +489,7 @@ async function runPR(pr) {
 
 const needsGoals = A.prs.some(pr => !pr.landFix)
 if (needsGoals) {
-  const pre = await agent(withSkills('preflight', null, preflightPrompt()), opts(STEPS.preflight, { label: 'preflight:goals', phase: 'Preflight', schema: PREFLIGHT }))
+  const pre = await call('preflight', null, preflightPrompt(), 'preflight:goals', { schema: PREFLIGHT })
   if (!pre || !pre.ok) {
     const missing = pre ? pre.missing.join(', ') : 'the preflight agent did not answer'
     log(`refused: ${GOALS} is missing or incomplete (${missing})`)

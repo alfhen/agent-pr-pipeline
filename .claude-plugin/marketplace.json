@@ -1,0 +1,12 @@
+{
+  "name": "agent-pr-pipeline",
+  "description": "The agent PR pipeline plugin.",
+  "owner": { "name": "Alf Henderson" },
+  "plugins": [
+    {
+      "name": "agent-pr-pipeline",
+      "source": "./",
+      "description": "Role agents, the wave workflow and the goals skill for building a release as small PRs."
+    }
+  ]
+}

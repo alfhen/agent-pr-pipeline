@@ -21,14 +21,14 @@ Summary: read the repo, ask the maintainer section by section, write their answe
 
 ## 1. Find the shared files
 
-The template and the checker are in the agent-pr-pipeline folder, two levels above this skill. This skill folder is often a symlink, so resolve the real path first:
+The template and the checker are in the agent-pr-pipeline plugin folder:
 
 ```bash
-ROOT=$(cd "$(dirname "$(realpath "<this skill's folder>/SKILL.md")")/../.." && pwd)
+ROOT="${CLAUDE_PLUGIN_ROOT}"
 ls "$ROOT/templates/goals.md" "$ROOT/scripts/check-goals.sh"
 ```
 
-If either file is missing, stop and tell the user to install the whole agent-pr-pipeline repo (see its README).
+If either file is missing, stop and tell the user to install the agent-pr-pipeline plugin (see its README).
 
 ## 2. Read before you ask
 

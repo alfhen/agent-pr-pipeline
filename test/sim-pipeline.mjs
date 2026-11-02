@@ -1,16 +1,16 @@
 // Runs workflow/pr-pipeline.js against a fake agent() that returns schema-shaped answers.
 // Usage: node test/sim-pipeline.mjs (exits non-zero on the first failed check).
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import assert from 'node:assert/strict'
 
-const src = readFileSync(new URL('../workflow/pr-pipeline.js', import.meta.url), 'utf8').replace('export const meta', 'const meta')
+const src = readFileSync(new URL('../workflows/run-wave.js', import.meta.url), 'utf8').replace('export const meta', 'const meta')
 const run = new Function('args', 'agent', 'parallel', 'log', `return (async () => { ${src} })()`)
 
 let calls = []
 let preflight
 let failWait = false
 const agent = async (prompt, o) => {
-  calls.push({ label: o.label, model: o.model, effort: o.effort, prompt })
+  calls.push({ label: o.label, model: o.model, effort: o.effort, agentType: o.agentType, isolation: o.isolation, prompt })
   const id = o.label.split(':')[1].split('#')[0]
   if (o.label.startsWith('preflight')) return preflight
   if (o.label.startsWith('product')) {
@@ -224,3 +224,49 @@ await check('an unknown step name throws', () =>
   assert.rejects(run({ ...base, skills: { implement: ['x'] } }, agent, parallel, log), /unknown step "implement"/))
 await check('a skill list that is not a list of names throws', () =>
   assert.rejects(run({ ...base, prs: [{ ...PRS[3], skills: { open: 'humanizer' } }] }, agent, parallel, log), /must be a list of skill names/))
+
+// Plugin wiring: every call names a role agent that exists, with the same defaults.
+const root = new URL('../', import.meta.url)
+const frontmatter = name => {
+  const text = readFileSync(new URL(`agents/${name}.md`, root), 'utf8')
+  return Object.fromEntries(text.split('---')[1].trim().split('\n').map(l => [l.slice(0, l.indexOf(':')), l.slice(l.indexOf(':') + 1).trim()]))
+}
+const AGENT_OF = { implement: 'implementer', test: 'tester', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight' }
+const WRITERS = ['implementer', 'fixer', 'docs-writer', 'bot-answerer', 'land-fixer']
+await simulate(base)
+await check('every call names its role agent from the plugin', () => {
+  for (const c of calls) assert.equal(c.agentType, 'agent-pr-pipeline:' + AGENT_OF[c.label.split(':')[0]], c.label)
+})
+await check('only writing agents run in a worktree', () => {
+  for (const c of calls) assert.equal(c.isolation === 'worktree', WRITERS.includes(c.agentType.split(':')[1]), c.label)
+})
+await check('each agent file exists and its defaults match the workflow defaults', () => {
+  const files = readdirSync(new URL('agents/', root)).map(f => f.replace(/\.md$/, '')).sort()
+  assert.deepEqual(files, Object.values(AGENT_OF).sort())
+  const docsOrPlan = c => c.label.startsWith('review:') && /^(D|P)\d/.test(c.label.split(':')[1])
+  for (const c of calls.filter(c => !docsOrPlan(c))) {
+    const fm = frontmatter(c.agentType.split(':')[1])
+    assert.equal(fm.name, c.agentType.split(':')[1])
+    assert.equal(`${fm.model}/${fm.effort}`, `${c.model}/${c.effort}`, c.label)
+  }
+  assert.equal(`${calls.find(c => c.label === 'review:D1#1').model}`, 'sonnet')
+})
+await check('read-only agents have no edit tools', () => {
+  for (const name of Object.values(AGENT_OF).filter(n => !WRITERS.includes(n))) {
+    const tools = frontmatter(name).tools
+    assert.ok(tools && !/\b(Edit|Write|NotebookEdit|Agent)\b/.test(tools), name)
+  }
+  for (const name of WRITERS) assert.match(frontmatter(name).disallowedTools || '', /\bAgent\b/, name)
+})
+await check('agentPrefix "" uses bare agent names', async () => {
+  await simulate({ ...base, agentPrefix: '' })
+  assert.equal(calls.find(c => c.label.startsWith('preflight')).agentType, 'goals-preflight')
+})
+await check('plugin and marketplace manifests agree, and the workflow is named run-wave', () => {
+  const plugin = JSON.parse(readFileSync(new URL('.claude-plugin/plugin.json', root), 'utf8'))
+  const market = JSON.parse(readFileSync(new URL('.claude-plugin/marketplace.json', root), 'utf8'))
+  assert.equal(plugin.name, 'agent-pr-pipeline')
+  assert.deepEqual(market.plugins.map(p => p.name), [plugin.name])
+  assert.match(src, /name: 'run-wave'/)
+  for (const skill of ['pr-pipeline', 'write-goals']) assert.ok(existsSync(new URL(`skills/${skill}/SKILL.md`, root)), skill)
+})

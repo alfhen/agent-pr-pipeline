@@ -1,11 +1,13 @@
 ---
-name: agent-pr-pipeline
+name: pr-pipeline
 description: Plan and build a release or a batch of changes as small PRs, where separate agents implement, test from a clean clone, review adversarially, fix, open the PR, answer review bots and bring it to green CI, and the main session merges. Use when the user asks to plan and build a release, a milestone or a set of issues "with the usual workflow", to run waves of PRs through review, or to set up this loop in a new repo. Not for a single quick fix.
 ---
 
 # Agent PR pipeline
 
 One PR at a time is easy to check. Many PRs at once are not, unless each PR goes through the same fixed loop and no agent checks its own work. This skill is that loop.
+
+This skill is part of the agent-pr-pipeline plugin. The plugin folder is `${CLAUDE_PLUGIN_ROOT}`: the scripts, templates and the workflow are there. Each step runs as one of the plugin's role agents (`agent-pr-pipeline:<role>`, see "Role agents").
 
 ```mermaid
 flowchart LR
@@ -51,19 +53,19 @@ Summary: a plan is reviewed first, including whether it still serves the product
 6. **Docs.** After a code PR signs off, a docs agent reads the diff and finds every doc the change makes wrong or incomplete: README, markdown docs, and the docs site if there is one. It updates only those places, on the same branch, and builds the site if it can. If nothing needs a change, it pushes nothing and the PR goes on. If it pushed, the tester and a Sonnet docs reviewer check the new head, with a fix round if needed (`docsRounds`, default 2). So the sha the land script merges is always one the pipeline checked. Docs and plan PRs skip this step.
 7. **Open the PR.** An agent opens a ready PR and files every minor finding as an issue (label `review-minor`). The PR body says which docs the PR updates.
 8. **Bots.** A small agent (Haiku, low effort) waits for the review bots and counts their open comments. Only if there are any does an answer agent run: it fixes the point or says why not, on every thread. If its changes are substantive, the loop runs again.
-9. **Land and merge.** The main session runs `scripts/land-wave.sh` with the `<pr>:<sha>` pairs from the workflow result. It waits for CI and squash-merges only when the PR's head is still the commit the pipeline checked, every check passed, and the latest review by a review bot is an approval. It deletes the branch only after GitHub shows MERGED. A PR that conflicts or has a red check is reported as `LAND FIX`, and a land-fix agent handles only that PR.
+9. **Land and merge.** The main session runs `${CLAUDE_PLUGIN_ROOT}/scripts/land-wave.sh` with the `<pr>:<sha>` pairs from the workflow result. It waits for CI and squash-merges only when the PR's head is still the commit the pipeline checked, every check passed, and the latest review by a review bot is an approval. It deletes the branch only after GitHub shows MERGED. A PR that conflicts or has a red check is reported as `LAND FIX`, and a land-fix agent handles only that PR.
 
 ## Before the first run in a repo
 
-- **Write the goals document first. The pipeline refuses to start without it.** Run the [write-goals](skills/write-goals/SKILL.md) skill: it asks the maintainer for the goals, non-goals and users, writes `templates/goals.md` into the repo (for example `docs/goals.md`) and checks it. Or copy the template and fill in the Goals and Non-goals sections by hand, at least one item each. Only the maintainer decides the content. Check it with `scripts/check-goals.sh <owner/repo> docs/goals.md`; the workflow runs the same check as its first step and refuses every PR in the wave if the file is missing or incomplete.
-- Add the loop to the repo's `AGENTS.md` (or `CLAUDE.md`). `templates/AGENTS-section.md` is a starting point. Workers read it, so hard rules go there once instead of in every prompt.
+- **Write the goals document first. The pipeline refuses to start without it.** Run the `agent-pr-pipeline:write-goals` skill: it asks the maintainer for the goals, non-goals and users, writes the goals template into the repo (for example `docs/goals.md`) and checks it. Or copy the template and fill in the Goals and Non-goals sections by hand, at least one item each. Only the maintainer decides the content. Check it with `${CLAUDE_PLUGIN_ROOT}/scripts/check-goals.sh <owner/repo> docs/goals.md`; the workflow runs the same check as its first step and refuses every PR in the wave if the file is missing or incomplete.
+- Add the loop to the repo's `AGENTS.md` (or `CLAUDE.md`). `${CLAUDE_PLUGIN_ROOT}/templates/AGENTS-section.md` is a starting point. Workers read it, so hard rules go there once instead of in every prompt.
 - Install at least one review bot on the repo (CodeRabbit, Gitar or similar). An approval from one of them is the merge gate.
 - Know the check commands (install, lint, typecheck, unit, e2e) and how long e2e takes.
 - Pick a temp folder for clones that is not shared `/tmp`.
 
 ## Step 1: write the plan, then review the plan
 
-Big work starts as a plan document, for example `docs/plan-<version>.md`. Copy `templates/plan.md`. The plan is the brief for every worker, so it must be concrete:
+Big work starts as a plan document, for example `docs/plan-<version>.md`. Copy `${CLAUDE_PLUGIN_ROOT}/templates/plan.md`. The plan is the brief for every worker, so it must be concrete:
 
 - **One entry per PR**, with an ID (`T01`, `U02`...), the issues it closes, a **Touches** line (every file it edits) and an **Acceptance** line (the test that proves it, and how that test fails without the change).
 - **Waves.** Entries in one wave touch different files, so they can be built in parallel without conflicts. A Mermaid diagram of the waves, with a one-line summary.
@@ -84,7 +86,9 @@ For the rest of the plan review, the reviewer checks that claims about the code 
 
 ## Step 2: run one wave
 
-Load the workflow-authoring skill if the session has a Workflow tool. Run `workflow/pr-pipeline.js` with `scriptPath`, one wave per run.
+Run the plugin's `run-wave` workflow, one wave per run: call the Workflow tool with `name: "agent-pr-pipeline:run-wave"` and the arguments below. If that name does not resolve, use `scriptPath: "${CLAUDE_PLUGIN_ROOT}/workflows/run-wave.js"`. Load the workflow-authoring skill only if you change the script.
+
+The workflow starts every agent as its role agent (`agentType: "agent-pr-pipeline:<role>"`). The role rules are in the agent definitions; the workflow's prompts carry only the data: repo, plan, branch, commands, findings.
 
 ### Workflow arguments
 
@@ -123,24 +127,51 @@ Load the workflow-authoring skill if the session has a Workflow tool. Run `workf
 - `skills`: which skills each step's agent loads before it starts. See "Pair skills with steps" below. Default: none.
 - `kind`: `code` (default), `docs` or `plan`. Docs and plan PRs get a Sonnet reviewer at high effort instead of Opus. Plan PRs stop after `planRounds` (default 2); fix what is left by hand, then rerun with `skipImpl`.
 
-Models and effort per step (override any of them in `steps`):
-
-| Step | Model | Effort |
-| --- | --- | --- |
-| `impl`, `fix`, `docs` | sonnet | medium |
-| `test` | sonnet | low |
-| `review` | opus | high |
-| `arch` | opus | high |
-| `product` (plans) | opus | high |
-| `preflight` | haiku | low |
-| `reviewDocs` (docs and plan PRs, and the docs check) | sonnet | high |
-| `open` | sonnet | low |
-| `botWait` | haiku | low |
-| `botAnswer`, `landFix` | sonnet | medium |
+Models and effort per step are in the table under "Role agents". Override a step for the whole wave in `steps`, for example `{ "review": { "model": "opus", "effort": "xhigh" } }`. `reviewDocs` sets the reviewer of docs and plan PRs and the docs check (default sonnet, high).
 
 PR options: `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `resume: { history, minors, findings }` to continue a PR whose rounds ran out. `landFix: true` with `prNumber` runs only the land-fix agent for that PR. `architectureDecision: "..."` carries a person's answer to an architecture escalation into every agent's brief for that PR; the architecture reviewer then checks the PR follows it and does not escalate the same question again. `productDecision: "..."` carries a person's answer to a product-fit escalation in the same way. `sensitive: true` adds a security-review skill to this PR's reviewer (see below). `skills: { ... }` adds skills for this PR only, on top of the wave's `skills`. `docsUpdate: false` skips the docs step for this PR.
 
 The result has one object per PR: `ready`, `prNumber`, `headSha` (the commit the pipeline checked, or the answer agent's push), `land` (the `<pr>:<sha>` pair for the land script), `approvedBy`, `rounds`, `history`, `architecture` (each verdict with its new concepts), `docs` (whether the docs agent changed anything, the files and a summary), `issues`, and `reason` when not ready. With `reason: needs human: architecture` it also has `escalation`: the question, options, recommendation and why. `ready` means the PR is open and the bots are answered; merging is the land script's job.
+
+### Role agents
+
+Each step runs as one agent definition from the plugin. Its body holds the role's rules; its tools are the smallest set the role needs. Reviewers, the tester, the PR opener, the bot waiter and the preflight have no edit tools. No role agent can start other agents.
+
+| Step | Agent | Model | Effort | Tools |
+| --- | --- | --- | --- | --- |
+| `impl` | `implementer` | sonnet | medium | all but Agent; own worktree |
+| `test` | `tester` | sonnet | low | Bash, Read, Glob, Grep, Skill |
+| `review` | `reviewer` | opus (sonnet for docs and plan PRs) | high | Bash, Read, Glob, Grep, Skill |
+| `arch` | `arch-reviewer` | opus | high | Bash, Read, Glob, Grep, Skill |
+| `product` | `product-reviewer` | opus | high | Bash, Read, Glob, Grep, Skill |
+| `fix` | `fixer` | sonnet | medium | all but Agent; own worktree |
+| `docs` | `docs-writer` | sonnet | medium | all but Agent; own worktree |
+| docs check | `docs-reviewer` | sonnet | high | Bash, Read, Glob, Grep, Skill |
+| `open` | `pr-opener` | sonnet | low | Bash, Read, Skill |
+| `botWait` | `bot-waiter` | haiku | low | Bash |
+| `botAnswer` | `bot-answerer` | sonnet | medium | all but Agent; own worktree |
+| `landFix` | `land-fixer` | sonnet | medium | all but Agent; own worktree |
+| `preflight` | `goals-preflight` | haiku | low | Bash, Skill |
+
+Summary: writers get their own worktree and every tool but Agent; checkers get read and shell tools only.
+
+To run one step by hand, start its agent with the Agent tool, for example `subagent_type: "agent-pr-pipeline:reviewer"`. Give it the same data the workflow would: the repo, the plan path, the PR block (id, title, branch, kind, notes), the temp folder and the check commands. Use this for a single re-review or a land fix outside a wave. For a wave, use the workflow: it keeps the loop, the round caps and the result format the land script expects.
+
+`agentPrefix` changes the namespace of the agent types. Set it to `""` if you copy `agents/*.md` into a repo's `.claude/agents/` instead of installing the plugin.
+
+### Cost and the prompt cache
+
+Every agent request is billed by its prompt. A cached prompt prefix costs a tenth of the normal input price (less on the newest models); writing it costs 1.25 times the price. The cache matches the exact prefix, in this order: tools, system prompt, then messages. It lasts 5 minutes after its last use. The plugin is set up so most of each prompt is a cache hit:
+
+- **Role text is in the agent definition.** Every reviewer in a wave has the same system prompt and tools, so their shared prefix is cached once and read by every PR.
+- **Each prompt starts with the wave-wide context** (repo, plan, rules), then the step's commands, then the PR block, then the round data (findings, history). Text that changes most goes last.
+- **Model and effort are fixed per role.** A cache entry belongs to one model. Override a role in `steps` for the whole wave, not per PR.
+- **Tool sets are fixed per role.** A change in tools invalidates the whole prefix. Do not connect or remove MCP servers during a run.
+- **Skills cost the most.** A skill loaded with the Skill tool is new text in each agent's messages, thousands of tokens per agent and per round. Pair a skill only where it changes the result (see below).
+- **Worktree agents miss the shared prefix.** The system prompt holds the working folder, so writers in their own worktree do not share a cache with each other. Checkers work in the session folder and do share it.
+- **Resume, do not restart.** After a failure, resume the run with `resumeFromRunId`: finished agents return their saved results without a new request.
+
+Summary: same role, same model, same tools and the same opening text give cache hits; skills, model changes and per-PR text at the start take them away.
 
 ### Pair skills with steps
 
@@ -169,7 +200,7 @@ Each loaded skill costs thousands of tokens per agent, in every round. Pair a sk
 
 ## Step 3: land and merge from the main session
 
-Workers never merge. Run `scripts/land-wave.sh <owner/repo> <pr>:<sha> <pr>:<sha> ...` with the `land` values from the workflow result. It waits for CI on each PR in order and calls `scripts/merge-pr.sh`, which refuses unless the PR is MERGEABLE, its head is still that sha, every check passed (and there is at least one), and the latest review by a bot login (`BOT_LOGINS` regex, default `coderabbit|gitar|[bot]`) is an approval. The branch is deleted only after GitHub shows MERGED. On `LAND FIX #n`, run the workflow with `{ "id": ..., "branch": ..., "prNumber": n, "landFix": true }`, then run the land script again.
+Workers never merge. Run `${CLAUDE_PLUGIN_ROOT}/scripts/land-wave.sh <owner/repo> <pr>:<sha> <pr>:<sha> ...` with the `land` values from the workflow result. It waits for CI on each PR in order and calls `merge-pr.sh` (in the same folder), which refuses unless the PR is MERGEABLE, its head is still that sha, every check passed (and there is at least one), and the latest review by a bot login (`BOT_LOGINS` regex, default `coderabbit|gitar|[bot]`) is an approval. The branch is deleted only after GitHub shows MERGED. On `LAND FIX #n`, run the workflow with `{ "id": ..., "branch": ..., "prNumber": n, "landFix": true }`, then run the land script again.
 
 After a wave, watch CI on the default branch before starting the next wave or tagging.
 
@@ -183,7 +214,7 @@ After a wave, watch CI on the default branch before starting the next wave or ta
 | `tester or reviewer failed` or agents failed on a usage limit | Resume the same run with `resumeFromRunId`; finished agents replay from cache. |
 | A CI e2e job fails in files the PR does not touch | Rerun the job once. If it fails on the default branch too, it is not this PR's problem: file it. |
 | Bot rate-limited | One bot's approval is enough. If none approved, wait or ask the person. |
-| `refused: goals document missing or incomplete` | Write or finish the goals document with the write-goals skill (or from `templates/goals.md`) in its own PR, merge it, and run again. Do not work around it: the product-fit review has nothing to check against without it. |
+| `refused: goals document missing or incomplete` | Write or finish the goals document with the `agent-pr-pipeline:write-goals` skill (or from the template) in its own PR, merge it, and run again. Do not work around it: the product-fit review has nothing to check against without it. |
 | `needs human: product` | Show the person the question and the per-entry suggestions. Their answer goes in `productDecision`; if it changes the goals, update the goals document in its own small PR first. Cut or deferred entries move out of the plan, with their issues moved to a later milestone. |
 | `needs human: architecture` | Show the person the escalation's question, options and recommendation, as a decision to make, not a fix to approve. If the answer changes the architecture, update the architecture document first (its own small PR). Then rerun the PR with `architectureDecision` set; if its branch exists, add `skipImpl: true` or `resume`. |
 | `docs check: rounds exhausted` | The docs commits still have findings. Fix the docs on the branch yourself, push, and rerun the PR with `skipImpl: true`. The code review replays from cache if the code did not change. |
@@ -206,11 +237,14 @@ After a wave, watch CI on the default branch before starting the next wave or ta
 
 ## Files
 
-- `workflow/pr-pipeline.js`: the workflow script.
+All paths are under `${CLAUDE_PLUGIN_ROOT}`.
+
+- `workflows/run-wave.js`: the workflow script.
+- `agents/*.md`: the role agents.
 - `scripts/land-wave.sh`: wait for CI and merge a wave, reporting PRs that need a land fix.
 - `scripts/merge-pr.sh`, `scripts/merge-wave.sh`: guarded squash-merge from the main session.
-- `templates/goals.md`: the goals document skeleton. Required before the first run.
-- `skills/write-goals/SKILL.md`: a second skill that interviews the maintainer and writes the goals document.
 - `scripts/check-goals.sh`: check the goals document before a run.
+- `skills/write-goals/SKILL.md`: the skill that interviews the maintainer and writes the goals document.
+- `templates/goals.md`: the goals document skeleton. Required before the first run.
 - `templates/plan.md`: plan document skeleton.
 - `templates/AGENTS-section.md`: the loop as repo rules.
