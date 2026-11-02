@@ -39,6 +39,7 @@ flowchart LR
 
 - <Hard rules from AGENTS.md that matter for this plan, in short.>
 - Each PR adds a regression test that fails when the change is removed. The PR description says how that was checked.
+- Each negative test checks that its input really contains what the check looks for. A test that passes because the input never had it proves nothing (for example, a compressed body that no longer holds the literal text).
 - New e2e tests go in new files. Named exceptions: <entry and file>.
 - CHANGELOG: this plan PR adds the `## <version>` heading with one marker per PR, a blank line between each pair. Each PR replaces only its own marker.
 
