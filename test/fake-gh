@@ -4,6 +4,8 @@
 # The fixture for GET /repos/o/r/issues?x=1 is repos__o__r__issues.json (the query is ignored).
 # With --paginate it reads repos__o__r__issues.1.json, .2.json, ... in order; --slurp wraps the pages in one array.
 # --method POST|PUT|PATCH|DELETE reads <name>.<METHOD>.json when it exists and otherwise answers {}.
+# <name>.<METHOD>.error (any method, GET included) holds a message: the call prints it and exits 1.
+# After a write, each line "from to" of <name>.<METHOD>.then copies fixture file from to to (state changes).
 # A path with no fixture exits 1, like a 404. Any other subcommand exits 1.
 log() { [ -n "$FAKE_GH_LOG" ] && echo "$*" >> "$FAKE_GH_LOG"; return 0; }
 if [ "$1" != "api" ]; then log "UNSUPPORTED gh $*"; echo "fake-gh: unsupported: gh $*" >&2; exit 1; fi
@@ -25,6 +27,7 @@ path=${path#/}; path=${path%%\?*}
 name=${path//\//__}
 log "$method /$path${fields//$'\n'/\\n}"
 dir=${FAKE_GH_FIXTURES:?FAKE_GH_FIXTURES not set}
+if [ -f "$dir/$name.$method.error" ]; then cat "$dir/$name.$method.error" >&2; exit 1; fi
 emit() { if [ -n "$jqx" ]; then jq -r "$jqx"; else cat; fi; }
 if [ "$method" = GET ]; then
   if [ "$paginate" = 1 ] && [ -f "$dir/$name.1.json" ]; then
@@ -38,5 +41,8 @@ if [ "$method" = GET ]; then
     exit 0
   fi
   echo "fake-gh: no fixture for GET /$path (HTTP 404)" >&2; exit 1
+fi
+if [ -f "$dir/$name.$method.then" ]; then
+  while read -r from to; do [ -n "$from" ] && cp "$dir/$from" "$dir/$to"; done < "$dir/$name.$method.then"
 fi
 if [ -f "$dir/$name.$method.json" ]; then emit < "$dir/$name.$method.json"; else echo '{}' | emit; fi

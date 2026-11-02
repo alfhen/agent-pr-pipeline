@@ -1,0 +1,13 @@
+{
+  "head": "h1",
+  "bots": "coderabbit|gitar|\\[bot\\]",
+  "checks": [],
+  "reviews": [
+    {"id": 1, "user": {"login": "gitar-bot[bot]"}, "state": "APPROVED", "body": "", "commit_id": "h1", "submitted_at": "2026-01-01T10:00:00Z"},
+    {"id": 2, "user": {"login": "gitar-bot[bot]"}, "state": "COMMENTED", "body": "", "commit_id": "h1", "submitted_at": "2026-01-01T11:00:00Z"}
+  ],
+  "comments": [
+    {"id": 10, "user": {"login": "gitar-bot[bot]"}, "in_reply_to_id": null, "pull_request_review_id": 0},
+    {"id": 11, "user": {"login": "gitar-bot[bot]"}, "in_reply_to_id": 10, "pull_request_review_id": 2}
+  ]
+}
