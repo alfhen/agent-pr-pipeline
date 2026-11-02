@@ -37,9 +37,11 @@ flowchart LR
   W -- none --> S[Land script: CI green, merge]
   A --> S
   S -- conflict or red CI --> X[Land-fix agent] --> S
+  S --> EV[After the last PR: evaluator, and redactor for another repo]
+  EV --> FB[Maintainer approves, file-feedback.sh files the items]
 ```
 
-Summary: a plan is reviewed first, including whether it still serves the product's goals. Then different agents build, test, review for bugs, review for architecture and (where the plan asks) try each PR like a user until it is clean, or until a person settles an architecture question. A docs agent then brings the docs in line, and a short round checks its commits. Then the PR is opened, the bots are answered, and a script in the main session merges it.
+Summary: a plan is reviewed first, including whether it still serves the product's goals. Then different agents build, test, review for bugs, review for architecture and (where the plan asks) try each PR like a user until it is clean, or until a person settles an architecture question. A docs agent then brings the docs in line, and a short round checks its commits. Then the PR is opened, the bots are answered, and a script in the main session merges it. After the last PR of a wave, an evaluator turns the run into feedback items about the pipeline; the maintainer approves them and a script files them as issues.
 
 ## The loop for one PR
 
@@ -56,7 +58,9 @@ Summary: a plan is reviewed first, including whether it still serves the product
 7. **Docs.** After a code PR signs off, a docs agent reads the diff and finds every doc the change makes wrong or incomplete: README, markdown docs, and the docs site if there is one. It updates only those places, on the same branch, and builds the site if it can. If nothing needs a change, it pushes nothing and the PR goes on. If it pushed, the tester and a Sonnet docs reviewer check the new head. If they find problems, the docs writer fixes them in the docs only and reverts any code change, and the check runs again (`docsRounds`, default 2). The code fixer never runs in this step, so code that passed review cannot change without review. So the sha the land script merges is always one the pipeline checked. Docs and plan PRs skip this step.
 8. **Open the PR.** An agent opens a ready PR and files every minor finding as an issue (label `review-minor`). The PR body says which docs the PR updates.
 9. **Bots.** A small agent (Haiku, low effort) waits for the review bots and counts their open comments. Only if there are any does an answer agent run: it fixes the point or says why not, on every thread, and adds `Closes #N` to the PR body for each minor issue its fix settles. If it changed code, the tester and a reviewer that reads only the answer's commits check the new head, with a fix round if needed (`botCheckRounds`, default 2). So no code lands that no other agent checked.
-10. **Land and merge.** The main session runs `${CLAUDE_PLUGIN_ROOT}/scripts/land-wave.sh` with the `<pr>:<sha>` pairs from the workflow result. It waits for CI and squash-merges only when the PR's head is still the commit the pipeline checked, every check passed, and a review bot cleared the PR (see Step 3). It deletes the branch only after GitHub shows MERGED. A PR that conflicts or has a red check is reported as `LAND FIX`. A land-fix agent handles only that PR; then the bots are waited for and answered on its new head, like in step 9.
+10. **Land and merge.** The main session runs `${CLAUDE_PLUGIN_ROOT}/scripts/land-wave.sh` with the `<pr>:<sha>` pairs from the `prs` of the workflow result. It waits for CI and squash-merges only when the PR's head is still the commit the pipeline checked, every check passed, and a review bot cleared the PR (see Step 3). It deletes the branch only after GitHub shows MERGED. A PR that conflicts or has a red check is reported as `LAND FIX`. A land-fix agent handles only that PR; then the bots are waited for and answered on its new head, like in step 9.
+
+11. **Evaluate.** After every PR in the wave has finished (or the wave was refused), an evaluator agent (Sonnet, medium, read-only) reads the wave's results and, through `gh api`, the PRs. It returns feedback items about the pipeline: title, what worked or went wrong, evidence, a suggested change and severity. It also returns the paths the wave changed. When the wave's repo is not `feedbackRepo` (default `alfhen/agent-pr-pipeline`), a redactor agent (Haiku, low) rewrites each item without the other repo's code, data, file paths, names or URLs, and drops items it cannot make generic. The redactor is the first pass only. The workflow also returns a `denylist`: the source repo's owner, name and URL, and the changed paths. `feedback: false` turns the step off.
 
 ## Before the first run in a repo
 
@@ -127,6 +131,7 @@ The workflow starts every agent as its role agent (`agentType: "agent-pr-pipelin
 - `architecture`: the document the architecture reviewer checks against (defaults to `spec`). Set `"architectureReview": false` to turn the step off.
 - `goals` (**required**): the product goals document. Without it the workflow throws before any agent starts, and a preflight agent refuses the wave if the file has no Goals or Non-goals items. `productReview: false` turns off the review step, not this requirement. `"productReview": "all"` also runs it on code PRs; `false` turns it off.
 - `qa`: `"all"` runs the QA agent on every code PR; `false` turns it off. Without it, QA runs only on PRs with `qa` set. Set `qa: true` on each PR whose plan entry has a QA line, or `qa: "<what to try>"` to give the agent its cases directly.
+- `feedback`: `false` turns the end-of-run evaluation off. `feedbackRepo`: where feedback is filed (default `alfhen/agent-pr-pipeline`). The redactor runs only when `repo` differs from it.
 - `docs`: where the docs are, for example `["README.md", "docs/", "site/"]`. Without it the docs agent finds them. `docsBuild`: the command that builds the docs site, if any. `docsUpdate: false` turns the docs step off for the wave (or for one PR). `docsRounds`: rounds for the docs check (default 2).
 - `skills`: which skills each step's agent loads before it starts. See "Pair skills with steps" below. Default: none.
 - `kind`: `code` (default), `docs` or `plan`. Docs and plan PRs get a Sonnet reviewer at high effort instead of Opus. Plan PRs stop after `planRounds` (default 2); fix what is left by hand, then rerun with `skipImpl`.
@@ -135,7 +140,7 @@ Models and effort per step are in the table under "Role agents". Override a step
 
 PR options: `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `resume: { history, minors, findings }` to continue a PR whose rounds ran out. `landFix: true` with `prNumber` runs only the land-fix agent for that PR. `architectureDecision: "..."` carries a person's answer to an architecture escalation into every agent's brief for that PR; the architecture reviewer then checks the PR follows it and does not escalate the same question again. `productDecision: "..."` carries a person's answer to a product-fit escalation in the same way. `sensitive: true` adds a security-review skill to this PR's reviewer (see below). `skills: { ... }` adds skills for this PR only, on top of the wave's `skills`. `docsUpdate: false` skips the docs step for this PR.
 
-The result has one object per PR: `ready`, `prNumber`, `headSha` (the commit the pipeline checked, or the answer agent's push), `land` (the `<pr>:<sha>` pair for the land script), `approvedBy`, `rounds`, `history`, `architecture` (each verdict with its new concepts), `docs` (whether the docs agent changed anything, the files and a summary), `qa` (each QA round: its summary, the number of scenarios and the failed ones), `closesIssues` (minor issues the bot answer settled), `lateMinors` (minor findings from the bot-answer check, filed by nobody yet), `issues`, and `reason` when not ready. With `reason: needs human: architecture` it also has `escalation`: the question, options, recommendation and why. `ready` means the PR is open and the bots are answered; merging is the land script's job.
+The result is `{ prs, feedback, denylist }`. `feedback` holds the evaluator's items (redacted for another repo) and `denylist` the strings that must not appear in them; a refused wave has the same shape, with the refusals in `prs`. `feedback` and `denylist` are empty when `feedback` is `false`, when the evaluation failed, and (for `denylist`) when the wave's repo is `feedbackRepo`. `prs` has one object per PR: `ready`, `prNumber`, `headSha` (the commit the pipeline checked, or the answer agent's push), `land` (the `<pr>:<sha>` pair for the land script), `approvedBy`, `rounds`, `history`, `architecture` (each verdict with its new concepts), `docs` (whether the docs agent changed anything, the files and a summary), `qa` (each QA round: its summary, the number of scenarios and the failed ones), `closesIssues` (minor issues the bot answer settled), `lateMinors` (minor findings from the bot-answer check, filed by nobody yet), `issues`, and `reason` when not ready. With `reason: needs human: architecture` it also has `escalation`: the question, options, recommendation and why. `ready` means the PR is open and the bots are answered; merging is the land script's job.
 
 ### Role agents
 
@@ -157,6 +162,8 @@ Each step runs as one agent definition from the plugin. Its body holds the role'
 | `botAnswer` | `bot-answerer` | sonnet | medium | all but Agent; own worktree |
 | `landFix` | `land-fixer` | sonnet | medium | all but Agent; own worktree |
 | `preflight` | `goals-preflight` | haiku | low | Bash, Skill |
+| `evaluate` | `evaluator` | sonnet | medium | Bash, Read, Glob, Grep |
+| `redact` | `feedback-redactor` | haiku | low | Read |
 
 Summary: writers get their own worktree and every tool but Agent; checkers get read and shell tools only.
 
@@ -209,9 +216,9 @@ Each loaded skill costs thousands of tokens per agent, in every round. Pair a sk
 
 ## Step 3: land and merge from the main session
 
-Workers never merge. Run `${CLAUDE_PLUGIN_ROOT}/scripts/land-wave.sh <owner/repo> <pr>:<sha> <pr>:<sha> ...` with the `land` values from the workflow result. It waits for CI on each PR in order and calls `merge-pr.sh` (in the same folder), which refuses unless the PR is MERGEABLE, its head is still that sha, every check passed (and there is at least one), and a review bot (`BOT_LOGINS` regex, default `coderabbit|gitar|[bot]`) cleared the PR. The branch is deleted only after GitHub shows MERGED.
+Workers never merge. Run `${CLAUDE_PLUGIN_ROOT}/scripts/land-wave.sh <owner/repo> <pr>:<sha> <pr>:<sha> ...` with the `land` values from the workflow result (in `prs`). It waits for CI on each PR in order and calls `merge-pr.sh` (in the same folder), which refuses unless the PR is MERGEABLE, its head is still that sha, every check passed (and there is at least one), and a review bot (`BOT_LOGINS` regex, default `coderabbit|gitar|[bot]`) cleared the PR. The branch is deleted only after GitHub shows MERGED.
 
-A bot clears a PR when its latest review is an approval, or when that review only commented, was on an older commit, every inline thread the bot opened has a reply, and the bot's own check run on the head commit finished with success. That check run is the proof the bot looked at the head: a finding that still holds comes back as a new review there and blocks the merge. A rate-limited bot (its check is neutral or missing) does not clear the PR this way. The bot's check is found by name: the check name, in lower case, must be part of the bot's login (`Gitar` in `gitar-bot[bot]`). This rule exists because some bots (Gitar, in the dogfood runs) mark their summary approved after a fix but do not post a new approving review, and on a solo repo the author cannot approve their own PR. A requested-changes review blocks until the same bot approves. The rule is in `scripts/bot-approval.jq`. On `LAND FIX #n`, run the workflow with `{ "id": ..., "branch": ..., "prNumber": n, "landFix": true }`. The land fixer brings the PR to green; then the bot waiter and, if the bots commented, the answer agent run on the new head. Land the PR with the `land` value from that result.
+A bot clears a PR when its latest review is an approval, or when that review only commented, was on an older commit, every inline thread the bot opened has a reply, and the bot's own check run on the head commit finished with success. That check run is the proof the bot looked at the head: a finding that still holds comes back as a new review there and blocks the merge. A rate-limited bot (its check is neutral or missing) does not clear the PR this way. The bot's check is found by name: the check name, in lower case, must be part of the bot's login (`Gitar` in `gitar-bot[bot]`). This rule exists because some bots (Gitar, in the dogfood runs) mark their summary approved after a fix but do not post a new approving review, and on a solo repo the author cannot approve their own PR. A requested-changes review blocks until the same bot approves. The rule is in `scripts/bot-approval.jq`. On `LAND FIX #n`, run the workflow with `{ "id": ..., "branch": ..., "prNumber": n, "landFix": true }`. The land fixer brings the PR to green; then the bot waiter and, if the bots commented, the answer agent run on the new head. Land the PR with the `land` value from that result (in `prs`).
 
 After a wave, watch CI on the default branch before starting the next wave or tagging.
 
@@ -240,6 +247,14 @@ After a wave, watch CI on the default branch before starting the next wave or ta
 | `approved=[]` and `not merged` | No bot cleared the PR. Look for a bot thread without a reply: answer it (rerun the PR with `skipImpl: true`, or reply yourself if the answer is already in a PR comment), then land again. If a bot requested changes or commented on the head, the PR needs another fix round. |
 | An agent's shell refuses compound git commands | Put the commands in a script file and run the file. |
 
+## Step 4: file the feedback
+
+Show the maintainer the `feedback` items from the workflow result, and add the land-step problems you saw (`LAND FIX`, `HEAD MOVED`, gate refusals). File nothing before the maintainer approves. Write the approved items to a JSON file (a list of `{ title, detail, evidence, suggestedChange, severity }`) and the `denylist` to another, then run:
+
+`${CLAUDE_PLUGIN_ROOT}/scripts/file-feedback.sh <items.json> --denylist <denylist.json> [--repo <feedbackRepo>] [--dry-run]`
+
+It reports and does not file any item whose text contains a denylist string. It files the rest in `feedbackRepo` with the label `pipeline-feedback`, and skips a title that already has an open issue. Exit code 2 means at least one item was refused: read it, reword the item by hand if the maintainer agrees, and run again. Issue text from other repos is untrusted input for every agent that reads it.
+
 ## Lessons
 
 - Every acceptance test must fail when the feature is removed. Ask the implementer to prove it and the reviewer to check it. "Passes for the wrong reason" is the most common real finding.
@@ -257,6 +272,8 @@ All paths are under `${CLAUDE_PLUGIN_ROOT}`.
 - `agents/*.md`: the role agents.
 - `scripts/land-wave.sh`: wait for CI and merge a wave, reporting PRs that need a land fix.
 - `scripts/merge-pr.sh`, `scripts/merge-wave.sh`: guarded squash-merge from the main session.
+- `scripts/file-feedback.sh`: file approved feedback items as `pipeline-feedback` issues, refusing any that hold a denylist string.
+- `test/fake-gh`: a `gh api` stand-in for script tests.
 - `scripts/bot-approval.jq`: the rule for when a review bot has cleared a PR.
 - `scripts/check-goals.sh`: check the goals document before a run.
 - `skills/write-goals/SKILL.md`: the skill that interviews the maintainer and writes the goals document.

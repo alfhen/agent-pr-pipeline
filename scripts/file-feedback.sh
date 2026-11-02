@@ -1,0 +1,55 @@
+#!/bin/bash
+# usage: file-feedback.sh <feedback.json> --denylist <denylist.json> [--repo <owner/name>] [--dry-run]
+# Files each feedback item as an issue with the label pipeline-feedback in --repo (default
+# alfhen/agent-pr-pipeline). <feedback.json> is a list of { title, detail, evidence, suggestedChange, severity };
+# <denylist.json> is a list of strings. An item whose text contains a denylist string (any case) is reported
+# as REFUSED and never filed. A title that already has an open pipeline-feedback issue is skipped.
+# Exit: 0 all done, 1 error, 2 at least one item refused. Uses gh api REST calls only.
+set -u
+file=""; deny=""; repo="alfhen/agent-pr-pipeline"; dry=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --denylist) deny=$2; shift 2 ;;
+    --repo) repo=$2; shift 2 ;;
+    --dry-run) dry=1; shift ;;
+    -*) echo "unknown option $1"; exit 1 ;;
+    *) file=$1; shift ;;
+  esac
+done
+[ -n "$file" ] && [ -n "$deny" ] || { echo "usage: file-feedback.sh <feedback.json> --denylist <denylist.json> [--repo <owner/name>] [--dry-run]"; exit 1; }
+jq -e 'type == "array"' "$file" >/dev/null 2>&1 || { echo "$file is not a JSON list"; exit 1; }
+jq -e 'type == "array" and all(.[]; type == "string")' "$deny" >/dev/null 2>&1 || { echo "$deny is not a JSON list of strings"; exit 1; }
+
+# Fail closed: without the list of open issues, a duplicate could be filed.
+open=$(gh api --paginate --slurp "repos/$repo/issues?state=open&labels=pipeline-feedback&per_page=100") || { echo "cannot list open issues in $repo"; exit 1; }
+titles=$(jq -c '[add // [] | .[] | select(has("pull_request") | not) | .title | ascii_downcase | gsub("^\\s+|\\s+$"; "")]' <<<"$open") || exit 1
+
+status=0
+seen='[]'
+count=$(jq length "$file")
+for ((i = 0; i < count; i++)); do
+  item=$(jq -c ".[$i]" "$file")
+  title=$(jq -r '.title // ""' <<<"$item")
+  [ -n "$title" ] || { echo "REFUSED item $i: no title"; status=2; continue; }
+  hit=$(jq -r --slurpfile deny "$deny" '[.. | strings] | join("\n") | ascii_downcase as $text
+    | [$deny[0][] | select(length > 0) | select(. as $d | $text | contains($d | ascii_downcase))] | first // empty' <<<"$item")
+  if [ -n "$hit" ]; then
+    echo "REFUSED $title: contains \"$hit\""
+    status=2
+    continue
+  fi
+  key=$(jq -r 'ascii_downcase | gsub("^\\s+|\\s+$"; "")' <<<"$(jq -Rn --arg t "$title" '$t')")
+  if jq -e --arg k "$key" 'index($k) != null' <<<"$titles" >/dev/null || jq -e --arg k "$key" 'index($k) != null' <<<"$seen" >/dev/null; then
+    echo "SKIP duplicate: $title"
+    continue
+  fi
+  seen=$(jq -c --arg k "$key" '. + [$k]' <<<"$seen")
+  body=$(jq -r '"Severity: \(.severity // "unrated")\n\n\(.detail // "")\n\nEvidence: \(.evidence // "none")\n\nSuggested change: \(.suggestedChange // "none")\n\nFiled by the end-of-run evaluation."' <<<"$item")
+  if [ "$dry" = 1 ]; then
+    echo "WOULD FILE $title [pipeline-feedback] in $repo"
+    continue
+  fi
+  url=$(gh api --method POST "repos/$repo/issues" -f "title=$title" -f "body=$body" -f "labels[]=pipeline-feedback" --jq .html_url) || { echo "FAILED $title"; status=1; continue; }
+  echo "FILED $title $url"
+done
+exit $status

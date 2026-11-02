@@ -9,10 +9,17 @@ const run = new Function('args', 'agent', 'parallel', 'log', `return (async () =
 let calls = []
 let preflight
 let failWait = false
+const ITEMS = [
+  { title: 'Bot wait reports pending', detail: 'd', evidence: 'C1 botwait', suggestedChange: 'c', severity: 'major' },
+  { title: 'Docs step has no timeout', detail: 'd', evidence: 'e', suggestedChange: 'c', severity: 'minor' },
+]
+let evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'README.md'] }
 const agent = async (prompt, o) => {
   calls.push({ label: o.label, model: o.model, effort: o.effort, agentType: o.agentType, isolation: o.isolation, prompt })
   const id = o.label.split(':')[1].split('#')[0]
   if (o.label.startsWith('preflight')) return preflight
+  if (o.label.startsWith('evaluate')) return evaluation
+  if (o.label.startsWith('redact')) return { items: JSON.parse(prompt.slice(prompt.indexOf('[{'))) }
   if (o.label.startsWith('product')) {
     if (id === 'P2') return { verdict: 'escalate', summary: 's', entries: [{ entry: 'V04 MCP server', fit: 'widens-scope', suggestion: 'cut' }], escalation: { question: 'Keep the product CLI only?', recommendation: 'cut V04' } }
     if (id === 'P3') return { verdict: 'notes', summary: 's', entries: [{ entry: 'H08', fit: 'widens-scope', note: 'polish', suggestion: 'defer' }] }
@@ -68,17 +75,20 @@ const PRS = [
 ]
 const base = { repo: 'o/r', tmp: '/x', plan: 'docs/p.md', architecture: 'docs/design.md', goals: 'docs/goals.md', prs: PRS }
 const GOOD = { ok: true, exists: true, goals: 3, nonGoals: 2, missing: [] }
+let lastResult
 const simulate = async (args, pre = GOOD) => {
   calls = []
   preflight = pre
   const out = await run(args, agent, parallel, log)
-  return Object.fromEntries(out.map(r => [r.id, r]))
+  lastResult = out
+  return Object.fromEntries(out.prs.map(r => [r.id, r]))
 }
 const check = async (name, fn) => { await fn(); console.log('ok  ' + name) }
 
 // Main run: every path except the failures.
 const r = await simulate(base)
 const mainCalls = calls
+const mainResult = lastResult
 await check('clean code PR lands at the tested sha', () => {
   assert.equal(r.C1.ready, true)
   assert.equal(r.C1.land.split(':')[1], 'sha-C1')
@@ -223,15 +233,78 @@ await check('failed bot wait is not ready', () => {
 })
 
 const refused = await simulate(base, { ok: false, exists: true, goals: 2, nonGoals: 0, missing: ['Non-goals items'] })
+const refusedResult = lastResult
+const refusedCalls = calls
 await check('incomplete goals refuse the wave after one agent', () => {
   assert.ok(Object.values(refused).every(x => x.refused && !x.ready))
   assert.match(refused.C1.reason, /Non-goals items/)
-  assert.equal(calls.length, 1)
+  assert.deepEqual(calls.map(c => c.label), ['preflight:goals', 'evaluate:wave', 'redact:wave'])
 })
 
 await check('missing goals argument throws before any agent', () => {
   calls = []
   return assert.rejects(run({ ...base, goals: undefined }, agent, parallel, log), /args needs goals/)
+})
+
+// End-of-run evaluation and feedback.
+const lastIndex = (cs, re) => cs.map(c => re.test(c.label)).lastIndexOf(true)
+await check('the evaluator runs once per wave, after the last PR, on sonnet/medium', () => {
+  const ev = mainCalls.filter(c => c.label.startsWith('evaluate'))
+  assert.equal(ev.length, 1)
+  assert.equal(mainCalls.indexOf(ev[0]), mainCalls.length - 2)
+  assert.ok(mainCalls.indexOf(ev[0]) > lastIndex(mainCalls, /^(?!evaluate|redact)/))
+  assert.equal(`${ev[0].model}/${ev[0].effort}`, 'sonnet/medium')
+  assert.match(ev[0].prompt, /"id":"C1"/)
+  assert.match(ev[0].prompt, /repos\/o\/r\/pulls\/<n>\/files/)
+})
+await check('the result has the shape { prs, feedback, denylist }', () => {
+  assert.deepEqual(Object.keys(mainResult).sort(), ['denylist', 'feedback', 'prs'])
+  assert.ok(Array.isArray(mainResult.prs) && mainResult.prs.length === PRS.length)
+})
+await check('for another repo the redactor runs once on haiku/low, its prompt names the repo to remove, and its output is the feedback', () => {
+  const red = mainCalls.filter(c => c.label.startsWith('redact'))
+  assert.equal(red.length, 1)
+  assert.equal(`${red[0].model}/${red[0].effort}`, 'haiku/low')
+  assert.match(red[0].prompt, /the owner "o"/)
+  assert.match(red[0].prompt, /the name "r"/)
+  assert.match(red[0].prompt, /source repo o\/r:/)
+  assert.ok(red[0].prompt.includes(JSON.stringify(ITEMS)))
+  assert.deepEqual(mainResult.feedback, ITEMS)
+})
+await check('the denylist holds the repo owner, name, URL and the changed paths', () => {
+  assert.deepEqual(mainResult.denylist, ['o', 'r', 'o/r', 'https://github.com/o/r', 'src/billing/invoice.ts', 'README.md'])
+})
+await check('for the feedback repo itself there is no redactor and the denylist is empty', async () => {
+  await simulate({ ...base, repo: 'alfhen/agent-pr-pipeline' })
+  assert.ok(!calls.some(c => c.label.startsWith('redact')))
+  assert.equal(calls.filter(c => c.label.startsWith('evaluate')).length, 1)
+  assert.deepEqual(lastResult.denylist, [])
+  assert.equal(lastResult.feedback.length, 2)
+})
+await check('feedbackRepo makes another repo the target', async () => {
+  await simulate({ ...base, repo: 'x/y', feedbackRepo: 'x/y' })
+  assert.ok(!calls.some(c => c.label.startsWith('redact')))
+})
+await check('feedback false turns the step off and keeps the result shape', async () => {
+  await simulate({ ...base, feedback: false })
+  assert.ok(!calls.some(c => /^(evaluate|redact)/.test(c.label)))
+  assert.deepEqual(lastResult.feedback, [])
+  assert.deepEqual(lastResult.denylist, [])
+  assert.equal(lastResult.prs.length, PRS.length)
+})
+await check('a failed evaluation gives no feedback and does not fail the wave', async () => {
+  evaluation = null
+  await simulate(base)
+  evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'README.md'] }
+  assert.deepEqual(lastResult.feedback, [])
+  assert.ok(!calls.some(c => c.label.startsWith('redact')))
+  assert.equal(lastResult.prs.length, PRS.length)
+})
+await check('a refused wave still gets an evaluation, with the refusals in prs', () => {
+  assert.deepEqual(refusedResult.feedback, ITEMS)
+  assert.deepEqual(Object.keys(refusedResult).sort(), ['denylist', 'feedback', 'prs'])
+  assert.ok(refusedResult.prs.every(x => x.refused))
+  assert.match(refusedCalls.find(c => c.label === 'evaluate:wave').prompt, /"refused":true/)
 })
 
 // Skill pairing.
@@ -248,7 +321,7 @@ const prsWithSkills = PRS.map(pr =>
     : pr.id === 'D1' ? { ...pr, skills: { impl: ['humanizer:humanizer'], review: ['humanizer:humanizer'] } }
       : pr)
 await simulate({ ...base, skills: SKILLS, prs: prsWithSkills })
-const STEP_OF = { botreview: 'review', qa: 'qa', docs: 'docs', docsfix: 'docs', docsreview: 'docs', implement: 'impl', test: 'test', review: 'review', arch: 'arch', product: 'product', fix: 'fix', open: 'open', botwait: 'botWait', botanswer: 'botAnswer', landfix: 'landFix', preflight: 'preflight' }
+const STEP_OF = { botreview: 'review', qa: 'qa', docs: 'docs', docsfix: 'docs', docsreview: 'docs', implement: 'impl', test: 'test', review: 'review', arch: 'arch', product: 'product', fix: 'fix', open: 'open', botwait: 'botWait', botanswer: 'botAnswer', landfix: 'landFix', preflight: 'preflight', evaluate: 'evaluate', redact: 'redact' }
 const expected = c => {
   const step = STEP_OF[c.label.split(':')[0]]
   const id = c.label.split(':')[1].split('#')[0]
@@ -298,7 +371,7 @@ const frontmatter = name => {
   const text = readFileSync(new URL(`agents/${name}.md`, root), 'utf8')
   return Object.fromEntries(text.split('---')[1].trim().split('\n').map(l => [l.slice(0, l.indexOf(':')), l.slice(l.indexOf(':') + 1).trim()]))
 }
-const AGENT_OF = { botreview: 'reviewer', qa: 'qa', docsfix: 'docs-writer', implement: 'implementer', test: 'tester', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight' }
+const AGENT_OF = { botreview: 'reviewer', qa: 'qa', docsfix: 'docs-writer', implement: 'implementer', test: 'tester', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight', evaluate: 'evaluator', redact: 'feedback-redactor' }
 const WRITERS = ['implementer', 'fixer', 'docs-writer', 'bot-answerer', 'land-fixer']
 await simulate(base)
 await check('every call names its role agent from the plugin', () => {

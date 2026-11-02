@@ -7,9 +7,9 @@ It grew out of building [Tagreeve](https://github.com/alfhen/tagreeve) (first ca
 ## What is in it
 
 - **Skills.** `pr-pipeline` runs the loop: plan, waves, land and merge. `write-goals` interviews the maintainer and writes the product goals document that the pipeline needs before its first run.
-- **Role agents.** `implementer`, `tester`, `reviewer`, `qa`, `arch-reviewer`, `product-reviewer`, `fixer`, `docs-writer`, `docs-reviewer`, `pr-opener`, `bot-waiter`, `bot-answerer`, `land-fixer` and `goals-preflight`. Each has its own rules, model, effort and the smallest tool set its role needs.
+- **Role agents.** `implementer`, `tester`, `reviewer`, `qa`, `arch-reviewer`, `product-reviewer`, `fixer`, `docs-writer`, `docs-reviewer`, `pr-opener`, `bot-waiter`, `bot-answerer`, `land-fixer`, `goals-preflight`, `evaluator` and `feedback-redactor`. Each has its own rules, model, effort and the smallest tool set its role needs.
 - **Workflow.** `run-wave` runs one wave of PRs through the loop with the role agents.
-- **Scripts and templates.** The land and merge scripts, the goals check, and the plan, goals and `AGENTS.md` templates.
+- **Scripts and templates.** The land and merge scripts, the goals check, `scripts/file-feedback.sh`, and the plan, goals and `AGENTS.md` templates.
 
 ## Install
 
@@ -50,7 +50,8 @@ Ask Claude Code to plan and build a release or a set of issues with the pipeline
 1. triage the issues against the code,
 2. write a plan with waves, Touches and Acceptance lines, and put the plan through review,
 3. run each wave with the `run-wave` workflow,
-4. land the ready PRs with `scripts/land-wave.sh`, which merges only the commit the pipeline checked, with green CI and a review bot's approval (or its comments answered and nothing new raised).
+4. land the ready PRs with `scripts/land-wave.sh`, which merges only the commit the pipeline checked, with green CI and a review bot's approval (or its comments answered and nothing new raised),
+5. show the maintainer the feedback items from the end-of-run evaluation and, after approval, file them with `scripts/file-feedback.sh`. For a wave in another repo, a redactor and a denylist keep that repo's details out of the issues.
 
 Read [skills/pr-pipeline/SKILL.md](skills/pr-pipeline/SKILL.md) for the loop, the workflow arguments, the role agents, cost and caching, and what to do when a step fails.
 
@@ -64,7 +65,7 @@ Read [skills/pr-pipeline/SKILL.md](skills/pr-pipeline/SKILL.md) for the loop, th
 
 - Load your working copy without installing: `claude --plugin-dir .`
 - Check the manifests: `claude plugin validate .` and `claude plugin validate .claude-plugin/plugin.json`
-- Simulate the workflow with a fake `agent()`: `node test/sim-pipeline.mjs`. Run it after every change to `workflows/run-wave.js` or `agents/`.
+- Simulate the workflow with a fake `agent()`: `node test/sim-pipeline.mjs`. Run it after every change to `workflows/run-wave.js` or `agents/`. Script tests: `node --test test/*.test.mjs`.
 
 ## Explainer
 
