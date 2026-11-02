@@ -169,6 +169,7 @@ Every agent request is billed by its prompt. A cached prompt prefix costs a tent
 - **Tool sets are fixed per role.** A change in tools invalidates the whole prefix. Do not connect or remove MCP servers during a run.
 - **Skills cost the most.** A skill loaded with the Skill tool is new text in each agent's messages, thousands of tokens per agent and per round. Pair a skill only where it changes the result (see below).
 - **Worktree agents miss the shared prefix.** The system prompt holds the working folder, so writers in their own worktree do not share a cache with each other. Checkers work in the session folder and do share it.
+- **Only the land fixer keeps its cache for an hour.** It waits on CI for longer than 5 minutes, and after such a wait its next request would write its whole history again. Its definition sets `experimental.cacheTtl: 1h` (Claude Code 2.1.248 or later). A 1-hour write costs 2 times the input price instead of 1.25, so the other roles, which take turns well inside 5 minutes, keep the default. If a repo's checks run longer than 5 minutes, give the tester and implementer the same setting. The `subagentPromptCacheTtl` setting overrides it, and Claude Code ignores it while a subscription draws on usage credits.
 - **Resume, do not restart.** After a failure, resume the run with `resumeFromRunId`: finished agents return their saved results without a new request.
 
 Summary: same role, same model, same tools and the same opening text give cache hits; skills, model changes and per-PR text at the start take them away.

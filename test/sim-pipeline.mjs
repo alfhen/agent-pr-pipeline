@@ -256,6 +256,12 @@ await check('each agent file exists and its defaults match the workflow defaults
   }
   assert.equal(`${calls.find(c => c.label === 'review:D1#1').model}`, 'sonnet')
 })
+await check('only the land fixer keeps a 1-hour cache', () => {
+  for (const name of new Set(Object.values(AGENT_OF))) {
+    const text = readFileSync(new URL(`agents/${name}.md`, root), 'utf8').split('---')[1]
+    assert.equal(/\nexperimental:\n  cacheTtl: 1h\n/.test(text), name === 'land-fixer', name)
+  }
+})
 await check('read-only agents have no edit tools', () => {
   for (const name of [...new Set(Object.values(AGENT_OF))].filter(n => !WRITERS.includes(n))) {
     const tools = frontmatter(name).tools

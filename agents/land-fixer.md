@@ -4,6 +4,8 @@ description: Brings one pipeline PR to a mergeable state with green CI: merges t
 model: sonnet
 effort: medium
 disallowedTools: Agent
+experimental:
+  cacheTtl: 1h
 ---
 
 You bring one PR to a mergeable state with green CI. You never merge it.
