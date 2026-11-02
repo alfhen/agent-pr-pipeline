@@ -101,7 +101,7 @@ const docsRuns = pr => pr.kind !== 'docs' && pr.kind !== 'plan' && A.docsUpdate 
 const DOCS_ROUNDS = A.docsRounds || 2
 const BOT_CHECK_ROUNDS = A.botCheckRounds || 2
 const qaRuns = pr => pr.kind !== 'docs' && pr.kind !== 'plan' && A.qa !== false && pr.qa !== false && (A.qa === 'all' || !!pr.qa)
-const archRuns = pr => pr.kind !== 'docs' && !!ARCH && A.architectureReview !== false && !pr.skipArch
+const archRuns = pr => pr.kind !== 'docs' && !!ARCH && A.architectureReview !== false && !(pr.quickState && pr.quickState.skipArch)
 const decided = pr => (pr.architectureDecision ? `\nArchitecture decision by the maintainer for this PR (settled; follow it): ${pr.architectureDecision}` : '')
   + (pr.productDecision ? `\nProduct scope decision by the maintainer for this PR (settled; follow it): ${pr.productDecision}` : '')
 const AGENT_PREFIX = A.agentPrefix === undefined ? 'agent-pr-pipeline:' : A.agentPrefix
@@ -317,7 +317,7 @@ const IO = {
 
 const fastText = FAST_CHECKS.map(c => `\`${c}\``).join(', ')
 const ownE2e = `the e2e test files this branch adds or changes (\`git diff --name-only --diff-filter=d origin/HEAD...HEAD | grep -E '${E2E_PATTERN}'\`), run with \`${E2E_COMMAND}\` where {files} is that list; skip this when the list is empty. Do not run the full e2e suite`
-const prBlock = pr => `PR: ${pr.id} - ${pr.title}\nBranch: ${pr.branch}\nKind: ${pr.kind || 'code'}${pr.brief ? `\nQuick-fix entry (the brief for this PR, from issue #${pr.quick.issue}):\n${pr.brief}` : ''}\nNotes for this PR:\n${pr.notes || '(none)'}${decided(pr)}`
+const prBlock = pr => `PR: ${pr.id} - ${pr.title}\nBranch: ${pr.branch}\nKind: ${pr.kind || 'code'}${pr.quickState ? `\nQuick-fix entry (the brief for this PR, from issue #${pr.quick.issue}):\n${pr.quickState.brief}` : ''}\nNotes for this PR:\n${pr.notes || '(none)'}${decided(pr)}`
 const cloneTo = (dir, pr) => `\`rm -rf ${TMP}/${dir} && git clone https://github.com/${REPO}.git ${TMP}/${dir} && cd ${TMP}/${dir} && git checkout ${pr.branch}\``
 const freshBranch = (prefix, pr, n) => `\`git fetch origin && git checkout -B ${prefix}-${pr.id}-r${n} origin/${pr.branch}\` (a new local name, because another worktree may hold ${pr.branch}). Push with \`git push origin HEAD:${pr.branch}\`.`
 
@@ -495,15 +495,30 @@ ${prBlock(pr)}`
 
 const entryText = (t, e) => `Touches: ${e.touches}\nAcceptance: ${e.acceptance}${e.qa ? `\nQA: ${e.qa}` : ''}\nTriage: size ${t.size}, risk ${t.risk}, new concepts: ${(t.newConcepts || []).join('; ') || 'none'}`
 // S and low risk get two rounds and no architecture review, unless the triager named a new concept.
-const scaleOf = pr => {
-  const small = /^Triage: size S, risk low, new concepts: (.*)$/m.exec(pr.brief)
-  return { ...pr, ...(small ? { skipArch: small[1].trim() === 'none', maxRounds: pr.maxRounds || 2 } : {}) }
+const withBrief = (pr, brief) => {
+  const small = /^Triage: size S, risk low, new concepts: (.*)$/m.exec(brief)
+  return { ...pr, quickState: { brief, skipArch: !!small && small[1].trim() === 'none' }, ...(small ? { maxRounds: pr.maxRounds || 2 } : {}) }
 }
-const ioPrompt = (pr, command, entry) => `Task: run one command and return its exit code and output.
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+// Plain JS: the script has no Buffer or btoa. The command line gets text that a shell cannot interpret.
+const base64 = text => {
+  const bytes = encodeURIComponent(text).replace(/%([0-9A-F]{2})|(.)/g, (m, h, c) => String.fromCharCode(h ? parseInt(h, 16) : c.charCodeAt(0)))
+  let out = ''
+  for (let i = 0; i < bytes.length; i += 3) {
+    const n = (bytes.charCodeAt(i) << 16) | ((bytes.charCodeAt(i + 1) || 0) << 8) | (bytes.charCodeAt(i + 2) || 0)
+    out += B64[(n >> 18) & 63] + B64[(n >> 12) & 63] + (i + 1 < bytes.length ? B64[(n >> 6) & 63] : '=') + (i + 2 < bytes.length ? B64[n & 63] : '=')
+  }
+  return out
+}
+const productMinors = product => product.verdict === 'notes'
+  ? product.entries.filter(e => e.fit !== 'serves-goal' && e.fit !== 'neutral')
+      .map(e => ({ severity: 'minor', title: `Product fit: ${e.entry} (${e.fit})`, detail: `${e.note || ''} Suggestion: ${e.suggestion || 'keep'}.` }))
+  : []
+const ioPrompt = (pr, command) => `Task: run one command and return its exit code and output.
 Plugin folder: ${PLUGIN_ROOT}. Run scripts only from this folder, never from a clone of ${REPO}.
-${entry ? `First write the text between the lines BEGIN and END, exactly as it is and without those two lines, to ${TMP}/io-${pr.id}/entry.md (make the folder).\nBEGIN\n${entry}\nEND\n` : ''}Command: \`${command}\`
+Command: \`${command}\`
 Return exitCode and output.`
-const briefCommand = (pr, mode) => `bash ${PLUGIN_ROOT}/scripts/quick-brief.sh ${mode} ${REPO} ${pr.quick.issue}${mode === 'put' ? ` ${TMP}/io-${pr.id}/entry.md` : ''}`
+const briefCommand = (pr, mode, entry) => `bash ${PLUGIN_ROOT}/scripts/quick-brief.sh ${mode} ${REPO} ${pr.quick.issue}${mode === 'put' ? ` --b64 ${base64(entry)}` : ''}`
 
 const productEntryPrompt = pr => `${ctx(pr)}
 
@@ -517,11 +532,10 @@ ${prBlock(pr)}`
 async function quickSetup(pr) {
   const stop = (reason, more) => ({ stop: { id: pr.id, ready: false, reason, ...more } })
   if (!PLUGIN_ROOT) return stop('pluginRoot missing: a quick fix needs it to run the brief script')
-  if (pr.skipImpl || pr.resume || pr.landFix) {
-    const got = await call('io', pr, ioPrompt(pr, briefCommand(pr, 'get')), `io:${pr.id}#get`, { schema: IO })
-    if (!got || got.exitCode !== 0 || !got.output.trim()) return stop(`quick brief not found: ${got ? got.output : 'pipeline-io failed'}`)
-    return { pr: scaleOf({ ...pr, brief: got.output.trim() }), minors: [], product: null, triage: null }
-  }
+  const rerun = !!(pr.skipImpl || pr.resume || pr.landFix)
+  const got = await call('io', pr, ioPrompt(pr, briefCommand(pr, 'get')), `io:${pr.id}#get`, { schema: IO })
+  if (got && got.exitCode === 0 && got.output.trim()) return { pr: withBrief(pr, got.output.trim()), minors: [], product: null, triage: null }
+  if (rerun || !got || got.exitCode !== 1) return stop(`quick brief not found: ${got ? got.output : 'pipeline-io failed'}`)
   const t = await call('triage', pr, triagePrompt(pr), `triage:${pr.id}`, { schema: TRIAGE })
   if (!t) return stop('triager failed')
   const triage = { decision: t.decision, size: t.size, risk: t.risk, why: t.why }
@@ -529,18 +543,15 @@ async function quickSetup(pr) {
   log(`${pr.id} triage: ${t.decision} (${t.size}, ${t.risk})${decision !== t.decision ? ' -> plan' : ''}`)
   if (decision !== 'build') return stop(`quick fix: ${decision}. ${t.why}`, { triage })
   if (!t.entry) return stop('quick fix: the triager returned build without an entry', { triage })
-  const quick = scaleOf({ ...pr, brief: entryText(t, t.entry) })
+  const quick = withBrief(pr, entryText(t, t.entry))
   const product = await call('productEntry', quick, productEntryPrompt(quick), `product:${pr.id}#entry`, { schema: PRODUCT })
   if (!product) return stop('product reviewer failed', { triage })
   const state = { round: 0, verdict: product.verdict, summary: product.summary, entries: product.entries }
   if (product.verdict === 'escalate') return stop('needs human: product', { triage, escalation: product.escalation, product: state })
-  const put = await call('io', quick, ioPrompt(quick, briefCommand(quick, 'put'), quick.brief), `io:${pr.id}#put`, { schema: IO })
+  const put = await call('io', quick, ioPrompt(quick, briefCommand(quick, 'put', quick.quickState.brief)), `io:${pr.id}#put`, { schema: IO })
   if (!put || put.exitCode !== 0) return stop(`quick brief not posted: ${put ? put.output : 'pipeline-io failed'}`, { triage })
-  const minors = product.verdict === 'notes'
-    ? product.entries.filter(e => e.fit !== 'serves-goal' && e.fit !== 'neutral')
-        .map(e => ({ severity: 'minor', title: `Product fit: ${e.entry} (${e.fit})`, detail: `${e.note || ''} Suggestion: ${e.suggestion || 'keep'}.` }))
-    : []
-  return { pr: quick, minors, product: state, triage }
+  if (put.output.trim() !== quick.quickState.brief) return stop('quick brief differs from the one already on the issue; rerun to use the stored one', { triage })
+  return { pr: quick, minors: productMinors(product), product: state, triage }
 }
 
 async function reviewLoop(pr, startRound, history, minors, archState) {
@@ -564,8 +575,7 @@ async function reviewLoop(pr, startRound, history, minors, archState) {
       archState.product = { round, verdict: product.verdict, summary: product.summary, entries: product.entries }
       log(`${pr.id} round ${round}: product ${product.verdict}`)
       if (product.verdict === 'notes') {
-        minors.push(...product.entries.filter(e => e.fit !== 'serves-goal' && e.fit !== 'neutral')
-          .map(e => ({ severity: 'minor', title: `Product fit: ${e.entry} (${e.fit})`, detail: `${e.note || ''} Suggestion: ${e.suggestion || 'keep'}.` })))
+        minors.push(...productMinors(product))
       }
     }
     if (arch) {

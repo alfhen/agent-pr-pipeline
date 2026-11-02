@@ -16,6 +16,7 @@ const ITEMS = [
 ]
 const REDACTED = ITEMS.map(i => ({ ...i, title: `generic: ${i.title}`, detail: 'generic detail' }))
 const briefs = {}
+const storedInstead = {}
 const triage = (decision, size, risk, extra = {}) => ({
   decision, size, risk, why: `why ${decision} ${size} ${risk}`, newConcepts: [],
   ...(decision === 'build' ? { entry: { touches: 'src/x.js', acceptance: 'node --test passes' } } : {}), ...extra,
@@ -34,7 +35,11 @@ const agent = async (prompt, o) => {
   if (o.label.startsWith('preflight')) return preflight
   if (o.label.startsWith('triage')) return TRIAGES[id]
   if (o.label.startsWith('io:')) {
-    if (o.label.endsWith('#put')) { briefs[id] = prompt.slice(prompt.indexOf('BEGIN\n') + 6, prompt.indexOf('\nEND\n')); return { exitCode: 0, output: briefs[id] } }
+    if (o.label.endsWith('#put')) {
+      const posted = Buffer.from(/--b64 (\S+)/.exec(prompt)[1], 'base64').toString('utf8')
+      briefs[id] = storedInstead[id] || posted
+      return { exitCode: 0, output: briefs[id] }
+    }
     return briefs[id] ? { exitCode: 0, output: briefs[id] } : { exitCode: 1, output: 'quick-brief: no trusted brief on issue 1' }
   }
   if (o.label.startsWith('evaluate')) return evaluation
@@ -476,13 +481,13 @@ await check('quick: an L or high-risk build becomes a plan and builds nothing', 
   for (const id of ['QL', 'QH']) {
     assert.equal(qr[id].ready, false)
     assert.match(qr[id].reason, /^quick fix: plan\. why build /)
-    assert.equal(forPr(id, /^(implement|product|io:|test|review)/).length, 0, id)
+    assert.equal(forPr(id, /^(implement|product|io:[^#]*#put|test|review)/).length, 0, id)
   }
 })
 await check('quick: plan and decline stop with the triager\'s reason and start no implementer', () => {
   assert.match(qr.QP.reason, /^quick fix: plan\. why plan M medium/)
   assert.match(qr.QD.reason, /^quick fix: decline\. why decline S low/)
-  for (const id of ['QP', 'QD']) assert.equal(forPr(id, /^(implement|product|io:|test|review)/).length, 0, id)
+  for (const id of ['QP', 'QD']) assert.equal(forPr(id, /^(implement|product|io:[^#]*#put|test|review)/).length, 0, id)
 })
 await check('quick: a build runs the product-fit reviewer on the entry, and its escalate stops the PR', () => {
   const p = forPr('QM', /^product/)[0]
@@ -490,7 +495,7 @@ await check('quick: a build runs the product-fit reviewer on the entry, and its 
   assert.ok(p.prompt.includes(entryOf('QM')))
   assert.equal(qr.QE.reason, 'needs human: product')
   assert.equal(qr.QE.escalation.question, 'Add a hosted mode?')
-  assert.equal(forPr('QE', /^(implement|io:|test|review)/).filter(c => c.label !== 'io:QE#put').length, 0)
+  assert.equal(forPr('QE', /^(implement|io:[^#]*#put|test|review)/).filter(c => c.label !== 'io:QE#put').length, 0)
   assert.equal(forPr('QE', /^io:QE#put/).length, 0, 'the brief is posted only after the product check passes')
 })
 await check('quick: product notes become minor issues for the PR opener', () => {
@@ -555,6 +560,29 @@ await check('quick: a rerun with no trusted brief stops', async () => {
   const r4 = await simulate({ ...quickBase, prs: [{ id: 'QZ', quick: { issue: 78 }, branch: 'fix/QZ', skipImpl: true }] })
   assert.match(r4.QZ.reason, /^quick brief not found/)
   assert.ok(!calls.some(c => /^(triage|implement|test|review)/.test(c.label)))
+})
+await check('quick: a plain rerun with a stored brief skips the triager and uses the stored text', async () => {
+  briefs.QX = 'Touches: src/old.js\nAcceptance: old test\nTriage: size M, risk medium, new concepts: none'
+  const r5 = await simulate({ ...quickBase, prs: [{ id: 'QX', quick: { issue: 79 }, branch: 'fix/QX' }] })
+  assert.ok(!calls.some(c => /^(triage|io:QX#put)/.test(c.label)))
+  for (const c of calls.filter(c => /^(implement|test|review)/.test(c.label))) assert.ok(c.prompt.includes('Acceptance: old test'), c.label)
+  assert.equal(r5.QX.ready, true)
+})
+await check('quick: a put that returns a different stored brief stops the PR before any code', async () => {
+  storedInstead.QW = 'Touches: src/other.js\nAcceptance: other\nTriage: size M, risk medium, new concepts: none'
+  TRIAGES.QW = triage('build', 'M', 'medium')
+  const r6 = await simulate({ ...quickBase, prs: [{ id: 'QW', quick: { issue: 80 }, branch: 'fix/QW' }] })
+  assert.match(r6.QW.reason, /^quick brief differs/)
+  assert.ok(!calls.some(c => /^(implement|test|review)/.test(c.label)))
+})
+await check('quick: the entry goes into the put command as base64, never as inline text', () => {
+  const put = forPr('QM', /^io:QM#put/)[0].prompt
+  assert.doesNotMatch(put, /Acceptance: node --test/)
+  assert.match(put, /quick-brief\.sh put o\/r 42 --b64 [A-Za-z0-9+\/=]+/)
+})
+await check('quick: quick state stays off the caller options', () => {
+  assert.equal(quickBase.prs[0].quickState, undefined)
+  assert.equal(quickBase.prs[0].brief, undefined)
 })
 await check('quick: a plan is optional for a quick-only wave and required otherwise', async () => {
   await assert.rejects(() => run({ ...quickBase, prs: [...quickBase.prs.slice(0, 1), { id: 'X', title: 't', branch: 'x' }] }, agent, parallel, log), /needs plan/)
