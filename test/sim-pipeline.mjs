@@ -26,7 +26,8 @@ const agent = async (prompt, o) => {
   }
   if (o.label.startsWith('implement')) return { pushed: true, branch: 'b', summary: 's', acceptanceTestPassed: true }
   const round = o.label.split('#')[1] || ''
-  if (o.label.startsWith('test')) return { pass: true, headSha: 'sha-' + id + (round.startsWith('docs') ? '-' + round : ''), checks: [{ name: 'lint', pass: true }] }
+  if (o.label.startsWith('test')) return { pass: true, headSha: 'sha-' + id + (/^(docs|bots)/.test(round) ? '-' + round : ''), checks: [{ name: 'lint', pass: true }] }
+  if (o.label.startsWith('botreview')) return { summary: 's', findings: id === 'B1' && round === '1' ? [{ severity: 'major', title: 'the new regex anchor rejects valid input', detail: 'd' }] : [{ severity: 'minor', title: 'late nit', detail: 'd' }] }
   if (o.label.startsWith('docsreview')) {
     const major = id === 'G3' || (id === 'G2' && round === '1')
     return { summary: 's', findings: major ? [{ severity: 'major', title: 'docs say the flag is --all, code has --every', detail: 'd' }] : [] }
@@ -37,9 +38,9 @@ const agent = async (prompt, o) => {
   if (o.label.startsWith('docsfix')) return { changed: true, headSha: 'docsfix-' + id, files: ['README.md'], summary: 's' }
   if (o.label.startsWith('docs')) return ['G1', 'G2', 'G3'].includes(id) ? { changed: true, headSha: 'docs-' + id, files: ['README.md'], summary: 's' } : { changed: false, summary: 'already right' }
   if (o.label.startsWith('review')) return { summary: 's', findings: id === 'P1' ? [{ severity: 'major', title: 'x', detail: 'd' }] : [{ severity: 'minor', title: 'm', detail: 'd' }] }
-  if (o.label.startsWith('open')) return { prNumber: 100 + calls.length, prUrl: 'u', issuesCreated: [] }
-  if (o.label.startsWith('botwait')) return id === 'C1' && failWait ? null : { approvedBy: ['gitar-bot'], openComments: id === 'C2' || id === 'L1' ? 2 : 0 }
-  if (o.label.startsWith('botanswer')) return { codeChanged: true, substantiveChange: false, headSha: 'sha-answer-' + id }
+  if (o.label.startsWith('open')) return { prNumber: 100 + calls.length, prUrl: 'u', issuesCreated: id === 'C2' ? ['https://github.com/o/r/issues/21'] : [] }
+  if (o.label.startsWith('botwait')) return id === 'C1' && failWait ? null : { approvedBy: ['gitar-bot'], openComments: ['C2', 'L1', 'B1', 'W1'].includes(id) ? 2 : 0 }
+  if (o.label.startsWith('botanswer')) return { codeChanged: id !== 'W1', headSha: 'sha-answer-' + id, closesIssues: id === 'C2' ? [21] : [], notes: 'anchored the regex' }
   if (o.label.startsWith('landfix')) return { readyToMerge: true, headSha: 'abc', notes: 'ok' }
   return null
 }
@@ -61,7 +62,9 @@ const PRS = [
   { id: 'G3', title: 't', branch: 'b12' },
   { id: 'G4', title: 't', branch: 'b13', docsUpdate: false },
   { id: 'Q1', title: 't', branch: 'b14', qa: 'try --words with empty input' },
-  { id: 'Q2', title: 't', branch: 'b15', qa: true, qaNote: 'clean' },
+  { id: 'Q2', title: 't', branch: 'b15', qa: true },
+  { id: 'B1', title: 't', branch: 'b16' },
+  { id: 'W1', title: 't', branch: 'b17' },
 ]
 const base = { repo: 'o/r', tmp: '/x', plan: 'docs/p.md', architecture: 'docs/design.md', goals: 'docs/goals.md', prs: PRS }
 const GOOD = { ok: true, exists: true, goals: 3, nonGoals: 2, missing: [] }
@@ -81,10 +84,31 @@ await check('clean code PR lands at the tested sha', () => {
   assert.equal(r.C1.land.split(':')[1], 'sha-C1')
   assert.equal(r.C1.rounds, 1)
 })
-await check('bot comments are answered and land at the answer sha', () => {
+await check('a bot answer that changed code is tested and reviewed on its diff before it can land', () => {
   assert.equal(r.C2.ready, true)
-  assert.equal(r.C2.land.split(':')[1], 'sha-answer-C2')
   assert.equal(r.C2.codeChangedByBots, true)
+  assert.equal(r.C2.land.split(':')[1], 'sha-C2-bots1')
+  const review = mainCalls.find(c => c.label === 'botreview:C2#1')
+  assert.equal(review.agentType, 'agent-pr-pipeline:reviewer')
+  assert.equal(review.model, 'opus')
+  assert.match(review.prompt, /git diff sha-C2\.\.HEAD/)
+  assert.match(review.prompt, /anchored the regex/)
+  assert.ok(mainCalls.some(c => c.label === 'test:C2#bots1'))
+  assert.deepEqual(r.C2.lateMinors.map(f => f.title), ['late nit'])
+})
+await check('a bot answer gets the filed minor issues and reports the ones it closes', () => {
+  assert.match(mainCalls.find(c => c.label === 'botanswer:C2').prompt, /issues\/21/)
+  assert.deepEqual(r.C2.closesIssues, [21])
+})
+await check('a finding in the bot answer check gets a fix round and a second check', () => {
+  assert.ok(mainCalls.some(c => c.label === 'fix:B1#bots1'))
+  assert.equal(r.B1.ready, true)
+  assert.equal(r.B1.land.split(':')[1], 'sha-B1-bots2')
+})
+await check('a bot answer in words only needs no check', () => {
+  assert.equal(r.W1.ready, true)
+  assert.ok(!mainCalls.some(c => /^(botreview|test):W1#bots/.test(c.label)))
+  assert.equal(r.W1.land.split(':')[1], 'sha-W1')
 })
 await check('docs PR skips architecture and uses the docs reviewer', () => {
   assert.equal(r.D1.ready, true)
@@ -99,8 +123,8 @@ await check('plan PR stops after planRounds', () => {
 })
 await check('land fix runs the land fixer, then waits for and answers the bots on the new head', () => {
   assert.equal(r.L1.ready, true)
-  assert.deepEqual(mainCalls.filter(c => c.label.includes(':L1')).map(c => c.label), ['landfix:L1', 'botwait:L1', 'botanswer:L1'])
-  assert.equal(r.L1.land, '7:sha-answer-L1')
+  assert.deepEqual(mainCalls.filter(c => c.label.includes(':L1')).map(c => c.label), ['landfix:L1', 'botwait:L1', 'botanswer:L1', 'test:L1#bots1', 'botreview:L1#1'])
+  assert.equal(r.L1.land, '7:sha-L1-bots1')
 })
 await check('architecture escalate stops the PR with the question', () => {
   assert.equal(r.E1.ready, false)
@@ -127,7 +151,7 @@ await check('preflight runs once on haiku/low', () => {
 })
 await check('docs agent runs on code PRs only, and not when a PR turns it off', () => {
   const ran = new Set(mainCalls.filter(c => c.label.startsWith('docs:')).map(c => c.label.split(':')[1]))
-  assert.deepEqual([...ran].sort(), ['C1', 'C2', 'G1', 'G2', 'G3', 'N1', 'Q1', 'Q2'])
+  assert.deepEqual([...ran].sort(), ['B1', 'C1', 'C2', 'G1', 'G2', 'G3', 'N1', 'Q1', 'Q2', 'W1'])
 })
 await check('QA runs only on PRs with qa set, in parallel with the reviewer', () => {
   const ran = new Set(mainCalls.filter(c => c.label.startsWith('qa:')).map(c => c.label.split(':')[1].split('#')[0]))
@@ -224,7 +248,7 @@ const prsWithSkills = PRS.map(pr =>
     : pr.id === 'D1' ? { ...pr, skills: { impl: ['humanizer:humanizer'], review: ['humanizer:humanizer'] } }
       : pr)
 await simulate({ ...base, skills: SKILLS, prs: prsWithSkills })
-const STEP_OF = { qa: 'qa', docs: 'docs', docsfix: 'docs', docsreview: 'docs', implement: 'impl', test: 'test', review: 'review', arch: 'arch', product: 'product', fix: 'fix', open: 'open', botwait: 'botWait', botanswer: 'botAnswer', landfix: 'landFix', preflight: 'preflight' }
+const STEP_OF = { botreview: 'review', qa: 'qa', docs: 'docs', docsfix: 'docs', docsreview: 'docs', implement: 'impl', test: 'test', review: 'review', arch: 'arch', product: 'product', fix: 'fix', open: 'open', botwait: 'botWait', botanswer: 'botAnswer', landfix: 'landFix', preflight: 'preflight' }
 const expected = c => {
   const step = STEP_OF[c.label.split(':')[0]]
   const id = c.label.split(':')[1].split('#')[0]
@@ -250,6 +274,11 @@ await check('sensitive adds the security skill to the reviewer only', () => {
   assert.deepEqual(c1.filter(c => loaded(c).includes('security-review')).map(c => c.label), ['review:C1#1'])
   assert.ok(calls.filter(c => !c.label.includes(':C1')).every(c => !loaded(c).includes('security-review')))
 })
+await check('agents that work in a clone are told to ignore git context a skill collects from their starting folder', () => {
+  assert.match(calls.find(c => c.label === 'review:C1#1').prompt, /that context is from the wrong branch/)
+  assert.doesNotMatch(calls.find(c => c.label === 'implement:C1').prompt, /wrong branch/)
+  assert.doesNotMatch(calls.find(c => c.label === 'open:C1').prompt, /wrong branch/)
+})
 await check('a PR skill listed globally too is loaded once', async () => {
   await simulate({ ...base, skills: { review: ['security-review'] }, prs: [{ ...PRS[3], sensitive: true }] })
   assert.deepEqual(loaded(calls.find(c => c.label === 'review:C1#1')), ['security-review'])
@@ -269,7 +298,7 @@ const frontmatter = name => {
   const text = readFileSync(new URL(`agents/${name}.md`, root), 'utf8')
   return Object.fromEntries(text.split('---')[1].trim().split('\n').map(l => [l.slice(0, l.indexOf(':')), l.slice(l.indexOf(':') + 1).trim()]))
 }
-const AGENT_OF = { qa: 'qa', docsfix: 'docs-writer', implement: 'implementer', test: 'tester', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight' }
+const AGENT_OF = { botreview: 'reviewer', qa: 'qa', docsfix: 'docs-writer', implement: 'implementer', test: 'tester', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight' }
 const WRITERS = ['implementer', 'fixer', 'docs-writer', 'bot-answerer', 'land-fixer']
 await simulate(base)
 await check('every call names its role agent from the plugin', () => {

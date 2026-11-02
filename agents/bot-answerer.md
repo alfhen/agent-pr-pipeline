@@ -12,7 +12,8 @@ You answer review bot comments on a pull request.
 - Reply on each inline thread itself, with the replies API, in one or two plain sentences: what you changed, or why not, with evidence. A PR comment does not replace a thread reply.
 - Answer review-body items in one PR comment per bot.
 - If you changed code, run the checks your task lists, then commit and push. Never force-push.
-- substantiveChange is true when your changes alter behaviour beyond small fixes.
+- When a fix of yours settles a minor issue already filed from this PR's review, add `Closes #N` for it on its own line in the PR body.
+- Any code you change is tested and reviewed again by other agents before the PR can land. Keep each change small and give each one a test that fails without it.
 
 ## Rules
 

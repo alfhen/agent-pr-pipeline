@@ -68,10 +68,11 @@ const skillsFor = (step, pr) => {
   if (step === 'review' && pr && pr.sensitive) names.push(SECURITY_SKILL)
   return [...new Set(names)]
 }
-const withSkills = (step, pr, prompt) => {
+const withSkills = (step, pr, prompt, inClone) => {
   const names = skillsFor(step, pr)
   if (!names.length) return prompt
-  return `Before you do anything else, load these skills with the Skill tool: ${names.map(n => `\`${n}\``).join(', ')}. Follow them where they apply to your job below. If a skill cannot be loaded, go on without it and say so in your answer.
+  const cloneNote = inClone ? ' You work in a clone under the temp folder, not in your starting folder: if a skill collects git context (a diff, a log, a status) when it loads, that context is from the wrong branch. Ignore it, and apply the skill to the diff in your clone.' : ''
+  return `Before you do anything else, load these skills with the Skill tool: ${names.map(n => `\`${n}\``).join(', ')}. Follow them where they apply to your job below. If a skill cannot be loaded, go on without it and say so in your answer.${cloneNote}
 
 ${prompt}`
 }
@@ -81,6 +82,7 @@ const reviewStep = pr => (pr.kind === 'plan' || pr.kind === 'docs') ? STEPS.revi
 const productRuns = pr => A.productReview !== false && (pr.kind === 'plan' || (A.productReview === 'all' && pr.kind !== 'docs'))
 const docsRuns = pr => pr.kind !== 'docs' && pr.kind !== 'plan' && A.docsUpdate !== false && pr.docsUpdate !== false
 const DOCS_ROUNDS = A.docsRounds || 2
+const BOT_CHECK_ROUNDS = A.botCheckRounds || 2
 const qaRuns = pr => pr.kind !== 'docs' && pr.kind !== 'plan' && A.qa !== false && pr.qa !== false && (A.qa === 'all' || !!pr.qa)
 const archRuns = pr => pr.kind !== 'docs' && !!ARCH && A.architectureReview !== false
 const decided = pr => (pr.architectureDecision ? `\nArchitecture decision by the maintainer for this PR (settled; follow it): ${pr.architectureDecision}` : '')
@@ -88,14 +90,15 @@ const decided = pr => (pr.architectureDecision ? `\nArchitecture decision by the
 const AGENT_PREFIX = A.agentPrefix === undefined ? 'agent-pr-pipeline:' : A.agentPrefix
 const ROLES = {
   impl: { agent: 'implementer', phase: 'Implement', isolation: 'worktree' },
-  test: { agent: 'tester', phase: 'Test' },
-  review: { agent: 'reviewer', phase: 'Review' },
-  qa: { agent: 'qa', phase: 'QA' },
-  arch: { agent: 'arch-reviewer', phase: 'Architecture' },
-  product: { agent: 'product-reviewer', phase: 'Product fit' },
+  test: { agent: 'tester', phase: 'Test', clone: true },
+  review: { agent: 'reviewer', phase: 'Review', clone: true, reviewModel: true },
+  botReview: { agent: 'reviewer', phase: 'Bots', clone: true, reviewModel: true, skills: 'review' },
+  qa: { agent: 'qa', phase: 'QA', clone: true },
+  arch: { agent: 'arch-reviewer', phase: 'Architecture', clone: true },
+  product: { agent: 'product-reviewer', phase: 'Product fit', clone: true },
   fix: { agent: 'fixer', phase: 'Fix', isolation: 'worktree' },
   docs: { agent: 'docs-writer', phase: 'Docs', isolation: 'worktree' },
-  docsReview: { agent: 'docs-reviewer', phase: 'Docs', skills: 'docs', model: 'reviewDocs' },
+  docsReview: { agent: 'docs-reviewer', phase: 'Docs', skills: 'docs', model: 'reviewDocs', clone: true },
   open: { agent: 'pr-opener', phase: 'Open PR' },
   botWait: { agent: 'bot-waiter', phase: 'Bots', skills: null },
   botAnswer: { agent: 'bot-answerer', phase: 'Bots', isolation: 'worktree' },
@@ -105,8 +108,8 @@ const ROLES = {
 const call = (role, pr, prompt, label, extra) => {
   const r = ROLES[role]
   const skillStep = r.skills === undefined ? role : r.skills
-  const step = role === 'review' ? reviewStep(pr) : STEPS[r.model || role]
-  return agent(skillStep ? withSkills(skillStep, pr, prompt) : prompt, Object.assign(
+  const step = r.reviewModel ? reviewStep(pr) : STEPS[r.model || role]
+  return agent(skillStep ? withSkills(skillStep, pr, prompt, !!r.clone) : prompt, Object.assign(
     { agentType: AGENT_PREFIX + r.agent, model: step.model, effort: step.effort, label, phase: r.phase },
     r.isolation ? { isolation: r.isolation } : {},
     extra))
@@ -255,8 +258,8 @@ const WAIT = {
 }
 const ANSWER = {
   type: 'object',
-  properties: { threadsAddressed: { type: 'number' }, codeChanged: { type: 'boolean' }, substantiveChange: { type: 'boolean' }, headSha: { type: 'string' }, notes: { type: 'string' } },
-  required: ['codeChanged', 'substantiveChange'],
+  properties: { threadsAddressed: { type: 'number' }, codeChanged: { type: 'boolean' }, headSha: { type: 'string' }, closesIssues: { type: 'array', items: { type: 'number' } }, notes: { type: 'string' } },
+  required: ['codeChanged'],
 }
 const LANDFIX = {
   type: 'object',
@@ -396,15 +399,27 @@ Bots: ${BOTS}.
 Poll with \`gh pr view ${n} -R ${REPO} --json headRefOid,reviews\` and \`gh pr checks ${n} -R ${REPO}\`. A review counts only if its commit is the current head (\`.reviews[].commit.oid\` equals \`headRefOid\`). Inline threads: \`gh api repos/${REPO}/pulls/${n}/comments\`.
 Return approvedBy (bot logins whose latest review is APPROVED on the current head), openComments, timedOut, and one line of notes.`
 
-const answerPrompt = (pr, n) => `${CONTEXT}
+const answerPrompt = (pr, n, issues) => `${CONTEXT}
 
 Task: answer the review bots on pull request #${n}.
 1. You are in a fresh git worktree. ${freshBranch('bots', pr, 0)}
 2. Reply on a thread with \`gh api repos/${REPO}/pulls/${n}/comments/<id>/replies -f body=...\`.
 3. Checks if you changed code: ${fastText}, and ${ownE2e}.
-Return threads addressed, whether code changed, substantiveChange, headSha (\`git rev-parse HEAD\` after your last push), and notes.
+4. Minor issues already filed from this PR's review: ${issues && issues.length ? issues.join(', ') : '(none)'}. If a fix of yours settles one, add \`Closes #N\` on its own line to the PR body (\`gh pr view ${n} -R ${REPO} --json body\`, then \`gh pr edit ${n} -R ${REPO} --body-file <file>\`), so it closes when the PR merges.
+Return threads addressed, whether code changed, headSha (\`git rev-parse HEAD\` after your last push), closesIssues (the issue numbers you added), and notes.
 
 ${prBlock(pr)}`
+
+const botReviewPrompt = (pr, round, fromSha, answer) => `${CONTEXT}
+
+Task: review only the commits the bot answer agent added after the rest of the PR passed review.
+Clone it: ${cloneTo(`botreview-${pr.id}-r${round}`, pr)}. Those commits are \`git diff ${fromSha || 'origin/HEAD'}..HEAD\`; the whole PR is \`git diff origin/HEAD...HEAD\` for context.
+Check that each change is right and complete, that its tests can fail, and that it breaks nothing the PR already did. Do not review the rest of the PR again.
+Return headSha, a summary and the findings.
+
+${prBlock(pr)}
+
+Bot answer agent's notes: ${JSON.stringify((answer && answer.notes) || '')}`
 
 const landFixPrompt = pr => `${CONTEXT}
 
@@ -494,13 +509,35 @@ async function docsStep(pr, signedSha, history, minors) {
   }
 }
 
-async function bots(pr, n, headSha) {
+async function botCheck(pr, fromSha, answer, history, minors) {
+  for (let round = 1; round <= BOT_CHECK_ROUNDS; round++) {
+    const [test, review] = await parallel([
+      () => call('test', pr, testPrompt(pr, `bots${round}`), `test:${pr.id}#bots${round}`, { phase: 'Bots', schema: TEST }),
+      () => call('botReview', pr, botReviewPrompt(pr, round, fromSha, answer), `botreview:${pr.id}#${round}`, { schema: REVIEW }),
+    ])
+    if (!test || !review) return { ok: false, reason: 'bot answer check failed to run' }
+    const blocking = review.findings.filter(f => f.severity !== 'minor')
+    minors.push(...review.findings.filter(f => f.severity === 'minor'))
+    history.push({ round: `bots${round}`, testPass: test.pass, failingChecks: test.checks.filter(c => !c.pass).map(c => c.name), blockersAndMajors: blocking.map(f => `${f.severity}: ${f.title}`) })
+    log(`${pr.id} bot answer check ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
+    if (test.pass && blocking.length === 0) return { ok: true, headSha: test.headSha || review.headSha }
+    if (round === BOT_CHECK_ROUNDS) return { ok: false, reason: 'bot answer check: rounds exhausted', lastFindings: blocking }
+    await call('fix', pr, fixPrompt(pr, test, blocking, `bots${round}`), `fix:${pr.id}#bots${round}`)
+  }
+}
+
+async function bots(pr, n, headSha, issues, history, minors) {
   const wait = await call('botWait', pr, waitPrompt(pr, n), `botwait:${pr.id}`, { schema: WAIT })
   if (!wait) return { ok: false, reason: 'bot wait failed', headSha }
   if (!(wait.openComments > 0)) return { ok: true, headSha, wait }
-  const answer = await call('botAnswer', pr, answerPrompt(pr, n), `botanswer:${pr.id}`, { schema: ANSWER })
+  const answer = await call('botAnswer', pr, answerPrompt(pr, n, issues), `botanswer:${pr.id}`, { schema: ANSWER })
   if (!answer) return { ok: false, reason: 'bot answer failed', headSha, wait }
-  return { ok: true, headSha: answer.codeChanged && answer.headSha ? answer.headSha : headSha, wait, answer }
+  if (!answer.codeChanged) return { ok: true, headSha, wait, answer }
+  const lateMinors = []
+  const check = await botCheck(pr, headSha, answer, history, lateMinors)
+  minors.push(...lateMinors)
+  if (!check.ok) return { ok: false, reason: check.reason, lastFindings: check.lastFindings, headSha: answer.headSha || headSha, wait, answer, lateMinors }
+  return { ok: true, headSha: check.headSha, wait, answer, lateMinors }
 }
 
 async function runPR(pr) {
@@ -508,18 +545,13 @@ async function runPR(pr) {
     const n = pr.prNumber
     const r = await call('landFix', pr, landFixPrompt(pr), `landfix:${pr.id}`, { schema: LANDFIX })
     if (!r || !r.readyToMerge) return { id: pr.id, prNumber: n, ready: false, reason: 'land fix not ready', headSha: r && r.headSha, notes: r && r.notes }
-    const b = await bots(pr, n, r.headSha)
-    if (!b.ok) return { id: pr.id, prNumber: n, ready: false, reason: b.reason, headSha: b.headSha, notes: r.notes }
-    let headSha = b.headSha
     const history = []
-    if (b.answer && b.answer.substantiveChange) {
-      const loop = await reviewLoop(pr, 1, history, [], { last: null, reports: [], product: null, qa: [], qaOpen: [] })
-      if (!loop.signedOff) return { id: pr.id, prNumber: n, ready: false, reason: `after bots: ${loop.reason}`, history, lastFindings: loop.lastFindings, escalation: loop.escalation }
-      headSha = loop.headSha
-    }
+    const b = await bots(pr, n, r.headSha, [], history, [])
+    if (!b.ok) return { id: pr.id, prNumber: n, ready: false, reason: b.reason, headSha: b.headSha, lastFindings: b.lastFindings, history, notes: r.notes }
     return {
-      id: pr.id, prNumber: n, ready: true, headSha, land: `${n}:${headSha}`, notes: r.notes,
-      approvedBy: b.wait.approvedBy || [], botNotes: b.wait.notes, codeChangedByBots: !!(b.answer && b.answer.codeChanged), history,
+      id: pr.id, prNumber: n, ready: true, headSha: b.headSha, land: `${n}:${b.headSha}`, notes: r.notes,
+      approvedBy: b.wait.approvedBy || [], botNotes: b.wait.notes, codeChangedByBots: !!(b.answer && b.answer.codeChanged),
+      lateMinors: b.lateMinors || [], history,
     }
   }
   const history = pr.resume ? pr.resume.history || [] : []
@@ -547,20 +579,15 @@ async function runPR(pr) {
   if (!opened || !opened.prNumber) return { id: pr.id, ready: false, reason: 'PR not opened', history }
   const n = opened.prNumber
 
-  const b = await bots(pr, n, loop.headSha)
-  if (!b.ok) return { id: pr.id, ready: false, reason: b.reason, history, prNumber: n, headSha: b.headSha }
+  const b = await bots(pr, n, loop.headSha, opened.issuesCreated || [], history, minors)
+  if (!b.ok) return { id: pr.id, ready: false, reason: b.reason, history, prNumber: n, headSha: b.headSha, lastFindings: b.lastFindings }
   const { wait, answer } = b
-  let headSha = b.headSha
-  if (answer && answer.substantiveChange) {
-    loop = await reviewLoop(pr, history.length + 1, history, minors, archState)
-    if (!loop.signedOff) return { id: pr.id, ready: false, reason: `after bots: ${loop.reason}`, history, prNumber: n, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: archState.reports, product: archState.product }
-    headSha = loop.headSha
-  }
+  const headSha = b.headSha
   return {
     id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl, headSha,
     land: `${n}:${headSha}`,
     approvedBy: (wait && wait.approvedBy) || [], botNotes: wait && wait.notes,
-    codeChangedByBots: !!(answer && answer.codeChanged),
+    codeChangedByBots: !!(answer && answer.codeChanged), closesIssues: (answer && answer.closesIssues) || [], lateMinors: b.lateMinors || [],
     docs,
     issues: opened.issuesCreated || [], rounds: history.length, history, architecture: archState.reports, product: archState.product, qa: archState.qa, implProblems: impl.problems || '',
   }
