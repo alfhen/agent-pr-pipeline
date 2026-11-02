@@ -43,7 +43,7 @@ for ((i = 0; i < count; i++)); do
   title=$(jq -r '.title // ""' <<<"$item")
   [ -n "$title" ] || { echo "REFUSED item $i: no title"; status=2; continue; }
   hit=$(jq -r --argjson deny "$deny_all" '[.. | strings] | join("\n") | ascii_downcase as $text
-    | [$deny[] | select(length > 0) | select(. as $d | $text | contains($d | ascii_downcase))] | first // empty' <<<"$item")
+    | [$deny[] | select(length > 0) | select(. as $d | $text | contains($d | ascii_downcase))] | first // empty' <<<"$item") || { echo "REFUSED $title: denylist check failed"; status=2; continue; }
   if [ -n "$hit" ]; then
     echo "REFUSED $title: contains \"$hit\""
     status=2

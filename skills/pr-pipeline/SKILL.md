@@ -249,7 +249,7 @@ After a wave, watch CI on the default branch before starting the next wave or ta
 
 ## Step 4: file the feedback
 
-Show the maintainer the `feedback` items from the workflow result, and add the land-step problems you saw (`LAND FIX`, `HEAD MOVED`, gate refusals). File nothing before the maintainer approves. Write the approved items to a JSON file (a list of `{ title, detail, evidence, suggestedChange, severity }`) and the `denylist` to another, then run:
+Show the maintainer the `feedback` items from the workflow result, and add the land-step problems you saw (`LAND FIX`, `HEAD MOVED`, gate refusals). The redactor never sees these items. When the wave's repo is not `feedbackRepo`, write them in generic words, with no PR numbers, branch names or check names from the source repo, and add those PR numbers, branch names and check names to the denylist file before filing. File nothing before the maintainer approves. Write the approved items to a JSON file (a list of `{ title, detail, evidence, suggestedChange, severity }`) and the `denylist` to another, then run:
 
 `${CLAUDE_PLUGIN_ROOT}/scripts/file-feedback.sh <items.json> --denylist <denylist.json> --repo <feedbackRepo> --source <source> [--dry-run]`
 
