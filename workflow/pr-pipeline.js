@@ -9,6 +9,7 @@ export const meta = {
     { title: 'Product fit', detail: 'a stronger model checks a plan against the product goals and non-goals, and asks a person when it diverges' },
     { title: 'Architecture', detail: 'a stronger model checks the PR against the architecture, and asks a person when the architecture itself should change' },
     { title: 'Fix', detail: 'an agent fixes blockers, majors and failing checks' },
+    { title: 'Docs', detail: 'after sign-off, an agent updates the docs the change affects; a short round checks the new head' },
     { title: 'Open PR', detail: 'open the PR and file minor findings as issues' },
     { title: 'Bots', detail: 'a small agent waits for the review bots; another answers them only if they commented' },
     { title: 'Land fix', detail: 'only for PRs passed with landFix: resolve a conflict or a CI failure' },
@@ -43,11 +44,12 @@ const STEPS = Object.assign({
   botWait: { model: 'haiku', effort: 'low' },
   botAnswer: { model: 'sonnet', effort: 'medium' },
   landFix: { model: 'sonnet', effort: 'medium' },
+  docs: { model: 'sonnet', effort: 'medium' },
 }, A.steps || {})
 if (!REPO || !TMP || !PLAN || !Array.isArray(A.prs)) throw new Error('args needs repo, tmp, plan and prs')
 if (!GOALS) throw new Error('args needs goals: the path to the product goals document (see templates/goals.md). The pipeline does not start without one.')
 
-const SKILL_STEPS = ['impl', 'test', 'review', 'arch', 'product', 'fix', 'open', 'botAnswer', 'landFix', 'preflight']
+const SKILL_STEPS = ['impl', 'test', 'review', 'arch', 'product', 'fix', 'docs', 'open', 'botAnswer', 'landFix', 'preflight']
 const SECURITY_SKILL = A.securitySkill || 'security-review'
 const checkSkills = (map, where) => {
   for (const [step, names] of Object.entries(map || {})) {
@@ -75,6 +77,8 @@ ${prompt}`
 const roundsFor = pr => pr.maxRounds || (pr.kind === 'plan' ? (A.planRounds || 2) : (A.maxRounds || 4))
 const reviewStep = pr => (pr.kind === 'plan' || pr.kind === 'docs') ? STEPS.reviewDocs : STEPS.review
 const productRuns = pr => A.productReview !== false && (pr.kind === 'plan' || (A.productReview === 'all' && pr.kind !== 'docs'))
+const docsRuns = pr => pr.kind !== 'docs' && pr.kind !== 'plan' && A.docsUpdate !== false && pr.docsUpdate !== false
+const DOCS_ROUNDS = A.docsRounds || 2
 const archRuns = pr => pr.kind !== 'docs' && !!ARCH && A.architectureReview !== false
 const decided = pr => (pr.architectureDecision ? `\nArchitecture decision by the maintainer for this PR (settled; follow it): ${pr.architectureDecision}` : '')
   + (pr.productDecision ? `\nProduct scope decision by the maintainer for this PR (settled; follow it): ${pr.productDecision}` : '')
@@ -188,6 +192,14 @@ const PREFLIGHT = {
   },
   required: ['ok', 'exists', 'missing'],
 }
+const DOCS = {
+  type: 'object',
+  properties: {
+    changed: { type: 'boolean' }, headSha: { type: 'string' }, summary: { type: 'string' },
+    files: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' },
+  },
+  required: ['changed', 'summary'],
+}
 const OPEN = {
   type: 'object',
   properties: { prNumber: { type: 'number' }, prUrl: { type: 'string' }, issuesCreated: { type: 'array', items: { type: 'string' } } },
@@ -294,15 +306,41 @@ Findings:
 ${JSON.stringify(findings, null, 1)}
 Return a short summary of each fix, and any finding you disagree with and why.`
 
+const docsWhere = A.docs && A.docs.length
+  ? `The docs of this repo are: ${A.docs.join(', ')}.`
+  : 'Find the docs yourself: README files, markdown under docs/ or similar, and a docs site if there is one (its source folder, for example docs/, site/ or website/, or HTML pages).'
+const docsPrompt = (pr, signedSha) => `${CONTEXT}
+
+${prBlock(pr)}
+
+Your job: bring the docs in line with this PR. The code passed review at ${signedSha || 'the branch head'}; do not change code or tests.
+1. You are in a fresh git worktree. ${freshBranch('docs', pr, 0)}
+2. Read the full diff (\`git diff origin/HEAD...HEAD\`). List what a user or contributor sees differently: commands, flags, options, config, output, defaults, errors, install steps, behaviour, architecture.
+3. ${docsWhere} Find every place that now says something wrong, or leaves out something a reader needs, because of this PR. Start with the docs the plan entry's Touches line names. Other PRs in this wave are built at the same time, so say in notes when you change a doc that Touches does not name.
+4. Update only those places. Match the style of each file. Do not rewrite text the PR does not affect, and add a new page only when a new user-facing feature has no home. Leave CHANGELOG and release notes alone unless the plan entry or the notes say otherwise.
+5. ${A.docsBuild ? `Build the docs site with \`${A.docsBuild}\` and fix what you broke.` : 'If the repo has a docs site build command, run it and fix what you broke.'} Run ${fastText}.
+6. If you changed anything, commit and push with \`git push origin HEAD:${pr.branch}\`. If nothing needs a change, push nothing.
+Return changed, headSha (\`git rev-parse HEAD\` after your push), the files you changed, a short summary, and, when nothing changed, why the docs are already right.`
+
+const docsReviewPrompt = (pr, round, signedSha, docs) => `${CONTEXT}
+
+${prBlock(pr)}
+
+Your job: check the docs commits on branch ${pr.branch}. The code already passed review; another agent then updated the docs. Do not change anything or push.
+Clone it: \`rm -rf ${TMP}/docsreview-${pr.id}-r${round} && git clone https://github.com/${REPO}.git ${TMP}/docsreview-${pr.id}-r${round} && cd ${TMP}/docsreview-${pr.id}-r${round} && git checkout ${pr.branch}\`. Read the docs changes (\`git diff ${signedSha || 'origin/HEAD'}..HEAD\`) and the code diff they describe (\`git diff origin/HEAD...HEAD\`).
+Look for: docs that say something the code does not do, examples that would fail, places the PR affects that the docs agent missed, a broken docs site build or links, and any change to code or tests (a blocker: this step changes docs only).
+Docs agent summary: ${JSON.stringify(docs)}
+Rank findings blocker, major or minor as in a code review. No style nits. Delete the clone when done. Return headSha, a summary and the findings.`
+
 const openPrompt = (pr, rounds, minors, arch) => `${CONTEXT}
 
 ${prBlock(pr)}
 
 Your job: open the pull request for ${pr.branch} and file minor findings. Do not change code.
 1. File each minor finding below as a GitHub issue with label ${LABEL} (\`gh issue create -R ${REPO} --label ${LABEL}${MILESTONE}\`). Skip duplicates of each other and of open issues. Body: the finding, the file, and "Found in review of ${pr.id}."
-2. Open a ready PR to the default branch if none exists: \`gh pr create -R ${REPO} --head ${pr.branch}\`, title "${pr.title}". Body: what it does, how it is tested, "Review: no blockers or majors after round N." (N from the history), one line with the architecture verdict and the new concepts, and for a plan one line with the product-fit verdict, if those reviews ran, links to the issues you filed, and each \`Closes #N\` on its own line.
+2. Open a ready PR to the default branch if none exists: \`gh pr create -R ${REPO} --head ${pr.branch}\`, title "${pr.title}". Body: what it does, how it is tested, which docs it updates, "Review: no blockers or majors after round N." (N from the history), one line with the architecture verdict and the new concepts, and for a plan one line with the product-fit verdict, if those reviews ran, links to the issues you filed, and each \`Closes #N\` on its own line.
 Review history: ${JSON.stringify(rounds)}
-Architecture and product review: ${JSON.stringify(arch || [])}
+Architecture, product and docs: ${JSON.stringify(arch || [])}
 Minor findings: ${JSON.stringify(minors, null, 1)}
 Return prNumber, prUrl and the issues you created.`
 
@@ -383,6 +421,27 @@ async function reviewLoop(pr, startRound, history, minors, archState) {
   }
 }
 
+async function docsStep(pr, signedSha, history, minors) {
+  const docs = await agent(withSkills('docs', pr, docsPrompt(pr, signedSha)), opts(STEPS.docs, { label: `docs:${pr.id}`, phase: 'Docs', isolation: 'worktree', schema: DOCS }))
+  if (!docs) return { ok: false, reason: 'docs agent failed' }
+  log(`${pr.id} docs: ${docs.changed ? (docs.files || []).join(', ') : 'no change'}`)
+  if (!docs.changed) return { ok: true, headSha: signedSha, docs }
+  for (let round = 1; round <= DOCS_ROUNDS; round++) {
+    const [test, review] = await parallel([
+      () => agent(withSkills('test', pr, testPrompt(pr, `docs${round}`)), opts(STEPS.test, { label: `test:${pr.id}#docs${round}`, phase: 'Docs', schema: TEST })),
+      () => agent(withSkills('docs', pr, docsReviewPrompt(pr, round, signedSha, docs)), opts(STEPS.reviewDocs, { label: `docsreview:${pr.id}#${round}`, phase: 'Docs', schema: REVIEW })),
+    ])
+    if (!test || !review) return { ok: false, reason: 'docs check failed to run', docs }
+    const blocking = review.findings.filter(f => f.severity !== 'minor')
+    minors.push(...review.findings.filter(f => f.severity === 'minor'))
+    history.push({ round: `docs${round}`, testPass: test.pass, failingChecks: test.checks.filter(c => !c.pass).map(c => c.name), blockersAndMajors: blocking.map(f => `${f.severity}: ${f.title}`) })
+    log(`${pr.id} docs round ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
+    if (test.pass && blocking.length === 0) return { ok: true, headSha: test.headSha || review.headSha, docs }
+    if (round === DOCS_ROUNDS) return { ok: false, reason: 'docs check: rounds exhausted', lastFindings: blocking, docs }
+    await agent(withSkills('fix', pr, fixPrompt(pr, test, blocking, `docs${round}`)), opts(STEPS.fix, { label: `fix:${pr.id}#docs${round}`, phase: 'Fix', isolation: 'worktree' }))
+  }
+}
+
 async function runPR(pr) {
   if (pr.landFix) {
     const r = await agent(withSkills('landFix', pr, landFixPrompt(pr)), opts(STEPS.landFix, { label: `landfix:${pr.id}`, phase: 'Land fix', isolation: 'worktree', schema: LANDFIX }))
@@ -401,7 +460,15 @@ async function runPR(pr) {
   let loop = await reviewLoop(pr, history.length + 1, history, minors, archState)
   if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: archState.reports, product: archState.product }
 
-  const opened = await agent(withSkills('open', pr, openPrompt(pr, history, minors, { architecture: archState.reports, product: archState.product })), opts(STEPS.open, { label: `open:${pr.id}`, phase: 'Open PR', schema: OPEN }))
+  let docs = null
+  if (docsRuns(pr)) {
+    const d = await docsStep(pr, loop.headSha, history, minors)
+    if (!d.ok) return { id: pr.id, ready: false, reason: d.reason, history, lastFindings: d.lastFindings, docs: d.docs, architecture: archState.reports, product: archState.product }
+    loop.headSha = d.headSha
+    docs = { changed: d.docs.changed, files: d.docs.files || [], summary: d.docs.summary }
+  }
+
+  const opened = await agent(withSkills('open', pr, openPrompt(pr, history, minors, { architecture: archState.reports, product: archState.product, docs })), opts(STEPS.open, { label: `open:${pr.id}`, phase: 'Open PR', schema: OPEN }))
   if (!opened || !opened.prNumber) return { id: pr.id, ready: false, reason: 'PR not opened', history }
   const n = opened.prNumber
 
@@ -424,6 +491,7 @@ async function runPR(pr) {
     land: `${n}:${headSha}`,
     approvedBy: (wait && wait.approvedBy) || [], botNotes: wait && wait.notes,
     codeChangedByBots: !!(answer && answer.codeChanged),
+    docs,
     issues: opened.issuesCreated || [], rounds: history.length, history, architecture: archState.reports, product: archState.product, implProblems: impl.problems || '',
   }
 }

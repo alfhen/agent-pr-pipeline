@@ -54,7 +54,7 @@ flowchart LR
 
 ### Wave 1
 
-**A01 <Title> (#<n>).** Touches: `<file>`, `<file>`, `<test file>`, `CHANGELOG.md` (the A01 marker).
+**A01 <Title> (#<n>).** Touches: `<file>`, `<file>`, `<test file>`, `<doc page the change affects>`, `CHANGELOG.md` (the A01 marker).
 - <What changes, in concrete terms: functions, messages, field names.>
 - <Edge cases and what the output says in each.>
 Regression test: <the unit and e2e tests, with fixture inputs>.

@@ -23,7 +23,11 @@ flowchart LR
   AR -- fits or needs-change --> D
   D -- no --> F[Fix] --> T
   F --> R
-  D -- yes --> O[Open PR, file minors]
+  D -- yes --> DA[Docs agent updates the affected docs]
+  DA -- no change --> O[Open PR, file minors]
+  DA -- docs changed --> DC{Clean-clone test and docs review pass?}
+  DC -- no --> DF[Fix] --> DC
+  DC -- yes --> O
   O --> W[Small agent waits for the bots]
   W -- comments --> A[Answer the bots]
   W -- none --> S[Land script: CI green, merge]
@@ -31,7 +35,7 @@ flowchart LR
   S -- conflict or red CI --> X[Land-fix agent] --> S
 ```
 
-Summary: a plan is reviewed first, including whether it still serves the product's goals; then each PR is built, tested, reviewed for bugs and reviewed for architecture by different agents until it is clean (or a person settles an architecture question), opened, answered where the bots commented, and merged by a script in the main session.
+Summary: a plan is reviewed first, including whether it still serves the product's goals. Then different agents build, test, review for bugs and review for architecture each PR until it is clean, or until a person settles an architecture question. A docs agent then brings the docs in line, and a short round checks its commits. Then the PR is opened, the bots are answered, and a script in the main session merges it.
 
 ## The loop for one PR
 
@@ -44,9 +48,10 @@ Summary: a plan is reviewed first, including whether it still serves the product
    - **escalate:** the architecture itself should change, because the PR or the plan shows the structure will not hold for what comes next, or the PR needs a decision that is not the PR's to make. The PR stops with `needs human: architecture`, a question, options and a recommendation. A person decides; the PR resumes with that decision.
    Docs-only PRs skip it. Plan PRs get it too: a plan is where new concepts usually first appear.
 5. **Fix.** If a check failed or there are blockers or majors, a fix agent adds commits to the same branch. It never force-pushes. If it thinks a finding is wrong, it says why with evidence. Then steps 2 and 3 run again (and 4, if it asked for changes). Stop after `maxRounds` (default 4; plan PRs 2); then a person decides.
-6. **Open the PR.** An agent opens a ready PR and files every minor finding as an issue (label `review-minor`).
-7. **Bots.** A small agent (Haiku, low effort) waits for the review bots and counts their open comments. Only if there are any does an answer agent run: it fixes the point or says why not, on every thread. If its changes are substantive, the loop runs again.
-8. **Land and merge.** The main session runs `scripts/land-wave.sh` with the `<pr>:<sha>` pairs from the workflow result. It waits for CI and squash-merges only when the PR's head is still the commit the pipeline checked, every check passed, and the latest review by a review bot is an approval. It deletes the branch only after GitHub shows MERGED. A PR that conflicts or has a red check is reported as `LAND FIX`, and a land-fix agent handles only that PR.
+6. **Docs.** After a code PR signs off, a docs agent reads the diff and finds every doc the change makes wrong or incomplete: README, markdown docs, and the docs site if there is one. It updates only those places, on the same branch, and builds the site if it can. If nothing needs a change, it pushes nothing and the PR goes on. If it pushed, the tester and a Sonnet docs reviewer check the new head, with a fix round if needed (`docsRounds`, default 2). So the sha the land script merges is always one the pipeline checked. Docs and plan PRs skip this step.
+7. **Open the PR.** An agent opens a ready PR and files every minor finding as an issue (label `review-minor`). The PR body says which docs the PR updates.
+8. **Bots.** A small agent (Haiku, low effort) waits for the review bots and counts their open comments. Only if there are any does an answer agent run: it fixes the point or says why not, on every thread. If its changes are substantive, the loop runs again.
+9. **Land and merge.** The main session runs `scripts/land-wave.sh` with the `<pr>:<sha>` pairs from the workflow result. It waits for CI and squash-merges only when the PR's head is still the commit the pipeline checked, every check passed, and the latest review by a review bot is an approval. It deletes the branch only after GitHub shows MERGED. A PR that conflicts or has a red check is reported as `LAND FIX`, and a land-fix agent handles only that PR.
 
 ## Before the first run in a repo
 
@@ -100,6 +105,8 @@ Load the workflow-authoring skill if the session has a Workflow tool. Run `workf
   "botWaitMinutes": 20,
   "bots": "CodeRabbit (login coderabbitai) and Gitar (login contains \"gitar\")",
   "milestone": "1.2.0",
+  "docs": ["README.md", "docs/"],
+  "docsBuild": "pnpm docs:build",
   "steps": { "review": { "model": "opus", "effort": "high" } },
   "skills": { "impl": ["laravel-idioms:laravel-idioms"], "open": ["humanizer:humanizer"] },
   "prs": [
@@ -112,6 +119,7 @@ Load the workflow-authoring skill if the session has a Workflow tool. Run `workf
 - `checks` are the **fast** checks. Agents also run the e2e files the PR adds or changes (`e2ePattern`, run with `e2eCommand`). The full e2e suite runs only in CI, so CI must run it on every PR.
 - `architecture`: the document the architecture reviewer checks against (defaults to `spec`). Set `"architectureReview": false` to turn the step off.
 - `goals` (**required**): the product goals document. Without it the workflow throws before any agent starts, and a preflight agent refuses the wave if the file has no Goals or Non-goals items. `productReview: false` turns off the review step, not this requirement. `"productReview": "all"` also runs it on code PRs; `false` turns it off.
+- `docs`: where the docs are, for example `["README.md", "docs/", "site/"]`. Without it the docs agent finds them. `docsBuild`: the command that builds the docs site, if any. `docsUpdate: false` turns the docs step off for the wave (or for one PR). `docsRounds`: rounds for the docs check (default 2).
 - `skills`: which skills each step's agent loads before it starts. See "Pair skills with steps" below. Default: none.
 - `kind`: `code` (default), `docs` or `plan`. Docs and plan PRs get a Sonnet reviewer at high effort instead of Opus. Plan PRs stop after `planRounds` (default 2); fix what is left by hand, then rerun with `skipImpl`.
 
@@ -119,24 +127,24 @@ Models and effort per step (override any of them in `steps`):
 
 | Step | Model | Effort |
 | --- | --- | --- |
-| `impl`, `fix` | sonnet | medium |
+| `impl`, `fix`, `docs` | sonnet | medium |
 | `test` | sonnet | low |
 | `review` | opus | high |
 | `arch` | opus | high |
 | `product` (plans) | opus | high |
 | `preflight` | haiku | low |
-| `reviewDocs` (docs and plan PRs) | sonnet | high |
+| `reviewDocs` (docs and plan PRs, and the docs check) | sonnet | high |
 | `open` | sonnet | low |
 | `botWait` | haiku | low |
 | `botAnswer`, `landFix` | sonnet | medium |
 
-PR options: `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `resume: { history, minors, findings }` to continue a PR whose rounds ran out. `landFix: true` with `prNumber` runs only the land-fix agent for that PR. `architectureDecision: "..."` carries a person's answer to an architecture escalation into every agent's brief for that PR; the architecture reviewer then checks the PR follows it and does not escalate the same question again. `productDecision: "..."` carries a person's answer to a product-fit escalation in the same way. `sensitive: true` adds a security-review skill to this PR's reviewer (see below). `skills: { ... }` adds skills for this PR only, on top of the wave's `skills`.
+PR options: `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `resume: { history, minors, findings }` to continue a PR whose rounds ran out. `landFix: true` with `prNumber` runs only the land-fix agent for that PR. `architectureDecision: "..."` carries a person's answer to an architecture escalation into every agent's brief for that PR; the architecture reviewer then checks the PR follows it and does not escalate the same question again. `productDecision: "..."` carries a person's answer to a product-fit escalation in the same way. `sensitive: true` adds a security-review skill to this PR's reviewer (see below). `skills: { ... }` adds skills for this PR only, on top of the wave's `skills`. `docsUpdate: false` skips the docs step for this PR.
 
-The result has one object per PR: `ready`, `prNumber`, `headSha` (the commit the pipeline checked, or the answer agent's push), `land` (the `<pr>:<sha>` pair for the land script), `approvedBy`, `rounds`, `history`, `architecture` (each verdict with its new concepts), `issues`, and `reason` when not ready. With `reason: needs human: architecture` it also has `escalation`: the question, options, recommendation and why. `ready` means the PR is open and the bots are answered; merging is the land script's job.
+The result has one object per PR: `ready`, `prNumber`, `headSha` (the commit the pipeline checked, or the answer agent's push), `land` (the `<pr>:<sha>` pair for the land script), `approvedBy`, `rounds`, `history`, `architecture` (each verdict with its new concepts), `docs` (whether the docs agent changed anything, the files and a summary), `issues`, and `reason` when not ready. With `reason: needs human: architecture` it also has `escalation`: the question, options, recommendation and why. `ready` means the PR is open and the bots are answered; merging is the land script's job.
 
 ### Pair skills with steps
 
-`skills` maps a step name to a list of skill names. Each agent of that step gets an instruction, at the start of its prompt, to load those skills with the Skill tool before it works. The step names are `impl`, `test`, `review`, `arch`, `product`, `fix`, `open`, `botAnswer`, `landFix` and `preflight`. `review` covers the reviewer of every kind of PR, also the `reviewDocs` model. The bot waiter gets no skills. An unknown step name stops the workflow before any agent starts.
+`skills` maps a step name to a list of skill names. Each agent of that step gets an instruction, at the start of its prompt, to load those skills with the Skill tool before it works. The step names are `impl`, `test`, `review`, `arch`, `product`, `fix`, `docs`, `open`, `botAnswer`, `landFix` and `preflight`. `review` covers the reviewer of every kind of PR, also the `reviewDocs` model. `docs` covers the docs agent and the reviewer of its commits. The bot waiter gets no skills. An unknown step name stops the workflow before any agent starts.
 
 A PR with `sensitive: true` (auth, secrets, payments, user data, anything that runs untrusted input) adds a security-review skill to its reviewer only. The default skill is `security-review`; set `securitySkill` to use another one.
 
@@ -146,7 +154,7 @@ Recommended pairing:
 | --- | --- | --- |
 | The stack's idiom skill (for example `laravel-idioms:laravel-idioms`) | `impl`, `fix`, `review` | The writer and the reviewer apply the same conventions. |
 | A docs-lookup skill (for example `context7-mcp`) | `impl` | The implementer checks the current API of a library instead of guessing. |
-| A writing-style skill (for example `humanizer:humanizer`) | `open`, and `impl`, `fix`, `review` of docs and plan PRs (per-PR `skills`) | PR text and docs read plainly. |
+| A writing-style skill (for example `humanizer:humanizer`) | `open`, `docs`, and `impl`, `fix`, `review` of docs and plan PRs (per-PR `skills`) | PR text and docs read plainly. |
 | A security-review skill | `review` of PRs marked `sensitive: true` | A focused security pass where the risk is. |
 
 Each loaded skill costs thousands of tokens per agent, in every round. Pair a skill only where it changes the result. Leave `test`, `arch`, `product`, `landFix` and `preflight` without skills unless you saw them miss something a skill covers.
@@ -178,6 +186,9 @@ After a wave, watch CI on the default branch before starting the next wave or ta
 | `refused: goals document missing or incomplete` | Write or finish the goals document with the write-goals skill (or from `templates/goals.md`) in its own PR, merge it, and run again. Do not work around it: the product-fit review has nothing to check against without it. |
 | `needs human: product` | Show the person the question and the per-entry suggestions. Their answer goes in `productDecision`; if it changes the goals, update the goals document in its own small PR first. Cut or deferred entries move out of the plan, with their issues moved to a later milestone. |
 | `needs human: architecture` | Show the person the escalation's question, options and recommendation, as a decision to make, not a fix to approve. If the answer changes the architecture, update the architecture document first (its own small PR). Then rerun the PR with `architectureDecision` set; if its branch exists, add `skipImpl: true` or `resume`. |
+| `docs check: rounds exhausted` | The docs commits still have findings. Fix the docs on the branch yourself, push, and rerun the PR with `skipImpl: true`. The code review replays from cache if the code did not change. |
+| `docs agent failed` or `docs check failed to run` | Resume the run with `resumeFromRunId`. |
+| Two PRs in a wave conflict in the same doc | The land script reports `LAND FIX`; the land-fix agent merges the default branch in. To avoid it, list the docs a plan entry changes in its Touches line, so the plan puts those entries in different waves. |
 | `HEAD MOVED #n` from the land script | Someone pushed after the pipeline checked the PR (a bot autofix, a person, a late agent push). Run the workflow for that PR with `skipImpl: true` so the new head is tested and reviewed, then land it with the new sha. |
 | `bot wait failed` or `bot answer failed` | The PR is open but its bot comments were not read or answered. Rerun the workflow for the PR with `skipImpl: true`; the review rounds replay from cache when nothing changed. |
 | `LAND FIX #n` from the land script | The PR conflicts or a check is red. Run the workflow with `landFix: true` for that PR; it merges the default branch in or fixes CI. Never rebase a pushed branch. |

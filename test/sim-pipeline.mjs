@@ -25,7 +25,13 @@ const agent = async (prompt, o) => {
     return { verdict: 'fits', summary: 's', newConcepts: [] }
   }
   if (o.label.startsWith('implement')) return { pushed: true, branch: 'b', summary: 's', acceptanceTestPassed: true }
-  if (o.label.startsWith('test')) return { pass: true, headSha: 'sha-' + id, checks: [{ name: 'lint', pass: true }] }
+  const round = o.label.split('#')[1] || ''
+  if (o.label.startsWith('test')) return { pass: true, headSha: 'sha-' + id + (round.startsWith('docs') ? '-' + round : ''), checks: [{ name: 'lint', pass: true }] }
+  if (o.label.startsWith('docsreview')) {
+    const major = id === 'G3' || (id === 'G2' && round === '1')
+    return { summary: 's', findings: major ? [{ severity: 'major', title: 'docs say the flag is --all, code has --every', detail: 'd' }] : [] }
+  }
+  if (o.label.startsWith('docs')) return ['G1', 'G2', 'G3'].includes(id) ? { changed: true, headSha: 'docs-' + id, files: ['README.md'], summary: 's' } : { changed: false, summary: 'already right' }
   if (o.label.startsWith('review')) return { summary: 's', findings: id === 'P1' ? [{ severity: 'major', title: 'x', detail: 'd' }] : [{ severity: 'minor', title: 'm', detail: 'd' }] }
   if (o.label.startsWith('open')) return { prNumber: 100 + calls.length, prUrl: 'u', issuesCreated: [] }
   if (o.label.startsWith('botwait')) return id === 'C1' && failWait ? null : { approvedBy: ['gitar-bot'], openComments: id === 'C2' ? 2 : 0 }
@@ -46,6 +52,10 @@ const PRS = [
   { id: 'L1', title: 't', branch: 'b4', landFix: true, prNumber: 7 },
   { id: 'P2', title: 'plan2', branch: 'b8', kind: 'plan', skipImpl: true },
   { id: 'P3', title: 'plan3', branch: 'b9', kind: 'plan', skipImpl: true },
+  { id: 'G1', title: 't', branch: 'b10' },
+  { id: 'G2', title: 't', branch: 'b11' },
+  { id: 'G3', title: 't', branch: 'b12' },
+  { id: 'G4', title: 't', branch: 'b13', docsUpdate: false },
 ]
 const base = { repo: 'o/r', tmp: '/x', plan: 'docs/p.md', architecture: 'docs/design.md', goals: 'docs/goals.md', prs: PRS }
 const GOOD = { ok: true, exists: true, goals: 3, nonGoals: 2, missing: [] }
@@ -108,6 +118,36 @@ await check('product notes become minors and the plan goes on', () => {
 await check('preflight runs once on haiku/low', () => {
   assert.deepEqual(mainCalls.filter(c => c.label.startsWith('preflight')).map(c => `${c.model}/${c.effort}`), ['haiku/low'])
 })
+await check('docs agent runs on code PRs only, and not when a PR turns it off', () => {
+  const ran = new Set(mainCalls.filter(c => c.label.startsWith('docs:')).map(c => c.label.split(':')[1]))
+  assert.deepEqual([...ran].sort(), ['C1', 'C2', 'G1', 'G2', 'G3', 'N1'])
+})
+await check('unchanged docs keep the reviewed sha and skip the re-check', () => {
+  assert.equal(r.C1.docs.changed, false)
+  assert.ok(!mainCalls.some(c => c.label.startsWith('docsreview:C1') || c.label === 'test:C1#docs1'))
+})
+await check('changed docs are re-checked and land at the re-checked sha', () => {
+  assert.equal(r.G1.ready, true)
+  assert.equal(r.G1.land.split(':')[1], 'sha-G1-docs1')
+  assert.deepEqual(r.G1.docs.files, ['README.md'])
+  const order = mainCalls.filter(c => c.label.includes(':G1')).map(c => c.label.split(':')[0])
+  assert.ok(order.indexOf('docs') > order.lastIndexOf('review') && order.indexOf('docs') < order.indexOf('open'))
+  assert.equal(mainCalls.find(c => c.label === 'docsreview:G1#1').model, 'sonnet')
+})
+await check('a docs finding gets a fix and a second check', () => {
+  assert.equal(r.G2.ready, true)
+  assert.ok(mainCalls.some(c => c.label === 'fix:G2#docs1'))
+  assert.equal(r.G2.land.split(':')[1], 'sha-G2-docs2')
+})
+await check('docs findings left after docsRounds stop the PR', () => {
+  assert.equal(r.G3.ready, false)
+  assert.equal(r.G3.reason, 'docs check: rounds exhausted')
+  assert.ok(!mainCalls.some(c => c.label === 'open:G3'))
+})
+await check('docsUpdate false turns it off for the wave', async () => {
+  await simulate({ ...base, docsUpdate: false })
+  assert.ok(!calls.some(c => c.label.startsWith('docs')))
+})
 await check('no skill instruction without a skills argument', () => {
   assert.ok(mainCalls.every(c => !c.prompt.includes('Skill tool')))
 })
@@ -138,6 +178,7 @@ const SKILLS = {
   fix: ['laravel-idioms:laravel-idioms'],
   open: ['humanizer:humanizer'],
   botAnswer: ['humanizer:humanizer'],
+  docs: ['humanizer:humanizer'],
   preflight: ['goals-helper'],
 }
 const prsWithSkills = PRS.map(pr =>
@@ -145,7 +186,7 @@ const prsWithSkills = PRS.map(pr =>
     : pr.id === 'D1' ? { ...pr, skills: { impl: ['humanizer:humanizer'], review: ['humanizer:humanizer'] } }
       : pr)
 await simulate({ ...base, skills: SKILLS, prs: prsWithSkills })
-const STEP_OF = { implement: 'impl', test: 'test', review: 'review', arch: 'arch', product: 'product', fix: 'fix', open: 'open', botwait: 'botWait', botanswer: 'botAnswer', landfix: 'landFix', preflight: 'preflight' }
+const STEP_OF = { docs: 'docs', docsreview: 'docs', implement: 'impl', test: 'test', review: 'review', arch: 'arch', product: 'product', fix: 'fix', open: 'open', botwait: 'botWait', botanswer: 'botAnswer', landfix: 'landFix', preflight: 'preflight' }
 const expected = c => {
   const step = STEP_OF[c.label.split(':')[0]]
   const id = c.label.split(':')[1].split('#')[0]
@@ -160,7 +201,7 @@ const loaded = c => {
 }
 await check('skill instruction appears only in the configured steps', () => {
   const seen = new Set(calls.map(c => STEP_OF[c.label.split(':')[0]]))
-  for (const step of ['impl', 'test', 'review', 'arch', 'product', 'fix', 'open', 'botWait', 'botAnswer', 'landFix', 'preflight']) assert.ok(seen.has(step), `simulation never ran ${step}`)
+  for (const step of ['impl', 'test', 'review', 'arch', 'product', 'fix', 'docs', 'open', 'botWait', 'botAnswer', 'landFix', 'preflight']) assert.ok(seen.has(step), `simulation never ran ${step}`)
   for (const c of calls) {
     assert.deepEqual(loaded(c), expected(c), c.label)
     if (!loaded(c).length) assert.ok(!c.prompt.includes('Skill tool'), c.label)
