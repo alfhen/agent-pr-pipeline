@@ -1,48 +1,75 @@
 # agent-pr-pipeline
 
-A Claude Code skill for building a release as a series of small PRs. Separate agents implement, test from a clean clone, review adversarially, fix, open the PR and answer the review bots. The main session merges.
+A Claude Code plugin for building a release as a series of small PRs. Separate role agents implement, test from a clean clone, review adversarially, fix, update the docs, open the PR and answer the review bots. The main session merges.
 
 It grew out of building [Tagreeve](https://github.com/alfhen/tagreeve) (first called Pingwright) 0.1 to 0.4 this way: more than 150 PRs, each one through the same loop.
 
+## What is in it
+
+- **Skills.** `pr-pipeline` runs the loop: plan, waves, land and merge. `write-goals` interviews the maintainer and writes the product goals document that the pipeline needs before its first run.
+- **Role agents.** `implementer`, `tester`, `reviewer`, `arch-reviewer`, `product-reviewer`, `fixer`, `docs-writer`, `docs-reviewer`, `pr-opener`, `bot-waiter`, `bot-answerer`, `land-fixer` and `goals-preflight`. Each has its own rules, model, effort and the smallest tool set its role needs.
+- **Workflow.** `run-wave` runs one wave of PRs through the loop with the role agents.
+- **Scripts and templates.** The land and merge scripts, the goals check, and the plan, goals and `AGENTS.md` templates.
+
 ## Install
 
-Copy the folder into your skills directory:
+The repo is its own plugin marketplace. You need `gh` signed in, with git using it (`gh auth setup-git`), because the repo is private.
+
+For yourself:
 
 ```bash
-git clone https://github.com/alfhen/agent-pr-pipeline.git ~/.claude/skills/agent-pr-pipeline
+claude plugin marketplace add alfhen/agent-pr-pipeline
+claude plugin install agent-pr-pipeline@agent-pr-pipeline
 ```
 
-Or, for one project, into `.claude/skills/agent-pr-pipeline` in that repo.
+In a session, `/plugin marketplace add alfhen/agent-pr-pipeline` and `/plugin install agent-pr-pipeline@agent-pr-pipeline` do the same.
 
-The repo has a second skill, [write-goals](skills/write-goals/SKILL.md). It interviews you and writes the product goals document that the pipeline needs before its first run. Claude Code finds skills only one folder deep, so link it next to the first one:
+On Claude Code 2.1.275 or later, one step also works: `/plugin install agent-pr-pipeline --marketplace alfhen/agent-pr-pipeline`.
 
-```bash
-ln -s ~/.claude/skills/agent-pr-pipeline/skills/write-goals ~/.claude/skills/write-goals
+For a team repo, add this to the repo's `.claude/settings.json`. Claude Code offers the plugin to each person who trusts the folder. If someone does not get it, they run the install command above with `--scope project`.
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "agent-pr-pipeline": { "source": { "source": "github", "repo": "alfhen/agent-pr-pipeline" } }
+  },
+  "enabledPlugins": { "agent-pr-pipeline@agent-pr-pipeline": true }
+}
 ```
 
-The main skill stays at the repo root, so its paths and the clone command above do not change. `skills/` is also where a Claude Code plugin keeps its skills, so the repo can become a plugin later without moving files.
+Updates: `claude plugin update agent-pr-pipeline@agent-pr-pipeline`. A new version reaches users when `version` in `.claude-plugin/plugin.json` changes.
+
+## Before the first run in a repo
+
+Run `/agent-pr-pipeline:write-goals`. It asks you for the product's goals, non-goals and users, writes the goals document (for example `docs/goals.md`) and checks it. Merge it in its own PR. The pipeline refuses to start without it.
 
 ## Use
 
-Ask Claude Code to plan and build a release or a set of issues with this skill. It will:
+Ask Claude Code to plan and build a release or a set of issues with the pipeline. It will:
 
 1. triage the issues against the code,
 2. write a plan with waves, Touches and Acceptance lines, and put the plan through review,
-3. run each wave with `workflow/pr-pipeline.js`,
-4. merge ready PRs with `scripts/merge-wave.sh` after you can see them.
+3. run each wave with the `run-wave` workflow,
+4. land the ready PRs with `scripts/land-wave.sh`, which merges only the commit the pipeline checked, with green CI and a bot approval.
 
-Read [SKILL.md](SKILL.md) for the loop, the workflow arguments and what to do when a step fails.
+Read [skills/pr-pipeline/SKILL.md](skills/pr-pipeline/SKILL.md) for the loop, the workflow arguments, the role agents, cost and caching, and what to do when a step fails.
 
 ## Needs
 
-- Claude Code with the Workflow tool (multi-agent workflows) and `gh` signed in.
+- Claude Code with the Workflow tool and `gh` signed in.
 - A review bot on the repo, such as CodeRabbit or Gitar. One approval is the merge gate.
-- CI that runs the same checks the agents run.
+- CI that runs the same checks the agents run, and the full e2e suite.
 
-## License
+## Develop
 
-MIT
+- Load your working copy without installing: `claude --plugin-dir .`
+- Check the manifests: `claude plugin validate .` and `claude plugin validate .claude-plugin/plugin.json`
+- Simulate the workflow with a fake `agent()`: `node test/sim-pipeline.mjs`. Run it after every change to `workflows/run-wave.js` or `agents/`.
 
 ## Explainer
 
 `docs/explainer.html` explains the loop in plain words, for people who will not run it. It is a page fragment for a host that adds the HTML skeleton.
+
+## License
+
+MIT
