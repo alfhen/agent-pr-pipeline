@@ -750,6 +750,8 @@ await check('bot status: approvedBy comes from the script through pipeline-io, n
   const wait = calls.find(c => c.label === 'botwait:C1')
   assert.ok(wait.prompt.includes('bash /plug/scripts/bot-status.sh o/r '))
   assert.doesNotMatch(wait.prompt, /latest review is APPROVED/)
+  assert.match(wait.prompt, /Stop early only when seenHead is not empty/)
+  assert.doesNotMatch(wait.prompt, /check-runs/)
   assert.ok(calls.findIndex(c => c.label === 'io:C1#botstatus') > calls.findIndex(c => c.label === 'botwait:C1'))
 })
 await check('bot status: a failed status script stops the PR before the land gate', async () => {

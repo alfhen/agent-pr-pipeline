@@ -453,7 +453,7 @@ Minor findings: ${JSON.stringify(minors, null, 1)}`
 const statusCommand = n => `bash ${PLUGIN_ROOT}/scripts/bot-status.sh ${REPO} ${n}`
 const waitPrompt = (pr, n) => `Task: wait for the review bots on pull request #${n} in ${REPO}, for at most ${BOT_WAIT_MIN} minutes.
 Bots: ${BOTS}.
-Status command, from the plugin folder ${PLUGIN_ROOT} (never from a clone of ${REPO}): \`${statusCommand(n)}\`. It prints one JSON line with head, approvedBy and openThreads. Run it on every poll. approvedBy is the only list of approvals: report it as it is, and never judge approvals yourself. Also check that each bot's check has finished on the head: \`gh api repos/${REPO}/commits/<head>/check-runs\`. Inline threads: \`gh api repos/${REPO}/pulls/${n}/comments\`.
+Status command, from the plugin folder ${PLUGIN_ROOT} (never from a clone of ${REPO}): \`${statusCommand(n)}\`. It prints one JSON line with head, approvedBy, seenHead and openThreads. Run it on every poll. approvedBy is the only list of approvals: report it as it is, and never judge approvals yourself. Stop early only when seenHead is not empty; otherwise wait until every bot has finished with the current head or the time limit passes. Inline threads: \`gh api repos/${REPO}/pulls/${n}/comments\`.
 Return approvedBy, openComments, timedOut, and one line of notes.`
 
 const answerPrompt = (pr, n, issues) => `${ctx(pr)}
