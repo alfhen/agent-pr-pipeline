@@ -126,7 +126,7 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
 <main>
   <header style="display:grid; gap:14px">
     <h1>The PR relay</h1>
-    <p class="lede">How Tagreeve (formerly Pingwright) gets built: every change is a small pull request that passes through <strong>a relay of separate agents</strong>. One builds it, one tests it from scratch, one tries to break it, one fixes what they found, and only then do you merge it. No agent ever checks its own work.</p>
+    <p class="lede">How Tagreeve (formerly Pingwright) gets built: every change is a small pull request that passes through <strong>a relay of separate agents</strong>. One builds it, one tests it from scratch, one tries to break it, one fixes what they found, and only then does an agent merge it, once the gate and the merge-safety check clear it, or you do. No agent ever checks its own work.</p>
   </header>
 
   <section aria-labelledby="loop">
@@ -193,7 +193,7 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
       <div class="role check"><span class="who">QA</span><h3>Uses it like you would</h3><p>When the plan asks for it, a separate agent runs the finished feature: the main case, empty and bad input, combinations with other options, and what the docs promise.</p></div>
       <div class="role person"><span class="who">PRODUCT CHECK</span><h3>Keeps the plan on course</h3><p>Before anything is built, an Opus reviewer checks every plan entry against the product's goals and non-goals. If something widens the product, like an MCP server on a CLI tool, it stops and asks you.</p></div>
       <div class="role person"><span class="who">ARCHITECT</span><h3>Guards the shape</h3><p>An Opus reviewer lists the new concepts a PR brings in and checks them against the architecture. Small mismatches become fixes. If the architecture itself should change, it stops and asks you.</p></div>
-      <div class="role person"><span class="who">TRIAGER</span><h3>Sizes up a quick fix</h3><p>For a single issue with no plan, an Opus reviewer reads the issue, the code and the goals. It decides to build, to plan properly, or to decline. Only a small, low-risk change gets built.</p></div>
+      <div class="role person"><span class="who">TRIAGER</span><h3>Sizes up a quick fix</h3><p>For a single issue with no plan, an Opus reviewer reads the issue, the code and the goals. It decides to build, to plan properly, or to decline. A change of size L or risk high becomes a plan. A small, low-risk change gets lighter checks.</p></div>
       <div class="role check"><span class="who">MERGE SAFETY</span><h3>Decides who merges</h3><p>A script first checks the changed files against the gated paths. For the rest, a read-only Opus agent answers "safe" or "person". Only a PR that passes both is merged by an agent. A rerun never is.</p></div>
       <div class="role agent"><span class="who">EVALUATOR</span><h3>Reviews the run itself</h3><p>When a wave ends, it reads what happened and writes feedback about the pipeline. You approve it, and a script files it as issues. For another repo, a redactor removes that repo's details first.</p></div>
       <div class="role fixer"><span class="who">FIXER</span><h3>Repairs, or argues back</h3><p>Fixes blockers and majors. If it thinks a finding is wrong, it has to say why, with evidence.</p></div>
@@ -210,7 +210,7 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
       <table>
         <thead><tr><th>Step</th><th>Model</th><th>Effort</th><th>What it spends its time on</th></tr></thead>
         <tbody>
-          <tr><td>You and the main session</td><td><span class="pill opus">Opus 5.5</span></td><td><span class="pill def">session</span></td><td>Triage, plans, reading results, merges, tags. Merging is a script, not an agent.</td></tr>
+          <tr><td>You and the main session</td><td><span class="pill opus">Opus 5.5</span></td><td><span class="pill def">session</span></td><td>Triage, plans, reading results, and merges you ask for. Merging is a script, not an agent. Releases are made by hand with release.sh.</td></tr>
           <tr><td>Triage and plan drafting</td><td><span class="pill opus">Opus 5.5</span></td><td><span class="pill def">session</span></td><td>Reading issues against the code. These agents inherit the session model.</td></tr>
           <tr><td>Builder</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Writing the change and tests, then running every check, including the full e2e suite.</td></tr>
           <tr><td>Tester</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Fresh clone, install, lint, types, unit tests and the full e2e suite (10 to 15 minutes), every round.</td></tr>
@@ -290,7 +290,8 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
     <ul>
       <li>You agree the plan before anything is built.</li>
       <li>You approve anything that changes a hard rule. For example, payments on real stores stay a human step unless you sign off.</li>
-      <li>You see every merge happen in your own session. Merges need green CI and a review bot that approved, or whose comments were all answered with nothing new raised.</li>
+      <li>You merge every gated PR, and any PR the merge-safety agent called <code>person</code>. Use <code>--person</code> for a merge you ask for.</li>
+      <li>Agents merge only the other PRs, with the <code>:auto</code> land value. A rerun never gets <code>:auto</code>. Merges need green CI and a review bot that approved, or whose comments were all answered with nothing new raised.</li>
       <li>Publishing to npm is yours, with your one-time code.</li>
     </ul>
   </section>

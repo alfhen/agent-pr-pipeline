@@ -49,7 +49,7 @@ Ask Claude Code to plan and build a release or a set of issues with the pipeline
 
 1. triage the issues against the code,
 2. write a plan with waves, Touches and Acceptance lines, and put the plan through review,
-3. run each wave with the `run-wave` workflow. A single issue can skip the plan with the `quick` option: a triager agent first decides `build`, `plan` or `decline`, and only a small, low-risk build goes on,
+3. run each wave with the `run-wave` workflow. A single issue can skip the plan with the `quick` option: a triager agent first decides `build`, `plan` or `decline`, and a build of size L or risk high becomes a plan. A small, low-risk build gets lighter checks,
 4. land the ready PRs with `scripts/land-wave.sh`. It merges only the commit the pipeline checked, with green CI and a review bot's approval (or its comments answered and nothing new raised). First a script checks the changed files against the gated paths, and the merge-safety agent decides `safe` or `person` for the rest. A rerun PR (land fix, resume or decision rerun) skips both and is never merged with `--auto`. The land values from the workflow end in `:auto` only for a PR that passed both. For a merge you asked for in the conversation, the merge scripts take `--person`,
 5. show the maintainer the feedback items from the end-of-run evaluation and, after approval, file them with `scripts/file-feedback.sh`. For a wave in another repo, a redactor and a denylist keep that repo's details out of the issues.
 
