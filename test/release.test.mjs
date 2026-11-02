@@ -113,6 +113,11 @@ test('release: a manifest version that differs from the release version refuses'
   refused(release(s), /MISSING: \.claude-plugin\/plugin\.json has version '0\.2\.9', not 0\.3\.0/)
 })
 
+test('release: a repo with no manifest refuses', () => {
+  const s = setup({ manifest: null })
+  refused(release(s), /MISSING: no manifest with a version at aaaaaaa/)
+})
+
 test('release: the manifest check covers package.json too', () => {
   const s = setup()
   put(s.fx, `${P}__contents__package.json.json`, { version: '0.1.0' })

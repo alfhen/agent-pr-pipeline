@@ -84,12 +84,15 @@ else
   fi
 fi
 
+found=0
 for file in .claude-plugin/plugin.json package.json composer.json; do
   m=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/$file?ref=$sha" 2>&1)
   if [ $? -ne 0 ]; then is404 "$m" && continue; stop "cannot read $file ($m)"; fi
+  found=$((found + 1))
   v=$(jq -r '.version // ""' <<<"$m" 2>/dev/null)
   if [ "${v#v}" = "$version" ]; then ok "$file has version $version"; else miss "$file has version '$v', not $version"; fi
 done
+[ "$found" -gt 0 ] || miss "no manifest with a version at ${sha:0:7}"
 
 if [ ${#missing[@]} -gt 0 ]; then echo "release.sh: NOT released: ${#missing[@]} check(s) missing"; exit 1; fi
 echo "release: v$version on $R, target ${sha}"
