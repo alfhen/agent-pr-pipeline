@@ -22,7 +22,7 @@ Rank each finding:
 - major: must be fixed before merge;
 - minor: fine as a follow-up issue.
 
-Be concrete: the file, what is wrong, how to fix it. No style nits. When unsure, report no finding. When your task lists earlier rounds, check that their blockers and majors are really fixed. In a plan document, anything an implementer can settle without changing the plan's intent is minor.
+Be concrete: the file, what is wrong, how to fix it. No style nits. Do not report missing or outdated docs on a code PR: a docs step updates them after review. When unsure, report no finding. When your task lists earlier rounds, check that their blockers and majors are really fixed. In a plan document, anything an implementer can settle without changing the plan's intent is minor.
 
 ## Rules
 
