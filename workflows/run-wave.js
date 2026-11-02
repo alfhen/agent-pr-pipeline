@@ -451,13 +451,10 @@ Architecture, product and docs: ${JSON.stringify(arch || [])}
 Minor findings: ${JSON.stringify(minors, null, 1)}`
 
 const statusCommand = n => `bash ${PLUGIN_ROOT}/scripts/bot-status.sh ${REPO} ${n}`
-const waitPrompt = (pr, n) => PLUGIN_ROOT ? `Task: wait for the review bots on pull request #${n} in ${REPO}, for at most ${BOT_WAIT_MIN} minutes.
+const waitPrompt = (pr, n) => `Task: wait for the review bots on pull request #${n} in ${REPO}, for at most ${BOT_WAIT_MIN} minutes.
 Bots: ${BOTS}.
 Status command, from the plugin folder ${PLUGIN_ROOT} (never from a clone of ${REPO}): \`${statusCommand(n)}\`. It prints one JSON line with head, approvedBy and openThreads. Run it on every poll. approvedBy is the only list of approvals: report it as it is, and never judge approvals yourself. Also check that each bot's check has finished on the head: \`gh api repos/${REPO}/commits/<head>/check-runs\`. Inline threads: \`gh api repos/${REPO}/pulls/${n}/comments\`.
-Return approvedBy, openComments, timedOut, and one line of notes.` : `Task: wait for the review bots on pull request #${n} in ${REPO}, for at most ${BOT_WAIT_MIN} minutes.
-Bots: ${BOTS}.
-Poll with \`gh pr view ${n} -R ${REPO} --json headRefOid,reviews\` and \`gh pr checks ${n} -R ${REPO}\`. A review counts only if its commit is the current head (\`.reviews[].commit.oid\` equals \`headRefOid\`). Inline threads: \`gh api repos/${REPO}/pulls/${n}/comments\`.
-Return approvedBy (bot logins whose latest review is APPROVED on the current head), openComments, timedOut, and one line of notes.`
+Return approvedBy, openComments, timedOut, and one line of notes.`
 
 const answerPrompt = (pr, n, issues) => `${ctx(pr)}
 
@@ -540,9 +537,9 @@ const productMinors = product => product.verdict === 'notes'
   ? product.entries.filter(e => e.fit !== 'serves-goal' && e.fit !== 'neutral')
       .map(e => ({ severity: 'minor', title: `Product fit: ${e.entry} (${e.fit})`, detail: `${e.note || ''} Suggestion: ${e.suggestion || 'keep'}.` }))
   : []
-const ioPrompt = (pr, command) => `Task: run one command and return its exit code and output.
+const ioPrompt = (pr, command, head) => `Task: run one command and return its exit code and output.
 Plugin folder: ${PLUGIN_ROOT}. Run scripts only from this folder, never from a clone of ${REPO}.
-Command: \`${command}\`
+Command: \`${command}\`${head ? `\nExpected head: ${head}. If the output names another head, return exitCode 1 and say so in the output.` : ''}
 Return exitCode and output.`
 const briefCommand = (pr, mode, entry) => `bash ${PLUGIN_ROOT}/scripts/quick-brief.sh ${mode} ${REPO} ${pr.quick.issue}${mode === 'put' ? ` --b64 ${base64(entry)} --sum ${cksum(entry)}` : ''}`
 
@@ -600,7 +597,7 @@ async function landFor(pr, n, sha) {
   const pair = `${n}:${sha}`
   const person = (why, more) => ({ land: pair, landMode: 'person', landWhy: why, ...more })
   if (!PLUGIN_ROOT) return person('pluginRoot missing: no gate or safety check ran')
-  const gate = await call('io', pr, ioPrompt(pr, `bash ${PLUGIN_ROOT}/scripts/gate-files.sh ${REPO} ${n}`), `io:${pr.id}#gate`, { phase: 'Merge safety', schema: IO })
+  const gate = await call('io', pr, ioPrompt(pr, `bash ${PLUGIN_ROOT}/scripts/gate-files.sh ${REPO} ${n}`, sha), `io:${pr.id}#gate`, { phase: 'Merge safety', schema: IO })
   if (!gate || gate.exitCode !== 0 || !/^not gated/m.test(gate.output)) return person(`gate: ${gate ? gate.output.trim() : 'pipeline-io failed'}`)
   if (pr.quickState && /^Triage: .*risk high/m.test(pr.quickState.brief)) return person('the quick-fix triage says high risk')
   const verdict = await call('safety', pr, safetyPrompt(pr, n, sha), `safety:${pr.id}#land`, { schema: SAFETY })
@@ -700,14 +697,13 @@ async function botCheck(pr, fromSha, answer, history, minors) {
 }
 
 async function bots(pr, n, headSha, issues, history, minors) {
+  if (!PLUGIN_ROOT) return { ok: false, reason: 'pluginRoot missing: the bot step needs it to run the status script', headSha }
   const wait = await call('botWait', pr, waitPrompt(pr, n), `botwait:${pr.id}`, { schema: WAIT })
   if (!wait) return { ok: false, reason: 'bot wait failed', headSha }
-  if (PLUGIN_ROOT) {
-    const st = await call('io', pr, ioPrompt(pr, statusCommand(n)), `io:${pr.id}#botstatus`, { phase: 'Bots', schema: IO })
-    const status = st && st.exitCode === 0 ? jsonLine(st.output) : null
-    if (!status || !Array.isArray(status.approvedBy)) return { ok: false, reason: `bot status failed: ${st ? st.output.trim() : 'pipeline-io failed'}`, headSha, wait }
-    wait.approvedBy = status.approvedBy
-  }
+  const st = await call('io', pr, ioPrompt(pr, statusCommand(n), headSha), `io:${pr.id}#botstatus`, { phase: 'Bots', schema: IO })
+  const status = st && st.exitCode === 0 ? jsonLine(st.output) : null
+  if (!status || !Array.isArray(status.approvedBy)) return { ok: false, reason: `bot status failed: ${st ? st.output.trim() : 'pipeline-io failed'}`, headSha, wait }
+  wait.approvedBy = status.approvedBy
   if (!(wait.openComments > 0)) return { ok: true, headSha, wait }
   const answer = await call('botAnswer', pr, answerPrompt(pr, n, issues), `botanswer:${pr.id}`, { schema: ANSWER })
   if (!answer) return { ok: false, reason: 'bot answer failed', headSha, wait }

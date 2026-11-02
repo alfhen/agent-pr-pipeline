@@ -47,8 +47,9 @@ pages=$(gh api --paginate "repos/$R/commits/$sha/check-runs?per_page=100" 2>&1) 
 runs=$(jq -s -c '[.[].check_runs[]]' <<<"$pages") || stop "unexpected check runs answer"
 spages=$(gh api --paginate "repos/$R/commits/$sha/status?per_page=100" 2>&1) || stop "cannot read the commit statuses of ${sha:0:7} ($spages)"
 sts=$(jq -s -c '[.[].statuses[]]' <<<"$spages") || stop "unexpected commit status answer"
-red=$(jq -n -r --argjson r "$runs" --argjson s "$sts" 'if ($r | length) == 0 then "no check runs" else
-  ([$r[] | select(.status != "completed" or (.conclusion | IN("success", "skipped", "neutral") | not)) | .name] + [$s[] | select(.state != "success") | .context]) | join(", ") end')
+red=$(jq -n -r --slurpfile r <(printf '%s' "$runs") --slurpfile s <(printf '%s' "$sts") '$r[0] as $r | $s[0] as $s | if ($r | length) == 0 then "no check runs" else
+  ([$r[] | select(.status != "completed" or (.conclusion | IN("success", "skipped", "neutral") | not)) | .name] + [$s[] | select(.state != "success") | .context]) | join(", ") end') \
+  || stop "cannot judge the check runs"
 if [ -z "$red" ]; then ok "$branch is green at ${sha:0:7}"; else miss "$branch is not green at ${sha:0:7}: $red"; fi
 
 tags=$(gh api "repos/$R/tags?per_page=100" 2>&1) || stop "cannot list the tags ($tags)"

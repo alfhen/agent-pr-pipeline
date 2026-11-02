@@ -205,3 +205,17 @@ test('bot-status: a failed GitHub read exits 1', () => {
   assert.equal(r.code, 1)
   assert.match(r.out, /bot-status: cannot read the reviews/)
 })
+
+const big = (n, conclusion) => Array.from({ length: n }, (_, i) => ({ name: `job${i}`, status: 'completed', conclusion: i === 0 ? conclusion : 'success', output: { text: 'x'.repeat(20000) } }))
+
+test('release: a red branch with check runs over 128 KiB still refuses', () => {
+  const s = setup()
+  put(s.fx, `${P}__commits__${HEAD}__check-runs.json`, { check_runs: big(60, 'failure') })
+  refused(release(s, '--dry-run'), /MISSING: main is not green at aaaaaaa: job0/)
+})
+
+test('bot-status: reviews and comments over 128 KiB still work', () => {
+  const thread = (id) => ({ id, pull_request_review_id: 1, in_reply_to_id: null, user: { login: BOT }, body: 'x'.repeat(40000) })
+  const s = statusSetup([rv('COMMENTED', 'old'.padEnd(40, '0'), '1')], Array.from({ length: 30 }, (_, i) => thread(i + 1)))
+  assert.deepEqual(status(s), { head: HEAD, approvedBy: [], openThreads: 30 })
+})

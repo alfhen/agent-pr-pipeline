@@ -268,15 +268,12 @@ await check('no skill instruction without a skills argument', () => {
 failWait = true
 const w = await simulate(base)
 failWait = false
-await check('without pluginRoot the bot waiter keeps its own rule and nothing lands as :auto', async () => {
+await check('without pluginRoot the PR stops at the bot step and no waiter runs', async () => {
   const { pluginRoot, ...noRoot } = base
   const nr = await simulate({ ...noRoot, prs: PRS.filter(p => p.id === 'C1') })
-  assert.match(calls.find(c => c.label === 'botwait:C1').prompt, /latest review is APPROVED on the current head/)
-  assert.deepEqual(nr.C1.approvedBy, ['the-waiter-says-so'])
-  assert.ok(!calls.some(c => /^(io|safety):/.test(c.label)))
-  assert.equal(nr.C1.land, `${nr.C1.prNumber}:sha-C1`)
-  assert.equal(nr.C1.landMode, 'person')
-  assert.match(nr.C1.landWhy, /^pluginRoot missing/)
+  assert.equal(nr.C1.ready, false)
+  assert.match(nr.C1.reason, /^pluginRoot missing/)
+  assert.ok(!calls.some(c => /^(botwait|io|safety):/.test(c.label)))
 })
 await check('failed bot wait is not ready', () => {
   assert.equal(w.C1.ready, false)
@@ -717,7 +714,7 @@ await check('merge safety: without pluginRoot no PR is :auto', async () => {
   const { pluginRoot, ...noRoot } = base
   calls = []; preflight = GOOD
   const out = await run({ ...noRoot, prs: only('C1', 'C2') }, agent, parallel, log)
-  assert.ok(out.prs.every(p => p.ready && !p.land.endsWith(':auto')))
+  assert.ok(out.prs.every(p => !p.ready && !(p.land || '').endsWith(':auto')))
 })
 
 await check('bot status: approvedBy comes from the script through pipeline-io, not from the waiter', async () => {
