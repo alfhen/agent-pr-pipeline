@@ -3,7 +3,7 @@
 # Files each feedback item as an issue with the label pipeline-feedback in --repo. --source is the repo the
 # wave ran in. When it differs from --repo, the script itself also refuses the source owner, name, owner/name
 # and URL, and refuses to run with an empty denylist. <feedback.json> is a list of { title, detail, evidence, suggestedChange, severity };
-# <denylist.json> is a list of strings. An item whose text contains a denylist string (any case) is reported
+# <denylist.json> is a list of strings. An item whose text contains a denylist string (any case; an entry with a / matches as a substring, any other entry only as a whole word) is reported
 # as REFUSED and never filed. A title that already has an open pipeline-feedback issue is skipped.
 # Exit: 0 all done, 1 error, 2 at least one item refused. Uses gh api REST calls only.
 set -u
@@ -43,7 +43,7 @@ for ((i = 0; i < count; i++)); do
   title=$(jq -r '.title // ""' <<<"$item")
   [ -n "$title" ] || { echo "REFUSED item $i: no title"; status=2; continue; }
   hit=$(jq -r --argjson deny "$deny_all" '[.. | strings] | join("\n") | ascii_downcase as $text
-    | [$deny[] | select(length > 0) | select(. as $d | $text | contains($d | ascii_downcase))] | first // empty' <<<"$item") || { echo "REFUSED $title: denylist check failed"; status=2; continue; }
+    | [$deny[] | select(length > 0) | ascii_downcase | select(. as $d | if contains("/") then $text | contains($d) else $text | test("(^|[^a-z0-9])" + ($d | gsub("(?<c>[^a-z0-9])"; "\\" + .c)) + "($|[^a-z0-9])") end)] | first // empty' <<<"$item") || { echo "REFUSED $title: denylist check failed"; status=2; continue; }
   if [ -n "$hit" ]; then
     echo "REFUSED $title: contains \"$hit\""
     status=2

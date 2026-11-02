@@ -151,3 +151,13 @@ test('an item is refused when the denylist check fails', () => {
   assert.match(r.stdout, /REFUSED Tester reports a stale sha: denylist check failed/)
   assert.equal(r.posts.length, 0)
 })
+
+test('a short denylist entry matches only as a whole word, a path matches as a substring', () => {
+  const ok = item('Writer lags the code', { detail: 'The documentation step reads the README and runs the apis.' })
+  const bad = item('Fixer loops', { detail: 'It edits src/billing/invoice.ts twice.' })
+  const r = setup({ items: [ok, bad], deny: ['docs', 'api', 'src/billing/invoice.ts'], source: REPO }).run()
+  assert.equal(r.posts.length, 1)
+  assert.match(r.stdout, /REFUSED Fixer loops: contains "src\/billing\/invoice.ts"/)
+  const word = setup({ items: [item('Docs lag', { detail: 'Fixed in the Docs step.' })], deny: ['docs'] }).run()
+  assert.equal(word.status, 2)
+})
