@@ -15,11 +15,36 @@ const ITEMS = [
   { title: 'Docs step has no timeout', detail: 'd', evidence: 'e', suggestedChange: 'c', severity: 'minor' },
 ]
 const REDACTED = ITEMS.map(i => ({ ...i, title: `generic: ${i.title}`, detail: 'generic detail' }))
+const briefs = {}
+const storedInstead = {}
+const triage = (decision, size, risk, extra = {}) => ({
+  decision, size, risk, why: `why ${decision} ${size} ${risk}`, newConcepts: [],
+  ...(decision === 'build' ? { entry: { touches: 'src/x.js', acceptance: 'node --test passes' } } : {}), ...extra,
+})
+const TRIAGES = {
+  QS: triage('build', 'S', 'low'), QN: triage('build', 'S', 'low', { newConcepts: ['job queue'] }),
+  QM: triage('build', 'M', 'medium'), QF: triage('build', 'M', 'medium'), QY: triage('build', 'M', 'medium'),
+  QL: triage('build', 'L', 'low'), QH: triage('build', 'S', 'high'),
+  QP: triage('plan', 'M', 'medium'), QD: triage('decline', 'S', 'low'),
+  QA: triage('build', 'S', 'low', { entry: { touches: 'src/x.js', acceptance: 'node --test passes', qa: 'try --words with empty input' } }),
+  QE: triage('build', 'S', 'low'), QT: triage('build', 'S', 'low'),
+}
 let evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'README.md'] }
+let corruptPut = false
 const agent = async (prompt, o) => {
   calls.push({ label: o.label, model: o.model, effort: o.effort, agentType: o.agentType, isolation: o.isolation, prompt })
   const id = o.label.split(':')[1].split('#')[0]
   if (o.label.startsWith('preflight')) return preflight
+  if (o.label.startsWith('triage')) return TRIAGES[id]
+  if (o.label.startsWith('io:')) {
+    if (o.label.endsWith('#put')) {
+      const posted = Buffer.from(/--b64 (\S+)/.exec(prompt)[1], 'base64').toString('utf8')
+      if (corruptPut) return { exitCode: 65, output: 'quick-brief: the entry does not match its checksum; nothing posted' }
+      briefs[id] = storedInstead[id] || posted
+      return { exitCode: 0, output: briefs[id] }
+    }
+    return briefs[id] ? { exitCode: 0, output: briefs[id] } : { exitCode: 1, output: 'quick-brief: no trusted brief on issue 1' }
+  }
   if (o.label.startsWith('evaluate')) return evaluation
   if (o.label.startsWith('redact')) {
     if (redactor === 'null') return null
@@ -27,6 +52,8 @@ const agent = async (prompt, o) => {
   }
   if (o.label.startsWith('product')) {
     if (id === 'P2') return { verdict: 'escalate', summary: 's', entries: [{ entry: 'V04 MCP server', fit: 'widens-scope', suggestion: 'cut' }], escalation: { question: 'Keep the product CLI only?', recommendation: 'cut V04' } }
+    if (id === 'QE') return { verdict: 'escalate', summary: 's', entries: [{ entry: 'QE', fit: 'non-goal' }], escalation: { question: 'Add a hosted mode?', recommendation: 'decline' } }
+    if (id === 'QT') return { verdict: 'notes', summary: 's', entries: [{ entry: 'QT', fit: 'widens-scope', note: 'extra flag', suggestion: 'trim' }] }
     if (id === 'P3') return { verdict: 'notes', summary: 's', entries: [{ entry: 'H08', fit: 'widens-scope', note: 'polish', suggestion: 'defer' }] }
     return { verdict: 'aligned', summary: 's', entries: [] }
   }
@@ -49,7 +76,7 @@ const agent = async (prompt, o) => {
     : { summary: 's', scenarios: [{ name: 'acceptance', pass: true }], findings: [] }
   if (o.label.startsWith('docsfix')) return { changed: true, headSha: 'docsfix-' + id, files: ['README.md'], summary: 's' }
   if (o.label.startsWith('docs')) return ['G1', 'G2', 'G3'].includes(id) ? { changed: true, headSha: 'docs-' + id, files: ['README.md'], summary: 's' } : { changed: false, summary: 'already right' }
-  if (o.label.startsWith('review')) return { summary: 's', findings: id === 'P1' ? [{ severity: 'major', title: 'x', detail: 'd' }] : [{ severity: 'minor', title: 'm', detail: 'd' }] }
+  if (o.label.startsWith('review')) return { summary: 's', findings: id === 'P1' || ['QS', 'QY'].includes(id) || (id === 'QF' && round === '1') ? [{ severity: 'major', title: 'x', detail: 'd' }] : [{ severity: 'minor', title: 'm', detail: 'd' }] }
   if (o.label.startsWith('open')) return { prNumber: 100 + calls.length, prUrl: 'u', issuesCreated: id === 'C2' ? ['https://github.com/o/r/issues/21'] : [] }
   if (o.label.startsWith('botwait')) return id === 'C1' && failWait ? null : { approvedBy: ['gitar-bot'], openComments: ['C2', 'L1', 'B1', 'W1'].includes(id) ? 2 : 0 }
   if (o.label.startsWith('botanswer')) return { codeChanged: id !== 'W1', headSha: 'sha-answer-' + id, closesIssues: id === 'C2' ? [21] : [], notes: 'anchored the regex' }
@@ -393,7 +420,7 @@ const frontmatter = name => {
   const text = readFileSync(new URL(`agents/${name}.md`, root), 'utf8')
   return Object.fromEntries(text.split('---')[1].trim().split('\n').map(l => [l.slice(0, l.indexOf(':')), l.slice(l.indexOf(':') + 1).trim()]))
 }
-const AGENT_OF = { botreview: 'reviewer', qa: 'qa', docsfix: 'docs-writer', implement: 'implementer', test: 'tester', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight', evaluate: 'evaluator', redact: 'feedback-redactor' }
+const AGENT_OF = { botreview: 'reviewer', qa: 'qa', docsfix: 'docs-writer', implement: 'implementer', test: 'tester', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight', triage: 'triager', io: 'pipeline-io', evaluate: 'evaluator', redact: 'feedback-redactor' }
 const WRITERS = ['implementer', 'fixer', 'docs-writer', 'bot-answerer', 'land-fixer']
 await simulate(base)
 await check('every call names its role agent from the plugin', () => {
@@ -421,7 +448,7 @@ await check('only the land fixer keeps a 1-hour cache', () => {
 })
 await check('only the tester, bot waiter and preflight leave out CLAUDE.md', () => {
   for (const name of new Set(Object.values(AGENT_OF))) {
-    assert.equal(frontmatter(name).omitClaudeMd === 'true', ['tester', 'bot-waiter', 'goals-preflight'].includes(name), name)
+    assert.equal(frontmatter(name).omitClaudeMd === 'true', ['tester', 'bot-waiter', 'goals-preflight', 'pipeline-io'].includes(name), name)
   }
 })
 await check('read-only agents have no edit tools', () => {
@@ -444,6 +471,148 @@ await check('plugin and marketplace manifests agree, and the workflow is named r
   assert.deepEqual(market.plugins.map(p => p.name), [plugin.name])
   assert.match(src, /name: 'run-wave'/)
   for (const skill of ['pr-pipeline', 'write-goals']) assert.ok(existsSync(new URL(`skills/${skill}/SKILL.md`, root)), skill)
+})
+
+// Quick fixes: the triage gate.
+const QUICK = ['QS', 'QN', 'QM', 'QF', 'QY', 'QL', 'QH', 'QP', 'QD', 'QE', 'QT', 'QA']
+const quickBase = { repo: 'o/r', tmp: '/x', goals: 'docs/goals.md', architecture: 'docs/design.md', pluginRoot: '/plug', prs: QUICK.map((id, i) => ({ id, quick: { issue: 40 + i }, branch: `fix/${id}` })) }
+const qr = await simulate(quickBase)
+const quickCalls = calls
+const forPr = (id, re) => quickCalls.filter(c => c.label.split(':')[1].split('#')[0] === id && re.test(c.label))
+const entryOf = id => `Touches: src/x.js\nAcceptance: node --test passes\nTriage: size ${TRIAGES[id].size}, risk ${TRIAGES[id].risk}`
+await check('quick: an L or high-risk build becomes a plan and builds nothing', () => {
+  for (const id of ['QL', 'QH']) {
+    assert.equal(qr[id].ready, false)
+    assert.match(qr[id].reason, /^quick fix: plan\. why build /)
+    assert.equal(forPr(id, /^(implement|product|io:[^#]*#put|test|review)/).length, 0, id)
+  }
+})
+await check('quick: plan and decline stop with the triager\'s reason and start no implementer', () => {
+  assert.match(qr.QP.reason, /^quick fix: plan\. why plan M medium/)
+  assert.match(qr.QD.reason, /^quick fix: decline\. why decline S low/)
+  for (const id of ['QP', 'QD']) assert.equal(forPr(id, /^(implement|product|io:[^#]*#put|test|review)/).length, 0, id)
+})
+await check('quick: a build runs the product-fit reviewer on the entry, and its escalate stops the PR', () => {
+  const p = forPr('QM', /^product/)[0]
+  assert.equal(p.agentType, 'agent-pr-pipeline:product-reviewer')
+  assert.ok(p.prompt.includes(entryOf('QM')))
+  assert.equal(qr.QE.reason, 'needs human: product')
+  assert.equal(qr.QE.escalation.question, 'Add a hosted mode?')
+  assert.equal(forPr('QE', /^(implement|io:[^#]*#put|test|review)/).filter(c => c.label !== 'io:QE#put').length, 0)
+  assert.equal(forPr('QE', /^io:QE#put/).length, 0, 'the brief is posted only after the product check passes')
+})
+await check('quick: product notes become minor issues for the PR opener', () => {
+  assert.equal(qr.QT.ready, true)
+  assert.match(forPr('QT', /^open/)[0].prompt, /Product fit: QT \(widens-scope\)/)
+})
+await check('quick: the implementer, tester, reviewer, architecture reviewer, fixer and opener all carry the same entry', () => {
+  for (const id of ['QM', 'QF']) {
+    const entry = entryOf(id)
+    const labels = forPr(id, /^(implement|test|review|arch|fix|docs|open)/)
+    for (const want of ['implement', 'test', 'review', 'arch', 'open']) assert.ok(labels.some(c => c.label.startsWith(want)), `${id} ${want}`)
+    for (const c of labels) assert.ok(c.prompt.includes(entry), `${c.label} carries the entry`)
+  }
+  assert.ok(forPr('QF', /^fix/).length > 0)
+  assert.equal(forPr('QM', /^io:QM#put/).length, 1)
+})
+await check('quick: the prompts name the issue and not a plan, and the PR closes the issue', () => {
+  const impl = forPr('QM', /^implement/)[0].prompt
+  assert.match(impl, /issues\/42/)
+  assert.doesNotMatch(impl, /Plan:/)
+  assert.match(forPr('QM', /^open/)[0].prompt, /"Closes #42" on its own line/)
+})
+await check('quick: S and low risk get 2 rounds and no architecture review unless a new concept is named', () => {
+  assert.equal(qr.QS.reason, 'rounds exhausted')
+  assert.equal(qr.QS.history.length, 2)
+  assert.equal(forPr('QS', /^arch/).length, 0)
+  assert.ok(forPr('QN', /^arch/).length > 0)
+  assert.equal(qr.QY.history.length, 4)
+  assert.ok(forPr('QY', /^arch/).length > 0)
+})
+await check('quick: a QA line from the triager turns on the QA step, and a stored one does too', async () => {
+  assert.ok(forPr('QA', /^qa:/).length > 0)
+  assert.match(forPr('QA', /^qa:/)[0].prompt, /What to try: try --words with empty input/)
+  assert.equal(forPr('QS', /^qa:/).length, 0)
+  briefs.QB = 'Touches: src/old.js\nAcceptance: old test\nQA: try old input\nTriage: size M, risk medium, new concepts: none'
+  await simulate({ ...quickBase, prs: [{ id: 'QB', quick: { issue: 82 }, branch: 'fix/QB' }] })
+  assert.ok(calls.some(c => c.label.startsWith('qa:QB')))
+})
+await check('quick: the goals path reaches the triager and the entry check', () => {
+  assert.match(forPr('QM', /^triage/)[0].prompt, /docs\/goals\.md/)
+  assert.match(forPr('QM', /^product/)[0].prompt, /docs\/goals\.md/)
+})
+await check('quick: pluginRoot reaches every pipeline-io prompt, which names the script and the plugin folder rule', () => {
+  const io = quickCalls.filter(c => c.label.startsWith('io:'))
+  assert.ok(io.length > 0)
+  for (const c of io) {
+    assert.ok(c.prompt.includes('bash /plug/scripts/quick-brief.sh'), c.label)
+    assert.match(c.prompt, /never from a clone of o\/r/)
+    assert.equal(c.agentType, 'agent-pr-pipeline:pipeline-io')
+    assert.equal(`${c.model}/${c.effort}`, 'haiku/low')
+  }
+})
+await check('quick: without pluginRoot the PR stops and no agent runs for it', async () => {
+  const { pluginRoot, ...noRoot } = quickBase
+  const r2 = await simulate({ ...noRoot, prs: [quickBase.prs[2]] })
+  assert.match(r2.QM.reason, /^pluginRoot missing/)
+  assert.equal(calls.filter(c => !/^(preflight|evaluate|redact)/.test(c.label)).length, 0)
+})
+await check('quick: a rerun with skipImpl reads the brief through pipeline-io, not the triager, and keeps the scaling', async () => {
+  briefs.QR = 'Touches: src/r.js\nAcceptance: rerun test\nTriage: size S, risk low, new concepts: none'
+  const r3 = await simulate({ ...quickBase, prs: [{ id: 'QR', quick: { issue: 77 }, branch: 'fix/QR', skipImpl: true }] })
+  assert.ok(calls.some(c => c.label === 'io:QR#get' && c.prompt.includes('quick-brief.sh get o/r 77')))
+  assert.ok(!calls.some(c => /^(triage|implement|product)/.test(c.label)))
+  assert.ok(!calls.some(c => c.label === 'io:QR#put'))
+  assert.ok(!calls.some(c => c.label.startsWith('arch')))
+  for (const c of calls.filter(c => /^(test|review)/.test(c.label))) assert.ok(c.prompt.includes('Acceptance: rerun test'), c.label)
+  assert.equal(r3.QR.ready, true)
+})
+await check('quick: a rerun with no trusted brief stops', async () => {
+  const r4 = await simulate({ ...quickBase, prs: [{ id: 'QZ', quick: { issue: 78 }, branch: 'fix/QZ', skipImpl: true }] })
+  assert.match(r4.QZ.reason, /^quick brief not found/)
+  assert.ok(!calls.some(c => /^(triage|implement|test|review)/.test(c.label)))
+})
+await check('quick: a plain rerun with a stored brief skips the triager and uses the stored text', async () => {
+  briefs.QX = 'Touches: src/old.js\nAcceptance: old test\nTriage: size M, risk medium, new concepts: none'
+  const r5 = await simulate({ ...quickBase, prs: [{ id: 'QX', quick: { issue: 79 }, branch: 'fix/QX' }] })
+  assert.ok(!calls.some(c => /^(triage|io:QX#put)/.test(c.label)))
+  for (const c of calls.filter(c => /^(implement|test|review)/.test(c.label))) assert.ok(c.prompt.includes('Acceptance: old test'), c.label)
+  assert.equal(r5.QX.ready, true)
+})
+await check('quick: a put that returns a different stored brief stops the PR before any code', async () => {
+  storedInstead.QW = 'Touches: src/other.js\nAcceptance: other\nTriage: size M, risk medium, new concepts: none'
+  TRIAGES.QW = triage('build', 'M', 'medium')
+  const r6 = await simulate({ ...quickBase, prs: [{ id: 'QW', quick: { issue: 80 }, branch: 'fix/QW' }] })
+  assert.match(r6.QW.reason, /^quick brief differs/)
+  assert.ok(!calls.some(c => /^(implement|test|review)/.test(c.label)))
+})
+await check('quick: the entry goes into the put command as base64, never as inline text', () => {
+  const put = forPr('QM', /^io:QM#put/)[0].prompt
+  assert.doesNotMatch(put, /Acceptance: node --test/)
+  assert.match(put, /quick-brief\.sh put o\/r 42 --b64 [A-Za-z0-9+\/=]+/)
+})
+await check('quick: the sum in the put command matches cksum of the decoded entry', async () => {
+  const { execFileSync } = await import('node:child_process')
+  const put = forPr('QM', /^io:QM#put/)[0].prompt
+  const [, b64, sum] = /--b64 (\S+) --sum (\d+:\d+)/.exec(put)
+  const out = execFileSync('cksum', { input: Buffer.from(b64, 'base64') }).toString().trim().split(/\s+/)
+  assert.equal(sum, `${out[0]}:${out[1]}`)
+})
+await check('quick: a corrupted --b64 from the io agent posts nothing and stops the PR', async () => {
+  TRIAGES.QK = triage('build', 'M', 'medium')
+  corruptPut = true
+  const r7 = await simulate({ ...quickBase, prs: [{ id: 'QK', quick: { issue: 81 }, branch: 'fix/QK' }] })
+  corruptPut = false
+  assert.match(r7.QK.reason, /^quick brief not posted/)
+  assert.equal(briefs.QK, undefined)
+  assert.ok(!calls.some(c => /^(implement|test|review)/.test(c.label)))
+})
+await check('quick: quick state stays off the caller options', () => {
+  assert.equal(quickBase.prs[0].quickState, undefined)
+  assert.equal(quickBase.prs[0].brief, undefined)
+})
+await check('quick: a plan is optional for a quick-only wave and required otherwise', async () => {
+  await assert.rejects(() => run({ ...quickBase, prs: [...quickBase.prs.slice(0, 1), { id: 'X', title: 't', branch: 'x' }] }, agent, parallel, log), /needs plan/)
 })
 
 // Land gate: scripts/bot-approval.jq on fixture reviews and comments.

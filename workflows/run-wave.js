@@ -3,6 +3,7 @@ export const meta = {
   description: 'Build, test, review and fix one wave of PRs, open them and answer the review bots; each step a separate agent',
   phases: [
     { title: 'Preflight', detail: 'check the goals document exists and has goals and non-goals' },
+    { title: 'Triage', detail: 'only for quick fixes: a stronger model decides build, plan or decline for one issue; a small agent runs the brief script' },
     { title: 'Implement', detail: 'one agent builds each PR on its own branch' },
     { title: 'Test', detail: 'a second agent runs the fast checks and the PR\'s own e2e from a clean clone' },
     { title: 'Review', detail: 'a stronger model reviews the diff adversarially' },
@@ -23,6 +24,7 @@ const A = args || {}
 const REPO = A.repo
 const TMP = A.tmp
 const PLAN = A.plan
+const PLUGIN_ROOT = A.pluginRoot
 const SPEC = A.spec || ''
 const ARCH = A.architecture || SPEC
 const GOALS = A.goals
@@ -50,10 +52,20 @@ const STEPS = Object.assign({
   landFix: { model: 'sonnet', effort: 'medium' },
   docs: { model: 'sonnet', effort: 'medium' },
   qa: { model: 'sonnet', effort: 'medium' },
+  triage: { model: 'opus', effort: 'high' },
+  io: { model: 'haiku', effort: 'low' },
   evaluate: { model: 'sonnet', effort: 'medium' },
   redact: { model: 'haiku', effort: 'low' },
 }, A.steps || {})
-if (!REPO || !TMP || !PLAN || !Array.isArray(A.prs)) throw new Error('args needs repo, tmp, plan and prs')
+if (!REPO || !TMP || !Array.isArray(A.prs)) throw new Error('args needs repo, tmp, plan and prs')
+if (!PLAN && !A.prs.every(pr => pr.quick)) throw new Error('args needs plan, unless every PR is a quick fix')
+for (const pr of A.prs) {
+  if (!pr.quick) continue
+  if (!Number.isInteger(pr.quick.issue) || pr.quick.issue < 1) throw new Error(`prs[${pr.id}].quick needs issue: the issue number`)
+  pr.id = pr.id || `Q${pr.quick.issue}`
+  pr.branch = pr.branch || `fix/issue-${pr.quick.issue}`
+  pr.title = pr.title || `Quick fix for issue #${pr.quick.issue}`
+}
 if (!GOALS) throw new Error('args needs goals: the path to the product goals document (see templates/goals.md). The pipeline does not start without one.')
 
 const SKILL_STEPS = ['impl', 'test', 'review', 'qa', 'arch', 'product', 'fix', 'docs', 'open', 'botAnswer', 'landFix', 'preflight']
@@ -89,7 +101,7 @@ const docsRuns = pr => pr.kind !== 'docs' && pr.kind !== 'plan' && A.docsUpdate 
 const DOCS_ROUNDS = A.docsRounds || 2
 const BOT_CHECK_ROUNDS = A.botCheckRounds || 2
 const qaRuns = pr => pr.kind !== 'docs' && pr.kind !== 'plan' && A.qa !== false && pr.qa !== false && (A.qa === 'all' || !!pr.qa)
-const archRuns = pr => pr.kind !== 'docs' && !!ARCH && A.architectureReview !== false
+const archRuns = pr => pr.kind !== 'docs' && !!ARCH && A.architectureReview !== false && !(pr.quickState && pr.quickState.skipArch)
 const decided = pr => (pr.architectureDecision ? `\nArchitecture decision by the maintainer for this PR (settled; follow it): ${pr.architectureDecision}` : '')
   + (pr.productDecision ? `\nProduct scope decision by the maintainer for this PR (settled; follow it): ${pr.productDecision}` : '')
 const AGENT_PREFIX = A.agentPrefix === undefined ? 'agent-pr-pipeline:' : A.agentPrefix
@@ -109,6 +121,9 @@ const ROLES = {
   botAnswer: { agent: 'bot-answerer', phase: 'Bots', isolation: 'worktree' },
   landFix: { agent: 'land-fixer', phase: 'Land fix', isolation: 'worktree' },
   preflight: { agent: 'goals-preflight', phase: 'Preflight' },
+  triage: { agent: 'triager', phase: 'Triage', skills: null },
+  io: { agent: 'pipeline-io', phase: 'Triage', skills: null },
+  productEntry: { agent: 'product-reviewer', phase: 'Product fit', model: 'product', skills: 'product', clone: true },
   evaluate: { agent: 'evaluator', phase: 'Evaluate', skills: null },
   redact: { agent: 'feedback-redactor', phase: 'Evaluate', skills: null },
 }
@@ -122,8 +137,12 @@ const call = (role, pr, prompt, label, extra) => {
     extra))
 }
 
-const CONTEXT = `Repo: ${REPO} (https://github.com/${REPO}).
-${SPEC ? `Spec: ${SPEC}\n` : ''}Plan: ${PLAN}. The plan entry for this PR (its section, with its Touches and Acceptance lines) is the brief, plus the notes below. The plan's "Rules for every PR" section applies, and so do AGENTS.md or CLAUDE.md in the repo.
+const issueUrl = pr => `https://github.com/${REPO}/issues/${pr.quick.issue}`
+const ref = pr => pr.quick ? `issue #${pr.quick.issue} (${issueUrl(pr)})` : PLAN
+const ctx = pr => `Repo: ${REPO} (https://github.com/${REPO}).
+${SPEC ? `Spec: ${SPEC}\n` : ''}${pr && pr.quick
+  ? `Issue: ${issueUrl(pr)}. This PR has no entry in a plan document. The quick-fix entry in the PR block below (its Touches and Acceptance lines) is the brief, plus the notes.${PLAN ? ` The rules of ${PLAN} apply too.` : ''} AGENTS.md or CLAUDE.md in the repo apply.`
+  : `Plan: ${PLAN}. The plan entry for this PR (its section, with its Touches and Acceptance lines) is the brief, plus the notes below. The plan's "Rules for every PR" section applies, and so do AGENTS.md or CLAUDE.md in the repo.`}
 Temporary files go under ${TMP}/<your label>/. Never use /tmp.
 ${A.context || ''}`
 
@@ -274,24 +293,46 @@ const LANDFIX = {
   required: ['readyToMerge', 'notes'],
 }
 
+const TRIAGE = {
+  type: 'object',
+  properties: {
+    decision: { type: 'string', enum: ['build', 'plan', 'decline'] },
+    size: { type: 'string', enum: ['S', 'M', 'L'] },
+    risk: { type: 'string', enum: ['low', 'medium', 'high'] },
+    why: { type: 'string' },
+    newConcepts: { type: 'array', items: { type: 'string' } },
+    entry: {
+      type: 'object',
+      properties: { touches: { type: 'string' }, acceptance: { type: 'string' }, qa: { type: 'string' } },
+      required: ['touches', 'acceptance'],
+    },
+  },
+  required: ['decision', 'size', 'risk', 'why'],
+}
+const IO = {
+  type: 'object',
+  properties: { exitCode: { type: 'number' }, output: { type: 'string' } },
+  required: ['exitCode', 'output'],
+}
+
 const fastText = FAST_CHECKS.map(c => `\`${c}\``).join(', ')
 const ownE2e = `the e2e test files this branch adds or changes (\`git diff --name-only --diff-filter=d origin/HEAD...HEAD | grep -E '${E2E_PATTERN}'\`), run with \`${E2E_COMMAND}\` where {files} is that list; skip this when the list is empty. Do not run the full e2e suite`
-const prBlock = pr => `PR: ${pr.id} - ${pr.title}\nBranch: ${pr.branch}\nKind: ${pr.kind || 'code'}\nNotes for this PR:\n${pr.notes || '(none)'}${decided(pr)}`
+const prBlock = pr => `PR: ${pr.id} - ${pr.title}\nBranch: ${pr.branch}\nKind: ${pr.kind || 'code'}${pr.quickState ? `\nQuick-fix entry (the brief for this PR, from issue #${pr.quick.issue}):\n${pr.quickState.brief}` : ''}\nNotes for this PR:\n${pr.notes || '(none)'}${decided(pr)}`
 const cloneTo = (dir, pr) => `\`rm -rf ${TMP}/${dir} && git clone https://github.com/${REPO}.git ${TMP}/${dir} && cd ${TMP}/${dir} && git checkout ${pr.branch}\``
 const freshBranch = (prefix, pr, n) => `\`git fetch origin && git checkout -B ${prefix}-${pr.id}-r${n} origin/${pr.branch}\` (a new local name, because another worktree may hold ${pr.branch}). Push with \`git push origin HEAD:${pr.branch}\`.`
 
-const implPrompt = pr => `${CONTEXT}
+const implPrompt = pr => `${ctx(pr)}
 
 Task: implement this PR.
 1. You are in a fresh git worktree. Run \`git fetch origin && git checkout -B ${pr.branch} origin/HEAD\`. If ${pr.branch} already exists on origin from an earlier attempt, build on it: \`git checkout -B ${pr.branch} origin/${pr.branch}\`.
-2. Read ${SPEC ? `${SPEC}, ` : ''}${PLAN} and the code you will change.
+2. Read ${SPEC ? `${SPEC}, ` : ''}${ref(pr)} and the code you will change.
 3. Checks: ${fastText}, and ${ownE2e}.
 4. Commit and \`git push -u origin ${pr.branch}\`.
 Return pushed, branch, headSha, a short summary, whether the acceptance test passed, and any problems or open questions.
 
 ${prBlock(pr)}`
 
-const testPrompt = (pr, round) => `${CONTEXT}
+const testPrompt = (pr, round) => `${ctx(pr)}
 
 Task: test the branch from a clean clone.
 1. \`rm -rf ${TMP}/test-${pr.id}-r${round} && git clone --branch ${pr.branch} https://github.com/${REPO}.git ${TMP}/test-${pr.id}-r${round}\` and cd there.
@@ -300,16 +341,16 @@ Return pass, headSha, and one entry per check with the failing log excerpt.
 
 ${prBlock(pr)}`
 
-const reviewPrompt = (pr, round, history) => `${CONTEXT}
+const reviewPrompt = (pr, round, history) => `${ctx(pr)}
 
-Task: review the branch against ${SPEC ? `${SPEC} and ` : ''}${PLAN}.
+Task: review the branch against ${SPEC ? `${SPEC} and ` : ''}${ref(pr)}.
 Clone it: ${cloneTo(`review-${pr.id}-r${round}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`.
 Return headSha, a summary and the findings.
 
 ${prBlock(pr)}
 ${history.length ? `\nEarlier rounds (check their blockers and majors are really fixed):\n${JSON.stringify(history, null, 1)}` : ''}`
 
-const productPrompt = (pr, round) => `${CONTEXT}
+const productPrompt = (pr, round) => `${ctx(pr)}
 
 Task: check that ${pr.kind === 'plan' ? 'this plan' : 'this PR'} stays true to the product goals in ${GOALS}.
 Clone it: ${cloneTo(`product-${pr.id}-r${round}`, pr)}. Read ${GOALS}, then the ${pr.kind === 'plan' ? 'plan in the diff' : 'diff and its plan entry'} (\`git diff origin/HEAD...HEAD\`).
@@ -317,7 +358,7 @@ Return the verdict, a short summary, one row per entry, and the escalation (for 
 
 ${prBlock(pr)}`
 
-const qaPrompt = (pr, round, last) => `${CONTEXT}
+const qaPrompt = (pr, round, last) => `${ctx(pr)}
 
 Task: try the change on the branch like a user, and check it does what the plan entry and the docs say.
 Clone it: ${cloneTo(`qa-${pr.id}-r${round}`, pr)}. Install with \`${FAST_CHECKS[0]}\`. The diff is \`git diff origin/HEAD...HEAD\`.
@@ -327,7 +368,7 @@ Return headSha, a summary, every scenario you ran, and the findings.
 ${prBlock(pr)}
 ${last && last.length ? `\nYour findings from the last round (check each is really fixed):\n${JSON.stringify(last, null, 1)}` : ''}`
 
-const archPrompt = (pr, round) => `${CONTEXT}
+const archPrompt = (pr, round) => `${ctx(pr)}
 
 Task: review the branch for architecture against ${ARCH}.
 Clone it: ${cloneTo(`arch-${pr.id}-r${round}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`.
@@ -335,7 +376,7 @@ Return the verdict, a short summary, the new concepts, the findings (for needs-c
 
 ${prBlock(pr)}`
 
-const fixPrompt = (pr, test, findings, round) => `${CONTEXT}
+const fixPrompt = (pr, test, findings, round) => `${ctx(pr)}
 
 Task: fix the branch after review round ${round}.
 1. You are in a fresh git worktree. ${freshBranch('fix', pr, round)}
@@ -352,7 +393,7 @@ ${JSON.stringify(findings, null, 1)}`
 const docsWhere = A.docs && A.docs.length
   ? `The docs of this repo are: ${A.docs.join(', ')}.`
   : 'Find the docs yourself: README files, markdown under docs/ or similar, and a docs site if there is one (its source folder, for example docs/, site/ or website/, or HTML pages).'
-const docsPrompt = (pr, signedSha) => `${CONTEXT}
+const docsPrompt = (pr, signedSha) => `${ctx(pr)}
 
 Task: bring the docs in line with this PR. The code passed review at ${signedSha || 'the branch head'}.
 1. You are in a fresh git worktree. ${freshBranch('docs', pr, 0)}
@@ -362,7 +403,7 @@ Return changed, headSha (\`git rev-parse HEAD\` after your push), the files you 
 
 ${prBlock(pr)}`
 
-const docsFixPrompt = (pr, test, findings, round, signedSha) => `${CONTEXT}
+const docsFixPrompt = (pr, test, findings, round, signedSha) => `${ctx(pr)}
 
 Task: fix the docs after docs check round ${round}. Change docs only.
 1. You are in a fresh git worktree. ${freshBranch('docsfix', pr, round)}
@@ -378,7 +419,7 @@ ${JSON.stringify((test && test.checks || []).filter(c => !c.pass), null, 1)}
 Findings:
 ${JSON.stringify(findings, null, 1)}`
 
-const docsReviewPrompt = (pr, round, signedSha, docs) => `${CONTEXT}
+const docsReviewPrompt = (pr, round, signedSha, docs) => `${ctx(pr)}
 
 Task: check the docs commits on the branch.
 Clone it: ${cloneTo(`docsreview-${pr.id}-r${round}`, pr)}. The docs changes are \`git diff ${signedSha || 'origin/HEAD'}..HEAD\`; the code they describe is \`git diff origin/HEAD...HEAD\`.
@@ -388,11 +429,11 @@ ${prBlock(pr)}
 
 Docs agent summary: ${JSON.stringify(docs)}`
 
-const openPrompt = (pr, rounds, minors, arch) => `${CONTEXT}
+const openPrompt = (pr, rounds, minors, arch) => `${ctx(pr)}
 
 Task: open the pull request for ${pr.branch} and file the minor findings.
 1. Issues: \`gh issue create -R ${REPO} --label ${LABEL}${MILESTONE}\`. Body ends with "Found in review of ${pr.id}."
-2. PR: \`gh pr create -R ${REPO} --head ${pr.branch}\`, title "${pr.title}". Include "Review: no blockers or majors after round N." (N from the history).
+2. PR: \`gh pr create -R ${REPO} --head ${pr.branch}\`, title "${pr.title}". Include "Review: no blockers or majors after round N." (N from the history).${pr.quick ? ` Put "Closes #${pr.quick.issue}" on its own line in the body.` : ''}
 Return prNumber, prUrl and the issues you created.
 
 ${prBlock(pr)}
@@ -406,7 +447,7 @@ Bots: ${BOTS}.
 Poll with \`gh pr view ${n} -R ${REPO} --json headRefOid,reviews\` and \`gh pr checks ${n} -R ${REPO}\`. A review counts only if its commit is the current head (\`.reviews[].commit.oid\` equals \`headRefOid\`). Inline threads: \`gh api repos/${REPO}/pulls/${n}/comments\`.
 Return approvedBy (bot logins whose latest review is APPROVED on the current head), openComments, timedOut, and one line of notes.`
 
-const answerPrompt = (pr, n, issues) => `${CONTEXT}
+const answerPrompt = (pr, n, issues) => `${ctx(pr)}
 
 Task: answer the review bots on pull request #${n}.
 1. You are in a fresh git worktree. ${freshBranch('bots', pr, 0)}
@@ -417,7 +458,7 @@ Return threads addressed, whether code changed, headSha (\`git rev-parse HEAD\` 
 
 ${prBlock(pr)}`
 
-const botReviewPrompt = (pr, round, fromSha, answer) => `${CONTEXT}
+const botReviewPrompt = (pr, round, fromSha, answer) => `${ctx(pr)}
 
 Task: review only the commits the bot answer agent added after the rest of the PR passed review.
 Clone it: ${cloneTo(`botreview-${pr.id}-r${round}`, pr)}. Those commits are \`git diff ${fromSha || 'origin/HEAD'}..HEAD\`; the whole PR is \`git diff origin/HEAD...HEAD\` for context.
@@ -428,7 +469,7 @@ ${prBlock(pr)}
 
 Bot answer agent's notes: ${JSON.stringify((answer && answer.notes) || '')}`
 
-const landFixPrompt = pr => `${CONTEXT}
+const landFixPrompt = pr => `${ctx(pr)}
 
 Task: bring PR #${pr.prNumber} (${pr.branch}) to a mergeable state with green CI.
 1. You are in a fresh git worktree. ${freshBranch('land', pr, 0)}
@@ -442,6 +483,90 @@ ${prBlock(pr)}`
 const preflightPrompt = () => `Task: check the goals document ${GOALS} on the default branch of ${REPO}.
 Read it with \`gh api repos/${REPO}/contents/${GOALS} --jq .content | base64 --decode\`. If that fails, the file does not exist.
 Return ok, exists, the two counts, and missing: a short list of what is absent (for example "file", "Goals section", "Non-goals items").`
+
+const triagePrompt = pr => `${ctx(pr)}
+
+Task: triage ${ref(pr)} for a quick fix.
+1. Clone the default branch: \`rm -rf ${TMP}/triage-${pr.id} && git clone https://github.com/${REPO}.git ${TMP}/triage-${pr.id}\`.
+2. Read the issue with \`gh api repos/${REPO}/issues/${pr.quick.issue}\` and its comments with \`gh api --paginate repos/${REPO}/issues/${pr.quick.issue}/comments\`. Read the goals document ${GOALS} and the code the fix would touch.
+Return decision (build, plan or decline), size, risk, why, newConcepts, and for build the entry (touches, acceptance, qa).
+
+${prBlock(pr)}`
+
+const entryText = (t, e) => `Touches: ${e.touches}\nAcceptance: ${e.acceptance}${e.qa ? `\nQA: ${e.qa}` : ''}\nTriage: size ${t.size}, risk ${t.risk}, new concepts: ${(t.newConcepts || []).join('; ') || 'none'}`
+// S and low risk get two rounds and no architecture review, unless the triager named a new concept.
+const withBrief = (pr, brief) => {
+  const small = /^Triage: size S, risk low, new concepts: (.*)$/m.exec(brief)
+  const qa = /^QA: (.+)$/m.exec(brief)
+  return { ...pr, ...(qa && pr.qa === undefined ? { qa: qa[1] } : {}), quickState: { brief, skipArch: !!small && small[1].trim() === 'none' }, ...(small ? { maxRounds: pr.maxRounds || 2 } : {}) }
+}
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+// Plain JS: the script has no Buffer or btoa. The command line gets text that a shell cannot interpret.
+const base64 = text => {
+  const bytes = encodeURIComponent(text).replace(/%([0-9A-F]{2})|(.)/g, (m, h, c) => String.fromCharCode(h ? parseInt(h, 16) : c.charCodeAt(0)))
+  let out = ''
+  for (let i = 0; i < bytes.length; i += 3) {
+    const n = (bytes.charCodeAt(i) << 16) | ((bytes.charCodeAt(i + 1) || 0) << 8) | (bytes.charCodeAt(i + 2) || 0)
+    out += B64[(n >> 18) & 63] + B64[(n >> 12) & 63] + (i + 1 < bytes.length ? B64[(n >> 6) & 63] : '=') + (i + 2 < bytes.length ? B64[n & 63] : '=')
+  }
+  return out
+}
+// POSIX cksum of the UTF-8 bytes, as `cksum` prints it: "<crc> <length>". quick-brief.sh put checks it before it posts.
+const cksum = text => {
+  const bytes = unescape(encodeURIComponent(text))
+  let crc = 0
+  const feed = b => {
+    crc ^= b << 24
+    for (let k = 0; k < 8; k++) crc = crc & 0x80000000 ? (crc << 1) ^ 0x04C11DB7 : crc << 1
+    crc >>>= 0
+  }
+  for (let i = 0; i < bytes.length; i++) feed(bytes.charCodeAt(i))
+  for (let n = bytes.length; n > 0; n = Math.floor(n / 256)) feed(n & 255)
+  return `${(~crc) >>> 0}:${bytes.length}`
+}
+const productMinors = product => product.verdict === 'notes'
+  ? product.entries.filter(e => e.fit !== 'serves-goal' && e.fit !== 'neutral')
+      .map(e => ({ severity: 'minor', title: `Product fit: ${e.entry} (${e.fit})`, detail: `${e.note || ''} Suggestion: ${e.suggestion || 'keep'}.` }))
+  : []
+const ioPrompt = (pr, command) => `Task: run one command and return its exit code and output.
+Plugin folder: ${PLUGIN_ROOT}. Run scripts only from this folder, never from a clone of ${REPO}.
+Command: \`${command}\`
+Return exitCode and output.`
+const briefCommand = (pr, mode, entry) => `bash ${PLUGIN_ROOT}/scripts/quick-brief.sh ${mode} ${REPO} ${pr.quick.issue}${mode === 'put' ? ` --b64 ${base64(entry)} --sum ${cksum(entry)}` : ''}`
+
+const productEntryPrompt = pr => `${ctx(pr)}
+
+Task: check that this quick-fix entry stays true to the product goals in ${GOALS}. Nothing is built yet.
+Clone the default branch: \`rm -rf ${TMP}/product-${pr.id} && git clone https://github.com/${REPO}.git ${TMP}/product-${pr.id}\`. Read ${GOALS}, then the entry below and ${issueUrl(pr)}.
+Return the verdict, a short summary, one row for the entry, and the escalation (for escalate).
+
+${prBlock(pr)}`
+
+// Runs before any code is written. Returns { stop } to end the PR, or { pr, minors, product, triage } to go on.
+async function quickSetup(pr) {
+  const stop = (reason, more) => ({ stop: { id: pr.id, ready: false, reason, ...more } })
+  if (!PLUGIN_ROOT) return stop('pluginRoot missing: a quick fix needs it to run the brief script')
+  const rerun = !!(pr.skipImpl || pr.resume || pr.landFix)
+  const got = await call('io', pr, ioPrompt(pr, briefCommand(pr, 'get')), `io:${pr.id}#get`, { schema: IO })
+  if (got && got.exitCode === 0 && got.output.trim()) return { pr: withBrief(pr, got.output.trim()), minors: [], product: null, triage: null }
+  if (rerun || !got || got.exitCode !== 1) return stop(`quick brief not found: ${got ? got.output : 'pipeline-io failed'}`)
+  const t = await call('triage', pr, triagePrompt(pr), `triage:${pr.id}`, { schema: TRIAGE })
+  if (!t) return stop('triager failed')
+  const triage = { decision: t.decision, size: t.size, risk: t.risk, why: t.why }
+  const decision = t.decision === 'build' && (t.size === 'L' || t.risk === 'high') ? 'plan' : t.decision
+  log(`${pr.id} triage: ${t.decision} (${t.size}, ${t.risk})${decision !== t.decision ? ' -> plan' : ''}`)
+  if (decision !== 'build') return stop(`quick fix: ${decision}. ${t.why}`, { triage })
+  if (!t.entry) return stop('quick fix: the triager returned build without an entry', { triage })
+  const quick = withBrief(pr, entryText(t, t.entry))
+  const product = await call('productEntry', quick, productEntryPrompt(quick), `product:${pr.id}#entry`, { schema: PRODUCT })
+  if (!product) return stop('product reviewer failed', { triage })
+  const state = { round: 0, verdict: product.verdict, summary: product.summary, entries: product.entries }
+  if (product.verdict === 'escalate') return stop('needs human: product', { triage, escalation: product.escalation, product: state })
+  const put = await call('io', quick, ioPrompt(quick, briefCommand(quick, 'put', quick.quickState.brief)), `io:${pr.id}#put`, { schema: IO })
+  if (!put || put.exitCode !== 0) return stop(`quick brief not posted: ${put ? put.output : 'pipeline-io failed'}`, { triage })
+  if (put.output.trim() !== quick.quickState.brief) return stop('quick brief differs from the one already on the issue; a person must check the stored comment and delete it if it is wrong, then rerun', { triage })
+  return { pr: quick, minors: productMinors(product), product: state, triage }
+}
 
 async function reviewLoop(pr, startRound, history, minors, archState) {
   const max = roundsFor(pr)
@@ -464,8 +589,7 @@ async function reviewLoop(pr, startRound, history, minors, archState) {
       archState.product = { round, verdict: product.verdict, summary: product.summary, entries: product.entries }
       log(`${pr.id} round ${round}: product ${product.verdict}`)
       if (product.verdict === 'notes') {
-        minors.push(...product.entries.filter(e => e.fit !== 'serves-goal' && e.fit !== 'neutral')
-          .map(e => ({ severity: 'minor', title: `Product fit: ${e.entry} (${e.fit})`, detail: `${e.note || ''} Suggestion: ${e.suggestion || 'keep'}.` })))
+        minors.push(...productMinors(product))
       }
     }
     if (arch) {
@@ -563,7 +687,7 @@ const EVALUATION = {
 const REDACTION = { type: 'object', properties: { items: { type: 'array', items: FEEDBACK_ITEM } }, required: ['items'] }
 
 const evaluatePrompt = results => `Task: evaluate how this wave of PRs went, for feedback about the pipeline itself (not about the product the wave built).
-Repo: ${REPO}. Plan: ${PLAN}.
+Repo: ${REPO}. Plan: ${PLAN || '(none: quick fixes only)'}.
 The wave's results, as JSON (rounds, findings, escalations, failures and their reasons, bot answers, docs and QA outcomes):
 ${JSON.stringify(results)}
 
@@ -599,7 +723,16 @@ async function evaluateWave(prs) {
   return { ...none, feedback: items, denylist }
 }
 
-async function runPR(pr) {
+async function runPR(input) {
+  let pr = input
+  let quickMinors = []
+  let quickProduct = null
+  let triage = null
+  if (pr.quick) {
+    const q = await quickSetup(pr)
+    if (q.stop) return q.stop
+    pr = q.pr; quickMinors = q.minors; quickProduct = q.product; triage = q.triage
+  }
   if (pr.landFix) {
     const n = pr.prNumber
     const r = await call('landFix', pr, landFixPrompt(pr), `landfix:${pr.id}`, { schema: LANDFIX })
@@ -614,7 +747,7 @@ async function runPR(pr) {
     }
   }
   const history = pr.resume ? pr.resume.history || [] : []
-  const minors = pr.resume ? pr.resume.minors || [] : []
+  const minors = (pr.resume ? pr.resume.minors || [] : []).concat(quickMinors)
   let impl = { problems: '' }
   if (pr.resume && (pr.resume.findings || []).length) {
     await call('fix', pr, fixPrompt(pr, null, pr.resume.findings, history.length), `fix:${pr.id}#${history.length}`)
@@ -622,7 +755,7 @@ async function runPR(pr) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl }
   }
-  const archState = { last: null, reports: [], product: null, qa: [], qaOpen: [] }
+  const archState = { last: null, reports: [], product: quickProduct, qa: [], qaOpen: [] }
   let loop = await reviewLoop(pr, history.length + 1, history, minors, archState)
   if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: archState.reports, product: archState.product }
 
@@ -648,7 +781,7 @@ async function runPR(pr) {
     approvedBy: (wait && wait.approvedBy) || [], botNotes: wait && wait.notes,
     codeChangedByBots: !!(answer && answer.codeChanged), closesIssues: (answer && answer.closesIssues) || [], lateMinors: b.lateMinors || [],
     docs,
-    issues: opened.issuesCreated || [], rounds: history.length, history, architecture: archState.reports, product: archState.product, qa: archState.qa, implProblems: impl.problems || '',
+    triage, issues: opened.issuesCreated || [], rounds: history.length, history, architecture: archState.reports, product: archState.product, qa: archState.qa, implProblems: impl.problems || '',
   }
 }
 

@@ -1,6 +1,6 @@
 ---
 name: pr-pipeline
-description: Plan and build a release or a batch of changes as small PRs, where separate agents implement, test from a clean clone, review adversarially, fix, open the PR, answer review bots and bring it to green CI, and the main session merges. Use when the user asks to plan and build a release, a milestone or a set of issues "with the usual workflow", to run waves of PRs through review, or to set up this loop in a new repo. Not for a single quick fix.
+description: Plan and build a release or a batch of changes as small PRs, where separate agents implement, test from a clean clone, review adversarially, fix, open the PR, answer review bots and bring it to green CI, and the main session merges. Use when the user asks to plan and build a release, a milestone or a set of issues "with the usual workflow", to run waves of PRs through review, or to set up this loop in a new repo. Not for a single quick fix by hand; one issue without a plan goes through the `quick` option of a wave, which triages it first.
 ---
 
 # Agent PR pipeline
@@ -11,7 +11,10 @@ This skill is part of the agent-pr-pipeline plugin. The plugin folder is `${CLAU
 
 ```mermaid
 flowchart LR
-  P[Plan PR] --> PF{Product fit: plan serves the goals?}
+  QI[Quick fix: one issue, no plan] --> TR{Triager: build, plan or decline?}
+  TR -- plan or decline, or L size, or high risk --> QS[Stop with the reason]
+  TR -- build --> PF
+  P[Plan PR] --> PF{Product fit: plan or entry serves the goals?}
   PF -- escalate --> PH[Person decides scope]
   PH --> P
   PF -- aligned or notes --> I[Implement]
@@ -41,10 +44,11 @@ flowchart LR
   S --> FB[Maintainer approves, main session adds land problems, file-feedback.sh files the items]
 ```
 
-Summary: a plan is reviewed first, including whether it still serves the product's goals. Then different agents build, test, review for bugs, review for architecture and (where the plan asks) try each PR like a user until it is clean, or until a person settles an architecture question. A docs agent then brings the docs in line, and a short round checks its commits. Then the PR is opened, the bots are answered, and a script in the main session merges it. At the end of the workflow, before landing, an evaluator turns the run into feedback items about the pipeline. After landing, the maintainer approves them, the main session adds the land problems, and a script files them as issues.
+Summary: a plan is reviewed first, including whether it still serves the product's goals. A quick fix has no plan: a triager first decides build, plan or decline for the issue, and a build gets the same product-fit check on its entry. Then different agents build, test, review for bugs, review for architecture and (where the plan asks) try each PR like a user until it is clean, or until a person settles an architecture question. A docs agent then brings the docs in line, and a short round checks its commits. Then the PR is opened, the bots are answered, and a script in the main session merges it. At the end of the workflow, before landing, an evaluator turns the run into feedback items about the pipeline. After landing, the maintainer approves them, the main session adds the land problems, and a script files them as issues.
 
 ## The loop for one PR
 
+0. **Quick fix (only for a PR with `quick`).** A triager agent (Opus, high, read-only, adversarial) reads the issue, the code and the goals document and returns `build`, `plan` or `decline`, a size (S, M, L), a risk (low, medium, high) and, for `build`, a plan entry with Touches, Acceptance and an optional QA line. The workflow decides what code can decide: a `build` with size L or high risk becomes `plan`. `plan` and `decline` stop the PR with `reason` and the triager's why, and build nothing. For a `build`, the product-fit reviewer reads the entry and the goals. An `escalate` stops the PR with `needs human: product`; `notes` become minor issues. A quick fix never skips the product-fit check. Then a `pipeline-io` agent runs `scripts/quick-brief.sh put`, which posts the entry once as an issue comment that starts with `<!-- pipeline:quick-brief -->`. Every later agent gets that entry as its brief, and its prompts name the issue URL where they would name the plan. The workflow passes the entry as base64 in the command, so no agent copies or runs the issue text. It adds a `cksum` sum of the entry; `put` posts nothing and exits 65 when the decoded text does not match the sum, and the PR stops. Every quick fix runs `quick-brief.sh get` first: when a trusted brief exists, the workflow uses it and does not run the triager again, so a plain rerun, a resume and a rerun with `skipImpl` all work from the same stored text. If `put` returns a different text than the one posted, the PR stops. Checking scales with the triage: size S with low risk gets 2 rounds and no architecture review, unless the triager names a new concept; anything else gets the full loop.
 1. **Implement.** A worker agent builds one plan entry on its own branch, with unit tests and the acceptance test. It breaks the feature on purpose to see the test fail, then restores it. It runs the fast checks and the e2e files the PR adds or changes, pushes the branch, and does not open a PR.
 2. **Test from a clean clone.** A second agent clones the branch fresh and runs the fast checks (install, lint, types, unit tests) and the PR's own e2e files. It changes no code. A clean clone catches what a dirty worktree hides: missing files, lockfile drift, a test that only passes with local state. The full e2e suite is CI's job.
 3. **Adversarial review.** A third agent, on a stronger model, reads the diff against the spec and the plan entry. It ranks findings as blocker, major or minor. It runs in parallel with the tester.
@@ -107,6 +111,7 @@ The workflow starts every agent as its role agent (`agentType: "agent-pr-pipelin
   "spec": "docs/design.md",
   "architecture": "docs/architecture.md",
   "goals": "docs/goals.md",
+  "pluginRoot": "${CLAUDE_PLUGIN_ROOT}",
   "context": "Project facts and hard rules every agent needs, in a few lines.",
   "checks": ["pnpm install --frozen-lockfile", "pnpm lint", "pnpm typecheck", "pnpm test"],
   "e2ePattern": "\\.e2e\\.test\\.ts$",
@@ -122,11 +127,14 @@ The workflow starts every agent as its role agent (`agentType: "agent-pr-pipelin
   "skills": { "impl": ["laravel-idioms:laravel-idioms"], "open": ["humanizer:humanizer"] },
   "prs": [
     { "id": "T01", "title": "Short PR title", "branch": "fix/short-name", "kind": "code", "notes": "Build plan entry T01. Settle minor #123. PR body: Closes #45 on its own line." },
+    { "id": "Q57", "quick": { "issue": 57 }, "branch": "fix/issue-57" },
     { "id": "T02", "title": "Sign webhook payloads", "branch": "feat/webhook-signing", "sensitive": true, "notes": "Build plan entry T02." }
   ]
 }
 ```
 
+- `pluginRoot` (set it from `${CLAUDE_PLUGIN_ROOT}`): the plugin folder. It goes into every `pipeline-io` prompt, and `pipeline-io` runs scripts only from there, never from a clone of the target repo, so a PR cannot change the script that judges it. A quick fix without it stops with the reason `pluginRoot missing`.
+- `plan` is optional when every PR in the wave has `quick`.
 - `checks` are the **fast** checks. Agents also run the e2e files the PR adds or changes (`e2ePattern`, run with `e2eCommand`). The full e2e suite runs only in CI, so CI must run it on every PR.
 - `architecture`: the document the architecture reviewer checks against (defaults to `spec`). Set `"architectureReview": false` to turn the step off.
 - `goals` (**required**): the product goals document. Without it the workflow throws before any agent starts, and a preflight agent refuses the wave if the file has no Goals or Non-goals items. `productReview: false` turns off the review step, not this requirement. `"productReview": "all"` also runs it on code PRs; `false` turns it off.
@@ -138,9 +146,9 @@ The workflow starts every agent as its role agent (`agentType: "agent-pr-pipelin
 
 Models and effort per step are in the table under "Role agents". Override a step for the whole wave in `steps`, for example `{ "review": { "model": "opus", "effort": "xhigh" } }`. `reviewDocs` sets the reviewer of docs and plan PRs and the docs check (default sonnet, high).
 
-PR options: `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `resume: { history, minors, findings }` to continue a PR whose rounds ran out. `landFix: true` with `prNumber` runs only the land-fix agent for that PR. `architectureDecision: "..."` carries a person's answer to an architecture escalation into every agent's brief for that PR; the architecture reviewer then checks the PR follows it and does not escalate the same question again. `productDecision: "..."` carries a person's answer to a product-fit escalation in the same way. `sensitive: true` adds a security-review skill to this PR's reviewer (see below). `skills: { ... }` adds skills for this PR only, on top of the wave's `skills`. `docsUpdate: false` skips the docs step for this PR.
+PR options: `quick: { issue: N }` builds issue N without a plan entry (see step 0; `id`, `title` and `branch` default from the issue number, and `kind` stays `code`). `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `resume: { history, minors, findings }` to continue a PR whose rounds ran out. `landFix: true` with `prNumber` runs only the land-fix agent for that PR. `architectureDecision: "..."` carries a person's answer to an architecture escalation into every agent's brief for that PR; the architecture reviewer then checks the PR follows it and does not escalate the same question again. `productDecision: "..."` carries a person's answer to a product-fit escalation in the same way. `sensitive: true` adds a security-review skill to this PR's reviewer (see below). `skills: { ... }` adds skills for this PR only, on top of the wave's `skills`. `docsUpdate: false` skips the docs step for this PR.
 
-The result is `{ prs, feedback, denylist, source, feedbackRepo }`. `source` is the wave's repo. `feedback` holds the evaluator's items (redacted for another repo) and `denylist` the strings that must not appear in them; a refused wave has the same shape, with the refusals in `prs`. `feedback` and `denylist` are empty when `feedback` is `false`, when every PR is `landFix`, when the evaluation failed, and (for `denylist`) when the wave's repo is `feedbackRepo`. `prs` has one object per PR: `ready`, `prNumber`, `headSha` (the commit the pipeline checked, or the answer agent's push), `land` (the `<pr>:<sha>` pair for the land script), `approvedBy`, `rounds`, `history`, `architecture` (each verdict with its new concepts), `docs` (whether the docs agent changed anything, the files and a summary), `qa` (each QA round: its summary, the number of scenarios and the failed ones), `closesIssues` (minor issues the bot answer settled), `lateMinors` (minor findings from the bot-answer check, filed by nobody yet), `issues`, and `reason` when not ready. With `reason: needs human: architecture` it also has `escalation`: the question, options, recommendation and why. `ready` means the PR is open and the bots are answered; merging is the land script's job.
+The result is `{ prs, feedback, denylist, source, feedbackRepo }`. `source` is the wave's repo. `feedback` holds the evaluator's items (redacted for another repo) and `denylist` the strings that must not appear in them; a refused wave has the same shape, with the refusals in `prs`. `feedback` and `denylist` are empty when `feedback` is `false`, when every PR is `landFix`, when the evaluation failed, and (for `denylist`) when the wave's repo is `feedbackRepo`. `prs` has one object per PR: `ready`, `prNumber`, `headSha` (the commit the pipeline checked, or the answer agent's push), `land` (the `<pr>:<sha>` pair for the land script), `approvedBy`, `rounds`, `history`, `architecture` (each verdict with its new concepts), `docs` (whether the docs agent changed anything, the files and a summary), `qa` (each QA round: its summary, the number of scenarios and the failed ones), `closesIssues` (minor issues the bot answer settled), `lateMinors` (minor findings from the bot-answer check, filed by nobody yet), `issues`, and `triage` (for a quick fix: decision, size, risk and why), and `reason` when not ready. With `reason: needs human: architecture` or `needs human: product` it also has `escalation`: the question, options, recommendation and why. `ready` means the PR is open and the bots are answered; merging is the land script's job.
 
 ### Role agents
 
@@ -162,12 +170,14 @@ Each step runs as one agent definition from the plugin. Its body holds the role'
 | `botAnswer` | `bot-answerer` | sonnet | medium | all but Agent; own worktree |
 | `landFix` | `land-fixer` | sonnet | medium | all but Agent; own worktree |
 | `preflight` | `goals-preflight` | haiku | low | Bash, Skill |
+| `triage` | `triager` | opus | high | Bash, Read, Glob, Grep |
+| `io` | `pipeline-io` | haiku | low | Bash |
 | `evaluate` | `evaluator` | sonnet | medium | Bash, Read, Glob, Grep |
 | `redact` | `feedback-redactor` | haiku | low | Read |
 
 Summary: writers get their own worktree and every tool but Agent; checkers get read and shell tools only.
 
-The tester, the bot waiter and the goals preflight set `omitClaudeMd: true`. They run commands and read results, so they do not need the user's or the repo's CLAUDE.md, and leaving it out saves a few thousand tokens per agent. The other roles keep it, because the repo's rules apply to their work.
+The tester, the bot waiter, `pipeline-io` and the goals preflight set `omitClaudeMd: true`. They run commands and read results, so they do not need the user's or the repo's CLAUDE.md, and leaving it out saves a few thousand tokens per agent. The other roles keep it, because the repo's rules apply to their work.
 
 To run one step by hand, start its agent with the Agent tool, for example `subagent_type: "agent-pr-pipeline:reviewer"`. Give it the same data the workflow would: the repo, the plan path, the PR block (id, title, branch, kind, notes), the temp folder and the check commands. Use this for a single re-review or a land fix outside a wave. For a wave, use the workflow: it keeps the loop, the round caps and the result format the land script expects.
 
@@ -275,6 +285,8 @@ All paths are under `${CLAUDE_PLUGIN_ROOT}`.
 - `scripts/file-feedback.sh`: file approved feedback items as `pipeline-feedback` issues, refusing any that hold a denylist string.
 - `test/fake-gh`: a `gh api` stand-in for script tests.
 - `scripts/bot-approval.jq`: the rule for when a review bot has cleared a PR.
+- `scripts/quick-brief.sh`: post (`put`) or read (`get`) a quick fix's entry as a trusted issue comment.
+- `scripts/trusted-comment.jq`: the one rule for a comment the pipeline wrote: it starts with a marker prefix and its author is the account from `GET /user`. Two such comments are an error.
 - `scripts/check-goals.sh`: check the goals document before a run.
 - `skills/write-goals/SKILL.md`: the skill that interviews the maintainer and writes the goals document.
 - `templates/goals.md`: the goals document skeleton. Required before the first run.
