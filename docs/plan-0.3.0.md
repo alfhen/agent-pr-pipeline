@@ -46,12 +46,12 @@ Not in:
 
 ```mermaid
 flowchart LR
-  W1[Wave 1: A01, B01] --> W2[Wave 2: C01] --> W3[Wave 3: D01] --> W4[Wave 4: F01]
+  W1[Wave 1: A01, B01] --> W2[Wave 2: C01, D01a] --> W3[Wave 3: D01b] --> W4[Wave 4: F01]
 ```
 
-Summary: A01 and B01 run together; C01 and D01 each change `workflows/run-wave.js`, so they go one at a time; F01 bumps the version last.
+Summary: A01 and B01 run together; C01 and D01a (the scripts half of D01) run together; D01b (the workflow half) follows C01; F01 bumps the version last.
 
-B01, C01 and D01 each change `workflows/run-wave.js`, `test/sim-pipeline.mjs` and `skills/pr-pipeline/SKILL.md`, so they cannot share a wave. D01 reads the settings file A01 creates, and C01 and D01 reuse B01's `test/fake-gh`.
+B01, C01 and D01b each change `workflows/run-wave.js`, `test/sim-pipeline.mjs` and `skills/pr-pipeline/SKILL.md`, so they cannot share a wave. D01a changes only scripts and script tests, so it shares wave 2 with C01. D01 reads the settings file A01 creates, and C01 and D01 reuse B01's `test/fake-gh`.
 
 ## Rules for every PR
 
@@ -107,9 +107,18 @@ Regression test: the simulation checks: an L or high-risk `build` becomes `plan`
 Acceptance: `node test/sim-pipeline.mjs` and `node --test test/quick-brief.test.mjs` pass; the new checks fail without the gate.
 QA: run one quick fix on a scratch repo for a small real issue, and one for an issue that asks for something the goals list as a non-goal; check that the second stops at the triager or the product-fit step.
 
-### Wave 3
+### Waves 2 and 3: D01 in two halves
 
-**D01 Safety gate, safety evaluation, agent merge and release.** Touches: `workflows/run-wave.js`, `agents/merge-safety.md` (new), `agents/pipeline-io.md`, `scripts/merge-pr.sh`, `scripts/land-wave.sh`, `scripts/merge-wave.sh`, `scripts/gate-files.sh` (new), `test/fake-gh`, `scripts/release.sh` (new), `test/sim-pipeline.mjs`, `test/gate.test.mjs` (new), `skills/pr-pipeline/SKILL.md`, `templates/AGENTS-section.md`, `AGENTS.md`, `.github/pipeline.json`.
+The maintainer split D01 into two PRs, so that its scripts are built at the same time as C01:
+- **D01a, scripts (wave 2).** Touches: `scripts/gate-files.sh` (new), `scripts/merge-pr.sh`, `scripts/land-wave.sh`, `scripts/merge-wave.sh`, `scripts/bot-approval.jq`, `test/gate.test.mjs` (new), `test/fake-gh`, `test/fixtures/gate/` (new). From the D01 text below: one land format (the script side), REST only, the scripted gate, agent merges always pass the gate, the merge record, and the script cases of the regression test. Also: `bot-approval.jq` skips a bot review that holds no verdict (an empty body and only thread replies), with gate tests for an approval on the head followed by such a reply review (clears) and an empty-body review with a new inline finding on the head (blocks) (#43); and a branch that is already gone after MERGED counts as success, with the merge result printed apart from the clean-up (#49). No SKILL.md change: D01b documents both halves. Only D01a changes `test/fake-gh`; C01 adds fixture files only.
+  Acceptance: `node --test test/gate.test.mjs` passes, its new checks fail on the old scripts, and `node test/sim-pipeline.mjs` still passes unchanged.
+  QA: run `scripts/gate-files.sh` on a merged PR of this repo that touched `scripts/` (gated) and on one that touched only `docs/` (not gated); run `merge-pr.sh` with `CLAUDECODE=1` and no `--auto` and check it refuses before any merge call.
+- **D01b, workflow (wave 3).** Touches: `workflows/run-wave.js`, `agents/merge-safety.md` (new), `agents/pipeline-io.md`, `scripts/release.sh` (new), `test/sim-pipeline.mjs`, `test/release.test.mjs` (new), `skills/pr-pipeline/SKILL.md`, `templates/AGENTS-section.md`, `AGENTS.md`, `.github/pipeline.json`. From the D01 text below: the judgment check, final sha only and the function that builds every land value, releases (`release.sh` reads merge records through C01's `trusted-comment.jq`), `autoRelease: true` for this repo, every SKILL.md and `AGENTS.md` update for both halves, and the simulation and release cases of the regression test. Also: the bot waiter uses `bot-approval.jq`, the same rule as the land gate, instead of judging approvals in its prompt (#45).
+  Acceptance: `node test/sim-pipeline.mjs` and `node --test test/release.test.mjs` pass, and their new checks fail on the old code. The release cases of the D01 regression test live in `test/release.test.mjs`.
+  QA: run `scripts/release.sh --dry-run` on this repo and expect the "no tag yet" refusal; ask the merge-safety agent about one PR that changes a public interface and one that does not.
+- The combined D01 text below is the design both halves build from. Its Acceptance and QA lines are replaced by the two above.
+
+**D01 Safety gate, safety evaluation, agent merge and release (built as D01a and D01b).** Touches: `workflows/run-wave.js`, `agents/merge-safety.md` (new), `agents/pipeline-io.md`, `scripts/merge-pr.sh`, `scripts/land-wave.sh`, `scripts/merge-wave.sh`, `scripts/gate-files.sh` (new), `test/fake-gh`, `scripts/release.sh` (new), `test/sim-pipeline.mjs`, `test/gate.test.mjs` (new), `skills/pr-pipeline/SKILL.md`, `templates/AGENTS-section.md`, `AGENTS.md`, `.github/pipeline.json`.
 - **One land format.** A PR's `land` value stays `<pr>:<sha>`, and becomes `<pr>:<sha>:auto` when an agent may merge it. There is no second list. `land-wave.sh` and `merge-wave.sh` split the suffix off the pair and give `merge-pr.sh` an `--auto` flag, so the sha field is always a bare sha. Both scripts also accept `--person` and pass it through.
 - **REST only.** D01 converts the `gh pr` calls in `merge-pr.sh`, `land-wave.sh` and `merge-wave.sh` to `gh api` REST calls (the pull request, its check runs, and `PUT /repos/{repo}/pulls/{n}/merge` with `sha` set to the checked sha). Branch deletion becomes `gh api -X DELETE repos/{repo}/git/refs/heads/{branch}`, run only after `GET /repos/{repo}/pulls/{n}` shows `merged: true`; no script calls `git push`. `PIPELINE_TEST_FAST=1` sets every sleep and poll count to zero, for tests only. `test/fake-gh` then covers every call these scripts make, with fixtures for the merged pull request, and a logged `PUT .../merge` counts as the merge call.
 - **The scripted gate.** `scripts/gate-files.sh <repo> <pr>` lists the PR's changed files through `GET /repos/{repo}/pulls/{n}/files`, every page, and matches both `filename` and `previous_filename` (so moving a file out of a gated path still counts) against `gates` from `.github/pipeline.json` on the default branch, or from `templates/pipeline.json` when the repo has none. It fails closed: on an API error, at 3000 files, or when the settings cannot be read, it reports the PR as gated.
