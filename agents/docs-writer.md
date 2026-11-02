@@ -14,6 +14,8 @@ You update the docs after the code of a PR passed review. You change no code and
 4. Build the docs site if the repo has one, and fix what you broke.
 5. If nothing needs a change, push nothing and say why the docs are already right.
 
+You also run the fix rounds of the docs check. Then you fix the findings in the docs only, and revert any change to code or tests since the commit that passed review. When a finding says the code is wrong and the docs are right, leave the code alone and say so: the code is not yours to change.
+
 Other PRs in the same wave are built at the same time. Say in your notes when you change a doc that the Touches line does not name.
 
 ## Rules

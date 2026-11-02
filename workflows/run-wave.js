@@ -316,6 +316,22 @@ Return changed, headSha (\`git rev-parse HEAD\` after your push), the files you 
 
 ${prBlock(pr)}`
 
+const docsFixPrompt = (pr, test, findings, round, signedSha) => `${CONTEXT}
+
+Task: fix the docs after docs check round ${round}. Change docs only.
+1. You are in a fresh git worktree. ${freshBranch('docsfix', pr, round)}
+2. If \`git diff --stat ${signedSha || 'origin/HEAD'}..HEAD\` shows changes to code or tests, revert those parts: the code passed review at ${signedSha || 'the branch head'} and must stay as it was.
+3. Fix each finding and failing check below in the docs. If a finding says the code is wrong and the docs are right, do not change the code: say so in notes.
+4. Checks: ${fastText}.
+Return changed, headSha (\`git rev-parse HEAD\` after your push), the files you changed, a short summary, and notes.
+
+${prBlock(pr)}
+
+Failing checks:
+${JSON.stringify((test && test.checks || []).filter(c => !c.pass), null, 1)}
+Findings:
+${JSON.stringify(findings, null, 1)}`
+
 const docsReviewPrompt = (pr, round, signedSha, docs) => `${CONTEXT}
 
 Task: check the docs commits on the branch.
@@ -429,7 +445,7 @@ async function docsStep(pr, signedSha, history, minors) {
     log(`${pr.id} docs round ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (test.pass && blocking.length === 0) return { ok: true, headSha: test.headSha || review.headSha, docs }
     if (round === DOCS_ROUNDS) return { ok: false, reason: 'docs check: rounds exhausted', lastFindings: blocking, docs }
-    await call('fix', pr, fixPrompt(pr, test, blocking, `docs${round}`), `fix:${pr.id}#docs${round}`)
+    await call('docs', pr, docsFixPrompt(pr, test, blocking, round, signedSha), `docsfix:${pr.id}#${round}`, { schema: DOCS })
   }
 }
 

@@ -31,6 +31,7 @@ const agent = async (prompt, o) => {
     const major = id === 'G3' || (id === 'G2' && round === '1')
     return { summary: 's', findings: major ? [{ severity: 'major', title: 'docs say the flag is --all, code has --every', detail: 'd' }] : [] }
   }
+  if (o.label.startsWith('docsfix')) return { changed: true, headSha: 'docsfix-' + id, files: ['README.md'], summary: 's' }
   if (o.label.startsWith('docs')) return ['G1', 'G2', 'G3'].includes(id) ? { changed: true, headSha: 'docs-' + id, files: ['README.md'], summary: 's' } : { changed: false, summary: 'already right' }
   if (o.label.startsWith('review')) return { summary: 's', findings: id === 'P1' ? [{ severity: 'major', title: 'x', detail: 'd' }] : [{ severity: 'minor', title: 'm', detail: 'd' }] }
   if (o.label.startsWith('open')) return { prNumber: 100 + calls.length, prUrl: 'u', issuesCreated: [] }
@@ -134,9 +135,13 @@ await check('changed docs are re-checked and land at the re-checked sha', () => 
   assert.ok(order.indexOf('docs') > order.lastIndexOf('review') && order.indexOf('docs') < order.indexOf('open'))
   assert.equal(mainCalls.find(c => c.label === 'docsreview:G1#1').model, 'sonnet')
 })
-await check('a docs finding gets a fix and a second check', () => {
+await check('a docs finding gets a docs-only fix by the docs writer, then a second check', () => {
   assert.equal(r.G2.ready, true)
-  assert.ok(mainCalls.some(c => c.label === 'fix:G2#docs1'))
+  const fix = mainCalls.find(c => c.label === 'docsfix:G2#1')
+  assert.ok(fix)
+  assert.match(fix.prompt, /Change docs only/)
+  assert.match(fix.prompt, /git diff --stat sha-G2\.\.HEAD/)
+  assert.ok(!mainCalls.some(c => /^fix:G\d#docs/.test(c.label)), 'the code fixer never runs in a docs round')
   assert.equal(r.G2.land.split(':')[1], 'sha-G2-docs2')
 })
 await check('docs findings left after docsRounds stop the PR', () => {
@@ -186,7 +191,7 @@ const prsWithSkills = PRS.map(pr =>
     : pr.id === 'D1' ? { ...pr, skills: { impl: ['humanizer:humanizer'], review: ['humanizer:humanizer'] } }
       : pr)
 await simulate({ ...base, skills: SKILLS, prs: prsWithSkills })
-const STEP_OF = { docs: 'docs', docsreview: 'docs', implement: 'impl', test: 'test', review: 'review', arch: 'arch', product: 'product', fix: 'fix', open: 'open', botwait: 'botWait', botanswer: 'botAnswer', landfix: 'landFix', preflight: 'preflight' }
+const STEP_OF = { docs: 'docs', docsfix: 'docs', docsreview: 'docs', implement: 'impl', test: 'test', review: 'review', arch: 'arch', product: 'product', fix: 'fix', open: 'open', botwait: 'botWait', botanswer: 'botAnswer', landfix: 'landFix', preflight: 'preflight' }
 const expected = c => {
   const step = STEP_OF[c.label.split(':')[0]]
   const id = c.label.split(':')[1].split('#')[0]
@@ -231,7 +236,7 @@ const frontmatter = name => {
   const text = readFileSync(new URL(`agents/${name}.md`, root), 'utf8')
   return Object.fromEntries(text.split('---')[1].trim().split('\n').map(l => [l.slice(0, l.indexOf(':')), l.slice(l.indexOf(':') + 1).trim()]))
 }
-const AGENT_OF = { implement: 'implementer', test: 'tester', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight' }
+const AGENT_OF = { docsfix: 'docs-writer', implement: 'implementer', test: 'tester', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight' }
 const WRITERS = ['implementer', 'fixer', 'docs-writer', 'bot-answerer', 'land-fixer']
 await simulate(base)
 await check('every call names its role agent from the plugin', () => {
@@ -242,7 +247,7 @@ await check('only writing agents run in a worktree', () => {
 })
 await check('each agent file exists and its defaults match the workflow defaults', () => {
   const files = readdirSync(new URL('agents/', root)).map(f => f.replace(/\.md$/, '')).sort()
-  assert.deepEqual(files, Object.values(AGENT_OF).sort())
+  assert.deepEqual(files, [...new Set(Object.values(AGENT_OF))].sort())
   const docsOrPlan = c => c.label.startsWith('review:') && /^(D|P)\d/.test(c.label.split(':')[1])
   for (const c of calls.filter(c => !docsOrPlan(c))) {
     const fm = frontmatter(c.agentType.split(':')[1])
@@ -252,7 +257,7 @@ await check('each agent file exists and its defaults match the workflow defaults
   assert.equal(`${calls.find(c => c.label === 'review:D1#1').model}`, 'sonnet')
 })
 await check('read-only agents have no edit tools', () => {
-  for (const name of Object.values(AGENT_OF).filter(n => !WRITERS.includes(n))) {
+  for (const name of [...new Set(Object.values(AGENT_OF))].filter(n => !WRITERS.includes(n))) {
     const tools = frontmatter(name).tools
     assert.ok(tools && !/\b(Edit|Write|NotebookEdit|Agent)\b/.test(tools), name)
   }
