@@ -2,7 +2,7 @@
 # usage: land-wave.sh <owner/repo> <pr>:<checked sha> [<pr>:<checked sha> ...]
 # The pairs come from the workflow result (each PR's "land" field). For each PR in order: wait for CI
 # (up to 45 min), then merge it with merge-pr.sh, which refuses unless the head is still the checked sha,
-# every check passed and a bot approved. A PR whose head moved after the check stops the wave with
+# every check passed and a review bot cleared the gate (approved, or its comments answered and not repeated). A PR whose head moved after the check stops the wave with
 # "HEAD MOVED"; one that conflicts or has a failing check stops it with "LAND FIX". Run the workflow for
 # that PR (landFix: true, or skipImpl to check the new head), then run this again.
 R=$1; shift
@@ -27,7 +27,7 @@ for arg in "$@"; do
     echo "LAND FIX #$pr state=$state failing=[$failing]"; exit 3
   fi
   if [ "$pending" != "0" ]; then echo "WAITING #$pr: CI still running after 45 min"; exit 4; fi
-  bash "$M" "$R" "$pr" "$sha" "$branch" || { echo "STOP #$pr not merged (no bot approval, or a check did not pass)"; exit 5; }
+  bash "$M" "$R" "$pr" "$sha" "$branch" || { echo "STOP #$pr not merged (no bot cleared the gate, or a check did not pass)"; exit 5; }
   sleep 5
 done
 echo "all merged"

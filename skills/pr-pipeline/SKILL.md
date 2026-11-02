@@ -56,13 +56,13 @@ Summary: a plan is reviewed first, including whether it still serves the product
 7. **Docs.** After a code PR signs off, a docs agent reads the diff and finds every doc the change makes wrong or incomplete: README, markdown docs, and the docs site if there is one. It updates only those places, on the same branch, and builds the site if it can. If nothing needs a change, it pushes nothing and the PR goes on. If it pushed, the tester and a Sonnet docs reviewer check the new head. If they find problems, the docs writer fixes them in the docs only and reverts any code change, and the check runs again (`docsRounds`, default 2). The code fixer never runs in this step, so code that passed review cannot change without review. So the sha the land script merges is always one the pipeline checked. Docs and plan PRs skip this step.
 8. **Open the PR.** An agent opens a ready PR and files every minor finding as an issue (label `review-minor`). The PR body says which docs the PR updates.
 9. **Bots.** A small agent (Haiku, low effort) waits for the review bots and counts their open comments. Only if there are any does an answer agent run: it fixes the point or says why not, on every thread. If its changes are substantive, the loop runs again.
-10. **Land and merge.** The main session runs `${CLAUDE_PLUGIN_ROOT}/scripts/land-wave.sh` with the `<pr>:<sha>` pairs from the workflow result. It waits for CI and squash-merges only when the PR's head is still the commit the pipeline checked, every check passed, and the latest review by a review bot is an approval. It deletes the branch only after GitHub shows MERGED. A PR that conflicts or has a red check is reported as `LAND FIX`. A land-fix agent handles only that PR; then the bots are waited for and answered on its new head, like in step 9.
+10. **Land and merge.** The main session runs `${CLAUDE_PLUGIN_ROOT}/scripts/land-wave.sh` with the `<pr>:<sha>` pairs from the workflow result. It waits for CI and squash-merges only when the PR's head is still the commit the pipeline checked, every check passed, and a review bot cleared the PR (see Step 3). It deletes the branch only after GitHub shows MERGED. A PR that conflicts or has a red check is reported as `LAND FIX`. A land-fix agent handles only that PR; then the bots are waited for and answered on its new head, like in step 9.
 
 ## Before the first run in a repo
 
 - **Write the goals document first. The pipeline refuses to start without it.** Run the `agent-pr-pipeline:write-goals` skill: it asks the maintainer for the goals, non-goals and users, writes the goals template into the repo (for example `docs/goals.md`) and checks it. Or copy the template and fill in the Goals and Non-goals sections by hand, at least one item each. Only the maintainer decides the content. Check it with `${CLAUDE_PLUGIN_ROOT}/scripts/check-goals.sh <owner/repo> docs/goals.md`; the workflow runs the same check as its first step and refuses every PR in the wave if the file is missing or incomplete.
 - Add the loop to the repo's `AGENTS.md` (or `CLAUDE.md`). `${CLAUDE_PLUGIN_ROOT}/templates/AGENTS-section.md` is a starting point. Workers read it, so hard rules go there once instead of in every prompt.
-- Install at least one review bot on the repo (CodeRabbit, Gitar or similar). An approval from one of them is the merge gate.
+- Install at least one review bot on the repo (CodeRabbit, Gitar or similar). One of them clearing the PR is the merge gate.
 - Know the check commands (install, lint, typecheck, unit, e2e) and how long e2e takes.
 - Pick a temp folder for clones that is not shared `/tmp`.
 
@@ -209,7 +209,9 @@ Each loaded skill costs thousands of tokens per agent, in every round. Pair a sk
 
 ## Step 3: land and merge from the main session
 
-Workers never merge. Run `${CLAUDE_PLUGIN_ROOT}/scripts/land-wave.sh <owner/repo> <pr>:<sha> <pr>:<sha> ...` with the `land` values from the workflow result. It waits for CI on each PR in order and calls `merge-pr.sh` (in the same folder), which refuses unless the PR is MERGEABLE, its head is still that sha, every check passed (and there is at least one), and the latest review by a bot login (`BOT_LOGINS` regex, default `coderabbit|gitar|[bot]`) is an approval. The branch is deleted only after GitHub shows MERGED. On `LAND FIX #n`, run the workflow with `{ "id": ..., "branch": ..., "prNumber": n, "landFix": true }`. The land fixer brings the PR to green; then the bot waiter and, if the bots commented, the answer agent run on the new head. Land the PR with the `land` value from that result.
+Workers never merge. Run `${CLAUDE_PLUGIN_ROOT}/scripts/land-wave.sh <owner/repo> <pr>:<sha> <pr>:<sha> ...` with the `land` values from the workflow result. It waits for CI on each PR in order and calls `merge-pr.sh` (in the same folder), which refuses unless the PR is MERGEABLE, its head is still that sha, every check passed (and there is at least one), and a review bot (`BOT_LOGINS` regex, default `coderabbit|gitar|[bot]`) cleared the PR. The branch is deleted only after GitHub shows MERGED.
+
+A bot clears a PR when its latest review is an approval, or when that review only commented, was on an older commit, and every inline thread the bot opened has a reply. Bots review every push, so a finding that still holds comes back as a new review on the head and blocks the merge. This rule exists because some bots (Gitar, in the dogfood runs) mark their summary approved after a fix but do not post a new approving review, and on a solo repo the author cannot approve their own PR. A requested-changes review always blocks. The rule is in `scripts/bot-approval.jq`. On `LAND FIX #n`, run the workflow with `{ "id": ..., "branch": ..., "prNumber": n, "landFix": true }`. The land fixer brings the PR to green; then the bot waiter and, if the bots commented, the answer agent run on the new head. Land the PR with the `land` value from that result.
 
 After a wave, watch CI on the default branch before starting the next wave or tagging.
 
@@ -223,7 +225,7 @@ After a wave, watch CI on the default branch before starting the next wave or ta
 | `tester or reviewer failed`, `QA agent failed`, or agents failed on a usage limit | Resume the same run with `resumeFromRunId`; finished agents replay from cache. |
 | `Workflow aborted` in a headless session (`claude -p`) | Claude Code stops background tasks 10 minutes after the session's last turn, and a bot wait often takes longer. Start headless runs with `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, then resume the session (`claude -p --resume <session>`) and the run (`resumeFromRunId`). |
 | A CI e2e job fails in files the PR does not touch | Rerun the job once. If it fails on the default branch too, it is not this PR's problem: file it. |
-| Bot rate-limited | One bot's approval is enough. If none approved, wait or ask the person. |
+| Bot rate-limited | One bot clearing the PR is enough. If none did, wait or ask the person. |
 | `refused: goals document missing or incomplete` | Write or finish the goals document with the `agent-pr-pipeline:write-goals` skill (or from the template) in its own PR, merge it, and run again. Do not work around it: the product-fit review has nothing to check against without it. |
 | `needs human: product` | Show the person the question and the per-entry suggestions. Their answer goes in `productDecision`; if it changes the goals, update the goals document in its own small PR first. Cut or deferred entries move out of the plan, with their issues moved to a later milestone. |
 | `needs human: architecture` | Show the person the escalation's question, options and recommendation, as a decision to make, not a fix to approve. If the answer changes the architecture, update the architecture document first (its own small PR). Then rerun the PR with `architectureDecision` set; if its branch exists, add `skipImpl: true` or `resume`. |
@@ -233,7 +235,7 @@ After a wave, watch CI on the default branch before starting the next wave or ta
 | `HEAD MOVED #n` from the land script | Someone pushed after the pipeline checked the PR (a bot autofix, a person, a late agent push). Run the workflow for that PR with `skipImpl: true` so the new head is tested and reviewed, then land it with the new sha. |
 | `bot wait failed` or `bot answer failed` | The PR is open but its bot comments were not read or answered. Rerun the workflow for the PR with `skipImpl: true`; the review rounds replay from cache when nothing changed. |
 | `LAND FIX #n` from the land script | The PR conflicts or a check is red. Run the workflow with `landFix: true` for that PR; it merges the default branch in or fixes CI, then answers the bots on the new head. Never rebase a pushed branch. |
-| No bot approves | The land script stops with `not merged`. Ask the bot to review again, or let the person review and merge by hand. |
+| `approved=[]` and `not merged` | No bot cleared the PR. Look for a bot thread without a reply: answer it (rerun the PR with `skipImpl: true`, or reply yourself if the answer is already in a PR comment), then land again. If a bot requested changes or commented on the head, the PR needs another fix round. |
 | An agent's shell refuses compound git commands | Put the commands in a script file and run the file. |
 
 ## Lessons
@@ -253,6 +255,7 @@ All paths are under `${CLAUDE_PLUGIN_ROOT}`.
 - `agents/*.md`: the role agents.
 - `scripts/land-wave.sh`: wait for CI and merge a wave, reporting PRs that need a land fix.
 - `scripts/merge-pr.sh`, `scripts/merge-wave.sh`: guarded squash-merge from the main session.
+- `scripts/bot-approval.jq`: the rule for when a review bot has cleared a PR.
 - `scripts/check-goals.sh`: check the goals document before a run.
 - `skills/write-goals/SKILL.md`: the skill that interviews the maintainer and writes the goals document.
 - `templates/goals.md`: the goals document skeleton. Required before the first run.

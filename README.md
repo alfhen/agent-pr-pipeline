@@ -50,14 +50,14 @@ Ask Claude Code to plan and build a release or a set of issues with the pipeline
 1. triage the issues against the code,
 2. write a plan with waves, Touches and Acceptance lines, and put the plan through review,
 3. run each wave with the `run-wave` workflow,
-4. land the ready PRs with `scripts/land-wave.sh`, which merges only the commit the pipeline checked, with green CI and a bot approval.
+4. land the ready PRs with `scripts/land-wave.sh`, which merges only the commit the pipeline checked, with green CI and a review bot's approval (or its comments answered and nothing new raised).
 
 Read [skills/pr-pipeline/SKILL.md](skills/pr-pipeline/SKILL.md) for the loop, the workflow arguments, the role agents, cost and caching, and what to do when a step fails.
 
 ## Needs
 
 - Claude Code with the Workflow tool and `gh` signed in.
-- A review bot on the repo, such as CodeRabbit or Gitar. One approval is the merge gate.
+- A review bot on the repo, such as CodeRabbit or Gitar. Its approval is the merge gate.
 - CI that runs the same checks the agents run, and the full e2e suite.
 
 ## Develop

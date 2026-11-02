@@ -321,3 +321,34 @@ await check('plugin and marketplace manifests agree, and the workflow is named r
   assert.match(src, /name: 'run-wave'/)
   for (const skill of ['pr-pipeline', 'write-goals']) assert.ok(existsSync(new URL(`skills/${skill}/SKILL.md`, root)), skill)
 })
+
+// Land gate: scripts/bot-approval.jq on fixture reviews and comments.
+const { execFileSync } = await import('node:child_process')
+const gate = (reviews, comments = []) => JSON.parse(execFileSync('jq', ['-f', new URL('scripts/bot-approval.jq', root).pathname], {
+  input: JSON.stringify({ reviews, comments, head: 'HEAD', bots: 'coderabbit|gitar|\\[bot\\]' }),
+}))
+const BOT = 'gitar-bot[bot]'
+const review = (state, commit, at, login = BOT) => ({ user: { login }, state, commit_id: commit, submitted_at: at })
+const thread = (id, login = BOT) => ({ id, in_reply_to_id: null, user: { login } })
+const reply = (to, id = to + 1000) => ({ id, in_reply_to_id: to, user: { login: 'alfhen' } })
+await check('gate: a bot whose latest review is APPROVED clears it', () => {
+  assert.deepEqual(gate([review('APPROVED', 'OLD', '1')]), [BOT])
+})
+await check('gate: an answered comment on an older commit, not repeated on the head, clears it', () => {
+  assert.deepEqual(gate([review('APPROVED', 'A', '1'), review('COMMENTED', 'OLD', '2')], [thread(7), reply(7)]), [`${BOT} (answered)`])
+})
+await check('gate: an unanswered bot thread blocks', () => {
+  assert.deepEqual(gate([review('COMMENTED', 'OLD', '2')], [thread(7), thread(8), reply(7)]), [])
+})
+await check('gate: a bot comment on the current head blocks, even when answered', () => {
+  assert.deepEqual(gate([review('COMMENTED', 'HEAD', '2')], [thread(7), reply(7)]), [])
+})
+await check('gate: changes requested blocks', () => {
+  assert.deepEqual(gate([review('CHANGES_REQUESTED', 'OLD', '2')], [thread(7), reply(7)]), [])
+})
+await check('gate: a person approving does not count as a bot', () => {
+  assert.deepEqual(gate([review('APPROVED', 'HEAD', '1', 'alfhen')]), [])
+})
+await check('gate: only the latest review of each bot counts', () => {
+  assert.deepEqual(gate([review('COMMENTED', 'HEAD', '3'), review('APPROVED', 'OLD', '1')], [thread(7)]), [])
+})

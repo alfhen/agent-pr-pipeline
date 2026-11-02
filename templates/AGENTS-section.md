@@ -14,7 +14,7 @@ Every PR goes through the same loop. Each step is a separate agent, so no agent 
 5. **Fix.** If tests failed or there are blockers or majors, a fix agent fixes them on the same branch, adding commits, never force-pushing. If it thinks a finding is wrong, it says why, with evidence. Then steps 2 and 3 run again. The loop stops when there are no blockers or majors, or after four rounds, when a person decides.
 6. **Docs.** When the code is clean, a docs agent updates every doc the change makes wrong or incomplete: README, markdown docs and the docs site. It changes no code. If it changed anything, a clean-clone test and a docs review check the new head before the PR opens.
 7. **Open the PR and handle the bots.** An agent opens a ready PR that says how it was tested and how many review rounds it took. It files each minor finding as a GitHub issue with the label `review-minor`. It waits for CI and the review bots, and replies on every bot thread: it fixes the point, or says why not.
-8. **Merge.** A PR is merged when CI passes on the head commit and a review bot has approved it. Merges are squash merges, done by the person's main session, never by a worker agent. The branch is deleted only after GitHub shows the PR as merged.
+8. **Merge.** A PR is merged when CI passes on the head commit and a review bot has approved it, or answered its comments and raised nothing new on the head. Merges are squash merges, done by the person's main session, never by a worker agent. The branch is deleted only after GitHub shows the PR as merged.
 
 PR bodies put each `Closes #N` on its own line. GitHub closes only the first issue on a line like `Closes #1, #2`.
 

@@ -1,8 +1,8 @@
 #!/bin/bash
 # usage: merge-pr.sh <owner/repo> <pr> <head sha> <branch>
 # Squash-merges only if the PR is mergeable, its head is <head sha> (the commit the pipeline checked),
-# every check passed (and there is at least one), and the latest review by a bot login (BOT_LOGINS regex,
-# default coderabbit|gitar|[bot]) is APPROVED. Deletes the branch only after GitHub shows MERGED.
+# every check passed (and there is at least one), and a review bot (BOT_LOGINS regex, default
+# coderabbit|gitar|[bot]) clears bot-approval.jq. Deletes the branch only after GitHub shows MERGED.
 R=$1; pr=$2; sha=$3; branch=$4
 [ -n "$branch" ] || { echo "usage: merge-pr.sh <owner/repo> <pr> <head sha> <branch>"; exit 2; }
 for _ in 1 2 3 4 5 6; do
@@ -11,8 +11,12 @@ for _ in 1 2 3 4 5 6; do
   sleep 5
 done
 head=$(gh pr view "$pr" -R "$R" --json headRefOid --jq .headRefOid)
-export BOTS_RE="${BOT_LOGINS:-coderabbit|gitar|\\[bot\\]}"
-appr=$(gh pr view "$pr" -R "$R" --json reviews --jq '[.reviews|group_by(.author.login)[]|last|select(.state=="APPROVED" and (.author.login|test(env.BOTS_RE)))|.author.login]|join(",")')
+bots="${BOT_LOGINS:-coderabbit|gitar|\\[bot\\]}"
+appr=$(jq -n --arg head "$head" --arg bots "$bots" \
+  --slurpfile reviews <(gh api --paginate "repos/$R/pulls/$pr/reviews?per_page=100") \
+  --slurpfile comments <(gh api --paginate "repos/$R/pulls/$pr/comments?per_page=100") \
+  '{reviews: ($reviews | add // []), comments: ($comments | add // []), head: $head, bots: $bots}' \
+  | jq -f "$(dirname "$0")/bot-approval.jq" | jq -r 'join(",")')
 fail=$(gh pr checks "$pr" -R "$R" --json name,bucket --jq 'if length==0 then "no-checks" else [.[]|select(.bucket!="pass" and .bucket!="skipping")|.name+":"+.bucket]|join(",") end')
 echo "PR $pr mergeable=$m head=${head:0:7} approved=[$appr] failing=[$fail]"
 if [ "$m" != "MERGEABLE" ] || [ "$head" != "$sha" ] || [ -z "$appr" ] || [ -n "$fail" ]; then
