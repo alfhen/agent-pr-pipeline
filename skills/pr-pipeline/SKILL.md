@@ -190,7 +190,7 @@ Summary: each agent caches its own conversation well; between agents only the to
 
 ### Pair skills with steps
 
-`skills` maps a step name to a list of skill names. Each agent of that step gets an instruction, at the start of its prompt, to load those skills with the Skill tool before it works. The step names are `impl`, `test`, `review`, `arch`, `product`, `fix`, `docs`, `open`, `botAnswer`, `landFix` and `preflight`. `review` covers the reviewer of every kind of PR, also the `reviewDocs` model. `docs` covers the docs agent and the reviewer of its commits. The bot waiter gets no skills. An unknown step name stops the workflow before any agent starts.
+`skills` maps a step name to a list of skill names. Each agent of that step gets an instruction, at the start of its prompt, to load those skills with the Skill tool before it works. The step names are `impl`, `test`, `review`, `arch`, `product`, `fix`, `docs`, `open`, `botAnswer`, `landFix` and `preflight`. `review` covers the reviewer of every kind of PR, also the `reviewDocs` model. `docs` covers the docs agent and the reviewer of its commits. The bot waiter, the evaluator and the redactor get no skills. An unknown step name stops the workflow before any agent starts.
 
 A PR with `sensitive: true` (auth, secrets, payments, user data, anything that runs untrusted input) adds a security-review skill to its reviewer only. The default skill is `security-review`; set `securitySkill` to use another one.
 
