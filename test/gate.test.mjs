@@ -14,7 +14,7 @@ const PULL = `${P}__pulls__7`
 const MERGE = `${PULL}__merge`
 const DELETE_REF = `${P}__git__refs__heads__feat__x`
 
-const pull = (extra = {}) => ({ merged: false, mergeable: true, head: { sha: SHA, ref: 'feat/x' }, ...extra })
+const pull = (extra = {}) => ({ merged: false, mergeable: true, head: { sha: SHA, ref: 'feat/x', repo: { full_name: 'o/r' } }, ...extra })
 const put = (fx, name, v) => writeFileSync(join(fx, name), typeof v === 'string' ? v : JSON.stringify(v))
 
 // opts.files: name of a fixture in test/fixtures/gate/files, or null for no files fixture.
@@ -213,6 +213,26 @@ test('merge-pr: a failed branch delete with the branch still there leaves the me
   const r = run(s, 'merge-pr.sh', ['--auto', 'o/r', '7', SHA, 'feat/x'], AGENT)
   assert.equal(r.code, 0, r.out)
   assert.match(r.out, /clean-up: could not delete feat\/x/)
+})
+
+test('merge-pr: a branch name with # is deleted by its encoded full name', () => {
+  const s = setup({ files: 'clean' })
+  const head = { sha: SHA, ref: 'keep#x', repo: { full_name: 'o/r' } }
+  put(s.fx, `${PULL}.json`, pull({ head }))
+  put(s.fx, 'pull-merged.json', pull({ merged: true, head }))
+  const r = run(s, 'merge-pr.sh', ['--auto', 'o/r', '7', SHA, 'keep#x'], AGENT)
+  assert.equal(r.code, 0, r.out)
+  assert.equal(calls(r, /^DELETE /)[0], 'DELETE /repos/o/r/git/refs/heads/keep%23x')
+})
+
+test('merge-pr: a fork branch is not deleted in the base repo', () => {
+  const s = setup({ files: 'clean' })
+  const head = { sha: SHA, ref: 'feat/x', repo: { full_name: 'fork/r' } }
+  put(s.fx, `${PULL}.json`, pull({ head }))
+  put(s.fx, 'pull-merged.json', pull({ merged: true, head }))
+  const r = run(s, 'merge-pr.sh', ['--auto', 'o/r', '7', SHA, 'feat/x'], AGENT)
+  assert.equal(r.code, 0, r.out)
+  assert.equal(calls(r, /^DELETE /).length, 0)
 })
 
 test('land-wave: a :auto pair reaches merge-pr.sh as --auto', () => {

@@ -60,10 +60,16 @@ echo "PR $pr merged=$merged"
 [ "$merged" = true ] || exit 1
 gh api -X POST "repos/$R/issues/$pr/comments" -f body="<!-- pipeline:merge-cleared $mode $sha -->" >/dev/null \
   || echo "warning: the merge record comment was not posted"
-if gh api -X DELETE "repos/$R/git/refs/heads/$branch" >/dev/null 2>&1; then
-  echo "clean-up: deleted $branch"
-elif ! gh api "repos/$R/git/ref/heads/$branch" >/dev/null 2>&1; then
-  echo "clean-up: $branch already gone"
+# The branch comes from the pull, not the caller. Each segment is encoded because gh api reads '#' as a URL fragment.
+ref=$(jq -r .head.ref <<<"$pull")
+headrepo=$(jq -r '.head.repo.full_name // ""' <<<"$pull")
+enc=$(jq -rn --arg b "$ref" '$b | split("/") | map(@uri) | join("/")')
+if [ "$headrepo" != "$R" ]; then
+  echo "clean-up: $ref is not in $R, not deleted"
+elif gh api -X DELETE "repos/$R/git/refs/heads/$enc" >/dev/null 2>&1; then
+  echo "clean-up: deleted $ref"
+elif ! gh api "repos/$R/git/ref/heads/$enc" >/dev/null 2>&1; then
+  echo "clean-up: $ref already gone"
 else
-  echo "clean-up: could not delete $branch (the PR is merged)"
+  echo "clean-up: could not delete $ref (the PR is merged)"
 fi
