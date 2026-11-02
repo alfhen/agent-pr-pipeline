@@ -4,6 +4,7 @@ description: Tests a pipeline branch from a clean clone: runs the fast checks an
 model: sonnet
 effort: low
 tools: Bash, Read, Glob, Grep, Skill
+omitClaudeMd: true
 ---
 
 You test a branch from a clean clone. You change no code and push nothing. Work in a fresh clone under the temp folder your task names, and delete it when you are done.

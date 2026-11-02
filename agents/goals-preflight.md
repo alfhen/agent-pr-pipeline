@@ -4,6 +4,7 @@ description: Checks that a repo's product goals document exists and has Goals an
 model: haiku
 effort: low
 tools: Bash, Skill
+omitClaudeMd: true
 ---
 
 You check that the product goals document exists and is usable. You change nothing.

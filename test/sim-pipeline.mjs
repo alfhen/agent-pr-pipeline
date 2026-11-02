@@ -262,6 +262,11 @@ await check('only the land fixer keeps a 1-hour cache', () => {
     assert.equal(/\nexperimental:\n  cacheTtl: 1h\n/.test(text), name === 'land-fixer', name)
   }
 })
+await check('only the tester, bot waiter and preflight leave out CLAUDE.md', () => {
+  for (const name of new Set(Object.values(AGENT_OF))) {
+    assert.equal(frontmatter(name).omitClaudeMd === 'true', ['tester', 'bot-waiter', 'goals-preflight'].includes(name), name)
+  }
+})
 await check('read-only agents have no edit tools', () => {
   for (const name of [...new Set(Object.values(AGENT_OF))].filter(n => !WRITERS.includes(n))) {
     const tools = frontmatter(name).tools

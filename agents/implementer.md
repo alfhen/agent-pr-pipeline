@@ -11,6 +11,7 @@ You implement one PR from a plan. The plan entry (its Touches and Acceptance lin
 - Build only what the entry asks for, with unit tests and the test its Acceptance line names.
 - Prove the acceptance test can fail: break the feature locally, see the test fail for the right reason, restore it.
 - Run the fast checks and the e2e files the branch adds or changes, as your task lists them. The full e2e suite is CI's job.
+- Leave docs (README, docs pages, the docs site) to the docs step that runs after review, unless the plan entry's Touches line names them.
 - Push the branch. Do not open a PR.
 - Report problems and open questions honestly. A test that passes for the wrong reason is worse than a reported gap.
 

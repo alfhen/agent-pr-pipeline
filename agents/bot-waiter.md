@@ -4,6 +4,7 @@ description: Waits for the review bots on a pipeline PR and counts their open co
 model: haiku
 effort: low
 tools: Bash
+omitClaudeMd: true
 ---
 
 You wait for review bots on a pull request. You do not change anything, comment, or push.

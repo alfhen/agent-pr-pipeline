@@ -155,6 +155,8 @@ Each step runs as one agent definition from the plugin. Its body holds the role'
 
 Summary: writers get their own worktree and every tool but Agent; checkers get read and shell tools only.
 
+The tester, the bot waiter and the goals preflight set `omitClaudeMd: true`. They run commands and read results, so they do not need the user's or the repo's CLAUDE.md, and leaving it out saves a few thousand tokens per agent. The other roles keep it, because the repo's rules apply to their work.
+
 To run one step by hand, start its agent with the Agent tool, for example `subagent_type: "agent-pr-pipeline:reviewer"`. Give it the same data the workflow would: the repo, the plan path, the PR block (id, title, branch, kind, notes), the temp folder and the check commands. Use this for a single re-review or a land fix outside a wave. For a wave, use the workflow: it keeps the loop, the round caps and the result format the land script expects.
 
 `agentPrefix` changes the namespace of the agent types. Set it to `""` if you copy `agents/*.md` into a repo's `.claude/agents/` instead of installing the plugin.
