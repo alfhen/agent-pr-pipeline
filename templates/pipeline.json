@@ -1,0 +1,20 @@
+{
+  "gates": [
+    "docs/goals.md",
+    "docs/plan-*.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".github/**",
+    ".claude/**",
+    "**/package.json",
+    "**/composer.json",
+    "**/*.lock",
+    "**/package-lock.json",
+    "**/pnpm-lock.yaml",
+    "**/Dockerfile*",
+    "**/docker-compose*.yml",
+    "**/migrations/**",
+    "**/.env*"
+  ],
+  "autoRelease": false
+}
