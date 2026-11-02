@@ -3,7 +3,7 @@
 # Files each feedback item as an issue with the label pipeline-feedback in --repo. --source is the repo the
 # wave ran in. When it differs from --repo, the script itself also refuses the source owner, name, owner/name
 # and URL, and refuses to run with an empty denylist. <feedback.json> is a list of { title, detail, evidence, suggestedChange, severity };
-# <denylist.json> is a list of strings. An item whose text contains a denylist string (any case; an entry with a / matches as a substring, any other entry only as a whole word) is reported
+# <denylist.json> is a list of strings. An item whose text contains a denylist string (any case). A file entry matches as a whole word, except an entry with a / and the strings the script adds, which match as substrings. Whole-word matching needs a non-alphanumeric neighbour only on a side where the entry ends in a letter or digit is reported
 # as REFUSED and never filed. A title that already has an open pipeline-feedback issue is skipped.
 # Exit: 0 all done, 1 error, 2 at least one item refused. Uses gh api REST calls only.
 set -u
@@ -25,10 +25,10 @@ jq -e 'type == "array"' "$file" >/dev/null 2>&1 || { echo "$file is not a JSON l
 jq -e 'type == "array" and all(.[]; type == "string")' "$deny" >/dev/null 2>&1 || { echo "$deny is not a JSON list of strings"; exit 1; }
 
 # Strings the script refuses whatever the denylist file holds.
-deny_all=$(jq -c '.' "$deny")
+deny_all=$(jq -c '{subs: [.[] | select(contains("/"))], words: [.[] | select(contains("/") | not)]}' "$deny")
 if [ "$(tr 'A-Z' 'a-z' <<<"$source")" != "$(tr 'A-Z' 'a-z' <<<"$repo")" ]; then
   [ "$(jq length "$deny")" -gt 0 ] || { echo "$deny is empty but the source repo $source differs from $repo"; exit 1; }
-  deny_all=$(jq -c --arg s "$source" '. + [($s | split("/")[0]), ($s | split("/")[1]), $s, "https://github.com/\($s)"]' "$deny")
+  deny_all=$(jq -c --arg s "$source" '{subs: ([.[] | select(contains("/"))] + [($s | split("/")[0]), ($s | split("/")[1]), $s, "https://github.com/\($s)"]), words: [.[] | select(contains("/") | not)]}' "$deny")
 fi
 
 # Fail closed: without the list of open issues, a duplicate could be filed.
@@ -43,7 +43,10 @@ for ((i = 0; i < count; i++)); do
   title=$(jq -r '.title // ""' <<<"$item")
   [ -n "$title" ] || { echo "REFUSED item $i: no title"; status=2; continue; }
   hit=$(jq -r --argjson deny "$deny_all" '[.. | strings] | join("\n") | ascii_downcase as $text
-    | [$deny[] | select(length > 0) | ascii_downcase | select(. as $d | if contains("/") then $text | contains($d) else $text | test("(^|[^a-z0-9])" + ($d | gsub("(?<c>[^a-z0-9])"; "\\" + .c)) + "($|[^a-z0-9])") end)] | first // empty' <<<"$item") || { echo "REFUSED $title: denylist check failed"; status=2; continue; }
+    | def edge($c): $c | test("[a-z0-9]");
+      def pat: . as $d | (if edge($d[0:1]) then "(^|[^a-z0-9])" else "" end) + gsub("(?<c>[^a-z0-9])"; "\\" + .c) + (if edge($d[-1:]) then "($|[^a-z0-9])" else "" end);
+      [($deny.subs[] | select(length > 0) | ascii_downcase | select(. as $d | $text | contains($d))),
+       ($deny.words[] | select(length > 0) | ascii_downcase | select(. as $d | $text | test($d | pat)))] | first // empty' <<<"$item") || { echo "REFUSED $title: denylist check failed"; status=2; continue; }
   if [ -n "$hit" ]; then
     echo "REFUSED $title: contains \"$hit\""
     status=2

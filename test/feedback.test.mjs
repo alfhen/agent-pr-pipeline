@@ -161,3 +161,19 @@ test('a short denylist entry matches only as a whole word, a path matches as a s
   const word = setup({ items: [item('Docs lag', { detail: 'Fixed in the Docs step.' })], deny: ['docs'] }).run()
   assert.equal(word.status, 2)
 })
+
+test('the source owner and name match inside compound words', () => {
+  for (const detail of ['AcmeWidgets stalls', 'acmecorp stalls', 'widgetsApi stalls', 'acme2 stalls']) {
+    const r = setup({ items: [item('Fixer loops', { detail })], deny: ['unrelated'], source: 'acme/widgets' }).run()
+    assert.equal(r.status, 2, detail)
+    assert.equal(r.posts.length, 0)
+  }
+})
+
+test('a denylist entry that starts or ends with punctuation matches next to letters', () => {
+  for (const [entry, detail] of [['#123', 'See PR#123 for it.'], ['.env.prod', 'Reads app.env.prod twice.'], ['@acme', 'Mail bob@acme now.']]) {
+    const r = setup({ items: [item('Fixer loops', { detail })], deny: [entry] }).run()
+    assert.equal(r.status, 2, entry)
+    assert.equal(r.posts.length, 0)
+  }
+})
