@@ -14,6 +14,14 @@ git clone https://github.com/alfhen/agent-pr-pipeline.git ~/.claude/skills/agent
 
 Or, for one project, into `.claude/skills/agent-pr-pipeline` in that repo.
 
+The repo has a second skill, [write-goals](skills/write-goals/SKILL.md). It interviews you and writes the product goals document that the pipeline needs before its first run. Claude Code finds skills only one folder deep, so link it next to the first one:
+
+```bash
+ln -s ~/.claude/skills/agent-pr-pipeline/skills/write-goals ~/.claude/skills/write-goals
+```
+
+The main skill stays at the repo root, so its paths and the clone command above do not change. `skills/` is also where a Claude Code plugin keeps its skills, so the repo can become a plugin later without moving files.
+
 ## Use
 
 Ask Claude Code to plan and build a release or a set of issues with this skill. It will:

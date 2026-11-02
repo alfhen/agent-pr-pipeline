@@ -434,7 +434,7 @@ if (needsGoals) {
   if (!pre || !pre.ok) {
     const missing = pre ? pre.missing.join(', ') : 'the preflight agent did not answer'
     log(`refused: ${GOALS} is missing or incomplete (${missing})`)
-    return A.prs.map(pr => ({ id: pr.id, ready: false, refused: true, reason: `goals document missing or incomplete: ${missing}. Write ${GOALS} (see templates/goals.md) and run again.` }))
+    return A.prs.map(pr => ({ id: pr.id, ready: false, refused: true, reason: `goals document missing or incomplete: ${missing}. Write ${GOALS} with the write-goals skill (or from templates/goals.md) and run again.` }))
   }
 }
 return await parallel(A.prs.map(pr => () => runPR(pr)))
