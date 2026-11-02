@@ -1,13 +1,14 @@
 export const meta = {
   name: 'agent-pr-pipeline',
-  description: 'Build, test, review, fix and ready one wave of PRs, each step a separate agent',
+  description: 'Build, test, review and fix one wave of PRs, open them and answer the review bots; each step a separate agent',
   phases: [
     { title: 'Implement', detail: 'one agent builds each PR on its own branch' },
-    { title: 'Test', detail: 'a second agent runs every check from a clean clone' },
+    { title: 'Test', detail: 'a second agent runs the fast checks and the PR\'s own e2e from a clean clone' },
     { title: 'Review', detail: 'a stronger model reviews the diff adversarially' },
     { title: 'Fix', detail: 'an agent fixes blockers, majors and failing checks' },
-    { title: 'Bots', detail: 'open the PR, file minors as issues, answer the review bots' },
-    { title: 'Land', detail: 'bring the PR to mergeable with green CI; the main session merges' },
+    { title: 'Open PR', detail: 'open the PR and file minor findings as issues' },
+    { title: 'Bots', detail: 'a small agent waits for the review bots; another answers them only if they commented' },
+    { title: 'Land fix', detail: 'only for PRs passed with landFix: resolve a conflict or a CI failure' },
   ],
 }
 
@@ -17,13 +18,29 @@ const REPO = A.repo
 const TMP = A.tmp
 const PLAN = A.plan
 const SPEC = A.spec || ''
-const MAX_ROUNDS = A.maxRounds || 4
-const CHECKS = A.checks || ['pnpm install --frozen-lockfile', 'pnpm lint', 'pnpm typecheck', 'pnpm test']
-const MODELS = Object.assign({ impl: 'sonnet', test: 'sonnet', review: 'opus', fix: 'sonnet', bots: 'sonnet', land: 'sonnet' }, A.models || {})
+const FAST_CHECKS = A.checks || ['pnpm install --frozen-lockfile', 'pnpm lint', 'pnpm typecheck', 'pnpm test']
+const E2E_PATTERN = A.e2ePattern || '\\.e2e\\.test\\.ts$'
+const E2E_COMMAND = A.e2eCommand || 'pnpm exec vitest run {files}'
 const BOTS = A.bots || 'CodeRabbit (login coderabbitai) and Gitar (login contains "gitar")'
+const BOT_WAIT_MIN = A.botWaitMinutes || 20
 const LABEL = A.minorLabel || 'review-minor'
 const MILESTONE = A.milestone ? ` --milestone "${A.milestone}"` : ''
+const STEPS = Object.assign({
+  impl: { model: 'sonnet', effort: 'medium' },
+  test: { model: 'sonnet', effort: 'low' },
+  review: { model: 'opus', effort: 'high' },
+  reviewDocs: { model: 'sonnet', effort: 'high' },
+  fix: { model: 'sonnet', effort: 'medium' },
+  open: { model: 'sonnet', effort: 'low' },
+  botWait: { model: 'haiku', effort: 'low' },
+  botAnswer: { model: 'sonnet', effort: 'medium' },
+  landFix: { model: 'sonnet', effort: 'medium' },
+}, A.steps || {})
 if (!REPO || !TMP || !PLAN || !Array.isArray(A.prs)) throw new Error('args needs repo, tmp, plan and prs')
+
+const roundsFor = pr => pr.maxRounds || (pr.kind === 'plan' ? (A.planRounds || 2) : (A.maxRounds || 4))
+const reviewStep = pr => (pr.kind === 'plan' || pr.kind === 'docs') ? STEPS.reviewDocs : STEPS.review
+const opts = (step, extra) => Object.assign({ model: step.model, effort: step.effort }, extra)
 
 const CONTEXT = `You are working on ${REPO} (https://github.com/${REPO}).
 ${SPEC ? `The spec is ${SPEC}. ` : ''}The current plan is ${PLAN}. The plan entry for your PR (its section, with its Touches and Acceptance lines) is your brief, plus the notes below. The plan's "Rules for every PR" section applies, and so do AGENTS.md or CLAUDE.md in the repo.
@@ -38,8 +55,9 @@ Working rules:
 - Code comments only for why, hidden constraints, or properties a refactor must keep.
 - Match the style of the code around you.`
 
-const checksText = CHECKS.map(c => `\`${c}\``).join(', ')
-const prBlock = pr => `PR: ${pr.id} - ${pr.title}\nBranch: ${pr.branch}\nNotes for this PR:\n${pr.notes || '(none)'}`
+const fastText = FAST_CHECKS.map(c => `\`${c}\``).join(', ')
+const ownE2e = `the e2e test files this branch adds or changes (\`git diff --name-only origin/HEAD...HEAD | grep -E '${E2E_PATTERN}'\`), run with \`${E2E_COMMAND}\` where {files} is that list; skip this when the list is empty. The full e2e suite is CI's job: do not run it`
+const prBlock = pr => `PR: ${pr.id} - ${pr.title}\nBranch: ${pr.branch}\nKind: ${pr.kind || 'code'}\nNotes for this PR:\n${pr.notes || '(none)'}`
 
 const IMPL = {
   type: 'object',
@@ -75,19 +93,29 @@ const REVIEW = {
   },
   required: ['summary', 'findings'],
 }
-const BOTS_OUT = {
+const OPEN = {
+  type: 'object',
+  properties: { prNumber: { type: 'number' }, prUrl: { type: 'string' }, issuesCreated: { type: 'array', items: { type: 'string' } } },
+  required: ['prNumber'],
+}
+const WAIT = {
   type: 'object',
   properties: {
-    prNumber: { type: 'number' }, prUrl: { type: 'string' },
     approvedBy: { type: 'array', items: { type: 'string' } },
-    threadsAddressed: { type: 'number' }, codeChanged: { type: 'boolean' }, substantiveChange: { type: 'boolean' },
-    issuesCreated: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' },
+    openComments: { type: 'number' },
+    timedOut: { type: 'boolean' },
+    notes: { type: 'string' },
   },
-  required: ['prNumber', 'codeChanged', 'substantiveChange'],
+  required: ['approvedBy', 'openComments'],
 }
-const LAND = {
+const ANSWER = {
   type: 'object',
-  properties: { readyToMerge: { type: 'boolean' }, headSha: { type: 'string' }, ciPassed: { type: 'boolean' }, notes: { type: 'string' } },
+  properties: { threadsAddressed: { type: 'number' }, codeChanged: { type: 'boolean' }, substantiveChange: { type: 'boolean' }, notes: { type: 'string' } },
+  required: ['codeChanged', 'substantiveChange'],
+}
+const LANDFIX = {
+  type: 'object',
+  properties: { readyToMerge: { type: 'boolean' }, headSha: { type: 'string' }, notes: { type: 'string' } },
   required: ['readyToMerge', 'notes'],
 }
 
@@ -101,7 +129,7 @@ Your job: implement this PR.
 1. You are in a fresh git worktree. Run \`git fetch origin && git checkout -B ${pr.branch} origin/HEAD\`. If ${pr.branch} already exists on origin from an earlier attempt, build on it instead: \`git checkout -B ${pr.branch} origin/${pr.branch}\`.
 2. Read ${SPEC ? `${SPEC} and ` : ''}${PLAN} and the code you will change.
 3. Build the PR with unit tests and the test named in its Acceptance line. Keep it small and in scope.
-4. Run ${checksText} until they pass. Make sure the acceptance test fails for the right reason: break the feature locally, see the test fail, restore it.
+4. Run ${fastText}, and ${ownE2e}. Make sure the acceptance test fails for the right reason: break the feature locally, see the test fail, restore it.
 5. Commit and \`git push -u origin ${pr.branch}\`. Do not open a PR.
 Return pushed, branch, headSha, a short summary, whether the acceptance test passed, and any problems or open questions.`
 
@@ -111,7 +139,7 @@ ${prBlock(pr)}
 
 Your job: test branch ${pr.branch} from a clean clone. Do not change code.
 1. \`rm -rf ${TMP}/test-${pr.id}-r${round} && git clone --branch ${pr.branch} https://github.com/${REPO}.git ${TMP}/test-${pr.id}-r${round}\` and cd there.
-2. Run in order and capture output: ${checksText}. Run every step even if an earlier one fails, when possible.
+2. Run in order and capture output: ${fastText}. Then run ${ownE2e}. Run every step even if an earlier one fails, when possible.
 3. Check that the acceptance test from the plan exists and ran (was not skipped).
 4. Delete the clone when done.
 Return pass (true only if every step passed), headSha, and one entry per check with the failing log excerpt (the relevant 40 lines).`
@@ -121,9 +149,9 @@ const reviewPrompt = (pr, round, history) => `${CONTEXT}
 ${prBlock(pr)}
 
 Your job: review branch ${pr.branch} adversarially against ${SPEC ? `${SPEC} and ` : ''}${PLAN}. Do not change code or push anything.
-Clone it: \`rm -rf ${TMP}/review-${pr.id}-r${round} && git clone https://github.com/${REPO}.git ${TMP}/review-${pr.id}-r${round} && cd ${TMP}/review-${pr.id}-r${round} && git checkout ${pr.branch}\`. Read the full diff (\`git diff origin/HEAD...HEAD\`) and the touched files in full. You may run tests to check a suspicion.
+Clone it: \`rm -rf ${TMP}/review-${pr.id}-r${round} && git clone https://github.com/${REPO}.git ${TMP}/review-${pr.id}-r${round} && cd ${TMP}/review-${pr.id}-r${round} && git checkout ${pr.branch}\`. Read the full diff (\`git diff origin/HEAD...HEAD\`) and the touched files in full. You may run single tests to check a suspicion.
 Look for: correctness bugs and drift from the spec and the plan entry; security and privacy problems; scope creep; tests that pass for the wrong reason (assertions that cannot fail, skipped tests, mocks that hide the behaviour, timing that makes a test vacuous); broken project rules; claims the PR makes without evidence.
-Rank each finding: blocker (wrong, unsafe, or the acceptance test does not prove the feature), major (must fix before merge), minor (fine as a follow-up issue). Be concrete: file, what is wrong, how to fix. No style nits. Default to no finding when unsure.
+Rank each finding: blocker (wrong, unsafe, or the acceptance test does not prove the feature), major (must fix before merge), minor (fine as a follow-up issue). Be concrete: file, what is wrong, how to fix. No style nits. Default to no finding when unsure.${pr.kind === 'plan' ? ' This is a plan document: anything an implementer can settle without changing the plan\'s intent is minor.' : ''}
 ${history.length ? `Earlier rounds (check their blockers and majors are really fixed):\n${JSON.stringify(history, null, 1)}` : ''}
 Delete the clone when done. Return headSha, a summary and the findings.`
 
@@ -134,7 +162,7 @@ ${prBlock(pr)}
 Your job: fix branch ${pr.branch} after review round ${round}.
 1. You are in a fresh git worktree. ${freshBranch('fix', pr, round)}
 2. Fix every blocker and major below, and every failing check. If you think a finding is wrong, do not ignore it: fix it, or explain why with evidence in your answer.
-3. Run ${checksText} until they pass.
+3. Run ${fastText}, and ${ownE2e}.
 4. Commit and push with \`git push origin HEAD:${pr.branch}\`.
 Failing checks:
 ${JSON.stringify((test && test.checks || []).filter(c => !c.pass), null, 1)}
@@ -142,38 +170,51 @@ Findings:
 ${JSON.stringify(findings, null, 1)}
 Return a short summary of each fix, and any finding you disagree with and why.`
 
-const botsPrompt = (pr, rounds, minors) => `${CONTEXT}
+const openPrompt = (pr, rounds, minors) => `${CONTEXT}
 
 ${prBlock(pr)}
 
-Your job: open the pull request for ${pr.branch}, file minor findings as issues, and answer the review bots.
-1. You are in a fresh git worktree. ${freshBranch('bots', pr, 0)}
-2. File each minor finding below as a GitHub issue with label ${LABEL}${MILESTONE ? ' and the milestone' : ''} (\`gh issue create --label ${LABEL}${MILESTONE}\`). Skip duplicates and ones the branch already fixed. Body: the finding, the file, and "Found in review of ${pr.id}."
-3. Open a ready PR to the default branch if none exists: \`gh pr create --head ${pr.branch}\`, title "${pr.title}". Body: what it does, how it is tested, "Review: no blockers or majors after round N." (N from the history), links to the issues you filed, and each \`Closes #N\` on its own line.
-4. Wait for the review bots: ${BOTS}. Poll every 60 s for up to 20 minutes (\`gh pr view <n> --json reviews,comments\`, \`gh api repos/${REPO}/pulls/<n>/comments\`, \`gh pr checks <n>\`). Stop when one bot approved, or all have finished, or after 20 minutes.
-5. For every bot comment: decide if it is right. If right, fix it. Reply on the thread in one or two sentences saying what you changed or why not. Answer review-body items in one PR comment per bot.
-6. If you changed code, run ${checksText}, commit and push.
-Set substantiveChange true if your changes alter behaviour beyond small fixes.
+Your job: open the pull request for ${pr.branch} and file minor findings. Do not change code.
+1. File each minor finding below as a GitHub issue with label ${LABEL} (\`gh issue create -R ${REPO} --label ${LABEL}${MILESTONE}\`). Skip duplicates of each other and of open issues. Body: the finding, the file, and "Found in review of ${pr.id}."
+2. Open a ready PR to the default branch if none exists: \`gh pr create -R ${REPO} --head ${pr.branch}\`, title "${pr.title}". Body: what it does, how it is tested, "Review: no blockers or majors after round N." (N from the history), links to the issues you filed, and each \`Closes #N\` on its own line.
 Review history: ${JSON.stringify(rounds)}
 Minor findings: ${JSON.stringify(minors, null, 1)}
-Return the PR number and URL, approvedBy (bot logins that approved), threads addressed, whether code changed, issues created, and notes.`
+Return prNumber, prUrl and the issues you created.`
 
-const landPrompt = (pr, b) => `${CONTEXT}
+const waitPrompt = (pr, n) => `Wait for the review bots on pull request #${n} in ${REPO}. Do not change anything, comment, or push.
+Bots: ${BOTS}.
+Every 60 seconds, for at most ${BOT_WAIT_MIN} minutes, run \`gh pr view ${n} -R ${REPO} --json reviews\` and \`gh pr checks ${n} -R ${REPO}\`. Stop early when a bot has an APPROVED review and its check has finished, or when every bot has finished (a review, or a comment saying it is done, skipped or rate-limited).
+Then count the open bot comments: inline threads (\`gh api repos/${REPO}/pulls/${n}/comments\`) by a bot login with no reply yet, plus actionable items in a bot review body.
+Return approvedBy (bot logins with an APPROVED review), openComments (that count), timedOut, and one line of notes.`
+
+const answerPrompt = (pr, n) => `${CONTEXT}
 
 ${prBlock(pr)}
 
-Your job: bring PR #${b.prNumber} (${pr.branch}) to a mergeable state with green CI. Do not merge it.
+Your job: answer the review bots on pull request #${n}.
+1. You are in a fresh git worktree. ${freshBranch('bots', pr, 0)}
+2. For each bot comment without a reply: decide if it is right. If right, fix it. Reply on the thread (\`gh api repos/${REPO}/pulls/${n}/comments/<id>/replies -f body=...\`) in one or two sentences: what you changed, or why not. Answer review-body items in one PR comment per bot.
+3. If you changed code, run ${fastText}, and ${ownE2e}; commit and push.
+Set substantiveChange true if your changes alter behaviour beyond small fixes.
+Return threads addressed, whether code changed, substantiveChange, and notes.`
+
+const landFixPrompt = pr => `${CONTEXT}
+
+${prBlock(pr)}
+
+Your job: bring PR #${pr.prNumber} (${pr.branch}) to a mergeable state with green CI. Do not merge it.
 1. You are in a fresh git worktree. ${freshBranch('land', pr, 0)}
-2. \`gh pr view ${b.prNumber} --json mergeable,mergeStateStatus\`. If CONFLICTING: \`git merge origin/HEAD\`, resolve the conflicts keeping both sides' intent (for lockfiles take the default branch's version and reinstall), run ${checksText}, commit and push. If MERGEABLE, do not touch the branch.
-3. \`gh pr checks ${b.prNumber} --watch --interval 30\`. If a CI job fails, read the log, fix small causes, push, and wait again, up to 3 times. Rerun a flaky network failure once.
-4. Stop when the PR is MERGEABLE and CI passes on its head. The main session merges.
-Return readyToMerge, headSha, ciPassed and notes.`
+2. If the PR conflicts: \`git merge origin/HEAD\`, resolve keeping both sides' intent (lockfiles: take the default branch's version and reinstall), run ${fastText}, and ${ownE2e}, commit and push.
+3. If a CI job failed: read the log (\`gh run view <run> -R ${REPO} --log-failed\`), fix small causes, push. Rerun a flaky network failure once with \`gh run rerun <run> --failed\`.
+4. Wait for CI on the new head (\`gh pr checks ${pr.prNumber} -R ${REPO} --watch --interval 30\`). Stop when it is MERGEABLE and green, or after 3 attempts.
+Return readyToMerge, headSha and notes.`
 
 async function reviewLoop(pr, startRound, history, minors) {
-  for (let round = startRound; round < startRound + MAX_ROUNDS; round++) {
+  const max = roundsFor(pr)
+  for (let round = startRound; round < startRound + max; round++) {
     const [test, review] = await parallel([
-      () => agent(testPrompt(pr, round), { label: `test:${pr.id}#${round}`, phase: 'Test', model: MODELS.test, schema: TEST }),
-      () => agent(reviewPrompt(pr, round, history), { label: `review:${pr.id}#${round}`, phase: 'Review', model: MODELS.review, effort: 'high', schema: REVIEW }),
+      () => agent(testPrompt(pr, round), opts(STEPS.test, { label: `test:${pr.id}#${round}`, phase: 'Test', schema: TEST })),
+      () => agent(reviewPrompt(pr, round, history), opts(reviewStep(pr), { label: `review:${pr.id}#${round}`, phase: 'Review', schema: REVIEW })),
     ])
     if (!test || !review) return { signedOff: false, reason: 'tester or reviewer failed' }
     const blocking = review.findings.filter(f => f.severity !== 'minor')
@@ -181,35 +222,46 @@ async function reviewLoop(pr, startRound, history, minors) {
     history.push({ round, testPass: test.pass, failingChecks: test.checks.filter(c => !c.pass).map(c => c.name), blockersAndMajors: blocking.map(f => `${f.severity}: ${f.title}`) })
     log(`${pr.id} round ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (test.pass && blocking.length === 0) return { signedOff: true }
-    if (round === startRound + MAX_ROUNDS - 1) return { signedOff: false, reason: 'rounds exhausted', lastFindings: blocking, lastTest: test }
-    await agent(fixPrompt(pr, test, blocking, round), { label: `fix:${pr.id}#${round}`, phase: 'Fix', model: MODELS.fix, isolation: 'worktree' })
+    if (round === startRound + max - 1) return { signedOff: false, reason: 'rounds exhausted', lastFindings: blocking, lastTest: test }
+    await agent(fixPrompt(pr, test, blocking, round), opts(STEPS.fix, { label: `fix:${pr.id}#${round}`, phase: 'Fix', isolation: 'worktree' }))
   }
 }
 
 async function runPR(pr) {
+  if (pr.landFix) {
+    const r = await agent(landFixPrompt(pr), opts(STEPS.landFix, { label: `landfix:${pr.id}`, phase: 'Land fix', isolation: 'worktree', schema: LANDFIX }))
+    return { id: pr.id, prNumber: pr.prNumber, ready: !!(r && r.readyToMerge), headSha: r && r.headSha, notes: r && r.notes }
+  }
   const history = pr.resume ? pr.resume.history || [] : []
   const minors = pr.resume ? pr.resume.minors || [] : []
   let impl = { problems: '' }
   if (pr.resume && (pr.resume.findings || []).length) {
-    await agent(fixPrompt(pr, null, pr.resume.findings, history.length), { label: `fix:${pr.id}#${history.length}`, phase: 'Fix', model: MODELS.fix, isolation: 'worktree' })
+    await agent(fixPrompt(pr, null, pr.resume.findings, history.length), opts(STEPS.fix, { label: `fix:${pr.id}#${history.length}`, phase: 'Fix', isolation: 'worktree' }))
   } else if (!pr.skipImpl && !pr.resume) {
-    impl = await agent(implPrompt(pr), { label: `implement:${pr.id}`, phase: 'Implement', model: MODELS.impl, isolation: 'worktree', schema: IMPL })
+    impl = await agent(implPrompt(pr), opts(STEPS.impl, { label: `implement:${pr.id}`, phase: 'Implement', isolation: 'worktree', schema: IMPL }))
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl }
   }
   let loop = await reviewLoop(pr, history.length + 1, history, minors)
   if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings }
 
-  const b = await agent(botsPrompt(pr, history, minors), { label: `bots:${pr.id}`, phase: 'Bots', model: MODELS.bots, isolation: 'worktree', schema: BOTS_OUT })
-  if (!b || !b.prNumber) return { id: pr.id, ready: false, reason: 'PR not opened', history }
-  if (b.substantiveChange) {
-    loop = await reviewLoop(pr, history.length + 1, history, minors)
-    if (!loop.signedOff) return { id: pr.id, ready: false, reason: `after bots: ${loop.reason}`, history, prNumber: b.prNumber }
+  const opened = await agent(openPrompt(pr, history, minors), opts(STEPS.open, { label: `open:${pr.id}`, phase: 'Open PR', schema: OPEN }))
+  if (!opened || !opened.prNumber) return { id: pr.id, ready: false, reason: 'PR not opened', history }
+  const n = opened.prNumber
+
+  const wait = await agent(waitPrompt(pr, n), opts(STEPS.botWait, { label: `botwait:${pr.id}`, phase: 'Bots', schema: WAIT }))
+  let answer = null
+  if (wait && wait.openComments > 0) {
+    answer = await agent(answerPrompt(pr, n), opts(STEPS.botAnswer, { label: `botanswer:${pr.id}`, phase: 'Bots', isolation: 'worktree', schema: ANSWER }))
+    if (answer && answer.substantiveChange) {
+      loop = await reviewLoop(pr, history.length + 1, history, minors)
+      if (!loop.signedOff) return { id: pr.id, ready: false, reason: `after bots: ${loop.reason}`, history, prNumber: n }
+    }
   }
-  const land = await agent(landPrompt(pr, b), { label: `land:${pr.id}`, phase: 'Land', model: MODELS.land, isolation: 'worktree', schema: LAND })
   return {
-    id: pr.id, ready: !!(land && land.readyToMerge), prNumber: b.prNumber, prUrl: b.prUrl,
-    headSha: land && land.headSha, approvedBy: b.approvedBy || [], issues: b.issuesCreated || [],
-    rounds: history.length, history, land, implProblems: impl.problems || '',
+    id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl,
+    approvedBy: (wait && wait.approvedBy) || [], botNotes: wait && wait.notes,
+    codeChangedByBots: !!(answer && answer.codeChanged),
+    issues: opened.issuesCreated || [], rounds: history.length, history, implProblems: impl.problems || '',
   }
 }
 

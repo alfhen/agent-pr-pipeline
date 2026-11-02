@@ -16,22 +16,25 @@ flowchart LR
   R --> D
   D -- no --> F[Fix] --> T
   F --> R
-  D -- yes --> B[Open PR, file minors, answer bots]
-  B --> L[Land: mergeable and green CI]
-  L --> M[Main session merges]
+  D -- yes --> O[Open PR, file minors]
+  O --> W[Small agent waits for the bots]
+  W -- comments --> A[Answer the bots]
+  W -- none --> S[Land script: CI green, merge]
+  A --> S
+  S -- conflict or red CI --> X[Land-fix agent] --> S
 ```
 
-Summary: a plan is reviewed first; then each PR is built, tested and reviewed by different agents until it is clean, opened with the bots answered, and merged by the main session.
+Summary: a plan is reviewed first; then each PR is built, tested and reviewed by different agents until it is clean, opened, answered where the bots commented, and merged by a script in the main session.
 
 ## The loop for one PR
 
-1. **Implement.** A worker agent builds one plan entry on its own branch, with unit tests and the acceptance test. It breaks the feature on purpose to see the test fail, then restores it. It pushes the branch and does not open a PR.
-2. **Test from a clean clone.** A second agent clones the branch fresh and runs every check. It changes no code. A clean clone catches what a dirty worktree hides: missing files, lockfile drift, a test that only passes with local state.
+1. **Implement.** A worker agent builds one plan entry on its own branch, with unit tests and the acceptance test. It breaks the feature on purpose to see the test fail, then restores it. It runs the fast checks and the e2e files the PR adds or changes, pushes the branch, and does not open a PR.
+2. **Test from a clean clone.** A second agent clones the branch fresh and runs the fast checks (install, lint, types, unit tests) and the PR's own e2e files. It changes no code. A clean clone catches what a dirty worktree hides: missing files, lockfile drift, a test that only passes with local state. The full e2e suite is CI's job.
 3. **Adversarial review.** A third agent, on a stronger model, reads the diff against the spec and the plan entry. It ranks findings as blocker, major or minor. It runs in parallel with the tester.
-4. **Fix.** If a check failed or there are blockers or majors, a fix agent adds commits to the same branch. It never force-pushes. If it thinks a finding is wrong, it says why with evidence. Then steps 2 and 3 run again. Stop after `maxRounds` (default 4); then a person decides.
-5. **Open the PR and answer the bots.** An agent opens a ready PR, files every minor finding as an issue (label `review-minor`), waits for the review bots and replies on every thread: it fixes the point or says why not. If its changes are substantive, the loop runs again.
-6. **Land.** An agent brings the PR to MERGEABLE with green CI, merging the default branch in if there is a conflict. It does not merge.
-7. **Merge.** The main session squash-merges, only when CI is green on the exact head commit and a review bot approved. It deletes the branch only after GitHub shows MERGED.
+4. **Fix.** If a check failed or there are blockers or majors, a fix agent adds commits to the same branch. It never force-pushes. If it thinks a finding is wrong, it says why with evidence. Then steps 2 and 3 run again. Stop after `maxRounds` (default 4; plan PRs 2); then a person decides.
+5. **Open the PR.** An agent opens a ready PR and files every minor finding as an issue (label `review-minor`).
+6. **Bots.** A small agent (Haiku, low effort) waits for the review bots and counts their open comments. Only if there are any does an answer agent run: it fixes the point or says why not, on every thread. If its changes are substantive, the loop runs again.
+7. **Land and merge.** The main session runs `scripts/land-wave.sh`. It waits for CI and squash-merges only when CI is green on the exact head commit and a review bot approved. It deletes the branch only after GitHub shows MERGED. A PR that conflicts or has a red check is reported as `LAND FIX`, and a land-fix agent handles only that PR.
 
 ## Before the first run in a repo
 
@@ -66,20 +69,39 @@ Load the workflow-authoring skill if the session has a Workflow tool. Run `workf
   "plan": "docs/plan-1.2.md",
   "spec": "docs/design.md",
   "context": "Project facts and hard rules every agent needs, in a few lines.",
-  "checks": ["pnpm install --frozen-lockfile", "pnpm lint", "pnpm typecheck", "pnpm test", "pnpm e2e"],
+  "checks": ["pnpm install --frozen-lockfile", "pnpm lint", "pnpm typecheck", "pnpm test"],
+  "e2ePattern": "\\.e2e\\.test\\.ts$",
+  "e2eCommand": "pnpm exec vitest run {files}",
   "maxRounds": 4,
-  "models": { "impl": "sonnet", "test": "sonnet", "review": "opus", "fix": "sonnet", "bots": "sonnet", "land": "sonnet" },
+  "planRounds": 2,
+  "botWaitMinutes": 20,
   "bots": "CodeRabbit (login coderabbitai) and Gitar (login contains \"gitar\")",
   "milestone": "1.2.0",
+  "steps": { "review": { "model": "opus", "effort": "high" } },
   "prs": [
-    { "id": "T01", "title": "Short PR title", "branch": "fix/short-name", "notes": "Build plan entry T01. Settle minor #123. PR body: Closes #45 on its own line." }
+    { "id": "T01", "title": "Short PR title", "branch": "fix/short-name", "kind": "code", "notes": "Build plan entry T01. Settle minor #123. PR body: Closes #45 on its own line." }
   ]
 }
 ```
 
-PR options: `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `resume: { history, minors, findings }` to continue a PR whose rounds ran out: a fix agent handles `findings` first, then the loop continues with the history.
+- `checks` are the **fast** checks. Agents also run the e2e files the PR adds or changes (`e2ePattern`, run with `e2eCommand`). The full e2e suite runs only in CI, so CI must run it on every PR.
+- `kind`: `code` (default), `docs` or `plan`. Docs and plan PRs get a Sonnet reviewer at high effort instead of Opus. Plan PRs stop after `planRounds` (default 2); fix what is left by hand, then rerun with `skipImpl`.
 
-The result has one object per PR: `ready`, `prNumber`, `headSha`, `approvedBy`, `rounds`, `history`, `issues` and `reason` when not ready.
+Models and effort per step (override any of them in `steps`):
+
+| Step | Model | Effort |
+| --- | --- | --- |
+| `impl`, `fix` | sonnet | medium |
+| `test` | sonnet | low |
+| `review` | opus | high |
+| `reviewDocs` (docs and plan PRs) | sonnet | high |
+| `open` | sonnet | low |
+| `botWait` | haiku | low |
+| `botAnswer`, `landFix` | sonnet | medium |
+
+PR options: `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `resume: { history, minors, findings }` to continue a PR whose rounds ran out. `landFix: true` with `prNumber` runs only the land-fix agent for that PR.
+
+The result has one object per PR: `ready`, `prNumber`, `approvedBy`, `rounds`, `history`, `issues` and `reason` when not ready. `ready` means the PR is open and the bots are answered; merging is the land script's job.
 
 ### Notes that work
 
@@ -89,9 +111,9 @@ The result has one object per PR: `ready`, `prNumber`, `headSha`, `approvedBy`, 
 - Say what the agent must not do when it is tempting: "Test only; the final diff does not change src/x.ts."
 - For a change to a hard rule, say "must not be merged by any agent" and keep it until the person approves.
 
-## Step 3: merge from the main session
+## Step 3: land and merge from the main session
 
-Workers never merge. Merging stays in the main session, where the person can see it. Use `scripts/merge-wave.sh <pr> <pr> ...`. It merges in order and stops at the first PR that is not cleanly mergeable. `scripts/merge-pr.sh` refuses unless the PR is MERGEABLE, its head is the commit that was checked, a bot approved, and no check failed.
+Workers never merge. Run `scripts/land-wave.sh <owner/repo> <pr> <pr> ...`. It waits for CI on each PR in order and calls `scripts/merge-pr.sh`, which refuses unless the PR is MERGEABLE, its head is the commit that was checked, a bot approved, and no check failed. The branch is deleted only after GitHub shows MERGED. On `LAND FIX #n`, run the workflow with `{ "id": ..., "branch": ..., "prNumber": n, "landFix": true }`, then run the land script again.
 
 After a wave, watch CI on the default branch before starting the next wave or tagging.
 
@@ -102,16 +124,17 @@ After a wave, watch CI on the default branch before starting the next wave or ta
 | `rounds exhausted` with one small finding left | Fix it yourself on the branch, push, and rerun that PR with `skipImpl: true` and `maxRounds: 1` or 2. |
 | `rounds exhausted` with several findings | Rerun with `resume` and the last findings, or rethink the plan entry. |
 | `tester or reviewer failed` or agents failed on a usage limit | Resume the same run with `resumeFromRunId`; finished agents replay from cache. |
-| A test fails only in the tester's clone, in files the PR does not touch | Run it on the default branch a few times. Many parallel browser runs cause timeouts. Run fewer PRs per wave. |
+| A CI e2e job fails in files the PR does not touch | Rerun the job once. If it fails on the default branch too, it is not this PR's problem: file it. |
 | Bot rate-limited | One bot's approval is enough. If none approved, wait or ask the person. |
-| A PR conflicts after an earlier merge | The land agent merges the default branch in. Never rebase a pushed branch. |
+| `LAND FIX #n` from the land script | The PR conflicts or a check is red. Run the workflow with `landFix: true` for that PR; it merges the default branch in or fixes CI. Never rebase a pushed branch. |
+| No bot approves | The land script stops with `not merged`. Ask the bot to review again, or let the person review and merge by hand. |
 | An agent's shell refuses compound git commands | Put the commands in a script file and run the file. |
 
 ## Lessons
 
 - Every acceptance test must fail when the feature is removed. Ask the implementer to prove it and the reviewer to check it. "Passes for the wrong reason" is the most common real finding.
 - Check each issue against the code before you plan. Titles mislead.
-- Keep e2e load down: about five full test runs at once on an 11-core laptop is the limit before timeouts start.
+- Keep the full e2e suite in CI. On a laptop, about five full runs at once was the limit before timeouts started; running only the PR's own e2e files locally avoids that.
 - Minor findings become issues, not extra rounds. Fix them in batches between waves, grouped by file.
 - A release tag is made only from a green default branch. Publishing to a package registry, and creating releases, stay with the person.
 - Clean up after a release: leftover worktrees, temp clones and local branches whose tip is in a merged PR.
@@ -119,6 +142,7 @@ After a wave, watch CI on the default branch before starting the next wave or ta
 ## Files
 
 - `workflow/pr-pipeline.js`: the workflow script.
+- `scripts/land-wave.sh`: wait for CI and merge a wave, reporting PRs that need a land fix.
 - `scripts/merge-pr.sh`, `scripts/merge-wave.sh`: guarded squash-merge from the main session.
 - `templates/plan.md`: plan document skeleton.
 - `templates/AGENTS-section.md`: the loop as repo rules.

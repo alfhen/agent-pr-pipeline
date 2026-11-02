@@ -105,12 +105,28 @@ code, .mono { font-family: var(--mono); font-size: 0.86em; }
 footer { font-size: 0.92rem; color: var(--muted); }
 a { color: var(--accent); }
 @media (prefers-reduced-motion: no-preference) { .panel { transition: opacity .2s; } }
+.tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 0.95rem; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+thead th { font-family: var(--display); font-size: 0.95rem; background: var(--bg); }
+tbody tr:last-child td { border-bottom: 0; }
+td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.pill { display: inline-block; font-family: var(--mono); font-size: 0.78rem; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.pill.opus { background: var(--tint-human); color: var(--human); }
+.pill.sonnet { background: var(--tint-accent); color: var(--accent); }
+.pill.none { background: var(--tint-pass); color: var(--pass); }
+.pill.high { background: var(--tint-fix); color: var(--fix); }
+.pill.def { background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+.ideas { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.ideas li { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--fix); border-radius: 10px; padding: 14px 16px; display: grid; gap: 4px; }
+.ideas .gain { font-size: 0.92rem; color: var(--muted); }
+.note { font-size: 0.92rem; color: var(--muted); }
 </style>
 
 <main>
   <header style="display:grid; gap:14px">
     <h1>The PR relay</h1>
-    <p class="lede">How Pingwright gets built: every change is a small pull request that passes through <strong>a relay of separate agents</strong>. One builds it, one tests it from scratch, one tries to break it, one fixes what they found, and only then do you merge it. No agent ever checks its own work.</p>
+    <p class="lede">How Tagreeve (formerly Pingwright) gets built: every change is a small pull request that passes through <strong>a relay of separate agents</strong>. One builds it, one tests it from scratch, one tries to break it, one fixes what they found, and only then do you merge it. No agent ever checks its own work.</p>
   </header>
 
   <section aria-labelledby="loop">
@@ -180,6 +196,27 @@ a { color: var(--accent); }
     </div>
   </section>
 
+  <section aria-labelledby="models">
+    <h2 id="models">Which model does what</h2>
+    <p>Each step names its model in the workflow script. Only the reviewer sets its own effort; the others use the session's default effort.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Step</th><th>Model</th><th>Effort</th><th>What it spends its time on</th></tr></thead>
+        <tbody>
+          <tr><td>You and the main session</td><td><span class="pill opus">Opus 5.5</span></td><td><span class="pill def">session</span></td><td>Triage, plans, reading results, merges, tags. Merging is a script, not an agent.</td></tr>
+          <tr><td>Triage and plan drafting</td><td><span class="pill opus">Opus 5.5</span></td><td><span class="pill def">session</span></td><td>Reading issues against the code. These agents inherit the session model.</td></tr>
+          <tr><td>Builder</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Writing the change and tests, then running every check, including the full e2e suite.</td></tr>
+          <tr><td>Tester</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Fresh clone, install, lint, types, unit tests and the full e2e suite (10 to 15 minutes), every round.</td></tr>
+          <tr><td>Reviewer</td><td><span class="pill opus">Opus</span></td><td><span class="pill high">high</span></td><td>Reading the diff against the design and plan; sometimes running tests to check a suspicion.</td></tr>
+          <tr><td>Fixer</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Fixing blockers and majors, then running every check again.</td></tr>
+          <tr><td>PR agent</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Opening the PR, filing minors, then polling the bots for up to 20 minutes and answering them.</td></tr>
+          <tr><td>Land agent</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Mostly waiting for CI. It merges <span class="mono">main</span> in when a PR conflicts.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">A clean PR uses 5 agent runs: build, test, review, PR agent, land. Each extra round adds a fixer, a tester and a reviewer.</p>
+  </section>
+
   <section aria-labelledby="walk">
     <h2 id="walk">Follow one real PR</h2>
     <p>T03 in the 0.3.0 plan: a cookie rule said "stored by the browser" even when the cookie was already there before. Step through what happened.</p>
@@ -192,6 +229,38 @@ a { color: var(--accent); }
         <button type="button" class="primary" id="next">Next</button>
       </div>
     </div>
+  </section>
+
+  <section aria-labelledby="cost">
+    <h2 id="cost">Where the time and tokens went</h2>
+    <p>Real runs from 0.3.0 and 0.4.0-rc.1, as the workflow reported them. Tokens are everything the agents read and wrote.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Batch</th><th>PRs</th><th class="num">Agent runs</th><th class="num">Tokens</th><th class="num">Time</th></tr></thead>
+        <tbody>
+          <tr><td>0.3.0 plan (4 rounds, then 1 more)</td><td>1</td><td class="num">15</td><td class="num">1.18 M</td><td class="num">52 min</td></tr>
+          <tr><td>0.3.0 fixes, run together</td><td>4</td><td class="num">23</td><td class="num">1.47 M</td><td class="num">54 min</td></tr>
+          <tr><td>0.4 plan (4 rounds)</td><td>1</td><td class="num">11</td><td class="num">1.04 M</td><td class="num">49 min</td></tr>
+          <tr><td>0.4 wave 1, first half</td><td>5</td><td class="num">31</td><td class="num">1.92 M</td><td class="num">55 min</td></tr>
+          <tr><td>U03 country and optional fill (2 rounds)</td><td>1</td><td class="num">8</td><td class="num">0.67 M</td><td class="num">60 min</td></tr>
+          <tr><td>U04 viewport (2 rounds)</td><td>1</td><td class="num">8</td><td class="num">0.55 M</td><td class="num">32 min</td></tr>
+          <tr><td>N01 rename (3 rounds)</td><td>1</td><td class="num">11</td><td class="num">0.91 M</td><td class="num">109 min</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Roughly 60 to 95 thousand tokens per agent run, and 0.4 to 0.9 million per PR. Plans cost as much as a hard PR because they go round more often. The slowest part is the full e2e suite: the builder, every tester and every fixer run it, and CI runs it again.</p>
+  </section>
+
+  <section aria-labelledby="faster">
+    <h2 id="faster">Ways to make it faster and cheaper</h2>
+    <p>Proposals, not yet applied. Each keeps the rule that no agent checks its own work.</p>
+    <ul class="ideas">
+      <li><strong>Replace the land agent with a script.</strong><span>It mostly waits for CI. A script can wait and merge; an agent is needed only when CI fails or the PR conflicts.</span><span class="gain">Saves 1 of 5 agent runs per PR.</span></li>
+      <li><strong>Let a script wait for the review bots.</strong><span>The PR agent polls for up to 20 minutes. A script can wait, and wake a small agent only when there are comments to answer.</span><span class="gain">Saves most of the PR agent's time; it could run on Haiku or Sonnet at low effort.</span></li>
+      <li><strong>Test smarter, not twice.</strong><span>The tester could run install, lint, types, unit tests and only the PR's own e2e files, and leave the full e2e to CI, which already runs it on four shards. That also removes most of the flaky failures caused by many browsers at once.</span><span class="gain">About 10 minutes off each round.</span></li>
+      <li><strong>Set effort per step.</strong><span>Reviewer: Opus at high, as now. Builder and fixer: Sonnet at medium. Tester and land: low. Docs-only PRs: a Sonnet reviewer at high instead of Opus.</span><span class="gain">Fewer tokens on routine steps, same scrutiny where it matters.</span></li>
+      <li><strong>Cap plan reviews at two rounds.</strong><span>Plans took 4 to 5 rounds. After two, fix what is left by hand, as we did for the 0.3.0 plan's last finding.</span><span class="gain">Up to half a plan's cost.</span></li>
+    </ul>
   </section>
 
   <section aria-labelledby="why">
@@ -218,7 +287,7 @@ a { color: var(--accent); }
   <section aria-labelledby="nums">
     <h2 id="nums">So far</h2>
     <div class="numbers">
-      <div><b>141</b><span>Pingwright PRs merged this way</span></div>
+      <div><b>159</b><span>PRs merged this way, 0.1 to 0.4</span></div>
       <div><b>5</b><span>review rounds the 0.3.0 plan needed before it was solid</span></div>
       <div><b>4</b><span>0.3.0 fixes built in parallel, 1 to 2 rounds each</span></div>
       <div><b>16</b><span>small findings from the 0.4 plan review, filed as issues instead of extra rounds</span></div>

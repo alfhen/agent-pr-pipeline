@@ -2,7 +2,7 @@
 
 A Claude Code skill for building a release as a series of small PRs. Separate agents implement, test from a clean clone, review adversarially, fix, open the PR and answer the review bots. The main session merges.
 
-It grew out of building [Pingwright](https://github.com/alfhen/pingwright) 0.1 to 0.4 this way: more than 140 PRs, each one through the same loop.
+It grew out of building [Tagreeve](https://github.com/alfhen/tagreeve) (first called Pingwright) 0.1 to 0.4 this way: more than 150 PRs, each one through the same loop.
 
 ## Install
 
