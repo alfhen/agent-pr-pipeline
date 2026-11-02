@@ -9,7 +9,10 @@ One PR at a time is easy to check. Many PRs at once are not, unless each PR goes
 
 ```mermaid
 flowchart LR
-  P[Plan PR] --> I[Implement]
+  P[Plan PR] --> PF{Product fit: plan serves the goals?}
+  PF -- escalate --> PH[Person decides scope]
+  PH --> P
+  PF -- aligned or notes --> I[Implement]
   I --> T[Test from a clean clone]
   I --> R[Adversarial review]
   I --> AR[Architecture review]
@@ -28,7 +31,7 @@ flowchart LR
   S -- conflict or red CI --> X[Land-fix agent] --> S
 ```
 
-Summary: a plan is reviewed first; then each PR is built, tested, reviewed for bugs and reviewed for architecture by different agents until it is clean (or a person settles an architecture question), opened, answered where the bots commented, and merged by a script in the main session.
+Summary: a plan is reviewed first, including whether it still serves the product's goals; then each PR is built, tested, reviewed for bugs and reviewed for architecture by different agents until it is clean (or a person settles an architecture question), opened, answered where the bots commented, and merged by a script in the main session.
 
 ## The loop for one PR
 
@@ -63,7 +66,15 @@ Big work starts as a plan document, for example `docs/plan-<version>.md`. Copy `
 
 Triage before planning when the input is a pile of issues: give each read-only agent a group of issues, ask it to check each one against the code (not the title), and return still-valid, size, milestone and reasons. Some "bugs" turn out to be fixed already, and some "nits" turn out to be real bugs.
 
-Run the plan itself through the pipeline with `skipImpl: true`. The reviewer checks that claims about the code are true, Touches lines are complete, acceptance tests can fail, and the scope matches the goal. Plans usually need several rounds.
+Run the plan itself through the pipeline with `skipImpl: true` and `kind: "plan"`.
+
+**Product fit.** In round 1 of a plan PR, an Opus agent reads the product's goals and non-goals (the `goals` document) and the plan, and judges every entry: it serves a stated goal, is neutral, widens the product in a direction the goals do not mention, or touches a non-goal. It suggests keep, trim, defer, cut or change-goals for each.
+- **aligned:** nothing to do.
+- **notes:** small drift; each becomes a minor issue and the plan goes on.
+- **escalate:** the plan stops with `needs human: product` and one question. Product scope is the person's call, never an agent's. Typical catches: a second interface next to the main one (an MCP server on a CLI tool), a hosted service, a new audience, polish no goal asks for.
+After the person decides, rerun with `productDecision` set; if the decision changes the goals, update the goals document first.
+
+The rest of the plan review The reviewer checks that claims about the code are true, Touches lines are complete, acceptance tests can fail, and the scope matches the goal. Plans usually need several rounds.
 
 ## Step 2: run one wave
 
@@ -78,6 +89,7 @@ Load the workflow-authoring skill if the session has a Workflow tool. Run `workf
   "plan": "docs/plan-1.2.md",
   "spec": "docs/design.md",
   "architecture": "docs/architecture.md",
+  "goals": "docs/goals.md",
   "context": "Project facts and hard rules every agent needs, in a few lines.",
   "checks": ["pnpm install --frozen-lockfile", "pnpm lint", "pnpm typecheck", "pnpm test"],
   "e2ePattern": "\\.e2e\\.test\\.ts$",
@@ -96,6 +108,7 @@ Load the workflow-authoring skill if the session has a Workflow tool. Run `workf
 
 - `checks` are the **fast** checks. Agents also run the e2e files the PR adds or changes (`e2ePattern`, run with `e2eCommand`). The full e2e suite runs only in CI, so CI must run it on every PR.
 - `architecture`: the document the architecture reviewer checks against (defaults to `spec`). Set `"architectureReview": false` to turn the step off.
+- `goals`: the product goals and non-goals the product-fit reviewer checks plans against (defaults to `spec`). `"productReview": "all"` also runs it on code PRs; `false` turns it off.
 - `kind`: `code` (default), `docs` or `plan`. Docs and plan PRs get a Sonnet reviewer at high effort instead of Opus. Plan PRs stop after `planRounds` (default 2); fix what is left by hand, then rerun with `skipImpl`.
 
 Models and effort per step (override any of them in `steps`):
@@ -106,12 +119,13 @@ Models and effort per step (override any of them in `steps`):
 | `test` | sonnet | low |
 | `review` | opus | high |
 | `arch` | opus | high |
+| `product` (plans) | opus | high |
 | `reviewDocs` (docs and plan PRs) | sonnet | high |
 | `open` | sonnet | low |
 | `botWait` | haiku | low |
 | `botAnswer`, `landFix` | sonnet | medium |
 
-PR options: `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `resume: { history, minors, findings }` to continue a PR whose rounds ran out. `landFix: true` with `prNumber` runs only the land-fix agent for that PR. `architectureDecision: "..."` carries a person's answer to an escalation into every agent's brief for that PR; the architecture reviewer then checks the PR follows it and does not escalate the same question again.
+PR options: `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `resume: { history, minors, findings }` to continue a PR whose rounds ran out. `landFix: true` with `prNumber` runs only the land-fix agent for that PR. `productDecision: "..."` does the same for a scope question from the product-fit reviewer. `architectureDecision: "..."` carries a person's answer to an escalation into every agent's brief for that PR; the architecture reviewer then checks the PR follows it and does not escalate the same question again.
 
 The result has one object per PR: `ready`, `prNumber`, `approvedBy`, `rounds`, `history`, `architecture` (each verdict with its new concepts), `issues`, and `reason` when not ready. With `reason: needs human: architecture` it also has `escalation`: the question, options, recommendation and why. `ready` means the PR is open and the bots are answered; merging is the land script's job.
 
@@ -138,6 +152,7 @@ After a wave, watch CI on the default branch before starting the next wave or ta
 | `tester or reviewer failed` or agents failed on a usage limit | Resume the same run with `resumeFromRunId`; finished agents replay from cache. |
 | A CI e2e job fails in files the PR does not touch | Rerun the job once. If it fails on the default branch too, it is not this PR's problem: file it. |
 | Bot rate-limited | One bot's approval is enough. If none approved, wait or ask the person. |
+| `needs human: product` | Show the person the question and the per-entry suggestions. Their answer goes in `productDecision`; if it changes the goals, update the goals document in its own small PR first. Cut or deferred entries move out of the plan, with their issues moved to a later milestone. |
 | `needs human: architecture` | Show the person the escalation's question, options and recommendation, as a decision to make, not a fix to approve. If the answer changes the architecture, update the architecture document first (its own small PR). Then rerun the PR with `architectureDecision` set; if its branch exists, add `skipImpl: true` or `resume`. |
 | `LAND FIX #n` from the land script | The PR conflicts or a check is red. Run the workflow with `landFix: true` for that PR; it merges the default branch in or fixes CI. Never rebase a pushed branch. |
 | No bot approves | The land script stops with `not merged`. Ask the bot to review again, or let the person review and merge by hand. |

@@ -2,6 +2,10 @@
 
 <One paragraph: the goal of this release, who reads its output, and what is in and out. Each item is one small PR. A PR is done when its acceptance test passes in CI, an adversarial review reports no blockers or majors, and it is squash-merged.>
 
+## Goals this release serves
+
+<Name the product goals (from the goals document) this release moves forward, and any non-goal it comes close to. The product-fit review checks every entry against this.>
+
 ## Findings
 
 | Finding | Issue | What is wrong |

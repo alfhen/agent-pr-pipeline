@@ -2,6 +2,8 @@
 
 Each change is one PR on its own branch from the default branch. Big work is split into a plan first (`docs/plan-*.md`): each entry has a **Touches** line and an **Acceptance** line, and entries in the same wave touch different files so they can be built in parallel.
 
+A plan is checked against the product's goals and non-goals before anything is built. An agent that finds an entry widening the product or touching a non-goal stops the plan and asks the maintainer. Only the maintainer changes product scope.
+
 Every PR goes through the same loop. Each step is a separate agent, so no agent checks its own work.
 
 1. **Implement.** An agent builds the plan entry on its branch, with unit tests and the test named in the Acceptance line. It runs every check until it passes, and makes sure the acceptance test fails when the feature is broken. It pushes the branch. It does not open the PR.

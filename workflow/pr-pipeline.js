@@ -5,6 +5,7 @@ export const meta = {
     { title: 'Implement', detail: 'one agent builds each PR on its own branch' },
     { title: 'Test', detail: 'a second agent runs the fast checks and the PR\'s own e2e from a clean clone' },
     { title: 'Review', detail: 'a stronger model reviews the diff adversarially' },
+    { title: 'Product fit', detail: 'a stronger model checks a plan against the product goals and non-goals, and asks a person when it diverges' },
     { title: 'Architecture', detail: 'a stronger model checks the PR against the architecture, and asks a person when the architecture itself should change' },
     { title: 'Fix', detail: 'an agent fixes blockers, majors and failing checks' },
     { title: 'Open PR', detail: 'open the PR and file minor findings as issues' },
@@ -20,6 +21,7 @@ const TMP = A.tmp
 const PLAN = A.plan
 const SPEC = A.spec || ''
 const ARCH = A.architecture || SPEC
+const GOALS = A.goals || SPEC
 const FAST_CHECKS = A.checks || ['pnpm install --frozen-lockfile', 'pnpm lint', 'pnpm typecheck', 'pnpm test']
 const E2E_PATTERN = A.e2ePattern || '\\.e2e\\.test\\.ts$'
 const E2E_COMMAND = A.e2eCommand || 'pnpm exec vitest run {files}'
@@ -32,6 +34,7 @@ const STEPS = Object.assign({
   test: { model: 'sonnet', effort: 'low' },
   review: { model: 'opus', effort: 'high' },
   arch: { model: 'opus', effort: 'high' },
+  product: { model: 'opus', effort: 'high' },
   reviewDocs: { model: 'sonnet', effort: 'high' },
   fix: { model: 'sonnet', effort: 'medium' },
   open: { model: 'sonnet', effort: 'low' },
@@ -43,8 +46,10 @@ if (!REPO || !TMP || !PLAN || !Array.isArray(A.prs)) throw new Error('args needs
 
 const roundsFor = pr => pr.maxRounds || (pr.kind === 'plan' ? (A.planRounds || 2) : (A.maxRounds || 4))
 const reviewStep = pr => (pr.kind === 'plan' || pr.kind === 'docs') ? STEPS.reviewDocs : STEPS.review
+const productRuns = pr => !!GOALS && A.productReview !== false && (pr.kind === 'plan' || (A.productReview === 'all' && pr.kind !== 'docs'))
 const archRuns = pr => pr.kind !== 'docs' && !!ARCH && A.architectureReview !== false
-const decided = pr => pr.architectureDecision ? `\nArchitecture decision by the maintainer for this PR (settled; follow it): ${pr.architectureDecision}` : ''
+const decided = pr => (pr.architectureDecision ? `\nArchitecture decision by the maintainer for this PR (settled; follow it): ${pr.architectureDecision}` : '')
+  + (pr.productDecision ? `\nProduct scope decision by the maintainer for this PR (settled; follow it): ${pr.productDecision}` : '')
 const opts = (step, extra) => Object.assign({ model: step.model, effort: step.effort }, extra)
 
 const CONTEXT = `You are working on ${REPO} (https://github.com/${REPO}).
@@ -118,6 +123,32 @@ const ARCHREV = {
   },
   required: ['verdict', 'summary', 'newConcepts'],
 }
+const PRODUCT = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', enum: ['aligned', 'notes', 'escalate'] },
+    summary: { type: 'string' },
+    entries: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          entry: { type: 'string' },
+          fit: { type: 'string', enum: ['serves-goal', 'neutral', 'widens-scope', 'non-goal'] },
+          goal: { type: 'string' },
+          note: { type: 'string' },
+          suggestion: { type: 'string', enum: ['keep', 'trim', 'defer', 'cut', 'change-goals'] },
+        },
+        required: ['entry', 'fit'],
+      },
+    },
+    escalation: {
+      type: 'object',
+      properties: { question: { type: 'string' }, recommendation: { type: 'string' }, why: { type: 'string' } },
+    },
+  },
+  required: ['verdict', 'summary', 'entries'],
+}
 const OPEN = {
   type: 'object',
   properties: { prNumber: { type: 'number' }, prUrl: { type: 'string' }, issuesCreated: { type: 'array', items: { type: 'string' } } },
@@ -180,6 +211,21 @@ Rank each finding: blocker (wrong, unsafe, or the acceptance test does not prove
 ${history.length ? `Earlier rounds (check their blockers and majors are really fixed):\n${JSON.stringify(history, null, 1)}` : ''}
 Delete the clone when done. Return headSha, a summary and the findings.`
 
+const productPrompt = (pr, round) => `${CONTEXT}
+
+${prBlock(pr)}
+
+Your job: check that ${pr.kind === 'plan' ? 'this plan' : 'this PR'} stays true to the product. You are not looking for bugs or architecture problems; other reviewers do that. Do not change anything or push.
+Clone it: \`rm -rf ${TMP}/product-${pr.id}-r${round} && git clone https://github.com/${REPO}.git ${TMP}/product-${pr.id}-r${round} && cd ${TMP}/product-${pr.id}-r${round} && git checkout ${pr.branch}\`. Read the product goals and non-goals in ${GOALS} (and the README's own description of the product), then the ${pr.kind === 'plan' ? 'plan in the diff' : 'diff and its plan entry'}.
+1. For each plan entry (or for the PR as a whole), say which stated goal it serves, or that it is neutral, widens the product in a direction the goals do not mention, or touches a stated non-goal. Watch for scope creep that looks harmless: a second interface next to the main one, a hosted service, a new audience, a feature that mostly helps a different product category, or effort spent on polish that no goal asks for.
+2. Suggest for each: keep, trim, defer, cut, or change-goals (the goals should change, not the plan).
+3. Decide one verdict:
+   - aligned: every entry serves a goal or is neutral.
+   - notes: small drift that does not change what the product is. These become minor issues; the plan goes on.
+   - escalate: at least one entry widens the scope, touches a non-goal, or means the goals should change. A person decides product scope, never an agent. Write one question for the maintainer, your recommendation and why.
+${pr.productDecision ? 'The maintainer already decided the scope question for this PR (see above). Do not escalate it again; check the plan follows the decision.' : ''}
+Delete the clone when done. Return the verdict, a short summary, one row per entry, and the escalation (for escalate).`
+
 const archPrompt = (pr, round) => `${CONTEXT}
 
 ${prBlock(pr)}
@@ -215,9 +261,9 @@ ${prBlock(pr)}
 
 Your job: open the pull request for ${pr.branch} and file minor findings. Do not change code.
 1. File each minor finding below as a GitHub issue with label ${LABEL} (\`gh issue create -R ${REPO} --label ${LABEL}${MILESTONE}\`). Skip duplicates of each other and of open issues. Body: the finding, the file, and "Found in review of ${pr.id}."
-2. Open a ready PR to the default branch if none exists: \`gh pr create -R ${REPO} --head ${pr.branch}\`, title "${pr.title}". Body: what it does, how it is tested, "Review: no blockers or majors after round N." (N from the history), one line with the architecture verdict and the new concepts if the history has them, links to the issues you filed, and each \`Closes #N\` on its own line.
+2. Open a ready PR to the default branch if none exists: \`gh pr create -R ${REPO} --head ${pr.branch}\`, title "${pr.title}". Body: what it does, how it is tested, "Review: no blockers or majors after round N." (N from the history), one line with the architecture verdict and the new concepts, and for a plan one line with the product-fit verdict, if those reviews ran, links to the issues you filed, and each \`Closes #N\` on its own line.
 Review history: ${JSON.stringify(rounds)}
-Architecture review: ${JSON.stringify(arch || [])}
+Architecture and product review: ${JSON.stringify(arch || [])}
 Minor findings: ${JSON.stringify(minors, null, 1)}
 Return prNumber, prUrl and the issues you created.`
 
@@ -253,19 +299,31 @@ async function reviewLoop(pr, startRound, history, minors, archState) {
   const max = roundsFor(pr)
   for (let round = startRound; round < startRound + max; round++) {
     const wantArch = archRuns(pr) && (round === startRound || archState.last === 'needs-change')
-    const [test, review, arch] = await parallel([
+    const wantProduct = productRuns(pr) && round === startRound
+    const [test, review, arch, product] = await parallel([
       () => agent(testPrompt(pr, round), opts(STEPS.test, { label: `test:${pr.id}#${round}`, phase: 'Test', schema: TEST })),
       () => agent(reviewPrompt(pr, round, history), opts(reviewStep(pr), { label: `review:${pr.id}#${round}`, phase: 'Review', schema: REVIEW })),
       () => wantArch ? agent(archPrompt(pr, round), opts(STEPS.arch, { label: `arch:${pr.id}#${round}`, phase: 'Architecture', schema: ARCHREV })) : Promise.resolve(null),
+      () => wantProduct ? agent(productPrompt(pr, round), opts(STEPS.product, { label: `product:${pr.id}#${round}`, phase: 'Product fit', schema: PRODUCT })) : Promise.resolve(null),
     ])
     if (!test || !review) return { signedOff: false, reason: 'tester or reviewer failed' }
     if (wantArch && !arch) return { signedOff: false, reason: 'architecture reviewer failed' }
+    if (wantProduct && !product) return { signedOff: false, reason: 'product reviewer failed' }
+    if (product) {
+      archState.product = { round, verdict: product.verdict, summary: product.summary, entries: product.entries }
+      log(`${pr.id} round ${round}: product ${product.verdict}`)
+      if (product.verdict === 'notes') {
+        minors.push(...product.entries.filter(e => e.fit !== 'serves-goal' && e.fit !== 'neutral')
+          .map(e => ({ severity: 'minor', title: `Product fit: ${e.entry} (${e.fit})`, detail: `${e.note || ''} Suggestion: ${e.suggestion || 'keep'}.` })))
+      }
+    }
     if (arch) {
       archState.last = arch.verdict
       archState.reports.push({ round, verdict: arch.verdict, summary: arch.summary, newConcepts: arch.newConcepts })
       log(`${pr.id} round ${round}: architecture ${arch.verdict}`)
-      if (arch.verdict === 'escalate') return { signedOff: false, reason: 'needs human: architecture', escalation: arch.escalation, architecture: arch }
     }
+    if (product && product.verdict === 'escalate') return { signedOff: false, reason: 'needs human: product', escalation: product.escalation }
+    if (arch && arch.verdict === 'escalate') return { signedOff: false, reason: 'needs human: architecture', escalation: arch.escalation }
     const archFindings = arch && arch.verdict === 'needs-change'
       ? (arch.findings || []).map(f => Object.assign({ severity: 'major', source: 'architecture' }, f))
       : []
@@ -293,11 +351,11 @@ async function runPR(pr) {
     impl = await agent(implPrompt(pr), opts(STEPS.impl, { label: `implement:${pr.id}`, phase: 'Implement', isolation: 'worktree', schema: IMPL }))
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl }
   }
-  const archState = { last: null, reports: [] }
+  const archState = { last: null, reports: [], product: null }
   let loop = await reviewLoop(pr, history.length + 1, history, minors, archState)
-  if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: archState.reports }
+  if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: archState.reports, product: archState.product }
 
-  const opened = await agent(openPrompt(pr, history, minors, archState.reports), opts(STEPS.open, { label: `open:${pr.id}`, phase: 'Open PR', schema: OPEN }))
+  const opened = await agent(openPrompt(pr, history, minors, { architecture: archState.reports, product: archState.product }), opts(STEPS.open, { label: `open:${pr.id}`, phase: 'Open PR', schema: OPEN }))
   if (!opened || !opened.prNumber) return { id: pr.id, ready: false, reason: 'PR not opened', history }
   const n = opened.prNumber
 
@@ -314,7 +372,7 @@ async function runPR(pr) {
     id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl,
     approvedBy: (wait && wait.approvedBy) || [], botNotes: wait && wait.notes,
     codeChangedByBots: !!(answer && answer.codeChanged),
-    issues: opened.issuesCreated || [], rounds: history.length, history, architecture: archState.reports, implProblems: impl.problems || '',
+    issues: opened.issuesCreated || [], rounds: history.length, history, architecture: archState.reports, product: archState.product, implProblems: impl.problems || '',
   }
 }
 
