@@ -52,16 +52,16 @@ If the maintainer does not know an answer, leave that item out. Do not fill the 
 
 ## 4. Write the file
 
-Copy `$ROOT/templates/goals.md` to the path the maintainer chooses (default `docs/goals.md`). Replace every `<...>` placeholder with their answers. Keep their words; fix only grammar and length, and keep one item per bullet. Remove every placeholder that has no answer.
+Copy `$ROOT/templates/goals.md` to the path the maintainer chooses (default `docs/goals.md`). Call it `GOALS_PATH` and use it in every later step. Replace every `<...>` placeholder with their answers. Keep their words; fix only grammar and length, and keep one item per bullet. Remove every placeholder that has no answer.
 
 ## 5. Check it
 
 ```bash
-"$ROOT/scripts/check-goals.sh" --local docs/goals.md
+"$ROOT/scripts/check-goals.sh" --local "$GOALS_PATH"
 ```
 
 On `INCOMPLETE`, go back to step 3 for the missing section. Never add an item to make the check pass.
 
 ## 6. Show it and hand over
 
-Show the whole file and ask the maintainer to approve it or change it. Do not commit or push unless they ask. Suggest a PR of its own for the goals document. The pipeline reads the file from the default branch, so merge it before the first run. After the merge, `check-goals.sh <owner/repo> docs/goals.md` checks the merged file.
+Show the whole file and ask the maintainer to approve it or change it. Do not commit or push unless they ask. Suggest a PR of its own for the goals document. The pipeline reads the file from the default branch, so merge it before the first run. After the merge, `check-goals.sh <owner/repo> "$GOALS_PATH"` checks the merged file. Pass the same path as the pipeline's `goals` argument.
