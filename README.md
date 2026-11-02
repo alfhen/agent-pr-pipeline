@@ -7,7 +7,7 @@ It grew out of building [Tagreeve](https://github.com/alfhen/tagreeve) (first ca
 ## What is in it
 
 - **Skills.** `pr-pipeline` runs the loop: plan, waves, land and merge. `write-goals` interviews the maintainer and writes the product goals document that the pipeline needs before its first run.
-- **Role agents.** `implementer`, `tester`, `reviewer`, `qa`, `arch-reviewer`, `product-reviewer`, `fixer`, `docs-writer`, `docs-reviewer`, `pr-opener`, `bot-waiter`, `bot-answerer`, `land-fixer`, `merge-safety`, `goals-preflight`, `evaluator` and `feedback-redactor`. Each has its own rules, model, effort and the smallest tool set its role needs.
+- **Role agents.** `implementer`, `tester`, `reviewer`, `qa`, `arch-reviewer`, `product-reviewer`, `fixer`, `docs-writer`, `docs-reviewer`, `pr-opener`, `bot-waiter`, `bot-answerer`, `land-fixer`, `merge-safety`, `goals-preflight`, `triager`, `pipeline-io`, `evaluator` and `feedback-redactor`. Each has its own rules, model, effort and the smallest tool set its role needs.
 - **Workflow.** `run-wave` runs one wave of PRs through the loop with the role agents.
 - **Scripts and templates.** The land and merge scripts, `scripts/release.sh`, the goals check, `scripts/file-feedback.sh`, and the plan, goals and `AGENTS.md` templates.
 
@@ -49,8 +49,8 @@ Ask Claude Code to plan and build a release or a set of issues with the pipeline
 
 1. triage the issues against the code,
 2. write a plan with waves, Touches and Acceptance lines, and put the plan through review,
-3. run each wave with the `run-wave` workflow,
-4. land the ready PRs with `scripts/land-wave.sh`. It merges only the commit the pipeline checked, with green CI and a review bot's approval (or its comments answered and nothing new raised). First a script checks the changed files against the gated paths, and the merge-safety agent decides `safe` or `person` for the rest. A rerun PR (land fix, resume or decision rerun) skips both and is never merged with `--auto`,
+3. run each wave with the `run-wave` workflow. A single issue can skip the plan with the `quick` option: a triager agent first decides `build`, `plan` or `decline`, and only a small, low-risk build goes on,
+4. land the ready PRs with `scripts/land-wave.sh`. It merges only the commit the pipeline checked, with green CI and a review bot's approval (or its comments answered and nothing new raised). First a script checks the changed files against the gated paths, and the merge-safety agent decides `safe` or `person` for the rest. A rerun PR (land fix, resume or decision rerun) skips both and is never merged with `--auto`. The land values from the workflow end in `:auto` only for a PR that passed both. For a merge you asked for in the conversation, the merge scripts take `--person`,
 5. show the maintainer the feedback items from the end-of-run evaluation and, after approval, file them with `scripts/file-feedback.sh`. For a wave in another repo, a redactor and a denylist keep that repo's details out of the issues.
 
 Read [skills/pr-pipeline/SKILL.md](skills/pr-pipeline/SKILL.md) for the loop, the workflow arguments, the role agents, cost and caching, and what to do when a step fails.

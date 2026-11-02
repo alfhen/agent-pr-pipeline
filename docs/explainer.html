@@ -131,7 +131,7 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
 
   <section aria-labelledby="loop">
     <h2 id="loop">The loop, in one picture</h2>
-    <div class="diagram" role="img" aria-label="Plan, then build, then test and review side by side. If either finds a problem, a fixer repairs it and test and review run again. When both are clean, the PR is opened, the review bots are answered, CI goes green, and you merge.">
+    <div class="diagram" role="img" aria-label="Plan, then build, then test and review side by side. If either finds a problem, a fixer repairs it and test and review run again. When both are clean, the PR is opened, the review bots are answered, CI goes green, and it is merged by an agent or by you.">
       <svg viewBox="0 0 900 300" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -174,8 +174,8 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
           <text x="692" y="166" fill="var(--muted)" font-size="12">answer the bots</text>
 
           <rect x="786" y="122" width="102" height="56" rx="10" fill="var(--tint-human)" stroke="var(--human)"/>
-          <text x="837" y="146" fill="var(--ink)" font-weight="700">You merge</text>
-          <text x="837" y="166" fill="var(--muted)" font-size="12">green CI only</text>
+          <text x="837" y="146" fill="var(--ink)" font-weight="700">Merge</text>
+          <text x="837" y="166" fill="var(--muted)" font-size="12">green CI, gate</text>
 
           <text x="458" y="288" fill="var(--fix)" font-size="13" font-weight="700">not clean: a fixer repairs it, then test and review run again</text>
         </g>
@@ -193,10 +193,13 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
       <div class="role check"><span class="who">QA</span><h3>Uses it like you would</h3><p>When the plan asks for it, a separate agent runs the finished feature: the main case, empty and bad input, combinations with other options, and what the docs promise.</p></div>
       <div class="role person"><span class="who">PRODUCT CHECK</span><h3>Keeps the plan on course</h3><p>Before anything is built, an Opus reviewer checks every plan entry against the product's goals and non-goals. If something widens the product, like an MCP server on a CLI tool, it stops and asks you.</p></div>
       <div class="role person"><span class="who">ARCHITECT</span><h3>Guards the shape</h3><p>An Opus reviewer lists the new concepts a PR brings in and checks them against the architecture. Small mismatches become fixes. If the architecture itself should change, it stops and asks you.</p></div>
+      <div class="role person"><span class="who">TRIAGER</span><h3>Sizes up a quick fix</h3><p>For a single issue with no plan, an Opus reviewer reads the issue, the code and the goals. It decides to build, to plan properly, or to decline. Only a small, low-risk change gets built.</p></div>
+      <div class="role check"><span class="who">MERGE SAFETY</span><h3>Decides who merges</h3><p>A script first checks the changed files against the gated paths. For the rest, a read-only Opus agent answers "safe" or "person". Only a PR that passes both is merged by an agent. A rerun never is.</p></div>
+      <div class="role agent"><span class="who">EVALUATOR</span><h3>Reviews the run itself</h3><p>When a wave ends, it reads what happened and writes feedback about the pipeline. You approve it, and a script files it as issues. For another repo, a redactor removes that repo's details first.</p></div>
       <div class="role fixer"><span class="who">FIXER</span><h3>Repairs, or argues back</h3><p>Fixes blockers and majors. If it thinks a finding is wrong, it has to say why, with evidence.</p></div>
       <div class="role agent"><span class="who">DOCS WRITER</span><h3>Keeps the docs true</h3><p>After the review passes, it reads the change and fixes every page it makes wrong: README, docs and the docs site. A separate reviewer checks its edits.</p></div>
       <div class="role agent"><span class="who">PR AGENT</span><h3>Talks to the bots</h3><p>Opens the pull request, files small findings as issues for later, and replies to every review-bot comment.</p></div>
-      <div class="role person"><span class="who">YOU</span><h3>Make the calls</h3><p>Approve the plan, approve rule changes, and own releases and publishing. Agents merge only a PR that passed the gated-path check and the merge-safety agent. You merge every other PR.</p></div>
+      <div class="role person"><span class="who">YOU</span><h3>Make the calls</h3><p>Approve the plan, approve rule changes, and own publishing. Agents merge only a PR that passed the gated-path check and the merge-safety agent. You merge every other PR. Releases are yours too, unless the repo's settings turn on automatic release. Then a script makes the release after the last wave, when its checks pass.</p></div>
     </div>
   </section>
 
