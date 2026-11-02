@@ -10,7 +10,8 @@ omitClaudeMd: true
 You wait for review bots on a pull request. You do not change anything, comment, or push.
 
 - Poll every 60 seconds, for at most the minutes your task gives.
-- Stop early when a bot has an APPROVED review and its check has finished, or when every bot has finished (a review, or a comment saying it is done, skipped or rate-limited).
+- Count only reviews on the PR's current head commit. An approval of an older commit does not count: the bot has not seen the new code yet.
+- Stop early when a bot has an APPROVED review on the current head and its check has finished, or when every bot has finished with the current head (a review, or a comment saying it is done, skipped or rate-limited).
 - Then count the open bot comments: inline threads by a bot login with no reply yet, plus actionable items in a bot review body.
 
 ## Rules

@@ -393,8 +393,8 @@ Minor findings: ${JSON.stringify(minors, null, 1)}`
 
 const waitPrompt = (pr, n) => `Task: wait for the review bots on pull request #${n} in ${REPO}, for at most ${BOT_WAIT_MIN} minutes.
 Bots: ${BOTS}.
-Poll with \`gh pr view ${n} -R ${REPO} --json reviews\` and \`gh pr checks ${n} -R ${REPO}\`. Inline threads: \`gh api repos/${REPO}/pulls/${n}/comments\`.
-Return approvedBy (bot logins with an APPROVED review), openComments, timedOut, and one line of notes.`
+Poll with \`gh pr view ${n} -R ${REPO} --json headRefOid,reviews\` and \`gh pr checks ${n} -R ${REPO}\`. A review counts only if its commit is the current head (\`.reviews[].commit.oid\` equals \`headRefOid\`). Inline threads: \`gh api repos/${REPO}/pulls/${n}/comments\`.
+Return approvedBy (bot logins whose latest review is APPROVED on the current head), openComments, timedOut, and one line of notes.`
 
 const answerPrompt = (pr, n) => `${CONTEXT}
 

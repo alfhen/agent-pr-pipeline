@@ -190,6 +190,9 @@ await check('no skill instruction without a skills argument', () => {
 failWait = true
 const w = await simulate(base)
 failWait = false
+await check('the bot waiter counts only reviews on the current head', () => {
+  assert.match(mainCalls.find(c => c.label === 'botwait:C1').prompt, /latest review is APPROVED on the current head/)
+})
 await check('failed bot wait is not ready', () => {
   assert.equal(w.C1.ready, false)
   assert.equal(w.C1.reason, 'bot wait failed')
