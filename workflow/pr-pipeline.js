@@ -69,7 +69,7 @@ Working rules:
 - Match the style of the code around you.`
 
 const fastText = FAST_CHECKS.map(c => `\`${c}\``).join(', ')
-const ownE2e = `the e2e test files this branch adds or changes (\`git diff --name-only origin/HEAD...HEAD | grep -E '${E2E_PATTERN}'\`), run with \`${E2E_COMMAND}\` where {files} is that list; skip this when the list is empty. The full e2e suite is CI's job: do not run it`
+const ownE2e = `the e2e test files this branch adds or changes (\`git diff --name-only --diff-filter=d origin/HEAD...HEAD | grep -E '${E2E_PATTERN}'\`), run with \`${E2E_COMMAND}\` where {files} is that list; skip this when the list is empty. The full e2e suite is CI's job: do not run it`
 const prBlock = pr => `PR: ${pr.id} - ${pr.title}\nBranch: ${pr.branch}\nKind: ${pr.kind || 'code'}\nNotes for this PR:\n${pr.notes || '(none)'}${decided(pr)}`
 
 const IMPL = {
@@ -180,7 +180,7 @@ const WAIT = {
 }
 const ANSWER = {
   type: 'object',
-  properties: { threadsAddressed: { type: 'number' }, codeChanged: { type: 'boolean' }, substantiveChange: { type: 'boolean' }, notes: { type: 'string' } },
+  properties: { threadsAddressed: { type: 'number' }, codeChanged: { type: 'boolean' }, substantiveChange: { type: 'boolean' }, headSha: { type: 'string' }, notes: { type: 'string' } },
   required: ['codeChanged', 'substantiveChange'],
 }
 const LANDFIX = {
@@ -296,7 +296,7 @@ Your job: answer the review bots on pull request #${n}.
 2. For each bot comment without a reply: decide if it is right. If right, fix it. Reply on the thread (\`gh api repos/${REPO}/pulls/${n}/comments/<id>/replies -f body=...\`) in one or two sentences: what you changed, or why not. Answer review-body items in one PR comment per bot.
 3. If you changed code, run ${fastText}, and ${ownE2e}; commit and push.
 Set substantiveChange true if your changes alter behaviour beyond small fixes.
-Return threads addressed, whether code changed, substantiveChange, and notes.`
+Return threads addressed, whether code changed, substantiveChange, headSha (\`git rev-parse HEAD\` after your last push), and notes.`
 
 const landFixPrompt = pr => `${CONTEXT}
 
@@ -345,13 +345,14 @@ async function reviewLoop(pr, startRound, history, minors, archState) {
     if (product && product.verdict === 'escalate') return { signedOff: false, reason: 'needs human: product', escalation: product.escalation }
     if (arch && arch.verdict === 'escalate') return { signedOff: false, reason: 'needs human: architecture', escalation: arch.escalation }
     const archFindings = arch && arch.verdict === 'needs-change'
-      ? (arch.findings || []).map(f => Object.assign({ severity: 'major', source: 'architecture' }, f))
+      ? ((arch.findings && arch.findings.length) ? arch.findings : [{ title: 'Architecture review asked for changes', detail: arch.summary }])
+          .map(f => Object.assign({ severity: 'major', source: 'architecture' }, f))
       : []
     const blocking = review.findings.filter(f => f.severity !== 'minor').concat(archFindings)
     minors.push(...review.findings.filter(f => f.severity === 'minor'))
     history.push({ round, testPass: test.pass, failingChecks: test.checks.filter(c => !c.pass).map(c => c.name), blockersAndMajors: blocking.map(f => `${f.severity}: ${f.title}`) })
     log(`${pr.id} round ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
-    if (test.pass && blocking.length === 0) return { signedOff: true }
+    if (test.pass && blocking.length === 0) return { signedOff: true, headSha: test.headSha || review.headSha }
     if (round === startRound + max - 1) return { signedOff: false, reason: 'rounds exhausted', lastFindings: blocking, lastTest: test }
     await agent(fixPrompt(pr, test, blocking, round), opts(STEPS.fix, { label: `fix:${pr.id}#${round}`, phase: 'Fix', isolation: 'worktree' }))
   }
@@ -379,17 +380,23 @@ async function runPR(pr) {
   if (!opened || !opened.prNumber) return { id: pr.id, ready: false, reason: 'PR not opened', history }
   const n = opened.prNumber
 
+  let headSha = loop.headSha
   const wait = await agent(waitPrompt(pr, n), opts(STEPS.botWait, { label: `botwait:${pr.id}`, phase: 'Bots', schema: WAIT }))
+  if (!wait) return { id: pr.id, ready: false, reason: 'bot wait failed', history, prNumber: n, headSha }
   let answer = null
-  if (wait && wait.openComments > 0) {
+  if (wait.openComments > 0) {
     answer = await agent(answerPrompt(pr, n), opts(STEPS.botAnswer, { label: `botanswer:${pr.id}`, phase: 'Bots', isolation: 'worktree', schema: ANSWER }))
-    if (answer && answer.substantiveChange) {
+    if (!answer) return { id: pr.id, ready: false, reason: 'bot answer failed', history, prNumber: n, headSha }
+    if (answer.codeChanged && answer.headSha) headSha = answer.headSha
+    if (answer.substantiveChange) {
       loop = await reviewLoop(pr, history.length + 1, history, minors, archState)
-      if (!loop.signedOff) return { id: pr.id, ready: false, reason: `after bots: ${loop.reason}`, history, prNumber: n }
+      if (!loop.signedOff) return { id: pr.id, ready: false, reason: `after bots: ${loop.reason}`, history, prNumber: n, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: archState.reports, product: archState.product }
+      headSha = loop.headSha
     }
   }
   return {
-    id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl,
+    id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl, headSha,
+    land: `${n}:${headSha}`,
     approvedBy: (wait && wait.approvedBy) || [], botNotes: wait && wait.notes,
     codeChangedByBots: !!(answer && answer.codeChanged),
     issues: opened.issuesCreated || [], rounds: history.length, history, architecture: archState.reports, product: archState.product, implProblems: impl.problems || '',

@@ -46,7 +46,7 @@ Summary: a plan is reviewed first, including whether it still serves the product
 5. **Fix.** If a check failed or there are blockers or majors, a fix agent adds commits to the same branch. It never force-pushes. If it thinks a finding is wrong, it says why with evidence. Then steps 2 and 3 run again (and 4, if it asked for changes). Stop after `maxRounds` (default 4; plan PRs 2); then a person decides.
 6. **Open the PR.** An agent opens a ready PR and files every minor finding as an issue (label `review-minor`).
 7. **Bots.** A small agent (Haiku, low effort) waits for the review bots and counts their open comments. Only if there are any does an answer agent run: it fixes the point or says why not, on every thread. If its changes are substantive, the loop runs again.
-8. **Land and merge.** The main session runs `scripts/land-wave.sh`. It waits for CI and squash-merges only when CI is green on the exact head commit and a review bot approved. It deletes the branch only after GitHub shows MERGED. A PR that conflicts or has a red check is reported as `LAND FIX`, and a land-fix agent handles only that PR.
+8. **Land and merge.** The main session runs `scripts/land-wave.sh` with the `<pr>:<sha>` pairs from the workflow result. It waits for CI and squash-merges only when the PR's head is still the commit the pipeline checked, every check passed, and the latest review by a review bot is an approval. It deletes the branch only after GitHub shows MERGED. A PR that conflicts or has a red check is reported as `LAND FIX`, and a land-fix agent handles only that PR.
 
 ## Before the first run in a repo
 
@@ -75,7 +75,7 @@ Run the plan itself through the pipeline with `skipImpl: true` and `kind: "plan"
 - **escalate:** the plan stops with `needs human: product` and one question. Product scope is the person's call, never an agent's. Typical catches: a second interface next to the main one (an MCP server on a CLI tool), a hosted service, a new audience, polish no goal asks for.
 After the person decides, rerun with `productDecision` set; if the decision changes the goals, update the goals document first.
 
-The rest of the plan review The reviewer checks that claims about the code are true, Touches lines are complete, acceptance tests can fail, and the scope matches the goal. Plans usually need several rounds.
+For the rest of the plan review, the reviewer checks that claims about the code are true, Touches lines are complete, acceptance tests can fail, and the scope matches the goal. Plans usually need several rounds.
 
 ## Step 2: run one wave
 
@@ -127,9 +127,9 @@ Models and effort per step (override any of them in `steps`):
 | `botWait` | haiku | low |
 | `botAnswer`, `landFix` | sonnet | medium |
 
-PR options: `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `resume: { history, minors, findings }` to continue a PR whose rounds ran out. `landFix: true` with `prNumber` runs only the land-fix agent for that PR. `productDecision: "..."` does the same for a scope question from the product-fit reviewer. `architectureDecision: "..."` carries a person's answer to an escalation into every agent's brief for that PR; the architecture reviewer then checks the PR follows it and does not escalate the same question again.
+PR options: `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `resume: { history, minors, findings }` to continue a PR whose rounds ran out. `landFix: true` with `prNumber` runs only the land-fix agent for that PR. `architectureDecision: "..."` carries a person's answer to an architecture escalation into every agent's brief for that PR; the architecture reviewer then checks the PR follows it and does not escalate the same question again. `productDecision: "..."` carries a person's answer to a product-fit escalation in the same way.
 
-The result has one object per PR: `ready`, `prNumber`, `approvedBy`, `rounds`, `history`, `architecture` (each verdict with its new concepts), `issues`, and `reason` when not ready. With `reason: needs human: architecture` it also has `escalation`: the question, options, recommendation and why. `ready` means the PR is open and the bots are answered; merging is the land script's job.
+The result has one object per PR: `ready`, `prNumber`, `headSha` (the commit the pipeline checked, or the answer agent's push), `land` (the `<pr>:<sha>` pair for the land script), `approvedBy`, `rounds`, `history`, `architecture` (each verdict with its new concepts), `issues`, and `reason` when not ready. With `reason: needs human: architecture` it also has `escalation`: the question, options, recommendation and why. `ready` means the PR is open and the bots are answered; merging is the land script's job.
 
 ### Notes that work
 
@@ -141,7 +141,7 @@ The result has one object per PR: `ready`, `prNumber`, `approvedBy`, `rounds`, `
 
 ## Step 3: land and merge from the main session
 
-Workers never merge. Run `scripts/land-wave.sh <owner/repo> <pr> <pr> ...`. It waits for CI on each PR in order and calls `scripts/merge-pr.sh`, which refuses unless the PR is MERGEABLE, its head is the commit that was checked, a bot approved, and no check failed. The branch is deleted only after GitHub shows MERGED. On `LAND FIX #n`, run the workflow with `{ "id": ..., "branch": ..., "prNumber": n, "landFix": true }`, then run the land script again.
+Workers never merge. Run `scripts/land-wave.sh <owner/repo> <pr>:<sha> <pr>:<sha> ...` with the `land` values from the workflow result. It waits for CI on each PR in order and calls `scripts/merge-pr.sh`, which refuses unless the PR is MERGEABLE, its head is still that sha, every check passed (and there is at least one), and the latest review by a bot login (`BOT_LOGINS` regex, default `coderabbit|gitar|[bot]`) is an approval. The branch is deleted only after GitHub shows MERGED. On `LAND FIX #n`, run the workflow with `{ "id": ..., "branch": ..., "prNumber": n, "landFix": true }`, then run the land script again.
 
 After a wave, watch CI on the default branch before starting the next wave or tagging.
 
@@ -157,6 +157,8 @@ After a wave, watch CI on the default branch before starting the next wave or ta
 | `refused: goals document missing or incomplete` | Write or finish the goals document (`templates/goals.md`) in its own PR, merge it, and run again. Do not work around it: the product-fit review has nothing to check against without it. |
 | `needs human: product` | Show the person the question and the per-entry suggestions. Their answer goes in `productDecision`; if it changes the goals, update the goals document in its own small PR first. Cut or deferred entries move out of the plan, with their issues moved to a later milestone. |
 | `needs human: architecture` | Show the person the escalation's question, options and recommendation, as a decision to make, not a fix to approve. If the answer changes the architecture, update the architecture document first (its own small PR). Then rerun the PR with `architectureDecision` set; if its branch exists, add `skipImpl: true` or `resume`. |
+| `HEAD MOVED #n` from the land script | Someone pushed after the pipeline checked the PR (a bot autofix, a person, a late agent push). Run the workflow for that PR with `skipImpl: true` so the new head is tested and reviewed, then land it with the new sha. |
+| `bot wait failed` or `bot answer failed` | The PR is open but its bot comments were not read or answered. Rerun the workflow for the PR with `skipImpl: true`; the review rounds replay from cache when nothing changed. |
 | `LAND FIX #n` from the land script | The PR conflicts or a check is red. Run the workflow with `landFix: true` for that PR; it merges the default branch in or fixes CI. Never rebase a pushed branch. |
 | No bot approves | The land script stops with `not merged`. Ask the bot to review again, or let the person review and merge by hand. |
 | An agent's shell refuses compound git commands | Put the commands in a script file and run the file. |

@@ -190,6 +190,8 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
       <div class="role agent"><span class="who">BUILDER</span><h3>Writes the change</h3><p>Follows one entry in the plan. Adds a test, then breaks the feature on purpose to prove the test notices.</p></div>
       <div class="role check"><span class="who">TESTER</span><h3>Starts from scratch</h3><p>Downloads a fresh copy and runs every check. It changes nothing, so "works on my machine" can't slip through.</p></div>
       <div class="role check"><span class="who">REVIEWER</span><h3>Looks for trouble</h3><p>A stronger model reads the change against the plan and the design. It ranks each problem: blocker, major or minor.</p></div>
+      <div class="role person"><span class="who">PRODUCT CHECK</span><h3>Keeps the plan on course</h3><p>Before anything is built, an Opus reviewer checks every plan entry against the product's goals and non-goals. If something widens the product, like an MCP server on a CLI tool, it stops and asks you.</p></div>
+      <div class="role person"><span class="who">ARCHITECT</span><h3>Guards the shape</h3><p>An Opus reviewer lists the new concepts a PR brings in and checks them against the architecture. Small mismatches become fixes. If the architecture itself should change, it stops and asks you.</p></div>
       <div class="role fixer"><span class="who">FIXER</span><h3>Repairs, or argues back</h3><p>Fixes blockers and majors. If it thinks a finding is wrong, it has to say why, with evidence.</p></div>
       <div class="role agent"><span class="who">PR AGENT</span><h3>Talks to the bots</h3><p>Opens the pull request, files small findings as issues for later, and replies to every review-bot comment.</p></div>
       <div class="role person"><span class="who">YOU</span><h3>Make the calls</h3><p>Approve the plan, approve rule changes, and own merging, releases and publishing. Agents never merge.</p></div>
@@ -208,6 +210,8 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
           <tr><td>Builder</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Writing the change and tests, then running every check, including the full e2e suite.</td></tr>
           <tr><td>Tester</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Fresh clone, install, lint, types, unit tests and the full e2e suite (10 to 15 minutes), every round.</td></tr>
           <tr><td>Reviewer</td><td><span class="pill opus">Opus</span></td><td><span class="pill high">high</span></td><td>Reading the diff against the design and plan; sometimes running tests to check a suspicion.</td></tr>
+          <tr><td>Product-fit reviewer</td><td><span class="pill opus">Opus</span></td><td><span class="pill high">high</span></td><td>New in the skill: round 1 of every plan PR. Scope decisions go to you.</td></tr>
+          <tr><td>Architecture reviewer</td><td><span class="pill opus">Opus</span></td><td><span class="pill high">high</span></td><td>New in the skill: round 1 of every code and plan PR, and again after a fix it asked for. Escalates architecture changes to you.</td></tr>
           <tr><td>Fixer</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Fixing blockers and majors, then running every check again.</td></tr>
           <tr><td>PR agent</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Opening the PR, filing minors, then polling the bots for up to 20 minutes and answering them.</td></tr>
           <tr><td>Land agent</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Mostly waiting for CI. It merges <span class="mono">main</span> in when a PR conflicts.</td></tr>
@@ -253,7 +257,7 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
 
   <section aria-labelledby="faster">
     <h2 id="faster">Ways to make it faster and cheaper</h2>
-    <p>Proposals, not yet applied. Each keeps the rule that no agent checks its own work.</p>
+    <p>Applied in the skill repo, <span class="mono">alfhen/agent-pr-pipeline</span>; Tagreeve's own builds use them from 0.4.0 on. Each keeps the rule that no agent checks its own work.</p>
     <ul class="ideas">
       <li><strong>Replace the land agent with a script.</strong><span>It mostly waits for CI. A script can wait and merge; an agent is needed only when CI fails or the PR conflicts.</span><span class="gain">Saves 1 of 5 agent runs per PR.</span></li>
       <li><strong>Let a script wait for the review bots.</strong><span>The PR agent polls for up to 20 minutes. A script can wait, and wake a small agent only when there are comments to answer.</span><span class="gain">Saves most of the PR agent's time; it could run on Haiku or Sonnet at low effort.</span></li>
