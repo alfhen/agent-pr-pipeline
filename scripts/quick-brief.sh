@@ -1,8 +1,9 @@
 #!/bin/bash
 # Usage: quick-brief.sh get <owner/repo> <issue>
-#        quick-brief.sh put <owner/repo> <issue> <entry-file>|--b64 <base64-entry>
+#        quick-brief.sh put <owner/repo> <issue> <entry-file>|--b64 <base64-entry> --sum <crc>:<bytes>
 # The quick-fix brief is one issue comment that starts with MARKER and was written by the account from GET /user.
 # get prints the entry (without the marker line). It exits 1 when there is no brief and 2 when two exist.
+# put --b64 posts nothing when the decoded bytes do not match --sum (the POSIX cksum output as <crc>:<bytes>).
 # put posts the entry once. When a trusted brief exists already it posts nothing and prints that one.
 set -uo pipefail
 MARKER='<!-- pipeline:quick-brief -->'
@@ -32,6 +33,9 @@ case "$mode" in
       trap 'rm -f "$tmp"' EXIT
       printf '%s' "${5:-}" | base64 --decode > "$tmp" || { echo "quick-brief: the entry is not valid base64" >&2; exit 64; }
       entry=$tmp
+      [ "${6:-}" = --sum ] && want=${7:-} || want=
+      got=$(cksum < "$tmp" | awk '{print $1 ":" $2}')
+      if [ -z "$want" ] || [ "$got" != "$want" ]; then echo "quick-brief: the entry does not match its checksum; nothing posted" >&2; exit 65; fi
     fi
     [ -f "$entry" ] || usage
     if [ "$body" != null ]; then strip "$body"; exit 0; fi

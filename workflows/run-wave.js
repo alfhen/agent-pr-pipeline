@@ -510,6 +510,19 @@ const base64 = text => {
   }
   return out
 }
+// POSIX cksum of the UTF-8 bytes, as `cksum` prints it: "<crc> <length>". quick-brief.sh put checks it before it posts.
+const cksum = text => {
+  const bytes = unescape(encodeURIComponent(text))
+  let crc = 0
+  const feed = b => {
+    crc ^= b << 24
+    for (let k = 0; k < 8; k++) crc = crc & 0x80000000 ? (crc << 1) ^ 0x04C11DB7 : crc << 1
+    crc >>>= 0
+  }
+  for (let i = 0; i < bytes.length; i++) feed(bytes.charCodeAt(i))
+  for (let n = bytes.length; n > 0; n = Math.floor(n / 256)) feed(n & 255)
+  return `${(~crc) >>> 0}:${bytes.length}`
+}
 const productMinors = product => product.verdict === 'notes'
   ? product.entries.filter(e => e.fit !== 'serves-goal' && e.fit !== 'neutral')
       .map(e => ({ severity: 'minor', title: `Product fit: ${e.entry} (${e.fit})`, detail: `${e.note || ''} Suggestion: ${e.suggestion || 'keep'}.` }))
@@ -518,7 +531,7 @@ const ioPrompt = (pr, command) => `Task: run one command and return its exit cod
 Plugin folder: ${PLUGIN_ROOT}. Run scripts only from this folder, never from a clone of ${REPO}.
 Command: \`${command}\`
 Return exitCode and output.`
-const briefCommand = (pr, mode, entry) => `bash ${PLUGIN_ROOT}/scripts/quick-brief.sh ${mode} ${REPO} ${pr.quick.issue}${mode === 'put' ? ` --b64 ${base64(entry)}` : ''}`
+const briefCommand = (pr, mode, entry) => `bash ${PLUGIN_ROOT}/scripts/quick-brief.sh ${mode} ${REPO} ${pr.quick.issue}${mode === 'put' ? ` --b64 ${base64(entry)} --sum ${cksum(entry)}` : ''}`
 
 const productEntryPrompt = pr => `${ctx(pr)}
 
@@ -550,7 +563,7 @@ async function quickSetup(pr) {
   if (product.verdict === 'escalate') return stop('needs human: product', { triage, escalation: product.escalation, product: state })
   const put = await call('io', quick, ioPrompt(quick, briefCommand(quick, 'put', quick.quickState.brief)), `io:${pr.id}#put`, { schema: IO })
   if (!put || put.exitCode !== 0) return stop(`quick brief not posted: ${put ? put.output : 'pipeline-io failed'}`, { triage })
-  if (put.output.trim() !== quick.quickState.brief) return stop('quick brief differs from the one already on the issue; rerun to use the stored one', { triage })
+  if (put.output.trim() !== quick.quickState.brief) return stop('quick brief differs from the one already on the issue; a person must check the stored comment and delete it if it is wrong, then rerun', { triage })
   return { pr: quick, minors: productMinors(product), product: state, triage }
 }
 

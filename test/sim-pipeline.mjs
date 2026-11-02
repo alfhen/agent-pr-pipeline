@@ -29,6 +29,7 @@ const TRIAGES = {
   QE: triage('build', 'S', 'low'), QT: triage('build', 'S', 'low'),
 }
 let evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'README.md'] }
+let corruptPut = false
 const agent = async (prompt, o) => {
   calls.push({ label: o.label, model: o.model, effort: o.effort, agentType: o.agentType, isolation: o.isolation, prompt })
   const id = o.label.split(':')[1].split('#')[0]
@@ -37,6 +38,7 @@ const agent = async (prompt, o) => {
   if (o.label.startsWith('io:')) {
     if (o.label.endsWith('#put')) {
       const posted = Buffer.from(/--b64 (\S+)/.exec(prompt)[1], 'base64').toString('utf8')
+      if (corruptPut) return { exitCode: 65, output: 'quick-brief: the entry does not match its checksum; nothing posted' }
       briefs[id] = storedInstead[id] || posted
       return { exitCode: 0, output: briefs[id] }
     }
@@ -579,6 +581,22 @@ await check('quick: the entry goes into the put command as base64, never as inli
   const put = forPr('QM', /^io:QM#put/)[0].prompt
   assert.doesNotMatch(put, /Acceptance: node --test/)
   assert.match(put, /quick-brief\.sh put o\/r 42 --b64 [A-Za-z0-9+\/=]+/)
+})
+await check('quick: the sum in the put command matches cksum of the decoded entry', async () => {
+  const { execFileSync } = await import('node:child_process')
+  const put = forPr('QM', /^io:QM#put/)[0].prompt
+  const [, b64, sum] = /--b64 (\S+) --sum (\d+:\d+)/.exec(put)
+  const out = execFileSync('cksum', { input: Buffer.from(b64, 'base64') }).toString().trim().split(/\s+/)
+  assert.equal(sum, `${out[0]}:${out[1]}`)
+})
+await check('quick: a corrupted --b64 from the io agent posts nothing and stops the PR', async () => {
+  TRIAGES.QK = triage('build', 'M', 'medium')
+  corruptPut = true
+  const r7 = await simulate({ ...quickBase, prs: [{ id: 'QK', quick: { issue: 81 }, branch: 'fix/QK' }] })
+  corruptPut = false
+  assert.match(r7.QK.reason, /^quick brief not posted/)
+  assert.equal(briefs.QK, undefined)
+  assert.ok(!calls.some(c => /^(implement|test|review)/.test(c.label)))
 })
 await check('quick: quick state stays off the caller options', () => {
   assert.equal(quickBase.prs[0].quickState, undefined)
