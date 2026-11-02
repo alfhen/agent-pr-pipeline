@@ -22,5 +22,5 @@
     "templates/**",
     ".claude-plugin/**"
   ],
-  "autoRelease": false
+  "autoRelease": true
 }
