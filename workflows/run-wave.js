@@ -582,21 +582,21 @@ const denylistFor = changedPaths => {
 }
 
 async function evaluateWave(prs) {
-  const none = { feedback: [], denylist: [] }
-  if (!FEEDBACK) return none
+  const none = { feedback: [], denylist: [], source: REPO, feedbackRepo: FEEDBACK_REPO }
+  if (!FEEDBACK || A.prs.every(pr => pr.landFix)) return none
   const evaluation = await call('evaluate', null, evaluatePrompt(prs), 'evaluate:wave', { schema: EVALUATION })
   if (!evaluation) {
     log('evaluation failed: no feedback this run')
     return none
   }
   let items = evaluation.items || []
-  if (REPO === FEEDBACK_REPO) return { feedback: items, denylist: [] }
+  if (REPO === FEEDBACK_REPO) return { ...none, feedback: items }
   const denylist = denylistFor(evaluation.changedPaths || [])
   if (items.length) {
     const redacted = await call('redact', null, redactPrompt(items), 'redact:wave', { schema: REDACTION })
     items = redacted ? redacted.items || [] : []
   }
-  return { feedback: items, denylist }
+  return { ...none, feedback: items, denylist }
 }
 
 async function runPR(pr) {

@@ -1,24 +1,35 @@
 #!/bin/bash
-# usage: file-feedback.sh <feedback.json> --denylist <denylist.json> [--repo <owner/name>] [--dry-run]
-# Files each feedback item as an issue with the label pipeline-feedback in --repo (default
-# alfhen/agent-pr-pipeline). <feedback.json> is a list of { title, detail, evidence, suggestedChange, severity };
+# usage: file-feedback.sh <feedback.json> --denylist <denylist.json> --repo <owner/name> --source <owner/name> [--dry-run]
+# Files each feedback item as an issue with the label pipeline-feedback in --repo. --source is the repo the
+# wave ran in. When it differs from --repo, the script itself also refuses the source owner, name, owner/name
+# and URL, and refuses to run with an empty denylist. <feedback.json> is a list of { title, detail, evidence, suggestedChange, severity };
 # <denylist.json> is a list of strings. An item whose text contains a denylist string (any case) is reported
 # as REFUSED and never filed. A title that already has an open pipeline-feedback issue is skipped.
 # Exit: 0 all done, 1 error, 2 at least one item refused. Uses gh api REST calls only.
 set -u
-file=""; deny=""; repo="alfhen/agent-pr-pipeline"; dry=0
+file=""; deny=""; repo=""; source=""; dry=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --denylist) deny=$2; shift 2 ;;
     --repo) repo=$2; shift 2 ;;
+    --source) source=$2; shift 2 ;;
     --dry-run) dry=1; shift ;;
     -*) echo "unknown option $1"; exit 1 ;;
     *) file=$1; shift ;;
   esac
 done
-[ -n "$file" ] && [ -n "$deny" ] || { echo "usage: file-feedback.sh <feedback.json> --denylist <denylist.json> [--repo <owner/name>] [--dry-run]"; exit 1; }
+[ -n "$file" ] && [ -n "$deny" ] && [ -n "$repo" ] && [ -n "$source" ] || { echo "usage: file-feedback.sh <feedback.json> --denylist <denylist.json> --repo <owner/name> --source <owner/name> [--dry-run]"; exit 1; }
+slug='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+[[ $repo =~ $slug ]] && [[ $source =~ $slug ]] || { echo "--repo and --source must be owner/name"; exit 1; }
 jq -e 'type == "array"' "$file" >/dev/null 2>&1 || { echo "$file is not a JSON list"; exit 1; }
 jq -e 'type == "array" and all(.[]; type == "string")' "$deny" >/dev/null 2>&1 || { echo "$deny is not a JSON list of strings"; exit 1; }
+
+# Strings the script refuses whatever the denylist file holds.
+deny_all=$(jq -c '.' "$deny")
+if [ "$(tr 'A-Z' 'a-z' <<<"$source")" != "$(tr 'A-Z' 'a-z' <<<"$repo")" ]; then
+  [ "$(jq length "$deny")" -gt 0 ] || { echo "$deny is empty but the source repo $source differs from $repo"; exit 1; }
+  deny_all=$(jq -c --arg s "$source" '. + [($s | split("/")[0]), ($s | split("/")[1]), $s, "https://github.com/\($s)"]' "$deny")
+fi
 
 # Fail closed: without the list of open issues, a duplicate could be filed.
 open=$(gh api --paginate --slurp "repos/$repo/issues?state=open&labels=pipeline-feedback&per_page=100") || { echo "cannot list open issues in $repo"; exit 1; }
@@ -31,8 +42,8 @@ for ((i = 0; i < count; i++)); do
   item=$(jq -c ".[$i]" "$file")
   title=$(jq -r '.title // ""' <<<"$item")
   [ -n "$title" ] || { echo "REFUSED item $i: no title"; status=2; continue; }
-  hit=$(jq -r --slurpfile deny "$deny" '[.. | strings] | join("\n") | ascii_downcase as $text
-    | [$deny[0][] | select(length > 0) | select(. as $d | $text | contains($d | ascii_downcase))] | first // empty' <<<"$item")
+  hit=$(jq -r --argjson deny "$deny_all" '[.. | strings] | join("\n") | ascii_downcase as $text
+    | [$deny[] | select(length > 0) | select(. as $d | $text | contains($d | ascii_downcase))] | first // empty' <<<"$item")
   if [ -n "$hit" ]; then
     echo "REFUSED $title: contains \"$hit\""
     status=2

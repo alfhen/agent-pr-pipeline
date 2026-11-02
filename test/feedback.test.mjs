@@ -19,7 +19,7 @@ const openIssues = [
   [{ title: '  Bot wait reports pending ', number: 2 }, { title: 'Reused by a pull request', number: 3, pull_request: {} }],
 ]
 
-const setup = ({ items, deny = [], issues = openIssues }) => {
+const setup = ({ items, deny = [], issues = openIssues, source = REPO }) => {
   const dir = mkdtempSync(join(tmpdir(), 'feedback-test-'))
   const bin = join(dir, 'bin'); const fx = join(dir, 'fx')
   mkdirSync(bin); mkdirSync(fx)
@@ -30,13 +30,14 @@ const setup = ({ items, deny = [], issues = openIssues }) => {
   writeFileSync(join(dir, 'denylist.json'), JSON.stringify(deny))
   const log = join(dir, 'log')
   const run = (...flags) => {
-    const r = spawnSync('bash', [SCRIPT, join(dir, 'feedback.json'), '--denylist', join(dir, 'denylist.json'), ...flags], {
+    const args = [...(flags.includes('--repo') ? [] : ['--repo', REPO]), ...(flags.includes('--source') ? [] : ['--source', source]), ...flags]
+    const r = spawnSync('bash', [SCRIPT, join(dir, 'feedback.json'), '--denylist', join(dir, 'denylist.json'), ...args], {
       encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: fx, FAKE_GH_LOG: log },
     })
     const calls = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : []
     return { ...r, calls, posts: calls.filter(l => l.startsWith('POST ')) }
   }
-  return { run }
+  return { run, dir }
 }
 
 test('dry run reports one create per new title and makes no write call', () => {
@@ -84,7 +85,7 @@ for (const [what, bad] of leaking) {
     const text = JSON.stringify(bad).toLowerCase()
     assert.ok(DENY.some(d => text.includes(d.toLowerCase())), 'the fixture item contains a denylist string')
     const clean = item('Land step waits too long')
-    const s = setup({ items: [bad, clean], deny: DENY })
+    const s = setup({ items: [bad, clean], deny: DENY, source: 'acme/widgets' })
     const r = s.run()
     assert.equal(r.status, 2)
     assert.match(r.stdout, new RegExp(`REFUSED ${bad.title}`))
@@ -107,4 +108,35 @@ test('without the list of open issues nothing is filed', () => {
   const r = setup({ items: [item('Anything')], issues: null }).run()
   assert.equal(r.status, 1)
   assert.equal(r.posts.length, 0)
+})
+
+test('--repo and --source are required', () => {
+  const items = [item('Anything')]
+  const s = setup({ items })
+  for (const [flag, other] of [['--repo', '--source'], ['--source', '--repo']]) {
+    const r = spawnSync('bash', [SCRIPT, join(s.dir, 'feedback.json'), '--denylist', join(s.dir, 'denylist.json'), other, REPO], { encoding: 'utf8' })
+    assert.equal(r.status, 1, `missing ${flag}`)
+    assert.match(r.stdout, /usage/)
+  }
+  assert.equal(s.run().status, 0)
+})
+
+test('with a source repo that differs from the target, the script refuses its owner and name though the denylist file is not empty', () => {
+  const bad = item('Fixer loops', { detail: 'Seen in acme builds.' })
+  const r = setup({ items: [bad], deny: ['unrelated'], source: 'acme/widgets' }).run()
+  assert.equal(r.status, 2)
+  assert.match(r.stdout, /REFUSED Fixer loops: contains "acme"/)
+  assert.equal(r.posts.length, 0)
+})
+
+test('with a source repo that differs from the target, an empty denylist stops the run', () => {
+  const r = setup({ items: [item('Land step waits too long', { detail: 'acme' })], deny: [], source: 'acme/widgets' }).run()
+  assert.equal(r.status, 1)
+  assert.equal(r.posts.length, 0)
+})
+
+test('the script refuses the source URL for an item the redactor never saw', () => {
+  const bad = item('Land step', { evidence: 'https://github.com/Acme/Widgets/pull/3' })
+  const r = setup({ items: [bad], deny: ['x'], source: 'acme/widgets' }).run()
+  assert.equal(r.status, 2)
 })

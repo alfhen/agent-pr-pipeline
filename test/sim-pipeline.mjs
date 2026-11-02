@@ -9,17 +9,22 @@ const run = new Function('args', 'agent', 'parallel', 'log', `return (async () =
 let calls = []
 let preflight
 let failWait = false
+let redactor = 'ok'
 const ITEMS = [
   { title: 'Bot wait reports pending', detail: 'd', evidence: 'C1 botwait', suggestedChange: 'c', severity: 'major' },
   { title: 'Docs step has no timeout', detail: 'd', evidence: 'e', suggestedChange: 'c', severity: 'minor' },
 ]
+const REDACTED = ITEMS.map(i => ({ ...i, title: `generic: ${i.title}`, detail: 'generic detail' }))
 let evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'README.md'] }
 const agent = async (prompt, o) => {
   calls.push({ label: o.label, model: o.model, effort: o.effort, agentType: o.agentType, isolation: o.isolation, prompt })
   const id = o.label.split(':')[1].split('#')[0]
   if (o.label.startsWith('preflight')) return preflight
   if (o.label.startsWith('evaluate')) return evaluation
-  if (o.label.startsWith('redact')) return { items: JSON.parse(prompt.slice(prompt.indexOf('[{'))) }
+  if (o.label.startsWith('redact')) {
+    if (redactor === 'null') return null
+    return { items: JSON.parse(prompt.slice(prompt.indexOf('[{'))).map(i => ({ ...i, title: `generic: ${i.title}`, detail: 'generic detail' })) }
+  }
   if (o.label.startsWith('product')) {
     if (id === 'P2') return { verdict: 'escalate', summary: 's', entries: [{ entry: 'V04 MCP server', fit: 'widens-scope', suggestion: 'cut' }], escalation: { question: 'Keep the product CLI only?', recommendation: 'cut V04' } }
     if (id === 'P3') return { verdict: 'notes', summary: 's', entries: [{ entry: 'H08', fit: 'widens-scope', note: 'polish', suggestion: 'defer' }] }
@@ -257,8 +262,10 @@ await check('the evaluator runs once per wave, after the last PR, on sonnet/medi
   assert.match(ev[0].prompt, /"id":"C1"/)
   assert.match(ev[0].prompt, /repos\/o\/r\/pulls\/<n>\/files/)
 })
-await check('the result has the shape { prs, feedback, denylist }', () => {
-  assert.deepEqual(Object.keys(mainResult).sort(), ['denylist', 'feedback', 'prs'])
+await check('the result has the shape { prs, feedback, denylist, source, feedbackRepo }', () => {
+  assert.deepEqual(Object.keys(mainResult).sort(), ['denylist', 'feedback', 'feedbackRepo', 'prs', 'source'])
+  assert.equal(mainResult.source, 'o/r')
+  assert.equal(mainResult.feedbackRepo, 'alfhen/agent-pr-pipeline')
   assert.ok(Array.isArray(mainResult.prs) && mainResult.prs.length === PRS.length)
 })
 await check('for another repo the redactor runs once on haiku/low, its prompt names the repo to remove, and its output is the feedback', () => {
@@ -269,7 +276,22 @@ await check('for another repo the redactor runs once on haiku/low, its prompt na
   assert.match(red[0].prompt, /the name "r"/)
   assert.match(red[0].prompt, /source repo o\/r:/)
   assert.ok(red[0].prompt.includes(JSON.stringify(ITEMS)))
-  assert.deepEqual(mainResult.feedback, ITEMS)
+  assert.deepEqual(mainResult.feedback, REDACTED)
+  assert.notDeepEqual(mainResult.feedback, ITEMS)
+})
+await check('a redactor that returns nothing leaves no feedback, keeps the denylist and the prs', async () => {
+  redactor = 'null'
+  try { await simulate(base) } finally { redactor = 'ok' }
+  assert.deepEqual(lastResult.feedback, [])
+  assert.deepEqual(lastResult.denylist, ['o', 'r', 'o/r', 'https://github.com/o/r', 'src/billing/invoice.ts', 'README.md'])
+  assert.equal(lastResult.prs.length, PRS.length)
+  assert.equal(calls.filter(c => c.label.startsWith('redact')).length, 1)
+})
+await check('a landFix-only run starts no evaluate or redact agent', async () => {
+  await simulate({ ...base, prs: PRS.filter(p => p.landFix) })
+  assert.ok(calls.length > 0 && calls.every(c => !/^(evaluate|redact)/.test(c.label)))
+  assert.deepEqual(lastResult.feedback, [])
+  assert.deepEqual(lastResult.denylist, [])
 })
 await check('the denylist holds the repo owner, name, URL and the changed paths', () => {
   assert.deepEqual(mainResult.denylist, ['o', 'r', 'o/r', 'https://github.com/o/r', 'src/billing/invoice.ts', 'README.md'])
@@ -301,8 +323,8 @@ await check('a failed evaluation gives no feedback and does not fail the wave', 
   assert.equal(lastResult.prs.length, PRS.length)
 })
 await check('a refused wave still gets an evaluation, with the refusals in prs', () => {
-  assert.deepEqual(refusedResult.feedback, ITEMS)
-  assert.deepEqual(Object.keys(refusedResult).sort(), ['denylist', 'feedback', 'prs'])
+  assert.deepEqual(refusedResult.feedback, REDACTED)
+  assert.deepEqual(Object.keys(refusedResult).sort(), ['denylist', 'feedback', 'feedbackRepo', 'prs', 'source'])
   assert.ok(refusedResult.prs.every(x => x.refused))
   assert.match(refusedCalls.find(c => c.label === 'evaluate:wave').prompt, /"refused":true/)
 })
