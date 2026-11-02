@@ -15,7 +15,8 @@ bots="${BOT_LOGINS:-coderabbit|gitar|\\[bot\\]}"
 appr=$(jq -n --arg head "$head" --arg bots "$bots" \
   --slurpfile reviews <(gh api --paginate "repos/$R/pulls/$pr/reviews?per_page=100") \
   --slurpfile comments <(gh api --paginate "repos/$R/pulls/$pr/comments?per_page=100") \
-  '{reviews: ($reviews | add // []), comments: ($comments | add // []), head: $head, bots: $bots}' \
+  --slurpfile checks <(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100" --jq '.check_runs') \
+  '{reviews: ($reviews | add // []), comments: ($comments | add // []), checks: ($checks | add // []), head: $head, bots: $bots}' \
   | jq -f "$(dirname "$0")/bot-approval.jq" | jq -r 'join(",")')
 fail=$(gh pr checks "$pr" -R "$R" --json name,bucket --jq 'if length==0 then "no-checks" else [.[]|select(.bucket!="pass" and .bucket!="skipping")|.name+":"+.bucket]|join(",") end')
 echo "PR $pr mergeable=$m head=${head:0:7} approved=[$appr] failing=[$fail]"
