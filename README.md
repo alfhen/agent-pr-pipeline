@@ -65,6 +65,9 @@ Read [skills/pr-pipeline/SKILL.md](skills/pr-pipeline/SKILL.md) for the loop, th
 - Load your working copy without installing: `claude --plugin-dir .`
 - Check the manifests: `claude plugin validate .` and `claude plugin validate .claude-plugin/plugin.json`
 - Simulate the workflow with a fake `agent()`: `node test/sim-pipeline.mjs`. Run it after every change to `workflows/run-wave.js` or `agents/`.
+- Run the checks in [AGENTS.md](AGENTS.md) before you push. The `ci` workflow runs the same checks on every PR.
+- The `release` workflow runs when a release is published. It runs the simulation and checks that the manifest version matches the tag.
+- `.github/pipeline.json` lists the gated paths of this repo. A PR that touches one is merged by the maintainer, never by an agent. `templates/pipeline.json` is the starting file for another repo.
 
 ## Explainer
 
