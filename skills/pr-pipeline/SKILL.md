@@ -161,18 +161,18 @@ To run one step by hand, start its agent with the Agent tool, for example `subag
 
 ### Cost and the prompt cache
 
-Every agent request is billed by its prompt. A cached prompt prefix costs a tenth of the normal input price (less on the newest models); writing it costs 1.25 times the price. The cache matches the exact prefix, in this order: tools, system prompt, then messages. It lasts 5 minutes after its last use. The plugin is set up so most of each prompt is a cache hit:
+Every agent request is billed by its prompt. A cached prompt prefix costs a tenth of the normal input price (less on the newest models); writing it costs 1.25 times the price. The cache matches the exact prefix, in this order: tools, system prompt, then messages. It lasts 5 minutes after its last use. In the dogfood run (18 agents, one wave), 85% of all input came from the cache. Almost all of that is each agent reading its own earlier turns. What the plugin does, and what it measured:
 
-- **Role text is in the agent definition.** Every reviewer in a wave has the same system prompt and tools, so their shared prefix is cached once and read by every PR.
-- **Each prompt starts with the wave-wide context** (repo, plan, rules), then the step's commands, then the PR block, then the round data (findings, history). Text that changes most goes last.
+- **Role text is in the agent definition.** Agents of one role send the same tools and system prompt, and that part (about 4k tokens) is read from the cache by every agent after the first. The rest of the first request (about 15k tokens: the user's and repo's CLAUDE.md, the environment, the skills list and MCP instructions, then the task) is written fresh by every agent. Claude Code places the cache breakpoints, and it puts none between that shared context and the task, so a plugin cannot share it.
+- **Each prompt starts with the wave-wide context** (repo, plan, rules), then the step's commands, then the PR block, then the round data (findings, history). This keeps prompts stable for `resumeFromRunId`; it does not add cache sharing between agents.
 - **Model and effort are fixed per role.** A cache entry belongs to one model. Override a role in `steps` for the whole wave, not per PR.
 - **Tool sets are fixed per role.** A change in tools invalidates the whole prefix. Do not connect or remove MCP servers during a run.
 - **Skills cost the most.** A skill loaded with the Skill tool is new text in each agent's messages, thousands of tokens per agent and per round. Pair a skill only where it changes the result (see below).
-- **Worktree agents miss the shared prefix.** The system prompt holds the working folder, so writers in their own worktree do not share a cache with each other. Checkers work in the session folder and do share it.
+- **Worktree agents miss even the shared 4k.** Their working folder differs, so writers read nothing from the cache on their first request. At about 20k tokens, that costs a few cents per writer: not worth giving up the worktree.
 - **Only the land fixer keeps its cache for an hour.** It waits on CI for longer than 5 minutes, and after such a wait its next request would write its whole history again. Its definition sets `experimental.cacheTtl: 1h` (Claude Code 2.1.248 or later). A 1-hour write costs 2 times the input price instead of 1.25, so the other roles, which take turns well inside 5 minutes, keep the default. If a repo's checks run longer than 5 minutes, give the tester and implementer the same setting. The `subagentPromptCacheTtl` setting overrides it, and Claude Code ignores it while a subscription draws on usage credits.
 - **Resume, do not restart.** After a failure, resume the run with `resumeFromRunId`: finished agents return their saved results without a new request.
 
-Summary: same role, same model, same tools and the same opening text give cache hits; skills, model changes and per-PR text at the start take them away.
+Summary: each agent caches its own conversation well; between agents only the tools and the role's system prompt are shared. Skills and long global CLAUDE.md files are paid again by every agent.
 
 ### Pair skills with steps
 
