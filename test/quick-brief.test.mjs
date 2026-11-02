@@ -53,6 +53,13 @@ test('get fails when two trusted comments exist', () => {
   assert.match(r.stderr, /more than one trusted brief/)
 })
 
+test('get reports invalid comments JSON as such, not as two briefs', () => {
+  const r = run('invalid-json')
+  assert.equal(r.status, 3)
+  assert.match(r.stderr, /not valid JSON/)
+  assert.doesNotMatch(r.stderr, /more than one/)
+})
+
 test('put posts the marker and the entry once when no trusted brief exists', () => {
   const r = run('other-account', 'put')
   assert.equal(r.status, 0, r.stderr)

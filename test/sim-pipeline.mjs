@@ -26,6 +26,7 @@ const TRIAGES = {
   QM: triage('build', 'M', 'medium'), QF: triage('build', 'M', 'medium'), QY: triage('build', 'M', 'medium'),
   QL: triage('build', 'L', 'low'), QH: triage('build', 'S', 'high'),
   QP: triage('plan', 'M', 'medium'), QD: triage('decline', 'S', 'low'),
+  QA: triage('build', 'S', 'low', { entry: { touches: 'src/x.js', acceptance: 'node --test passes', qa: 'try --words with empty input' } }),
   QE: triage('build', 'S', 'low'), QT: triage('build', 'S', 'low'),
 }
 let evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'README.md'] }
@@ -473,7 +474,7 @@ await check('plugin and marketplace manifests agree, and the workflow is named r
 })
 
 // Quick fixes: the triage gate.
-const QUICK = ['QS', 'QN', 'QM', 'QF', 'QY', 'QL', 'QH', 'QP', 'QD', 'QE', 'QT']
+const QUICK = ['QS', 'QN', 'QM', 'QF', 'QY', 'QL', 'QH', 'QP', 'QD', 'QE', 'QT', 'QA']
 const quickBase = { repo: 'o/r', tmp: '/x', goals: 'docs/goals.md', architecture: 'docs/design.md', pluginRoot: '/plug', prs: QUICK.map((id, i) => ({ id, quick: { issue: 40 + i }, branch: `fix/${id}` })) }
 const qr = await simulate(quickBase)
 const quickCalls = calls
@@ -527,6 +528,14 @@ await check('quick: S and low risk get 2 rounds and no architecture review unles
   assert.ok(forPr('QN', /^arch/).length > 0)
   assert.equal(qr.QY.history.length, 4)
   assert.ok(forPr('QY', /^arch/).length > 0)
+})
+await check('quick: a QA line from the triager turns on the QA step, and a stored one does too', async () => {
+  assert.ok(forPr('QA', /^qa:/).length > 0)
+  assert.match(forPr('QA', /^qa:/)[0].prompt, /What to try: try --words with empty input/)
+  assert.equal(forPr('QS', /^qa:/).length, 0)
+  briefs.QB = 'Touches: src/old.js\nAcceptance: old test\nQA: try old input\nTriage: size M, risk medium, new concepts: none'
+  await simulate({ ...quickBase, prs: [{ id: 'QB', quick: { issue: 82 }, branch: 'fix/QB' }] })
+  assert.ok(calls.some(c => c.label.startsWith('qa:QB')))
 })
 await check('quick: the goals path reaches the triager and the entry check', () => {
   assert.match(forPr('QM', /^triage/)[0].prompt, /docs\/goals\.md/)

@@ -497,7 +497,8 @@ const entryText = (t, e) => `Touches: ${e.touches}\nAcceptance: ${e.acceptance}$
 // S and low risk get two rounds and no architecture review, unless the triager named a new concept.
 const withBrief = (pr, brief) => {
   const small = /^Triage: size S, risk low, new concepts: (.*)$/m.exec(brief)
-  return { ...pr, quickState: { brief, skipArch: !!small && small[1].trim() === 'none' }, ...(small ? { maxRounds: pr.maxRounds || 2 } : {}) }
+  const qa = /^QA: (.+)$/m.exec(brief)
+  return { ...pr, ...(qa && pr.qa === undefined ? { qa: qa[1] } : {}), quickState: { brief, skipArch: !!small && small[1].trim() === 'none' }, ...(small ? { maxRounds: pr.maxRounds || 2 } : {}) }
 }
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 // Plain JS: the script has no Buffer or btoa. The command line gets text that a shell cannot interpret.
