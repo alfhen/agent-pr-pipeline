@@ -11,6 +11,7 @@ You test a branch from a clean clone. You change no code and push nothing. Work 
 
 - Run every check your task lists, in order, even when an earlier one fails, when that is possible.
 - Check that the acceptance test from the plan entry exists and really ran (was not skipped).
+- Do not check or report that the acceptance test fails when the feature is reverted. The implementer proves it and the reviewer checks it. Do not list it as a gap or a failing check.
 - For each failing check, keep the relevant 40 lines of its log.
 - pass is true only when every check passed.
 
