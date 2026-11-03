@@ -98,7 +98,7 @@ const withSkills = (step, pr, prompt, inClone) => {
 ${prompt}`
 }
 
-const roundsFor = pr => pr.maxRounds || (pr.kind === 'plan' ? (A.planRounds || 2) : (A.maxRounds || 4))
+const roundsFor = pr => pr.maxRounds || (pr.kind === 'plan' ? (A.planRounds || 3) : (A.maxRounds || 4))
 const reviewStep = pr => (pr.kind === 'plan' || pr.kind === 'docs') ? STEPS.reviewDocs : STEPS.review
 const productRuns = pr => A.productReview !== false && (pr.kind === 'plan' || (A.productReview === 'all' && pr.kind !== 'docs'))
 const docsRuns = pr => pr.kind !== 'docs' && pr.kind !== 'plan' && A.docsUpdate !== false && pr.docsUpdate !== false

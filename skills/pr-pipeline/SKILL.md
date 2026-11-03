@@ -67,7 +67,7 @@ Summary: a plan is reviewed first, including whether it still serves the product
    - **needs-change:** the PR goes against the architecture in a way the PR can fix. Its findings count as majors for the fix agent, and it checks again in the next round.
    - **escalate:** the architecture itself should change, because the PR or the plan shows the structure will not hold for what comes next, or the PR needs a decision that is not the PR's to make. The PR stops with `needs human: architecture`, a question, options and a recommendation. A person decides; the PR resumes with that decision.
    Docs-only PRs skip it. Plan PRs get it too: a plan is where new concepts usually first appear.
-6. **Fix.** If a check failed or there are blockers or majors, a fix agent adds commits to the same branch. It never force-pushes. If it thinks a finding is wrong, it says why with evidence. Then steps 2 and 3 run again (and 4 and 5, if they asked for changes). Stop after `maxRounds` (default 4; plan PRs 2); then a person decides.
+6. **Fix.** If a check failed or there are blockers or majors, a fix agent adds commits to the same branch. It never force-pushes. If it thinks a finding is wrong, it says why with evidence. Then steps 2 and 3 run again (and 4 and 5, if they asked for changes). Stop after `maxRounds` (default 4; plan PRs 3); then a person decides.
 7. **Docs.** After a code PR signs off, a docs agent reads the diff and finds every doc the change makes wrong or incomplete: README, markdown docs, and the docs site if there is one. It updates only those places, on the same branch, and builds the site if it can. If nothing needs a change, it pushes nothing and the PR goes on. If it pushed, the tester and a Sonnet docs reviewer check the new head. If they find problems, the docs writer fixes them in the docs only and reverts any code change, and the check runs again (`docsRounds`, default 2). The code fixer never runs in this step, so code that passed review cannot change without review. So the sha the land script merges is always one the pipeline checked. Docs and plan PRs skip this step.
 8. **Open the PR.** An agent opens a ready PR and files every minor finding as an issue (label `review-minor`). The PR body says which docs the PR updates.
 9. **Bots.** A small agent (Haiku, low effort) waits for the review bots and counts their open comments. It runs `scripts/wait-bots.sh`, which polls `scripts/bot-status.sh` once a minute inside one command and stops when a bot has looked at the head or after 9 minutes (`timedOut`). The waiter runs it again until `botWaitMinutes` have passed, with the Bash `timeout` set to 600000 ms, because the default of 120000 ms kills the call at 2 minutes. The workflow runs the same script once more through `pipeline-io` and takes `approvedBy` from its output, not from the waiter's answer. The script applies `scripts/bot-approval.jq`, the rule the land gate uses, so the wait and the merge gate use one rule. Without `pluginRoot` the PR stops at this step with the reason `pluginRoot missing`. Only if there are any does an answer agent run: it fixes the point or says why not, on every thread, and adds `Closes #N` to the PR body for each minor issue its fix settles. If it changed code, the tester and a reviewer that reads only the answer's commits check the new head, with a fix round if needed (`botCheckRounds`, default 2). So no code lands that no other agent checked.
@@ -127,7 +127,7 @@ The workflow starts every agent as its role agent (`agentType: "agent-pr-pipelin
   "e2ePattern": "\\.e2e\\.test\\.ts$",
   "e2eCommand": "pnpm exec vitest run {files}",
   "maxRounds": 4,
-  "planRounds": 2,
+  "planRounds": 3,
   "botWaitMinutes": 20,
   "bots": "CodeRabbit (login coderabbitai) and Gitar (login contains \"gitar\")",
   "milestone": "1.2.0",
@@ -154,7 +154,7 @@ The workflow starts every agent as its role agent (`agentType: "agent-pr-pipelin
 - `feedback`: `false` turns the end-of-run evaluation off. `feedbackRepo`: where feedback is filed (default `alfhen/agent-pr-pipeline`). The redactor runs only when `repo` differs from it.
 - `docs`: where the docs are, for example `["README.md", "docs/", "site/"]`. Without it the docs agent finds them. `docsBuild`: the command that builds the docs site, if any. `docsUpdate: false` turns the docs step off for the wave (or for one PR). `docsRounds`: rounds for the docs check (default 2).
 - `skills`: which skills each step's agent loads before it starts. See "Pair skills with steps" below. Default: none.
-- `kind`: `code` (default), `docs` or `plan`. Docs and plan PRs get a Sonnet reviewer at high effort instead of Opus. Plan PRs stop after `planRounds` (default 2); fix what is left by hand, then rerun with `skipImpl`.
+- `kind`: `code` (default), `docs` or `plan`. Docs and plan PRs get a Sonnet reviewer at high effort instead of Opus. Plan PRs stop after `planRounds` (default 3); fix what is left by hand, then rerun with `skipImpl`.
 
 Models and effort per step are in the table under "Role agents". Override a step for the whole wave in `steps`, for example `{ "review": { "model": "opus", "effort": "xhigh" } }`. `reviewDocs` sets the reviewer of docs and plan PRs and the docs check (default sonnet, high).
 

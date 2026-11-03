@@ -274,7 +274,7 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
       <li><strong>Set effort per step.</strong><span>Reviewer: Opus at high, as now. Builder and fixer: Sonnet at medium. Tester and land: low. Docs-only PRs: a Sonnet reviewer at high instead of Opus.</span><span class="gain">Fewer tokens on routine steps, same scrutiny where it matters.</span></li>
       <li><strong>Give each role its own agent.</strong><span>The role's rules go in the agent definition, with the smallest set of tools the role needs. Agents of one role share the cached tools and rules; each agent's own turns read from the cache.</span><span class="gain">In a test wave, 85% of all input came from the cache.</span></li>
       <li><strong>Load skills only where they help.</strong><span>A skill adds thousands of tokens to every agent that loads it, every round. Pair a skill with the steps where it changes the result, such as a security review only for sensitive PRs.</span><span class="gain">No skill tokens on steps that do not need them.</span></li>
-      <li><strong>Cap plan reviews at two rounds.</strong><span>Plans took 4 to 5 rounds. After two, fix what is left by hand, as we did for the 0.3.0 plan's last finding.</span><span class="gain">Up to half a plan's cost.</span></li>
+      <li><strong>Cap plan reviews at three rounds.</strong><span>Plans took 4 to 5 rounds. After three, fix what is left by hand, as we did for the 0.3.0 plan's last finding.</span><span class="gain">Up to half a plan's cost.</span></li>
     </ul>
   </section>
 
