@@ -37,8 +37,18 @@ if [ $? -ne 0 ]; then
 else
   for path in $(jq -r '.[] | select(.name | test("\\.ya?ml$")) | .path' <<<"$wf"); do
     text=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/$path?ref=$branch" 2>&1) || stop "cannot read $path ($text)"
-    on=$(awk '/^(on|"on"|true):/ {f=1; print; next} /^[^[:space:]#]/ {f=0} f' <<<"$text")
-    if grep -Eq '^[[:space:]]*(release|tags):|^on:[[:space:]]*(\[[^]]*[^a-z])?release([^a-z]|$)' <<<"$on"; then trigger=$path; break; fi
+    # Only a release key directly under on, or a tags key directly under push, counts: a workflow_dispatch input may share the name.
+    if awk '
+      /^(on|"on"|true):/ { f = 1; base = -1; top = ""; rest = $0; sub(/^[^:]*:[ \t]*/, "", rest)
+        if (rest ~ /(^|[[{, \t])release($|[]},: \t])/) hit = 1
+        next }
+      /^[^ \t#]/ { f = 0 }
+      f && /^[ \t]*(#|$)/ { next }
+      f { match($0, /^[ \t]*/); ind = RLENGTH; key = $0; sub(/^[ \t]*/, "", key); sub(/[ \t]*:.*/, "", key)
+        if (base < 0) base = ind
+        if (ind == base) { top = key; second = -1; if (key == "release") hit = 1 }
+        else if (ind > base && top == "push") { if (second < 0) second = ind; if (ind == second && key == "tags") hit = 1 } }
+      END { exit !hit }' <<<"$text"; then trigger=$path; break; fi
   done
 fi
 if [ -n "$trigger" ]; then ok "$trigger runs on a release or a tag"; else miss "no workflow has a release or tag trigger"; fi

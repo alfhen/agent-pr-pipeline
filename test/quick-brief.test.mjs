@@ -10,11 +10,13 @@ const root = new URL('../', import.meta.url).pathname
 const SCRIPT = join(root, 'scripts/quick-brief.sh')
 const ENTRY = 'Touches: src/a.js\nAcceptance: node --test passes'
 
-const run = (fixture, mode = 'get', extra = [], entryArgs) => {
+const run = (fixture, mode = 'get', extra = [], entryArgs, stub) => {
   const dir = mkdtempSync(join(tmpdir(), 'quick-brief-test-'))
   const bin = join(dir, 'bin')
   mkdirSync(bin)
-  copyFileSync(join(root, 'test/fake-gh'), join(bin, 'gh')); chmodSync(join(bin, 'gh'), 0o755)
+  if (stub) writeFileSync(join(bin, 'gh'), stub)
+  else copyFileSync(join(root, 'test/fake-gh'), join(bin, 'gh'))
+  chmodSync(join(bin, 'gh'), 0o755)
   const log = join(dir, 'log')
   const entry = join(dir, 'entry.md')
   writeFileSync(entry, ENTRY)
@@ -58,6 +60,25 @@ test('get reports invalid comments JSON as such, not as two briefs', () => {
   assert.equal(r.status, 3)
   assert.match(r.stderr, /not valid JSON/)
   assert.doesNotMatch(r.stderr, /more than one/)
+})
+
+test('get skips malformed comment elements and still finds the one brief', () => {
+  const r = run('malformed-element')
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(r.stdout.trim(), ENTRY)
+  assert.doesNotMatch(r.stderr, /more than one/)
+})
+
+// A gh that answers the user call and then prints nothing for the comments.
+const EMPTY_COMMENTS = '#!/bin/bash\ncase "$*" in *comments*) exit 0 ;; *) echo alfhen ;; esac\n'
+
+test('an empty comments response is an error for get and put, and put posts nothing', () => {
+  for (const mode of ['get', 'put']) {
+    const r = run('trusted', mode, [], undefined, EMPTY_COMMENTS)
+    assert.equal(r.status, 3, mode)
+    assert.match(r.stderr, /came back empty/, mode)
+    assert.equal(r.stdout, '', mode)
+  }
 })
 
 test('put posts the marker and the entry once when no trusted brief exists', () => {

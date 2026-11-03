@@ -32,7 +32,7 @@ const TRIAGES = {
 let evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'README.md'] }
 let corruptPut = false
 // Merge safety: ids the gate holds, ids the agent calls person, and ids where an agent fails or answers badly.
-const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), gateOdd: new Set(), headMoved: new Set(), blocked: new Set(), landOutput: new Set(), landFail: new Set(), landBad: new Set(), testMoved: new Set() }
+const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), gateOdd: new Set(), headMoved: new Set(), blocked: new Set(), landOutput: new Set(), landFail: new Set(), landBad: new Set(), landBadOnce: new Set(), landOther: new Set(), testMoved: new Set(), threads: new Set() }
 const landHead = {}
 const lastHead = {}
 const agentRaw = async (prompt, o) => {
@@ -46,14 +46,19 @@ const agentRaw = async (prompt, o) => {
     if (land.gateOdd.has(id)) return { exitCode: 0, output: 'GATED #1: scripts/x.sh' }
     return land.gated.has(id) ? { exitCode: 1, output: 'GATED #1: scripts/merge-pr.sh' } : { exitCode: 0, output: 'not gated #1' }
   }
-  if (o.label.startsWith('io:') && /#landhead\d*$/.test(o.label)) return { exitCode: 0, output: JSON.stringify({ head: (o.label.endsWith('#landhead') ? 'b' : 'c').repeat(40), approvedBy: [] }) }
+  if (o.label.startsWith('io:') && /#landhead\d*$/.test(o.label)) {
+    // Right after the fix the PR head extends the fixer's short sha, as a real full sha does.
+    const head = o.label.endsWith('#landhead') ? 'b'.repeat(40) : o.label.endsWith('#landhead1') ? (land.landOther.has(id) ? 'd'.repeat(40) : (lastHead[id] || '').padEnd(40, 'c')) : 'c'.repeat(40)
+    if (!o.label.endsWith('#landhead')) lastHead[id] = head
+    return { exitCode: 0, output: JSON.stringify({ head, approvedBy: [] }) }
+  }
   if (o.label.startsWith('io:') && /#landcommits\d*$/.test(o.label)) {
     if (land.landFail.has(id)) return { exitCode: 1, output: 'land-commits: cannot read ' + 'b'.repeat(40) }
     landHead[id] = prompt.match(/land-commits\.sh \S+ \S+ (\S+)/)[1]
     return { exitCode: 0, output: land.landOutput.has(id) ? 'merge abc\n+resolved line\n' : '' }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#botstatus')) {
-    return land.statusDown.has(id) ? { exitCode: 1, output: 'bot-status: cannot read the reviews' } : { exitCode: 0, output: JSON.stringify({ head: land.headMoved.has(id) ? 'moved' : lastHead[id], approvedBy: ['gitar-bot'], seenHead: ['gitar-bot'], openThreads: 0 }) }
+    return land.statusDown.has(id) ? { exitCode: 1, output: 'bot-status: cannot read the reviews' } : { exitCode: 0, output: JSON.stringify({ head: land.headMoved.has(id) ? 'moved' : lastHead[id], approvedBy: ['gitar-bot'], seenHead: ['gitar-bot'], openThreads: land.threads.has(id) ? 1 : 0 }) }
   }
   if (o.label.startsWith('io:')) {
     if (o.label.endsWith('#put')) {
@@ -84,8 +89,8 @@ const agentRaw = async (prompt, o) => {
   }
   if (o.label.startsWith('implement')) return { pushed: true, branch: 'b', summary: 's', acceptanceTestPassed: true }
   const round = o.label.split('#')[1] || ''
-  if (o.label.startsWith('test')) return { pass: true, headSha: /^land/.test(round) && !land.testMoved.has(id) ? landHead[id] : 'sha-' + id + (/^(docs|bots|land)/.test(round) ? '-' + round : ''), checks: [{ name: 'lint', pass: true }] }
-  if (o.label.startsWith('landreview')) return { summary: 's', findings: land.landBad.has(id) ? [{ severity: 'major', title: 'the resolution drops the new flag', detail: 'd' }] : [{ severity: 'minor', title: 'land nit', detail: 'd' }] }
+  if (o.label.startsWith('test')) return { pass: true, headSha: /^land/.test(round) && !land.testMoved.has(id) ? landHead[id].padEnd(40, 'c') : 'sha-' + id + (/^(docs|bots|land)/.test(round) ? '-' + round : ''), checks: [{ name: 'lint', pass: true }] }
+  if (o.label.startsWith('landreview')) return { summary: 's', findings: land.landBad.has(id) || (land.landBadOnce.has(id) && round === '1') ? [{ severity: 'major', title: 'the resolution drops the new flag', detail: 'd' }] : [{ severity: 'minor', title: 'land nit', detail: 'd' }] }
   if (o.label.startsWith('botreview')) return { summary: 's', findings: id === 'B1' && round === '1' ? [{ severity: 'major', title: 'the new regex anchor rejects valid input', detail: 'd' }] : [{ severity: 'minor', title: 'late nit', detail: 'd' }] }
   if (o.label.startsWith('docsreview')) {
     const major = id === 'G3' || (id === 'G2' && round === '1')
@@ -96,7 +101,7 @@ const agentRaw = async (prompt, o) => {
     : { summary: 's', scenarios: [{ name: 'acceptance', pass: true }], findings: [] }
   if (o.label.startsWith('docsfix')) return { changed: true, headSha: 'docsfix-' + id, files: ['README.md'], summary: 's' }
   if (o.label.startsWith('docs')) return ['G1', 'G2', 'G3'].includes(id) ? { changed: true, headSha: 'docs-' + id, files: ['README.md'], summary: 's' } : { changed: false, summary: 'already right' }
-  if (o.label.startsWith('review')) return { summary: 's', findings: id === 'P1' || ['QS', 'QY'].includes(id) || (id === 'QF' && round === '1') ? [{ severity: 'major', title: 'x', detail: 'd' }] : [{ severity: 'minor', title: 'm', detail: 'd' }] }
+  if (o.label.startsWith('review')) return { summary: 's', findings: id === 'P1' || ['QS', 'QY'].includes(id) || (id === 'QF' && round === '1') ? [{ severity: 'major', title: 'x', detail: 'd', file: 'src/secret/area.ts' }] : [{ severity: 'minor', title: 'm', detail: 'd' }] }
   if (o.label.startsWith('open') && land.blocked.has(id)) return { blocked: true, blockedReason: 'permission denied: gh pr create', commands: ['gh pr create -R o/r --head b1 --title "t"'] }
   if (o.label.startsWith('open')) return { prNumber: 100 + calls.length, prUrl: 'u', issuesCreated: id === 'C2' ? ['https://github.com/o/r/issues/21'] : [] }
   if (o.label.startsWith('botwait')) return id === 'C1' && failWait ? null : { approvedBy: ['the-waiter-says-so'], openComments: ['C2', 'L1', 'B1', 'W1'].includes(id) ? 2 : 0 }
@@ -110,7 +115,8 @@ const agent = async (prompt, o) => {
   return out
 }
 const parallel = async thunks => Promise.all(thunks.map(t => t().catch(() => null)))
-const log = () => {}
+let logs = []
+const log = m => { logs.push(m) }
 
 const PRS = [
   { id: 'E1', title: 't', branch: 'b5' },
@@ -134,8 +140,10 @@ const PRS = [
 const base = { repo: 'o/r', tmp: '/x', plan: 'docs/p.md', architecture: 'docs/design.md', goals: 'docs/goals.md', pluginRoot: '/plug', prs: PRS }
 const GOOD = { ok: true, exists: true, goals: 3, nonGoals: 2, missing: [] }
 let lastResult
+const MAIN_DENYLIST = ['o', 'r', 'o/r', 'https://github.com/o/r', 'src/billing/invoice.ts', 'README.md', 'src/secret/area.ts', 'billing/invoice.ts', 'secret/area.ts', ...PRS.map(p => p.branch)]
 const simulate = async (args, pre = GOOD) => {
   calls = []
+  logs = []
   preflight = pre
   const out = await run(args, agent, parallel, log)
   lastResult = out
@@ -192,7 +200,7 @@ await check('plan PR stops after planRounds', () => {
 })
 await check('land fix runs the land fixer, then waits for and answers the bots on the new head', () => {
   assert.equal(r.L1.ready, true)
-  assert.deepEqual(mainCalls.filter(c => c.label.includes(':L1')).map(c => c.label), ['io:L1#landhead', 'landfix:L1', 'io:L1#landcommits1', 'botwait:L1', 'io:L1#botstatus', 'botanswer:L1', 'test:L1#bots1', 'botreview:L1#1'])
+  assert.deepEqual(mainCalls.filter(c => c.label.includes(':L1')).map(c => c.label), ['io:L1#landhead', 'landfix:L1', 'io:L1#landhead1', 'io:L1#landcommits1', 'botwait:L1', 'io:L1#botstatus', 'botanswer:L1', 'test:L1#bots1', 'botreview:L1#1'])
   assert.equal(r.L1.land, '7:sha-L1-bots1')
 })
 await check('architecture escalate stops the PR with the question', () => {
@@ -341,7 +349,7 @@ await check('a redactor that returns nothing leaves no feedback, keeps the denyl
   redactor = 'null'
   try { await simulate(base) } finally { redactor = 'ok' }
   assert.deepEqual(lastResult.feedback, [])
-  assert.deepEqual(lastResult.denylist, ['o', 'r', 'o/r', 'https://github.com/o/r', 'src/billing/invoice.ts', 'README.md'])
+  assert.deepEqual(lastResult.denylist, MAIN_DENYLIST)
   assert.equal(lastResult.prs.length, PRS.length)
   assert.equal(calls.filter(c => c.label.startsWith('redact')).length, 1)
 })
@@ -351,8 +359,8 @@ await check('a landFix-only run starts no evaluate or redact agent', async () =>
   assert.deepEqual(lastResult.feedback, [])
   assert.deepEqual(lastResult.denylist, [])
 })
-await check('the denylist holds the repo owner, name, URL and the changed paths', () => {
-  assert.deepEqual(mainResult.denylist, ['o', 'r', 'o/r', 'https://github.com/o/r', 'src/billing/invoice.ts', 'README.md'])
+await check('the denylist holds the repo owner, name, URL, the changed paths, their two-segment suffixes and the branches', () => {
+  assert.deepEqual(mainResult.denylist, MAIN_DENYLIST)
 })
 await check('for the feedback repo itself there is no redactor and the denylist is empty', async () => {
   await simulate({ ...base, repo: 'alfhen/agent-pr-pipeline' })
@@ -562,7 +570,11 @@ await check('quick: S and low risk get 2 rounds and no architecture review unles
 })
 await check('quick: a QA line from the triager turns on the QA step, and a stored one does too', async () => {
   assert.ok(forPr('QA', /^qa:/).length > 0)
-  assert.match(forPr('QA', /^qa:/)[0].prompt, /What to try: try --words with empty input/)
+  const qaPrompt = forPr('QA', /^qa:/)[0].prompt
+  const [instructions, briefBlock] = qaPrompt.split('Quick-fix entry (the brief for this PR')
+  assert.match(instructions, /What to try: the plan entry's QA line/)
+  assert.doesNotMatch(instructions, /try --words with empty input/)
+  assert.match(briefBlock, /QA: try --words with empty input/)
   assert.equal(forPr('QS', /^qa:/).length, 0)
   briefs.QB = 'Touches: src/old.js\nAcceptance: old test\nQA: try old input\nTriage: size M, risk medium, new concepts: none'
   await simulate({ ...quickBase, prs: [{ id: 'QB', quick: { issue: 82 }, branch: 'fix/QB' }] })
@@ -795,25 +807,26 @@ await check('the opener prompt says to stop on a denied command and return the c
 })
 
 // Land-fix check: the fixer's own code is tested and reviewed before the bot wait.
+const ABC = 'abc'.padEnd(40, 'c')
 const LANDS = [{ id: 'LA', title: 't', branch: 'la', landFix: true, prNumber: 8 }]
 const landFixRun = (cfg, id = 'LA') => landRun(cfg, [{ ...LANDS[0], id, branch: 'b-' + id }])
 await check('land fix: output from land-commits.sh starts a tester and a diff reviewer before the bot wait', async () => {
   const x = await landFixRun({ landOutput: ['LA'] })
   assert.equal(x.LA.ready, true)
   const labels = calls.map(c => c.label)
-  assert.deepEqual(labels.filter(l => l.includes(':LA')).slice(0, 6), ['io:LA#landhead', 'landfix:LA', 'io:LA#landcommits1', 'test:LA#land1', 'landreview:LA#1', 'botwait:LA'])
+  assert.deepEqual(labels.filter(l => l.includes(':LA')).slice(0, 7), ['io:LA#landhead', 'landfix:LA', 'io:LA#landhead1', 'io:LA#landcommits1', 'test:LA#land1', 'landreview:LA#1', 'botwait:LA'])
   const io = calls.find(c => c.label === 'io:LA#landcommits1')
-  assert.match(io.prompt, new RegExp('bash /plug/scripts/land-commits\\.sh o/r ' + 'b'.repeat(40) + ' abc /x'))
+  assert.match(io.prompt, new RegExp('bash /plug/scripts/land-commits\\.sh o/r ' + 'b'.repeat(40) + ' ' + ABC + ' /x'))
   const rev = calls.find(c => c.label === 'landreview:LA#1')
   assert.match(rev.prompt, /\+resolved line/)
   assert.match(rev.prompt, /Read only this output/)
   assert.equal(rev.agentType, 'agent-pr-pipeline:reviewer')
-  assert.equal(x.LA.land.split(':')[1], 'abc')
+  assert.equal(x.LA.land.split(':')[1], ABC)
 })
 await check('land fix: a tested head that is not the reviewed head makes the PR not ready', async () => {
   const x = await landFixRun({ landOutput: ['LA'], testMoved: ['LA'] })
   assert.equal(x.LA.ready, false)
-  assert.equal(x.LA.reason, 'land-fix check: head moved (sha-LA-land1 is not the reviewed abc)')
+  assert.equal(x.LA.reason, 'land-fix check: head moved (sha-LA-land1 is not the reviewed ' + ABC + ')')
   assert.ok(!calls.some(c => c.label === 'botwait:LA'))
 })
 await check('land fix: empty output from land-commits.sh starts no tester or reviewer', async () => {
@@ -821,7 +834,7 @@ await check('land fix: empty output from land-commits.sh starts no tester or rev
   assert.equal(x.LA.ready, true)
   assert.ok(calls.some(c => c.label === 'io:LA#landcommits1'))
   assert.ok(!calls.some(c => /^(test|landreview|fix):LA/.test(c.label)))
-  assert.equal(x.LA.land.split(':')[1], 'abc')
+  assert.equal(x.LA.land.split(':')[1], ABC)
 })
 await check('land fix: a non-zero exit of land-commits.sh makes the PR not ready', async () => {
   const x = await landFixRun({ landFail: ['LA'] })
@@ -853,6 +866,22 @@ await check('land fix: round 2 reads from the head before the land fix to the ne
   assert.match(calls.find(c => c.label === 'landreview:LA#2').prompt, /\+resolved line/)
   assert.match(calls.find(c => c.label === 'landreview:LA#2').prompt, /the resolution drops the new flag/)
   assert.doesNotMatch(calls.find(c => c.label === 'landreview:LA#1').prompt, /last round found/)
+})
+await check('land fix: a major in round 1 and a clean round 2 is ready, and lands at the round-2 head', async () => {
+  const x = await landFixRun({ landOutput: ['LA'], landBadOnce: ['LA'] })
+  assert.equal(x.LA.ready, true, x.LA.reason)
+  assert.equal(x.LA.land.split(':')[1], 'c'.repeat(40))
+  assert.deepEqual(calls.filter(c => c.label.startsWith('landreview:LA')).map(c => c.label), ['landreview:LA#1', 'landreview:LA#2'])
+  assert.ok(calls.some(c => c.label === 'botwait:LA'))
+})
+await check('land fix: a short sha from the fixer is completed from the PR head, and a head that does not extend it stops the PR', async () => {
+  const ok = await landFixRun({ landOutput: ['LA'] })
+  assert.equal(ok.LA.ready, true, ok.LA.reason)
+  assert.match(calls.find(c => c.label === 'io:LA#landcommits1').prompt, new RegExp(' ' + ABC + ' /x'))
+  const bad = await landFixRun({ landOutput: ['LA'], landOther: ['LA'] })
+  assert.equal(bad.LA.ready, false)
+  assert.equal(bad.LA.reason, `land-fix check: head moved (${'d'.repeat(40)} is not the fixer's abc)`)
+  assert.ok(!calls.some(c => /^(test|landreview|botwait):LA|^io:LA#landcommits/.test(c.label)))
 })
 await check('land fix: without pluginRoot the fixer does not run', async () => {
   const { pluginRoot, ...noRoot } = base
@@ -906,4 +935,68 @@ await check('gate: a person approving does not count as a bot', () => {
 })
 await check('gate: only the latest review of each bot counts', () => {
   assert.deepEqual(gate([review('COMMENTED', 'HEAD', '3'), review('APPROVED', 'OLD', '1')], [thread(7)]), [])
+})
+
+// Script and workflow minors.
+await check('bot status: an open thread in the status script runs the answer agent though the waiter says 0', async () => {
+  const x = await landRun({ threads: ['C1'] }, only('C1'))
+  assert.equal(x.C1.ready, true)
+  assert.ok(calls.some(c => c.label === 'botanswer:C1'))
+  const none = await landRun({}, only('C1'))
+  assert.equal(none.C1.ready, true)
+  assert.ok(!calls.some(c => c.label === 'botanswer:C1'))
+})
+await check('the wait schema has seenHead, which the waiter prompt asks for', async () => {
+  const seen = []
+  const probe = async (p, o) => { if (o.label.startsWith('botwait')) seen.push({ ...o, prompt: p }); return agent(p, o) }
+  await run({ ...base, prs: only('C1') }, probe, parallel, log)
+  assert.ok(seen[0].schema.properties.seenHead)
+  assert.match(seen[0].prompt, /Return approvedBy, seenHead, openComments/)
+})
+await check('quick: a stored high-risk brief on a first run lands as person without asking the safety agent', async () => {
+  briefs.QHI = 'Touches: src/h.js\nAcceptance: h test\nTriage: size M, risk high, new concepts: none'
+  const x = await landRun({}, [{ id: 'QHI', quick: { issue: 91 }, branch: 'fix/QHI' }], { pluginRoot: '/plug' })
+  assert.equal(x.QHI.ready, true, x.QHI.reason)
+  assert.equal(suffix(x.QHI), '')
+  assert.match(x.QHI.landWhy, /high risk/)
+  assert.ok(calls.some(c => c.label === 'io:QHI#gate'))
+  assert.deepEqual(ran(/^safety:/), [])
+})
+await check('quick: qa false on the PR beats a QA line in the stored brief', async () => {
+  briefs.QQF = 'Touches: src/q.js\nAcceptance: q test\nQA: try q input\nTriage: size M, risk medium, new concepts: none'
+  await simulate({ ...quickBase, prs: [{ id: 'QQF', quick: { issue: 92 }, branch: 'fix/QQF', qa: false }] })
+  assert.ok(calls.some(c => c.label.startsWith('review:QQF')))
+  assert.ok(!calls.some(c => c.label.startsWith('qa:')))
+  await simulate({ ...quickBase, qa: false, prs: [{ id: 'QQF', quick: { issue: 92 }, branch: 'fix/QQF' }] })
+  assert.ok(!calls.some(c => c.label.startsWith('qa:')))
+})
+await check('evaluate: a wave of only reruns runs no evaluator, a plan PR with skipImpl still does', async () => {
+  await simulate({ ...base, prs: only('P1', 'P3') })
+  assert.equal(calls.filter(c => c.label === 'evaluate:wave').length, 1)
+  const rerun = { id: 'R1', title: 't', branch: 'b7', skipImpl: true }
+  await simulate({ ...base, prs: [rerun] })
+  assert.ok(calls.length > 0 && !calls.some(c => /^(evaluate|redact)/.test(c.label)))
+  assert.deepEqual(lastResult.denylist, [])
+  await simulate({ ...base, prs: [{ id: 'C1', title: 't', branch: 'b1', resume: { history: [], minors: [], findings: [] } }, rerun] })
+  assert.ok(!calls.some(c => /^evaluate/.test(c.label)))
+  await simulate({ ...base, prs: only('P1', 'C1') })
+  assert.equal(calls.filter(c => c.label === 'evaluate:wave').length, 1)
+})
+await check('the denylist holds finding files, docs files, branches and path suffixes, and an empty changedPaths is logged', async () => {
+  for (const want of ['src/secret/area.ts', 'secret/area.ts', 'billing/invoice.ts', 'b1', 'b3']) assert.ok(mainResult.denylist.includes(want), want)
+  evaluation = { items: ITEMS, changedPaths: [] }
+  try { await simulate({ ...base, prs: only('C1', 'P1') }) } finally { evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'README.md'] } }
+  assert.ok(logs.some(m => /no changed paths/.test(m)))
+  assert.ok(lastResult.denylist.includes('src/secret/area.ts'))
+  await simulate({ ...base, prs: only('C1', 'P1') })
+  assert.ok(!logs.some(m => /no changed paths/.test(m)))
+})
+await check('a PR whose run throws is null in the result, and the other PRs and the evaluator still run', async () => {
+  calls = []
+  preflight = GOOD
+  const out = await run({ ...base, prs: only('C1', 'C2') }, async (p, o) => { if (o.label === 'implement:C1') throw new Error('boom'); return agent(p, o) }, parallel, log)
+  assert.equal(out.prs[0], null)
+  assert.equal(out.prs[1].id, 'C2')
+  assert.ok(out.denylist.includes('b1'))
+  assert.ok(calls.some(c => c.label === 'evaluate:wave'))
 })

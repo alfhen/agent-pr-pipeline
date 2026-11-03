@@ -102,6 +102,20 @@ test('release: a tag trigger counts', () => {
   assert.equal(r.code, 0, r.out)
 })
 
+test('release: an inline list and a bare name count as release triggers', () => {
+  for (const on of ['on: [release]', 'on: [push, release]', 'on: release', 'on: { release: { types: [published] } }']) {
+    const r = release(setup({ workflow: `${on}\njobs:\n  x:\n    runs-on: ubuntu-latest\n` }), '--dry-run')
+    assert.equal(r.code, 0, `${on}\n${r.out}`)
+  }
+})
+
+test('release: a workflow_dispatch input named release or tags, or a similar word, is not a trigger', () => {
+  const dispatch = name => `on:\n  workflow_dispatch:\n    inputs:\n      ${name}:\n        description: x\njobs:\n  x:\n    runs-on: ubuntu-latest\n`
+  for (const workflow of [dispatch('release'), dispatch('tags'), 'on: [push, prerelease]\n', 'on:\n  push:\n    branches: [main]\n  pull_request:\n    tags: [x]\n']) {
+    refused(release(setup({ workflow })), /MISSING: no workflow has a release or tag trigger/)
+  }
+})
+
 test('release: a red default branch refuses', () => {
   const s = setup({ conclusion: 'failure' })
   assert.match(readFileSync(join(s.fx, `${P}__commits__${HEAD}__check-runs.json`), 'utf8'), /"failure"/)
