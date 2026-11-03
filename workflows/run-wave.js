@@ -16,6 +16,7 @@ export const meta = {
     { title: 'Bots', detail: 'a small agent waits for the review bots; another answers them only if they commented' },
     { title: 'Merge safety', detail: 'for each ready PR: a script checks the gated paths; for a PR it does not hold, a stronger model decides safe or person; only safe PRs get the :auto land suffix' },
     { title: 'Land fix', detail: 'only for PRs passed with landFix: resolve a conflict or a CI failure' },
+    { title: 'Cleanup', detail: 'when a PR\'s work ends, a small agent deletes its clones and its writers\' pushed worktrees; after the evaluator it deletes the rest of the temp folder' },
     { title: 'Evaluate', detail: 'after the last PR, an agent turns the wave into feedback items about the pipeline; for another repo a second agent strips that repo\'s details' },
   ],
 }
@@ -36,6 +37,7 @@ const BOTS = A.bots || 'CodeRabbit (login coderabbitai) and Gitar (login contain
 const BOT_WAIT_MIN = A.botWaitMinutes || 20
 const LABEL = A.minorLabel || 'review-minor'
 const FEEDBACK = A.feedback !== false
+const CLEANUP = A.cleanup !== false
 const FEEDBACK_REPO = A.feedbackRepo || 'alfhen/agent-pr-pipeline'
 const MILESTONE = A.milestone ? ` --milestone "${A.milestone}"` : ''
 const STEPS = Object.assign({
@@ -131,14 +133,18 @@ const ROLES = {
   evaluate: { agent: 'evaluator', phase: 'Evaluate', skills: null },
   redact: { agent: 'feedback-redactor', phase: 'Evaluate', skills: null },
 }
-const call = (role, pr, prompt, label, extra) => {
+const WRITERS = ['impl', 'fix', 'docs', 'botAnswer', 'landFix']
+const worktreesOf = {}
+const call = async (role, pr, prompt, label, extra) => {
   const r = ROLES[role]
   const skillStep = r.skills === undefined ? role : r.skills
   const step = r.reviewModel ? reviewStep(pr) : STEPS[r.model || role]
-  return agent(skillStep ? withSkills(skillStep, pr, prompt, !!r.clone) : prompt, Object.assign(
+  const out = await agent(skillStep ? withSkills(skillStep, pr, prompt, !!r.clone) : prompt, Object.assign(
     { agentType: AGENT_PREFIX + r.agent, model: step.model, effort: step.effort, label, phase: r.phase },
     r.isolation ? { isolation: r.isolation } : {},
     extra))
+  if (pr && WRITERS.includes(role) && out && typeof out.worktree === 'string' && out.worktree.trim()) (worktreesOf[pr.id] = worktreesOf[pr.id] || new Set()).add(out.worktree.trim())
+  return out
 }
 
 const issueUrl = pr => `https://github.com/${REPO}/issues/${pr.quick.issue}`
@@ -154,7 +160,7 @@ const IMPL = {
   type: 'object',
   properties: {
     pushed: { type: 'boolean' }, branch: { type: 'string' }, headSha: { type: 'string' },
-    summary: { type: 'string' }, acceptanceTestPassed: { type: 'boolean' }, problems: { type: 'string' },
+    summary: { type: 'string' }, acceptanceTestPassed: { type: 'boolean' }, problems: { type: 'string' }, worktree: { type: 'string' },
   },
   required: ['pushed', 'branch', 'summary', 'acceptanceTestPassed'],
 }
@@ -267,7 +273,7 @@ const DOCS = {
   type: 'object',
   properties: {
     changed: { type: 'boolean' }, headSha: { type: 'string' }, summary: { type: 'string' },
-    files: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' },
+    files: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' }, worktree: { type: 'string' },
   },
   required: ['changed', 'summary'],
 }
@@ -291,15 +297,19 @@ const WAIT = {
 }
 const ANSWER = {
   type: 'object',
-  properties: { threadsAddressed: { type: 'number' }, codeChanged: { type: 'boolean' }, headSha: { type: 'string' }, closesIssues: { type: 'array', items: { type: 'number' } }, notes: { type: 'string' } },
+  properties: { threadsAddressed: { type: 'number' }, codeChanged: { type: 'boolean' }, headSha: { type: 'string' }, closesIssues: { type: 'array', items: { type: 'number' } }, notes: { type: 'string' }, worktree: { type: 'string' } },
   required: ['codeChanged'],
 }
 const LANDFIX = {
   type: 'object',
-  properties: { readyToMerge: { type: 'boolean' }, headSha: { type: 'string' }, notes: { type: 'string' } },
+  properties: { readyToMerge: { type: 'boolean' }, headSha: { type: 'string' }, notes: { type: 'string' }, worktree: { type: 'string' } },
   required: ['readyToMerge', 'notes'],
 }
 
+const FIX = {
+  type: 'object',
+  properties: { summary: { type: 'string' }, worktree: { type: 'string' } },
+}
 const SAFETY = {
   type: 'object',
   properties: { verdict: { type: 'string', enum: ['safe', 'person'] }, why: { type: 'string' } },
@@ -340,7 +350,7 @@ Task: implement this PR.
 2. Read ${SPEC ? `${SPEC}, ` : ''}${ref(pr)} and the code you will change.
 3. Checks: ${fastText}, and ${ownE2e}.
 4. Commit and \`git push -u origin ${pr.branch}\`.
-Return pushed, branch, headSha, a short summary, whether the acceptance test passed, and any problems or open questions.
+Return pushed, branch, headSha, a short summary, whether the acceptance test passed, any problems or open questions, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}`
 
@@ -393,7 +403,7 @@ const fixPrompt = (pr, test, findings, round) => `${ctx(pr)}
 Task: fix the branch after review round ${round}.
 1. You are in a fresh git worktree. ${freshBranch('fix', pr, round)}
 2. Checks: ${fastText}, and ${ownE2e}.
-Return a short summary of each fix, and any finding you disagree with and why.
+Return a short summary of each fix, any finding you disagree with and why, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}
 
@@ -411,7 +421,7 @@ Task: bring the docs in line with this PR. The code passed review at ${signedSha
 1. You are in a fresh git worktree. ${freshBranch('docs', pr, 0)}
 2. ${docsWhere}
 3. ${A.docsBuild ? `Build the docs site with \`${A.docsBuild}\`.` : 'If the repo has a docs site build command, run it.'} Checks: ${fastText}.
-Return changed, headSha (\`git rev-parse HEAD\` after your push), the files you changed, a short summary, and notes.
+Return changed, headSha (\`git rev-parse HEAD\` after your push), the files you changed, a short summary, notes, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}`
 
@@ -422,7 +432,7 @@ Task: fix the docs after docs check round ${round}. Change docs only.
 2. If \`git diff --stat ${signedSha || 'origin/HEAD'}..HEAD\` shows changes to code or tests, revert those parts: the code passed review at ${signedSha || 'the branch head'} and must stay as it was.
 3. Fix each finding and failing check below in the docs. If a finding says the code is wrong and the docs are right, do not change the code: say so in notes.
 4. Checks: ${fastText}.
-Return changed, headSha (\`git rev-parse HEAD\` after your push), the files you changed, a short summary, and notes.
+Return changed, headSha (\`git rev-parse HEAD\` after your push), the files you changed, a short summary, notes, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}
 
@@ -469,7 +479,7 @@ Task: answer the review bots on pull request #${n}.
 2. Reply on a thread with \`gh api repos/${REPO}/pulls/${n}/comments/<id>/replies -f body=...\`.
 3. Checks if you changed code: ${fastText}, and ${ownE2e}.
 4. Minor issues already filed from this PR's review: ${issues && issues.length ? issues.join(', ') : '(none)'}. If a fix of yours settles one, add \`Closes #N\` on its own line to the PR body (\`gh pr view ${n} -R ${REPO} --json body\`, then \`gh pr edit ${n} -R ${REPO} --body-file <file>\`), so it closes when the PR merges.
-Return threads addressed, whether code changed, headSha (\`git rev-parse HEAD\` after your last push), closesIssues (the issue numbers you added), and notes.
+Return threads addressed, whether code changed, headSha (\`git rev-parse HEAD\` after your last push), closesIssues (the issue numbers you added), notes, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}`
 
@@ -504,7 +514,7 @@ Task: bring PR #${pr.prNumber} (${pr.branch}) to a mergeable state with green CI
 2. Conflict: \`git merge origin/HEAD\`, then ${fastText}, and ${ownE2e}.
 3. CI: \`gh run view <run> -R ${REPO} --log-failed\`; rerun a flaky network failure with \`gh run rerun <run> --failed\`.
 4. Wait: \`gh pr checks ${pr.prNumber} -R ${REPO} --watch --interval 30\`.
-Return readyToMerge, headSha and notes.
+Return readyToMerge, headSha, notes and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}`
 
@@ -676,7 +686,7 @@ async function reviewLoop(pr, startRound, history, minors, archState) {
     log(`${pr.id} round ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (test.pass && blocking.length === 0) return { signedOff: true, headSha: test.headSha || review.headSha }
     if (round === startRound + max - 1) return { signedOff: false, reason: 'rounds exhausted', lastFindings: blocking, lastTest: test }
-    await call('fix', pr, fixPrompt(pr, test, blocking, round), `fix:${pr.id}#${round}`)
+    await call('fix', pr, fixPrompt(pr, test, blocking, round), `fix:${pr.id}#${round}`, { schema: FIX })
   }
 }
 
@@ -719,7 +729,7 @@ async function checkNewCode(pr, { tag, label, role, what, reviewPrompt }, histor
     if (test.pass && blocking.length === 0) return { ok: true, headSha: test.headSha || review.headSha }
     if (round === BOT_CHECK_ROUNDS) return { ok: false, reason: `${what}: rounds exhausted`, lastFindings: blocking }
     prior = blocking
-    await call('fix', pr, fixPrompt(pr, test, blocking, `${tag}${round}`), `fix:${pr.id}#${tag}${round}`)
+    await call('fix', pr, fixPrompt(pr, test, blocking, `${tag}${round}`), `fix:${pr.id}#${tag}${round}`, { schema: FIX })
   }
 }
 
@@ -847,7 +857,41 @@ async function evaluateWave(prs) {
   return { ...none, feedback: items, denylist }
 }
 
+const shq = text => "'" + String(text).replace(/'/g, "'\\''") + "'"
+const cleanupCommand = (...words) => `bash ${PLUGIN_ROOT}/scripts/cleanup.sh ${words.join(' ')}`
+// Every cleanup call is best effort: a failure becomes a line in the result and never stops a PR.
+async function cleanupRun(pr, command, label) {
+  try {
+    const io = await call('io', pr, ioPrompt(pr, command), `io:${pr ? pr.id : 'wave'}#cleanup${label}`, { phase: 'Cleanup', schema: IO })
+    if (!io) return [`${label}: pipeline-io failed`]
+    const lines = String(io.output).split('\n').map(l => l.trim()).filter(Boolean)
+    return io.exitCode === 0 ? lines : [`${label} failed (exit ${io.exitCode}): ${lines.join(' ')}`]
+  } catch (e) {
+    return [`${label} failed: ${e && e.message}`]
+  }
+}
+const cleanupReady = CLEANUP && !!PLUGIN_ROOT
+// False once init does not mark the folder, so no clones call can delete in a folder init refused.
+let clonesOn = cleanupReady
+async function cleanupPR(pr) {
+  if (!cleanupReady) return []
+  const lines = clonesOn ? await cleanupRun(pr, cleanupCommand('clones', shq(TMP), shq(pr.id)), 'clones') : []
+  const paths = [...(worktreesOf[pr.id] || [])]
+  if (paths.length) lines.push(...await cleanupRun(pr, cleanupCommand('worktrees', shq(REPO), ...paths.map(shq)), 'worktrees'))
+  return lines
+}
 async function runPR(input) {
+  let result = null
+  try {
+    result = await runPRSteps(input)
+  } finally {
+    const cleanup = await cleanupPR(input)
+    if (result && cleanup.length) result.cleanup = cleanup
+  }
+  return result
+}
+
+async function runPRSteps(input) {
   let pr = input
   let quickMinors = []
   let quickProduct = null
@@ -883,7 +927,7 @@ async function runPR(input) {
   const minors = (pr.resume ? pr.resume.minors || [] : []).concat(quickMinors)
   let impl = { problems: '' }
   if (pr.resume && (pr.resume.findings || []).length) {
-    await call('fix', pr, fixPrompt(pr, null, pr.resume.findings, history.length), `fix:${pr.id}#${history.length}`)
+    await call('fix', pr, fixPrompt(pr, null, pr.resume.findings, history.length), `fix:${pr.id}#${history.length}`, { schema: FIX })
   } else if (!pr.skipImpl && !pr.resume) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl }
@@ -920,6 +964,14 @@ async function runPR(input) {
   }
 }
 
+if (cleanupReady) {
+  const marked = await cleanupRun(null, cleanupCommand('init', shq(TMP)), 'init')
+  if (!marked.some(l => l.startsWith('MARKED'))) { clonesOn = false; log(`clones cleanup is off for this run: ${marked.join(' ')}`) }
+} else if (CLEANUP) log('cleanup skipped: pluginRoot missing')
+const finish = async result => {
+  if (clonesOn) result.cleanup = await cleanupRun(null, cleanupCommand('clones', shq(TMP), '--all'), 'all')
+  return result
+}
 const needsGoals = A.prs.some(pr => !pr.landFix)
 if (needsGoals) {
   const pre = await call('preflight', null, preflightPrompt(), 'preflight:goals', { schema: PREFLIGHT })
@@ -927,8 +979,8 @@ if (needsGoals) {
     const missing = pre ? pre.missing.join(', ') : 'the preflight agent did not answer'
     log(`refused: ${GOALS} is missing or incomplete (${missing})`)
     const refusals = A.prs.map(pr => ({ id: pr.id, ready: false, refused: true, reason: `goals document missing or incomplete: ${missing}. Write ${GOALS} with the write-goals skill (or from templates/goals.md) and run again.` }))
-    return { prs: refusals, ...(await evaluateWave(refusals)) }
+    return finish({ prs: refusals, ...(await evaluateWave(refusals)) })
   }
 }
 const prs = await parallel(A.prs.map(pr => () => runPR(pr)))
-return { prs, ...(await evaluateWave(prs)) }
+return finish({ prs, ...(await evaluateWave(prs)) })
