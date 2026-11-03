@@ -190,7 +190,9 @@ for (const [name, args] of [
   ['a risk of none', ['3', 'build', 'S', 'none', 'x']],
   ['a why of 501 characters', ['3', 'build', 'S', 'low', 'x'.repeat(501)]],
   ['a why with a newline', ['3', 'build', 'S', 'low', 'a\nb']],
-  ['an empty why', ['3', 'build', 'S', 'low', '']],
+  ['a why with a C1 control character', ['3', 'build', 'S', 'low', 'a\u0085b']],
+  ['a why with DEL', ['3', 'build', 'S', 'low', 'a\u007fb']],
+  ['an empty why',['3', 'build', 'S', 'low', '']],
   ['an issue that is not a number', ['3x', 'build', 'S', 'low', 'x']],
 ]) {
   test(`put refuses ${name} and logs no call`, () => {

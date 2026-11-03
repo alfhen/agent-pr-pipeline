@@ -53,7 +53,8 @@ if [ "$cmd" = put ]; then
   case "$size" in S|M|L) ;; *) die 64 "size must be S, M or L" ;; esac
   case "$risk" in low|medium|high) ;; *) die 64 "risk must be low, medium or high" ;; esac
   [ -n "$why" ] || die 64 "why is empty"
-  [[ $why =~ [[:cntrl:]] ]] && die 64 "why holds a control character"
+  # Cc includes the C1 controls, which are multibyte and slip past [[:cntrl:]] in the C locale.
+  jq -en --arg w "$why" '$w | test("\\p{Cc}") | not' >/dev/null || die 64 "why holds a control character"
   [ "$(jq -n --arg w "$why" '$w | length')" -le 500 ] || die 64 "why is longer than 500 characters"
   if [ "$in_guard" = 1 ]; then
     [ "$(tr -d '[:space:]' < "$guard/mode" 2>/dev/null)" = triage ] || die 65 "put needs the mode triage"
