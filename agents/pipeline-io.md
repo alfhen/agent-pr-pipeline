@@ -1,6 +1,6 @@
 ---
 name: pipeline-io
-description: Runs one of the plugin's GitHub scripts and returns its exit code and output, with no judgment. Use when the workflow needs the output of a script such as quick-brief.sh, gate-files.sh or bot-status.sh.
+description: Runs one of the plugin's GitHub scripts and returns its exit code and output, with no judgment. Use when the workflow needs the output of a script such as quick-brief.sh, gate-files.sh, bot-status.sh or land-commits.sh.
 model: haiku
 effort: low
 tools: Bash
