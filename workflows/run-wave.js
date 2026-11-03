@@ -817,7 +817,7 @@ ${JSON.stringify(items)}`
 // Paths the evaluator may not list: finding files, docs files and branch names from the results, and every suffix of two or more segments.
 const denylistFor = (changedPaths, results) => {
   const [owner, name] = REPO.split('/')
-  const files = results.flatMap(r => [...(r.lastFindings || []), ...(r.lateMinors || [])].map(f => f && f.file).concat((r.docs && r.docs.files) || []))
+  const files = results.filter(Boolean).flatMap(r => [...(r.lastFindings || []), ...(r.lateMinors || [])].map(f => f && f.file).concat((r.docs && r.docs.files) || []))
   const branches = A.prs.map(pr => pr.branch)
   const suffixes = path => {
     const parts = String(path).split('/')
@@ -838,7 +838,7 @@ async function evaluateWave(prs) {
   let items = evaluation.items || []
   if (REPO === FEEDBACK_REPO) return { ...none, feedback: items }
   const changedPaths = evaluation.changedPaths || []
-  if (!changedPaths.length && prs.some(pr => pr.prNumber)) log('evaluation returned no changed paths for a wave with PR numbers: the denylist has no paths')
+  if (!changedPaths.length && prs.some(pr => pr && pr.prNumber)) log('evaluation returned no changed paths for a wave with PR numbers: the denylist has no paths')
   const denylist = denylistFor(changedPaths, prs)
   if (items.length) {
     const redacted = await call('redact', null, redactPrompt(items), 'redact:wave', { schema: REDACTION })

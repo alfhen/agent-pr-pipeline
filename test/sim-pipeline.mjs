@@ -988,3 +988,12 @@ await check('the denylist holds finding files, docs files, branches and path suf
   await simulate({ ...base, prs: only('C1', 'P1') })
   assert.ok(!logs.some(m => /no changed paths/.test(m)))
 })
+await check('a PR whose run throws is null in the result, and the other PRs and the evaluator still run', async () => {
+  calls = []
+  preflight = GOOD
+  const out = await run({ ...base, prs: only('C1', 'C2') }, async (p, o) => { if (o.label === 'implement:C1') throw new Error('boom'); return agent(p, o) }, parallel, log)
+  assert.equal(out.prs[0], null)
+  assert.equal(out.prs[1].id, 'C2')
+  assert.ok(out.denylist.includes('b1'))
+  assert.ok(calls.some(c => c.label === 'evaluate:wave'))
+})
