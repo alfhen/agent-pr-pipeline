@@ -17,7 +17,7 @@ The routine is an hourly job on the maintainer's Mac. It reads the open `pipelin
 
 ## What the session can read
 
-The settings allow `Read`, `Glob` and `Grep` only for paths inside the work clone. `install.sh` writes the real clone path into the rules, for example `Read(//Users/me/.agent-pr-pipeline/work/o-r/clone/**)`. The path is the same string that `run.sh` puts in the prompt. The rules sit in `allow` only: Edit, Write and the `Bash` rule for `git` stay denied.
+The settings allow one rule, `Read`, only for paths inside the work clone. Claude Code applies a `Read` rule to all file-reading tools, so it covers `Read`, `Glob` and `Grep`. Claude Code does not match rules of the form `Glob(path)` or `Grep(path)`, so the settings hold none. `install.sh` writes the real clone path into the rules, for example `Read(//Users/me/.agent-pr-pipeline/work/o-r/clone/**)`. The path is the same string that `run.sh` puts in the prompt. The rules sit in `allow` only: Edit, Write and the `Bash` rule for `git` stay denied.
 
 The routine allows no Bash command that lists or reads files, such as `ls`, `find`, `cat` or `grep`. A rule for them would reach outside the clone. The prompt tells the triager to use the Read, Glob and Grep tools.
 
@@ -103,7 +103,7 @@ A record is a comment on the tracking issue (the open issue with the label `pipe
 ## Limits to know
 
 - **One identity, so the guards are advisory.** The routine acts as the maintainer's account. The settings files and the read-only `gh` wrapper catch mistakes. A session that calls the real `gh` by its full path is denied by the `dontAsk` allow list, not by GitHub. The one write path, `routine-state.sh put`, checks every record in code and does only the actions its decision names.
-- **A subagent's permissions.** The routine expects the `triager` agent to run under the session's `dontAsk` rules. Check this on the Claude Code version you use. A live run has not yet confirmed that the Read, Glob and Grep calls of the triager in the clone are accepted: check the log for refusals.
+- **A subagent's permissions.** The routine expects the `triager` agent to run under the session's `dontAsk` rules. In a live run on Claude Code (2026-11-03), the triager subagent read files in the clone under the session's `dontAsk` rules with no refusal. Check this again after a Claude Code update.
 - **Triage closes issues.** In `triage` mode a `decline` closes an issue with a comment. The maintainer can reopen it. The record stays, so the routine does not triage it again until the maintainer deletes the record.
 - **Two triage records for a build.** A `quick` wave runs its own triager. In 0.4.0 the two records do not read each other.
 - **Cost.** A run with nothing new to triage starts no session, and a run triages at most five issues.

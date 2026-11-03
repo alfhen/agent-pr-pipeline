@@ -334,7 +334,7 @@ test('each settings file is valid JSON with an allow list and a deny list, and n
       assert.ok(deny.includes(bad), `${name} does not deny ${bad}`)
     }
     assert.ok(deny.includes('Bash(git *)'))
-    assert.deepEqual(allow.filter(r => /^(Read|Glob|Grep)(\(|$)/.test(r)).sort(), ['Glob', 'Grep', 'Read'].map(t => `${t}(//${CLONE_RULE_PATH}/**)`), `${name}: Read, Glob and Grep rules are anchored at the clone and no others`)
+    assert.deepEqual(allow.filter(r => /^(Read|Glob|Grep)(\(|$)/.test(r)), [`Read(//${CLONE_RULE_PATH}/**)`], `${name}: one Read rule anchored at the clone, no Glob or Grep rule`)
     for (const t of ['Read', 'Glob', 'Grep']) assert.ok(!deny.some(r => r.startsWith(t)), `${name} denies ${t}`)
     assert.ok(!allow.some(r => /^Bash\((git|gh|routine-state\.sh)[ )]/.test(r)), 'Bash rules name files by absolute path')
     assert.ok(allow.filter(r => r.startsWith('Bash(')).every(r => r.startsWith(`Bash(${G}/plugin/`)))
@@ -432,12 +432,20 @@ for (const mode of ['observe', 'triage']) {
   })
 }
 
+test('the triage prompt holds a worked example of the four one-for-one replacements', () => {
+  const s = setup({ mode: 'triage' }); runIt(s)
+  const p = promptOf(s)
+  assert.ok(p.includes('`src/count.mjs` splits on "\\n" and `wc -l` costs $0 for stable formats.'))
+  assert.ok(p.includes(`"'src/count.mjs' splits on '/n' and 'wc -l' costs S0 for stable formats."`))
+  assert.match(p, /drop no character, add no character, keep every word/)
+})
+
 test('the triage prompt names the four replacements for the why and says nothing else is changed', () => {
   const s = setup({ mode: 'triage' }); runIt(s)
   const p = promptOf(s)
   assert.match(p, /word for word as the triager returned it/)
   assert.match(p, /Change only these characters: each `"` becomes `'`, each `\$` becomes `S`, each `` ` `` becomes `'` and each `\\` becomes `\/`\./)
-  assert.match(p, /Replace each line break with a space\. Do not shorten, reword or change anything else/)
+  assert.match(p, /Replace each line break with a space\. Change nothing else/)
 })
 
 test('only the triage prompt holds a put command, and observe tells the session to write the record as text', () => {
@@ -562,12 +570,9 @@ test('a home reached through a symlink gives a prompt whose command lines match 
   assert.ok(prompt.includes(`Your clone of the repo is ${clone}.`), 'the prompt names the real clone path')
   for (const mode of ['observe', 'triage']) {
     const allow = JSON.parse(readFileSync(join(guard, 'plugin/routine/settings', `${mode}.json`), 'utf8')).permissions.allow
-    for (const t of ['Read', 'Glob', 'Grep']) {
-      assert.ok(allow.includes(`${t}(/${clone}/**)`), `${mode}: ${t} rule equals the clone in the prompt`)
-      const rule = allow.find(r => r.startsWith(`${t}(`))
-      const path = rule.slice(t.length + 1, -1).replace(/\*\*$/, '')
-      assert.ok(`${clone}/a/b`.startsWith(path.slice(1)) && !`${real}/elsewhere`.startsWith(path.slice(1)), `${mode}: ${t} rule matches inside the clone only`)
-    }
+    assert.ok(allow.includes(`Read(/${clone}/**)`), `${mode}: Read rule equals the clone in the prompt`)
+    const path = allow.find(r => r.startsWith('Read(')).slice(5, -1).replace(/\*\*$/, '')
+    assert.ok(`${clone}/a/b`.startsWith(path.slice(1)) && !`${real}/elsewhere`.startsWith(path.slice(1)), `${mode}: Read rule matches inside the clone only`)
     const rules = allow.filter(x => x.startsWith('Bash(')).map(x => x.slice(5, -1))
     for (const c of cmds.filter(c => mode === 'triage' || !/ put /.test(c))) assert.ok(rules.some(x => matches(x, fillPlaceholders(c))), `${mode}: ${c} matches no installed allow rule`)
   }
@@ -666,7 +671,7 @@ test('install.sh refuses a minute outside 0 to 59, a non-number, an empty list a
   assert.equal(installSetup().run('o/r', '--minutes').status, 64)
 })
 
-test('install.sh fills the Read, Glob and Grep rules with the absolute clone path in both settings files', () => {
+test('install.sh fills the Read rule with the absolute clone path in both settings files', () => {
   const i = installSetup()
   assert.equal(i.run('o/r').status, 0)
   const clone = join(i.home, 'work/o-r/clone')
@@ -674,8 +679,8 @@ test('install.sh fills the Read, Glob and Grep rules with the absolute clone pat
     const text = readFileSync(join(i.guard, 'plugin/routine/settings', `${mode}.json`), 'utf8')
     assert.ok(!text.includes('CLONE'))
     const allow = JSON.parse(text).permissions.allow
-    for (const t of ['Read', 'Glob', 'Grep']) assert.ok(allow.includes(`${t}(/${clone}/**)`), `${mode} ${t}`)
-    assert.deepEqual(allow.filter(r => /^(Read|Glob|Grep)\(/.test(r)).length, 3)
+    assert.ok(allow.includes(`Read(/${clone}/**)`), `${mode} Read`)
+    assert.equal(allow.filter(r => /^(Read|Glob|Grep)\(/.test(r)).length, 1)
   }
 })
 

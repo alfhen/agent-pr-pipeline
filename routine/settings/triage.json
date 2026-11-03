@@ -5,8 +5,6 @@
       "Bash(GUARD/plugin/scripts/routine-state.sh OWNER/REPO next)",
       "Bash(GUARD/plugin/scripts/routine-state.sh OWNER/REPO put triaged *)",
       "Read(//CLONE/**)",
-      "Glob(//CLONE/**)",
-      "Grep(//CLONE/**)",
       "Agent(triager)",
       "Agent(agent-pr-pipeline:triager)"
     ],

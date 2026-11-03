@@ -68,7 +68,7 @@ if [ -d "$guard/lock" ]; then echo "install.sh: a run holds $guard/lock; try aga
 mkdir -p "$guard/logs" "$home/work/$slug" "$HOME/Library/LaunchAgents"
 # run.sh fills its own pwd -P guard path into the prompt; the allow rules must carry the same string.
 guard=$(cd "$guard" && pwd -P)
-# The same string run.sh puts in the prompt as the clone; the Read, Glob and Grep rules name it without the leading /.
+# The same string run.sh puts in the prompt as the clone; the Read rule names it without the leading /.
 clone="$(cd "$guard/../.." && pwd -P)/work/$slug/clone"
 
 if [ -e "$guard/plugin" ]; then chmod -R u+w "$guard/plugin"; rm -rf "$guard/plugin"; fi
