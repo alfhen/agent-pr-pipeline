@@ -437,6 +437,24 @@ test('the prompt template has a put block and an observe block, so the checks ab
   assert.match(raw, /^\[\[observe\]\]$[\s\S]*RECORD issue[\s\S]*^\[\[\/observe\]\]$/m)
 })
 
+for (const mode of ['observe', 'triage']) {
+  test(`${mode} prompt tells the triager to read the issue comments, by an allowed command`, () => {
+    const s = setup({ mode })
+    runIt(s)
+    const line = `${s.guard}/plugin/routine/bin/gh api --paginate repos/o/r/issues/<issue number>/comments`
+    assert.ok(commandLines(promptOf(s)).includes(line))
+    assert.ok(bashAllow(s, mode).some(r => matches(r, fillPlaceholders(line))), `${mode}: no allow rule`)
+    assert.ok(commandLines(promptOf(s)).includes(`${s.guard}/plugin/routine/bin/gh api user`))
+  })
+}
+
+test('the triager agent names the comments path and the maintainer-account rule', () => {
+  const t = readFileSync(join(root, 'agents/triager.md'), 'utf8')
+  assert.match(t, /issues\/<n>\/comments/)
+  assert.match(t, /Comments by the account `gh api user` returns count as part of the issue/)
+  assert.match(t, /<!-- pipeline:/)
+})
+
 test('the triager agent is told to use a ready clone and a gh path', () => {
   assert.match(readFileSync(join(root, 'agents/triager.md'), 'utf8'), /ready clone and a `gh` path, read that clone, make no clone/)
 })
