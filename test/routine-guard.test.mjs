@@ -34,7 +34,7 @@ function setup({ mode = 'observe', repoFile = 'o/r', next = '{"step":"triage","i
   chmodSync(state, 0o755)
   writeFileSync(join(dir, 'next.out'), next); writeFileSync(join(dir, 'next.rc'), String(nextRc))
   const claude = join(bin, 'claude')
-  writeFileSync(claude, `#!/bin/bash\nprintf '%s\\n' "$@" > "${dir}/claude.args"\necho "$PATH" > "${dir}/claude.path"\necho started >> "${dir}/claude.log"\necho session-output\nexit $(cat "${dir}/claude.rc" 2>/dev/null || echo 0)\n`)
+  writeFileSync(claude, `#!/bin/bash\nprintf '%s\\n' "$@" > "${dir}/claude.args"\necho "$PATH" > "${dir}/claude.path"\nprintf '%s' "$2" > "${dir}/claude.prompt"\necho started >> "${dir}/claude.log"\necho session-output\nexit $(cat "${dir}/claude.rc" 2>/dev/null || echo 0)\n`)
   chmodSync(claude, 0o755)
 
   const origin = join(dir, 'origin.git'); const seed = join(dir, 'seed')
@@ -384,40 +384,140 @@ test('the matcher itself tells a match from a miss', () => {
   assert.ok(matches('a.b (x)', 'a.b (x)'))
 })
 
+// ---- the prompt ----
+
+const promptOf = s => readFileSync(join(s.dir, 'claude.prompt'), 'utf8')
+const settingsOf = (s, mode) => JSON.parse(readFileSync(join(s.plugin, 'routine/settings', `${mode}.json`), 'utf8').replaceAll('GUARD', s.guard))
+const bashAllow = (s, mode) => settingsOf(s, mode).permissions.allow.filter(r => r.startsWith('Bash(')).map(r => r.slice(5, -1))
+const commandLines = p => p.split('\n').filter(l => /^ {4,}\S/.test(l)).map(l => l.trim()).filter(l => l.startsWith('/'))
+const fillPlaceholders = (c, s) => c.replace(/<[^>]+>/g, '1').replace(/"1"/, '"why"')
+
+test('run.sh passes the prompt with the guard path, the repo, the clone and the mode filled in', () => {
+  const s = setup({ mode: 'triage' })
+  runIt(s)
+  const p = promptOf(s)
+  assert.ok(p.includes(`${s.guard}/plugin/scripts/routine-state.sh o/r next`))
+  assert.ok(p.includes(join(s.work, 'clone')))
+  assert.match(p, /The mode is triage/)
+  assert.doesNotMatch(p, /\{\{|\[\[/)
+  assert.match(p, /untrusted/)
+})
+
+for (const mode of ['observe', 'triage']) {
+  test(`${mode} prompt names routine-state.sh and the wrapper only by guard path, and every command line is allowed`, () => {
+    const s = setup({ mode })
+    runIt(s)
+    const p = promptOf(s)
+    for (const m of p.matchAll(/(\S*)routine-state\.sh/g)) assert.equal(m[1], `${s.guard}/plugin/scripts/`, 'routine-state.sh by absolute guard path')
+    for (const m of p.matchAll(/(\S*)\bgh\b/g)) assert.equal(m[1], `${s.guard}/plugin/routine/bin/`, 'the wrapper by absolute guard path')
+    assert.doesNotMatch(p, /(^|[^/\w-])gh /m, 'no bare gh command')
+    const cmds = commandLines(p)
+    assert.ok(cmds.length >= 2)
+    for (const c of cmds) {
+      const cmd = fillPlaceholders(c)
+      assert.ok(bashAllow(s, mode).some(r => matches(r, cmd)), `${mode}: ${cmd} matches no allow rule`)
+    }
+    assert.doesNotMatch(p, /routine-state\.sh \S+ (init|put (?!triaged))/)
+    assert.doesNotMatch(p, /\bgit (push|commit|clone)/)
+  })
+}
+
+test('only the triage prompt holds a put command, and observe tells the session to write the record as text', () => {
+  const o = setup({ mode: 'observe' }); runIt(o)
+  const t = setup({ mode: 'triage' }); runIt(t)
+  assert.doesNotMatch(promptOf(o), /put triaged/)
+  assert.match(promptOf(o), /RECORD issue/)
+  assert.equal(commandLines(promptOf(t)).filter(c => c.includes(' put triaged ')).length, 1)
+  assert.doesNotMatch(promptOf(t), /RECORD issue/)
+})
+
+test('the prompt template has a put block and an observe block, so the checks above can fail', () => {
+  const raw = readFileSync(join(root, 'routine/prompt.md'), 'utf8')
+  assert.match(raw, /^\[\[triage\]\]$[\s\S]*put triaged[\s\S]*^\[\[\/triage\]\]$/m)
+  assert.match(raw, /^\[\[observe\]\]$[\s\S]*RECORD issue[\s\S]*^\[\[\/observe\]\]$/m)
+})
+
+test('the triager agent is told to use a ready clone and a gh path', () => {
+  assert.match(readFileSync(join(root, 'agents/triager.md'), 'utf8'), /ready clone and a `gh` path, read that clone, make no clone/)
+})
+
 // ---- the installer ----
 
-test('install.sh builds the guard folder with the literal repo and keeps the mode', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'routine-install-test-'))
-  const home = join(dir, 'home')
-  const cbin = join(dir, 'claude-bin'); mkdirSync(cbin)
+// A copy of the plugin whose routine-state.sh is a stub that records how it was called.
+function installSetup() {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'routine-install-test-')))
+  const src = join(dir, 'src'); const home = join(dir, 'home'); const cbin = join(dir, 'claude-bin')
+  mkdirSync(src); mkdirSync(cbin)
+  for (const d of ['.claude-plugin', 'agents', 'skills', 'scripts', 'routine', 'templates', 'workflows']) cpSync(join(root, d), join(src, d), { recursive: true })
+  const log = join(dir, 'state.log')
+  writeFileSync(join(src, 'scripts/routine-state.sh'), `#!/bin/bash\necho "$0 $*" >> "${log}"\nif [ -e "${home}/routine/o-r/repo" ]; then echo "repo file existed" >> "${log}"; fi\nexit $(cat "${dir}/init.rc" 2>/dev/null || echo 0)\n`)
+  chmodSync(join(src, 'scripts/routine-state.sh'), 0o755)
   writeFileSync(join(cbin, 'claude'), '#!/bin/sh\n'); chmodSync(join(cbin, 'claude'), 0o755)
-  const path = `${cbin}:${process.env.PATH}`
-  const run = () => spawnSync('bash', [join(root, 'routine/install.sh'), 'o/r'], { env: { ...process.env, PATH: path, AGENT_PR_PIPELINE_HOME: home, HOME: dir }, encoding: 'utf8' })
-  let r = run()
+  const run = (...args) => spawnSync('bash', [join(src, 'routine/install.sh'), ...args], { env: { ...process.env, PATH: `${cbin}:${process.env.PATH}`, AGENT_PR_PIPELINE_HOME: home, HOME: dir }, encoding: 'utf8' })
+  return { dir, src, home, cbin, log, run, guard: join(home, 'routine/o-r'), plist: join(dir, 'Library/LaunchAgents/com.agent-pr-pipeline.routine.o-r.plist') }
+}
+
+test('install.sh builds the guard folder with the literal repo and keeps the mode', () => {
+  const i = installSetup()
+  let r = i.run('o/r')
   assert.equal(r.status, 0, r.stderr)
-  const guard = join(home, 'routine/o-r')
+  const { guard } = i
   assert.equal(readFileSync(join(guard, 'repo'), 'utf8').trim(), 'o/r')
   assert.equal(readFileSync(join(guard, 'mode'), 'utf8').trim(), 'observe')
   const triage = readFileSync(join(guard, 'plugin/routine/settings/triage.json'), 'utf8')
   assert.ok(triage.includes(`${guard}/plugin/scripts/routine-state.sh o/r put triaged *`))
   assert.ok(!triage.includes('GUARD'))
   assert.ok(!triage.includes('OWNER/REPO'))
-  assert.ok(existsSync(join(guard, 'plugin/scripts/routine-state.sh')))
-  const plist = readFileSync(join(guard, 'launchd.plist'), 'utf8')
+  assert.ok(existsSync(join(guard, 'plugin/routine/prompt.md')))
+  const plist = readFileSync(i.plist, 'utf8')
   assert.ok(plist.includes(`${guard}/plugin/routine/run.sh`))
   assert.ok(plist.includes('com.agent-pr-pipeline.routine.o-r'))
-  assert.ok(plist.includes(`<string>${cbin}:`), 'the plist PATH starts with the folder of the claude found at install')
+  assert.ok(plist.includes(`<string>${i.cbin}:`), 'the plist PATH starts with the folder of the claude found at install')
   assert.ok(!plist.includes('CLAUDE_DIR'))
-  assert.ok(!existsSync(join(dir, 'Library')), 'nothing is written to LaunchAgents')
   assert.ok(!writable(join(guard, 'plugin/routine/run.sh')))
+  assert.match(r.stdout, /launchctl bootstrap/)
+  assert.match(r.stdout, /launchctl bootout/)
 
   chmodSync(join(guard, 'mode'), 0o644); writeFileSync(join(guard, 'mode'), 'triage\n')
-  r = run()
+  r = i.run('o/r')
   assert.equal(r.status, 0, r.stderr)
   assert.equal(readFileSync(join(guard, 'mode'), 'utf8').trim(), 'triage', 'a second install keeps the mode')
 
-  r = spawnSync('bash', [join(root, 'routine/install.sh'), 'not a repo'], { env: { ...process.env, AGENT_PR_PIPELINE_HOME: home }, encoding: 'utf8' })
+  r = spawnSync('bash', [join(i.src, 'routine/install.sh'), 'not a repo'], { env: { ...process.env, AGENT_PR_PIPELINE_HOME: i.home }, encoding: 'utf8' })
   assert.equal(r.status, 64)
+})
+
+test('install.sh runs init with the source plugin script, never the guard copy, and before the repo file exists', () => {
+  const i = installSetup()
+  assert.equal(i.run('o/r').status, 0)
+  const calls = lines(i.log)
+  assert.deepEqual(calls, [`${i.src}/scripts/routine-state.sh o/r init`])
+  assert.ok(!calls.some(c => c.includes(i.guard)), 'the guard copy is not used')
+  assert.ok(existsSync(join(i.guard, 'repo')))
+})
+
+test('a failed init stops the install and writes nothing', () => {
+  const i = installSetup()
+  writeFileSync(join(i.dir, 'init.rc'), '1')
+  const r = i.run('o/r')
+  assert.equal(r.status, 1)
+  assert.match(r.stderr, /init failed/)
+  assert.ok(!existsSync(i.guard))
+  assert.ok(!existsSync(i.plist))
+})
+
+test('install.sh --print writes nothing, calls nothing, and names the plist and minute 7', () => {
+  const i = installSetup()
+  const r = i.run('--print', 'o/r')
+  assert.equal(r.status, 0, r.stderr)
+  assert.ok(!existsSync(join(i.dir, 'Library')))
+  assert.ok(!existsSync(i.home))
+  assert.ok(!existsSync(i.log), 'init was not run')
+  assert.ok(r.stdout.includes(i.plist))
+  assert.match(r.stdout, /Library\/LaunchAgents\/.*\.plist/)
+  assert.match(r.stdout, /minute 7/)
+  const plist = readFileSync(join(root, 'routine/launchd.plist'), 'utf8')
+  assert.match(plist, /<key>Minute<\/key>\s*<integer>7<\/integer>/)
 })
 
 test('install.sh refuses when claude is not on PATH', () => {

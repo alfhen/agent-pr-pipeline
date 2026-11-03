@@ -93,11 +93,17 @@ if [ "$mode" = observe ]; then
 fi
 
 prompt_file="$plugin/routine/prompt.md"
-if [ -f "$prompt_file" ]; then
-  prompt=$(cat "$prompt_file")
-else
-  prompt="Run $plugin/scripts/routine-state.sh $repo next and say what you would do for each issue. Change nothing."
-fi
+[ -f "$prompt_file" ] || { log "$prompt_file is missing; no session"; exit 1; }
+# One prompt per mode: the other mode's block is dropped, so an observe session never sees the put command.
+# The guard path and the repo are filled in because the allow rules match absolute command lines only.
+prompt=$(awk -v mode="$mode" '
+  /^\[\[(triage|observe)\]\]$/ { skip = ($0 != "[[" mode "]]"); next }
+  /^\[\[\/(triage|observe)\]\]$/ { skip = 0; next }
+  !skip' "$prompt_file")
+prompt=${prompt//\{\{guard\}\}/$guard}
+prompt=${prompt//\{\{repo\}\}/$repo}
+prompt=${prompt//\{\{clone\}\}/$clone}
+prompt=${prompt//\{\{mode\}\}/$mode}
 
 log "starting session"
 PATH="$plugin/routine/bin:$PATH" claude -p "$prompt" \
