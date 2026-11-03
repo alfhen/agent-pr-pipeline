@@ -496,6 +496,36 @@ test('install.sh runs init with the source plugin script, never the guard copy, 
   assert.ok(existsSync(join(i.guard, 'repo')))
 })
 
+test('a home reached through a symlink gives a prompt whose command lines match the installed allow rules', () => {
+  const i = installSetup()
+  const real = join(i.dir, 'real'); const link = join(i.dir, 'link')
+  mkdirSync(real); symlinkSync(real, link)
+  const home = join(link, 'home')
+  writeFileSync(join(i.src, 'scripts/routine-state.sh'), '#!/bin/bash\n[ "$2" = next ] && echo \'{"step":"triage","issues":[7]}\'\nexit 0\n')
+  chmodSync(join(i.src, 'scripts/routine-state.sh'), 0o755)
+  writeFileSync(join(i.cbin, 'claude'), `#!/bin/bash\nprintf '%s' "$2" > "${i.dir}/claude.prompt"\n`)
+  const guard = join(realpathSync(real), 'home/routine/o-r')
+  const env = { ...process.env, PATH: `${i.cbin}:${process.env.PATH}`, AGENT_PR_PIPELINE_HOME: home, HOME: i.dir }
+  delete env.CLAUDECODE
+  let r = spawnSync('bash', [join(i.src, 'routine/install.sh'), 'o/r'], { env, encoding: 'utf8' })
+  assert.equal(r.status, 0, r.stderr)
+  assert.ok(r.stdout.includes(guard), 'the printed paths are resolved')
+  const git = (cwd, ...a) => { const g = spawnSync('git', a, { cwd, encoding: 'utf8' }); assert.equal(g.status, 0, g.stderr) }
+  const origin = join(i.dir, 'origin.git'); const seed = join(i.dir, 'seed')
+  git(i.dir, 'init', '--bare', '-b', 'main', origin); git(i.dir, 'init', '-b', 'main', seed)
+  writeFileSync(join(seed, 'a.txt'), 'a'); git(seed, 'add', '.')
+  git(seed, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'one'); git(seed, 'push', origin, 'main')
+  git(i.dir, 'clone', origin, join(real, 'home/work/o-r/clone'))
+  r = spawnSync('bash', [join(home, 'routine/o-r/plugin/routine/run.sh')], { env, encoding: 'utf8' })
+  assert.equal(r.status, 0, r.stderr)
+  const cmds = commandLines(readFileSync(join(i.dir, 'claude.prompt'), 'utf8'))
+  assert.ok(cmds.length >= 2)
+  for (const mode of ['observe', 'triage']) {
+    const rules = JSON.parse(readFileSync(join(guard, 'plugin/routine/settings', `${mode}.json`), 'utf8')).permissions.allow.filter(x => x.startsWith('Bash(')).map(x => x.slice(5, -1))
+    for (const c of cmds.filter(c => mode === 'triage' || !/ put /.test(c))) assert.ok(rules.some(x => matches(x, fillPlaceholders(c))), `${mode}: ${c} matches no installed allow rule`)
+  }
+})
+
 test('a failed init stops the install and writes nothing', () => {
   const i = installSetup()
   writeFileSync(join(i.dir, 'init.rc'), '1')
