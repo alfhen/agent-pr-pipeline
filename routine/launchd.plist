@@ -9,10 +9,9 @@
     <string>GUARD/plugin/routine/run.sh</string>
   </array>
   <key>StartCalendarInterval</key>
-  <dict>
-    <key>Minute</key>
-    <integer>7</integer>
-  </dict>
+  <array>
+MINUTES
+  </array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
