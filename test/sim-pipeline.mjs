@@ -601,6 +601,9 @@ await check('quick: the goals path reaches the triager and the entry check', () 
   assert.match(forPr('QM', /^triage/)[0].prompt, /docs\/goals\.md/)
   assert.match(forPr('QM', /^product/)[0].prompt, /docs\/goals\.md/)
 })
+await check('quick: the triage prompt names the issue comments path', () => {
+  assert.match(forPr('QM', /^triage/)[0].prompt, /repos\/o\/r\/issues\/42\/comments/)
+})
 await check('quick: pluginRoot reaches every pipeline-io prompt, which names the script and the plugin folder rule', () => {
   const io = quickCalls.filter(c => /^io:[^#]*#(get|put)$/.test(c.label))
   assert.ok(io.length > 0)
