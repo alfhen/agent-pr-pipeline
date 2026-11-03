@@ -1,0 +1,200 @@
+// Runs land-wave.sh (known flakes), check-version.sh and the gates for routine/** on fixtures.
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+const root = new URL('../', import.meta.url).pathname
+const FX = join(root, 'test/fixtures/land')
+const SHA = 'a'.repeat(40)
+const P = 'repos__o__r'
+const PULL = `${P}__pulls__7`
+const CONTENTS = `${P}__contents__.github__pipeline.json`
+const put = (fx, name, v) => writeFileSync(join(fx, name), typeof v === 'string' ? v : JSON.stringify(v))
+const fixture = (name) => readFileSync(join(FX, name), 'utf8')
+
+const run = (s, script, args, env = {}) => {
+  const e = { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log, PIPELINE_TEST_FAST: '1', ...env }
+  delete e.CLAUDECODE
+  const r = spawnSync('bash', [join(root, 'scripts', script), ...args], { env: e, encoding: 'utf8' })
+  const log = existsSync(s.log) ? readFileSync(s.log, 'utf8').split('\n').filter(Boolean) : []
+  return { code: r.status, out: r.stdout + r.stderr, log }
+}
+const reruns = (r) => r.log.filter((l) => /^POST .*rerun-failed-jobs/.test(l))
+
+const base = () => {
+  const dir = mkdtempSync(join(tmpdir(), 'land-test-'))
+  const bin = join(dir, 'bin'); const fx = join(dir, 'fx')
+  mkdirSync(bin); mkdirSync(fx)
+  copyFileSync(join(root, 'test/fake-gh'), join(bin, 'gh')); chmodSync(join(bin, 'gh'), 0o755)
+  put(fx, `${P}.json`, { default_branch: 'main' })
+  return { dir, bin, fx, log: join(dir, 'log') }
+}
+
+const failed = (name, runId = 55) => ({ name, status: 'completed', conclusion: 'failure', details_url: `https://github.com/o/r/actions/runs/${runId}/job/9` })
+const passed = (name) => ({ name, status: 'completed', conclusion: 'success' })
+
+// checks: one check-run list per read of the check-runs path (the last repeats).
+const landSetup = ({ checks, settings = 'flake', onHead = null, attempt = 1 }) => {
+  const s = base()
+  const { fx } = s
+  put(fx, `${PULL}.json`, { merged: false, mergeable: true, head: { sha: SHA, ref: 'feat/x', repo: { full_name: 'o/r' } } })
+  put(fx, 'pull-merged.json', { merged: true, head: { sha: SHA, ref: 'feat/x', repo: { full_name: 'o/r' } } })
+  put(fx, `${PULL}__merge.PUT.then`, `pull-merged.json ${PULL}.json\n`)
+  put(fx, `${PULL}__merge.PUT.json`, { merged: true })
+  checks.forEach((c, i) => put(fx, `${P}__commits__${SHA}__check-runs.call${i + 1}.json`, { check_runs: c }))
+  put(fx, `${P}__commits__${SHA}__status.json`, { state: 'success', statuses: [] })
+  put(fx, `${P}__actions__runs__55.json`, { run_attempt: attempt })
+  put(fx, `${CONTENTS}@ref=main.json`, fixture(`pipeline-${settings}.json`))
+  if (onHead) put(fx, `${CONTENTS}@ref=${SHA}.json`, fixture(`pipeline-${onHead}.json`))
+  put(fx, `${PULL}__reviews.json`, [{ id: 1, user: { login: 'gitar-bot[bot]' }, state: 'APPROVED', body: '', commit_id: SHA, submitted_at: '2026-01-01T10:00:00Z' }])
+  put(fx, `${PULL}__comments.json`, [])
+  return s
+}
+const land = (s) => run(s, 'land-wave.sh', ['o/r', `7:${SHA}`])
+
+test('land: a known flake that passes after one rerun merges', () => {
+  const r = land(landSetup({ checks: [[failed('e2e')], [failed('e2e')], [passed('e2e')]] }))
+  assert.equal(r.code, 0, r.out)
+  assert.equal(reruns(r).length, 1)
+  assert.match(r.out, /all merged/)
+  assert.equal(r.log.filter((l) => /^PUT .*\/pulls\/7\/merge/.test(l)).length, 1)
+})
+
+test('land: a head that moves during the rerun wait stops with HEAD MOVED', () => {
+  const s = landSetup({ checks: [[failed('e2e')], [failed('e2e')], [passed('e2e')]] })
+  const NEW = 'b'.repeat(40)
+  const pull = (sha) => ({ merged: false, mergeable: true, head: { sha, ref: 'feat/x', repo: { full_name: 'o/r' } } })
+  put(s.fx, `${PULL}.call1.json`, pull(SHA))
+  put(s.fx, `${PULL}.call2.json`, pull(SHA))
+  put(s.fx, `${PULL}.call3.json`, pull(NEW))
+  put(s.fx, `${P}__commits__${NEW}__check-runs.json`, { check_runs: [passed('e2e')] })
+  put(s.fx, `${P}__commits__${NEW}__status.json`, { state: 'success', statuses: [] })
+  const r = land(s)
+  assert.equal(r.code, 6, r.out)
+  assert.match(r.out, /HEAD MOVED #7: checked aaaaaaa, now bbbbbbb/)
+  assert.equal(reruns(r).length, 1)
+  assert.equal(r.log.filter((l) => /^PUT .*\/pulls\/7\/merge/.test(l)).length, 0)
+})
+
+test('land: a known flake that fails again stops with LAND FIX after one rerun', () => {
+  const r = land(landSetup({ checks: [[failed('e2e')]] }))
+  assert.equal(r.code, 3, r.out)
+  assert.match(r.out, /LAND FIX #7 .*failing=\[e2e\]/)
+  assert.equal(reruns(r).length, 1)
+})
+
+test('land: a failing check that is not in the list is not rerun', () => {
+  const r = land(landSetup({ checks: [[failed('lint', 56)]] }))
+  assert.equal(r.code, 3, r.out)
+  assert.match(r.out, /failing=\[lint\]/)
+  assert.equal(reruns(r).length, 0)
+})
+
+test('land: one known flake and one other failure are not rerun', () => {
+  const r = land(landSetup({ checks: [[failed('e2e'), failed('lint', 56)]] }))
+  assert.equal(r.code, 3, r.out)
+  assert.equal(reruns(r).length, 0)
+})
+
+test('land: a list that exists only on the PR head is not used', () => {
+  const s = landSetup({ checks: [[failed('e2e')]], settings: 'none', onHead: 'flake' })
+  assert.deepEqual(JSON.parse(readFileSync(join(s.fx, `${CONTENTS}@ref=${SHA}.json`), 'utf8')).knownFlakes, ['e2e'])
+  assert.deepEqual(JSON.parse(readFileSync(join(s.fx, `${CONTENTS}@ref=main.json`), 'utf8')).knownFlakes, [])
+  const r = land(s)
+  assert.equal(r.code, 3, r.out)
+  assert.equal(reruns(r).length, 0)
+  assert.equal(r.log.some((l) => l.includes(`ref=${SHA}`)), false)
+})
+
+test('land: a head that was rerun before is not rerun again', () => {
+  const r = land(landSetup({ checks: [[failed('e2e')]], attempt: 2 }))
+  assert.equal(r.code, 3, r.out)
+  assert.equal(reruns(r).length, 0)
+})
+
+test('land: a repo with no settings file has no known flakes', () => {
+  const s = landSetup({ checks: [[failed('e2e')]] })
+  rmSync(join(s.fx, `${CONTENTS}@ref=main.json`))
+  const r = land(s)
+  assert.equal(r.code, 3, r.out)
+  assert.equal(reruns(r).length, 0)
+})
+
+const git = (cwd, ...a) => {
+  const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', ...a], { cwd, encoding: 'utf8' })
+  assert.equal(r.status, 0, r.stderr)
+}
+const manifest = (dir, version) => {
+  mkdirSync(join(dir, '.claude-plugin'), { recursive: true })
+  writeFileSync(join(dir, '.claude-plugin/plugin.json'), JSON.stringify({ name: 'x', version }))
+}
+const versionRepo = (baseVersion = '0.3.0') => {
+  const dir = mkdtempSync(join(tmpdir(), 'version-test-'))
+  git(dir, 'init', '-q', '-b', 'main')
+  manifest(dir, baseVersion)
+  git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'base')
+  git(dir, 'tag', 'v0.3.0')
+  git(dir, 'branch', 'base')
+  return dir
+}
+const check = (dir, version, env = {}) => {
+  manifest(dir, version)
+  const e = { ...process.env }
+  delete e.BASE_REF
+  const r = spawnSync('bash', [join(root, 'scripts/check-version.sh')], { cwd: dir, env: { ...e, ...env }, encoding: 'utf8' })
+  return { code: r.status, out: r.stdout + r.stderr }
+}
+
+for (const v of ['bad', '0.4', '', '1.2.3.4', 'v0.4.0']) {
+  test(`version: "${v}" is not a semantic version`, () => {
+    const r = check(versionRepo(), v)
+    assert.equal(r.code, 1, r.out)
+    assert.match(r.out, /not MAJOR\.MINOR\.PATCH/)
+  })
+}
+
+for (const v of ['0.4.0', '0.4.0-rc.1']) {
+  test(`version: ${v} is accepted`, () => {
+    const r = check(versionRepo(), v)
+    assert.equal(r.code, 0, r.out)
+  })
+}
+
+test('version: a changed version lower than the latest tag fails on a pull request', () => {
+  const r = check(versionRepo(), '0.2.9', { BASE_REF: 'base' })
+  assert.equal(r.code, 1, r.out)
+  assert.match(r.out, /not higher than the latest tag v0\.3\.0/)
+})
+
+test('version: the same version as the latest tag fails when it changed', () => {
+  const r = check(versionRepo('0.3.1'), '0.3.0', { BASE_REF: 'base' })
+  assert.equal(r.code, 1, r.out)
+})
+
+test('version: a pre-release of the tagged version is lower than the tag', () => {
+  const r = check(versionRepo(), '0.3.0-rc.1', { BASE_REF: 'base' })
+  assert.equal(r.code, 1, r.out)
+})
+
+test('version: a higher version passes on a pull request', () => {
+  const r = check(versionRepo(), '0.4.0', { BASE_REF: 'base' })
+  assert.equal(r.code, 0, r.out)
+})
+
+test('version: an unchanged version passes even when it equals the tag', () => {
+  const r = check(versionRepo(), '0.3.0', { BASE_REF: 'base' })
+  assert.equal(r.code, 0, r.out)
+})
+
+test('gate: routine/run.sh and routine/bin/gh are held by the repo gates', () => {
+  const s = base()
+  put(s.fx, `${CONTENTS}@ref=main.json`, readFileSync(join(root, '.github/pipeline.json'), 'utf8'))
+  put(s.fx, `${PULL}__files.json`, fixture('routine-files.json'))
+  const r = run(s, 'gate-files.sh', ['o/r', '7'])
+  assert.equal(r.code, 1, r.out)
+  assert.match(r.out, /routine\/bin\/gh/)
+  assert.match(r.out, /routine\/run\.sh/)
+})
