@@ -314,8 +314,11 @@ All paths are under `${CLAUDE_PLUGIN_ROOT}`.
 - `scripts/bot-status.sh`: the bot wait's one-shot status, using `bot-approval.jq`.
 - `scripts/wait-bots.sh`: polls `bot-status.sh` once a minute for up to 9 minutes in one command, and prints the last status with `timedOut`.
 - `scripts/land-commits.sh`: prints the code a land fix added (its own commits and the combined diff of each merge), from a fresh clone.
+- `scripts/routine-state.sh`: the state of the triage routine: `init` opens the tracking issue, `next` names the work, `put triaged` stores a record. See `docs/routine.md`.
+- `scripts/check-version.sh`: checks that the manifest version is semantic and, in a PR, higher than the latest tag.
+- `routine/`: the hourly triage routine (runner, prompt, settings, read-only `gh` wrapper, installer). `docs/routine.md` describes it.
 - `agents/merge-safety.md`: the agent that decides `safe` or `person` for a PR the gate did not hold.
-- `.github/pipeline.json`, `templates/pipeline.json`: repo policy (`gates`, `autoRelease`).
+- `.github/pipeline.json`, `templates/pipeline.json`: repo policy (`gates`, `knownFlakes`, `autoRelease`). `knownFlakes` lists check-run names (exact) that may fail for reasons outside the PR; `land-wave.sh` reruns the failed jobs of only those checks once, and reads the list from the default branch.
 - `scripts/file-feedback.sh`: file approved feedback items as `pipeline-feedback` issues, refusing any that hold a denylist string.
 - `test/fake-gh`: a `gh api` stand-in for script tests.
 - `scripts/bot-approval.jq`: the rule for when a review bot has cleared a PR.

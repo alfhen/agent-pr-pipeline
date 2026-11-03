@@ -55,6 +55,10 @@ Ask Claude Code to plan and build a release or a set of issues with the pipeline
 
 Read [skills/pr-pipeline/SKILL.md](skills/pr-pipeline/SKILL.md) for the loop, the workflow arguments, the role agents, cost and caching, and what to do when a step fails.
 
+## The triage routine
+
+An optional hourly job triages the open `pipeline-feedback` issues of a repo, with guards that let it read and record but not build or merge. It starts in `observe` mode, which changes nothing on GitHub. Install it with `routine/install.sh <owner/repo>`. See [docs/routine.md](docs/routine.md).
+
 ## Needs
 
 - Claude Code with the Workflow tool and `gh` signed in.
