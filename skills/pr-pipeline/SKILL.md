@@ -307,7 +307,7 @@ Show the maintainer the `feedback` items from the workflow result, and add the l
 - Minor findings become issues, not extra rounds. Fix them in batches between waves, grouped by file.
 - A release is made only from a green default branch. An agent may create one through `release.sh`, under its conditions. Publishing to a package registry stays with the repo's CI, and no agent runs a publish command.
 - Clean up after a release: leftover worktrees, temp clones and local branches whose tip is in a merged PR.
-- A shallow or single-branch clone (`git clone --depth 1`) cannot see a branch that another agent pushed later. Fetch it by name: `git fetch origin <branch>`.
+- A shallow or single-branch clone (`git clone --depth 1`) cannot see a branch that another agent pushed later. Fetch it with an explicit refspec so `origin/<branch>` exists: `git fetch origin <branch>:refs/remotes/origin/<branch>`.
 - Set a milestone with `gh api -X PATCH repos/<repo>/issues/<n> -F milestone=<number>`. `gh issue edit --milestone` can fail with GraphQL errors.
 
 ## Files

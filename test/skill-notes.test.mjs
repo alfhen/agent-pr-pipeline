@@ -6,9 +6,9 @@ import { readFileSync } from 'node:fs'
 const skill = readFileSync(new URL('../skills/pr-pipeline/SKILL.md', import.meta.url), 'utf8')
 const lessons = skill.slice(skill.indexOf('## Lessons'), skill.indexOf('\n## Files'))
 
-test('lessons tell a shallow clone to fetch a branch by name', () => {
+test('lessons tell a shallow clone to fetch a branch with an explicit refspec', () => {
   assert.match(lessons, /shallow|single-branch/i)
-  assert.match(lessons, /git fetch origin <branch>/)
+  assert.match(lessons, /git fetch origin <branch>:refs\/remotes\/origin\/<branch>/)
 })
 
 test('lessons set a milestone through the REST API, not gh issue edit', () => {
