@@ -34,7 +34,7 @@ function setup({ mode = 'observe', repoFile = 'o/r', next = '{"step":"triage","i
   chmodSync(state, 0o755)
   writeFileSync(join(dir, 'next.out'), next); writeFileSync(join(dir, 'next.rc'), String(nextRc))
   const claude = join(bin, 'claude')
-  writeFileSync(claude, `#!/bin/bash\nprintf '%s\\n' "$@" > "${dir}/claude.args"\necho "$PATH" > "${dir}/claude.path"\necho started >> "${dir}/claude.log"\necho session-output\n`)
+  writeFileSync(claude, `#!/bin/bash\nprintf '%s\\n' "$@" > "${dir}/claude.args"\necho "$PATH" > "${dir}/claude.path"\necho started >> "${dir}/claude.log"\necho session-output\nexit $(cat "${dir}/claude.rc" 2>/dev/null || echo 0)\n`)
   chmodSync(claude, 0o755)
 
   const origin = join(dir, 'origin.git'); const seed = join(dir, 'seed')
@@ -276,6 +276,15 @@ test('in observe a second run with the same next output starts no claude, and a 
   assert.match(newestLog(s).join('\n'), /same work as the last run/)
   writeFileSync(join(s.dir, 'next.out'), '{"step":"triage","issues":[7,8]}')
   runIt(s); assert.equal(started(s), 2, 'changed output')
+})
+
+test('in observe a failed session is tried again on the next run', () => {
+  const s = setup({ mode: 'observe' })
+  writeFileSync(join(s.dir, 'claude.rc'), '1')
+  assert.equal(runIt(s).status, 1); assert.equal(started(s), 1)
+  writeFileSync(join(s.dir, 'claude.rc'), '0')
+  assert.equal(runIt(s).status, 0); assert.equal(started(s), 2, 'retried')
+  runIt(s); assert.equal(started(s), 2, 'recorded after success')
 })
 
 test('in triage the same next output starts claude each time', () => {

@@ -90,7 +90,6 @@ if [ "$mode" = observe ]; then
     log "observe: same work as the last run; no session"
     exit 0
   fi
-  printf '%s' "$next" > "$last"
 fi
 
 prompt_file="$plugin/routine/prompt.md"
@@ -109,4 +108,6 @@ PATH="$plugin/routine/bin:$PATH" claude -p "$prompt" \
   --strict-mcp-config >> "$logfile" 2>&1
 rc=$?
 log "session ended with exit $rc"
+# The key is recorded only after success, so a failed session is tried again on the next run.
+if [ "$mode" = observe ] && [ $rc -eq 0 ]; then printf '%s' "$next" > "$last"; fi
 exit $rc
