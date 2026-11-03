@@ -17,6 +17,7 @@ Step 2. For each issue number in `issues`, start the `triager` agent. Tell it:
 
 - the issue number and the repo {{repo}};
 - to read the goals in {{clone}}/docs/goals.md and the code in the ready clone {{clone}}, and to make no clone;
+- to read and search the clone with the Read, Glob and Grep tools only, never with Bash commands such as `ls`, `find`, `cat` or `grep`, because the routine refuses them;
 - to read the issue and its comments only with these two commands, and to run the wrapper by no other path:
 
         {{guard}}/plugin/routine/bin/gh api repos/{{repo}}/issues/<issue number>
@@ -29,7 +30,17 @@ Step 2. For each issue number in `issues`, start the `triager` agent. Tell it:
 - to return the decision (`build`, `plan` or `decline`), the size (`S`, `M` or `L`), the risk (`low`, `medium` or `high`) and a `why` of one sentence.
 
 [[triage]]
-Step 3. For each issue, record the answer of the triager with this command, in one call per issue. Put the `why` in double quotes, on one line, with no quote or control character inside it:
+Step 3. For each issue, record the answer of the triager with this command, in one call per issue. Put the `why` in double quotes, on one line, word for word as the triager returned it. Change only these characters: each `"` becomes `'`, each `$` becomes `S`, each `` ` `` becomes `'` and each `\` becomes `/`. Replace each line break with a space. Change nothing else: drop no character, add no character, keep every word.
+
+Example. The triager returns this `why`:
+
+    `src/count.mjs` splits on "\n" and `wc -l` costs $0 for stable formats.
+
+Pass exactly this text:
+
+    "'src/count.mjs' splits on '/n' and 'wc -l' costs S0 for stable formats."
+
+The command is:
 
     {{guard}}/plugin/scripts/routine-state.sh {{repo}} put triaged <issue number> <decision> <size> <risk> "<why>"
 

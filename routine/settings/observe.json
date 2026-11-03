@@ -3,6 +3,7 @@
     "allow": [
       "Bash(GUARD/plugin/routine/bin/gh api *)",
       "Bash(GUARD/plugin/scripts/routine-state.sh OWNER/REPO next)",
+      "Read(//CLONE/**)",
       "Agent(triager)",
       "Agent(agent-pr-pipeline:triager)"
     ],

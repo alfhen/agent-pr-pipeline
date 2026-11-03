@@ -319,7 +319,8 @@ const G = '/g'
 const STATE = `${G}/plugin/scripts/routine-state.sh`
 const WRAP = `${G}/plugin/routine/bin/gh`
 const settings = name => JSON.parse(readFileSync(join(root, 'routine/settings', `${name}.json`), 'utf8'))
-const rules = (name, kind) => settings(name).permissions[kind].map(r => r.replaceAll('OWNER/REPO', 'o/r').replaceAll('GUARD', G))
+const CLONE_RULE_PATH = 'work/o-r/clone'
+const rules = (name, kind) => settings(name).permissions[kind].map(r => r.replaceAll('OWNER/REPO', 'o/r').replaceAll('CLONE', CLONE_RULE_PATH).replaceAll('GUARD', G))
 const bashRules = (name, kind) => rules(name, kind).filter(r => r.startsWith('Bash(')).map(r => r.slice(5, -1))
 const matches = (rule, cmd) => new RegExp(`^${rule.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replaceAll('*', '.*')}$`).test(cmd)
 const allowedBash = (name, cmd) => bashRules(name, 'allow').some(r => matches(r, cmd))
@@ -333,7 +334,8 @@ test('each settings file is valid JSON with an allow list and a deny list, and n
       assert.ok(deny.includes(bad), `${name} does not deny ${bad}`)
     }
     assert.ok(deny.includes('Bash(git *)'))
-    assert.ok(!allow.some(r => /^(Read|Glob|Grep)(\(|$)/.test(r)), `${name} has a read rule that reaches outside the clone`)
+    assert.deepEqual(allow.filter(r => /^(Read|Glob|Grep)(\(|$)/.test(r)), [`Read(//${CLONE_RULE_PATH}/**)`], `${name}: one Read rule anchored at the clone, no Glob or Grep rule`)
+    for (const t of ['Read', 'Glob', 'Grep']) assert.ok(!deny.some(r => r.startsWith(t)), `${name} denies ${t}`)
     assert.ok(!allow.some(r => /^Bash\((git|gh|routine-state\.sh)[ )]/.test(r)), 'Bash rules name files by absolute path')
     assert.ok(allow.filter(r => r.startsWith('Bash(')).every(r => r.startsWith(`Bash(${G}/plugin/`)))
     assert.ok(!allow.some(r => r === 'Bash' || r === 'Agent'), 'no blanket Bash or Agent')
@@ -421,6 +423,30 @@ for (const mode of ['observe', 'triage']) {
     assert.doesNotMatch(p, /\bgit (push|commit|clone)/)
   })
 }
+
+for (const mode of ['observe', 'triage']) {
+  test(`${mode} prompt tells the triager to read the clone with Read, Glob and Grep and names ls and find as refused`, () => {
+    const s = setup({ mode }); runIt(s)
+    const p = promptOf(s)
+    assert.match(p, /with the Read, Glob and Grep tools only, never with Bash commands such as `ls`, `find`, `cat` or `grep`, because the routine refuses them/)
+  })
+}
+
+test('the triage prompt holds a worked example of the four one-for-one replacements', () => {
+  const s = setup({ mode: 'triage' }); runIt(s)
+  const p = promptOf(s)
+  assert.ok(p.includes('`src/count.mjs` splits on "\\n" and `wc -l` costs $0 for stable formats.'))
+  assert.ok(p.includes(`"'src/count.mjs' splits on '/n' and 'wc -l' costs S0 for stable formats."`))
+  assert.match(p, /drop no character, add no character, keep every word/)
+})
+
+test('the triage prompt names the four replacements for the why and says nothing else is changed', () => {
+  const s = setup({ mode: 'triage' }); runIt(s)
+  const p = promptOf(s)
+  assert.match(p, /word for word as the triager returned it/)
+  assert.match(p, /Change only these characters: each `"` becomes `'`, each `\$` becomes `S`, each `` ` `` becomes `'` and each `\\` becomes `\/`\./)
+  assert.match(p, /Replace each line break with a space\. Change nothing else/)
+})
 
 test('only the triage prompt holds a put command, and observe tells the session to write the record as text', () => {
   const o = setup({ mode: 'observe' }); runIt(o)
@@ -537,10 +563,17 @@ test('a home reached through a symlink gives a prompt whose command lines match 
   git(i.dir, 'clone', origin, join(real, 'home/work/o-r/clone'))
   r = spawnSync('bash', [join(home, 'routine/o-r/plugin/routine/run.sh')], { env, encoding: 'utf8' })
   assert.equal(r.status, 0, r.stderr)
-  const cmds = commandLines(readFileSync(join(i.dir, 'claude.prompt'), 'utf8'))
+  const prompt = readFileSync(join(i.dir, 'claude.prompt'), 'utf8')
+  const cmds = commandLines(prompt)
   assert.ok(cmds.length >= 2)
+  const clone = join(realpathSync(real), 'home/work/o-r/clone')
+  assert.ok(prompt.includes(`Your clone of the repo is ${clone}.`), 'the prompt names the real clone path')
   for (const mode of ['observe', 'triage']) {
-    const rules = JSON.parse(readFileSync(join(guard, 'plugin/routine/settings', `${mode}.json`), 'utf8')).permissions.allow.filter(x => x.startsWith('Bash(')).map(x => x.slice(5, -1))
+    const allow = JSON.parse(readFileSync(join(guard, 'plugin/routine/settings', `${mode}.json`), 'utf8')).permissions.allow
+    assert.ok(allow.includes(`Read(/${clone}/**)`), `${mode}: Read rule equals the clone in the prompt`)
+    const path = allow.find(r => r.startsWith('Read(')).slice(5, -1).replace(/\*\*$/, '')
+    assert.ok(`${clone}/a/b`.startsWith(path.slice(1)) && !`${real}/elsewhere`.startsWith(path.slice(1)), `${mode}: Read rule matches inside the clone only`)
+    const rules = allow.filter(x => x.startsWith('Bash(')).map(x => x.slice(5, -1))
     for (const c of cmds.filter(c => mode === 'triage' || !/ put /.test(c))) assert.ok(rules.some(x => matches(x, fillPlaceholders(c))), `${mode}: ${c} matches no installed allow rule`)
   }
 })
@@ -565,14 +598,96 @@ test('install.sh --print writes nothing, calls nothing, and names the plist and 
   assert.ok(r.stdout.includes(i.plist))
   assert.match(r.stdout, /Library\/LaunchAgents\/.*\.plist/)
   assert.match(r.stdout, /minute 7/)
-  const plist = readFileSync(join(root, 'routine/launchd.plist'), 'utf8')
-  assert.match(plist, /<key>Minute<\/key>\s*<integer>7<\/integer>/)
+  const tmpl = readFileSync(join(root, 'routine/launchd.plist'), 'utf8')
+  assert.match(tmpl, /^\s*MINUTES\s*$/m)
+})
+
+const minutesIn = file => [...readFileSync(file, 'utf8').matchAll(/<key>Minute<\/key>\s*<integer>(\d+)<\/integer>/g)].map(m => Number(m[1]))
+const intervalDicts = file => (readFileSync(file, 'utf8').match(/<dict>\s*<key>Minute<\/key>/g) || []).length
+const form040 = m => `<?xml version="1.0"?>\n<plist version="1.0"><dict><key>Label</key><string>x</string><key>StartCalendarInterval</key>\n  <dict>\n    <key>Minute</key>\n    <integer>${m}</integer>\n  </dict>\n</dict></plist>\n`
+const writePlist = (i, text) => { mkdirSync(join(i.dir, 'Library/LaunchAgents'), { recursive: true }); writeFileSync(i.plist, text) }
+
+test('install.sh --minutes 7,37 writes two intervals, and a reinstall with no --minutes keeps them', () => {
+  const i = installSetup()
+  assert.equal(i.run('--minutes', '7,37', 'o/r').status, 0)
+  assert.deepEqual(minutesIn(i.plist), [7, 37])
+  assert.equal(intervalDicts(i.plist), 2)
+  const r = i.run('o/r')
+  assert.equal(r.status, 0, r.stderr)
+  assert.deepEqual(minutesIn(i.plist), [7, 37])
+  assert.ok(!readFileSync(i.plist, 'utf8').includes('MINUTES'))
+})
+
+test('a fresh install with no --minutes uses minute 7', () => {
+  const i = installSetup()
+  assert.equal(i.run('o/r').status, 0)
+  assert.deepEqual(minutesIn(i.plist), [7])
+})
+
+test('a reinstall keeps the minute of a 0.4.0 plist, a hand-edited array, and falls back to 7 for a plist with no minute or an unreadable one', () => {
+  let i = installSetup()
+  writePlist(i, form040(7))
+  assert.equal(i.run('o/r').status, 0)
+  assert.deepEqual(minutesIn(i.plist), [7])
+  i = installSetup()
+  writePlist(i, form040(22))
+  assert.equal(i.run('o/r').status, 0)
+  assert.deepEqual(minutesIn(i.plist), [22], 'a kept minute is not forced to 7')
+  i = installSetup()
+  writePlist(i, `<plist><dict><key>StartCalendarInterval</key><array>\n<dict><key>Minute</key><integer>7</integer></dict>\n<dict>\n<key>Minute</key>\n<integer>37</integer>\n</dict></array></dict></plist>\n`)
+  assert.equal(i.run('o/r').status, 0)
+  assert.deepEqual(minutesIn(i.plist), [7, 37])
+  i = installSetup()
+  writePlist(i, '<plist><dict><key>Label</key><string>x</string></dict></plist>\n')
+  assert.equal(i.run('o/r').status, 0)
+  assert.deepEqual(minutesIn(i.plist), [7])
+  i = installSetup()
+  writePlist(i, form040(37)); chmodSync(i.plist, 0o200)
+  const r = i.run('o/r')
+  chmodSync(i.plist, 0o644)
+  assert.equal(r.status, 0, r.stderr)
+  assert.deepEqual(minutesIn(i.plist), [7])
+})
+
+test('install.sh --print shows the kept minutes and the given ones, and writes nothing', () => {
+  const i = installSetup()
+  writePlist(i, `<dict><key>Minute</key><integer>7</integer></dict><dict><key>Minute</key><integer>37</integer></dict>`)
+  let r = i.run('--print', 'o/r')
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stdout, /hourly at minute 7,37/)
+  r = i.run('--print', '--minutes', '5,50', 'o/r')
+  assert.match(r.stdout, /hourly at minute 5,50/)
+  assert.deepEqual(minutesIn(i.plist), [7, 37])
+  assert.ok(!existsSync(i.home))
+})
+
+test('install.sh refuses a minute outside 0 to 59, a non-number, an empty list and a missing value with exit 64', () => {
+  for (const bad of ['60', 'x', '7,', '7,60', '-1', '']) {
+    const i = installSetup()
+    const r = i.run('--minutes', bad, 'o/r')
+    assert.equal(r.status, 64, `--minutes '${bad}'`)
+    assert.ok(!existsSync(i.home) && !existsSync(i.plist), 'nothing written')
+  }
+  assert.equal(installSetup().run('o/r', '--minutes').status, 64)
+})
+
+test('install.sh fills the Read rule with the absolute clone path in both settings files', () => {
+  const i = installSetup()
+  assert.equal(i.run('o/r').status, 0)
+  const clone = join(i.home, 'work/o-r/clone')
+  for (const mode of ['observe', 'triage']) {
+    const text = readFileSync(join(i.guard, 'plugin/routine/settings', `${mode}.json`), 'utf8')
+    assert.ok(!text.includes('CLONE'))
+    const allow = JSON.parse(text).permissions.allow
+    assert.ok(allow.includes(`Read(/${clone}/**)`), `${mode} Read`)
+    assert.equal(allow.filter(r => /^(Read|Glob|Grep)\(/.test(r)).length, 1)
+  }
 })
 
 test('install.sh refuses when claude is not on PATH', () => {
   const dir = mkdtempSync(join(tmpdir(), 'routine-install-test-'))
   const tools = join(dir, 'tools'); mkdirSync(tools)
-  for (const t of ['dirname', 'cp', 'mkdir', 'rm', 'chmod', 'sed', 'tr', 'jq', 'cat']) {
+  for (const t of ['dirname', 'cp', 'mkdir', 'rm', 'chmod', 'sed', 'tr', 'jq', 'cat', 'grep', 'awk', 'paste']) {
     const w = spawnSync('sh', ['-c', `command -v ${t}`], { encoding: 'utf8' }).stdout.trim()
     if (w) symlinkSync(w, join(tools, t))
   }

@@ -4,6 +4,7 @@
       "Bash(GUARD/plugin/routine/bin/gh api *)",
       "Bash(GUARD/plugin/scripts/routine-state.sh OWNER/REPO next)",
       "Bash(GUARD/plugin/scripts/routine-state.sh OWNER/REPO put triaged *)",
+      "Read(//CLONE/**)",
       "Agent(triager)",
       "Agent(agent-pr-pipeline:triager)"
     ],
