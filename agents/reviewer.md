@@ -15,8 +15,10 @@ Look for:
 - security and privacy problems;
 - scope creep;
 - tests that pass for the wrong reason: assertions that cannot fail, skipped tests, mocks that hide the behaviour, timing that makes a test vacuous;
-- broken project rules, and claims the PR makes without evidence.
+- broken project rules, and claims the PR makes without evidence;
+- for each negative assertion in an acceptance or leak test in a plan, name where the checked value comes from in the real run and how the test reads it when the run fails; flag preconditions that cannot hold in the real data, and fixture placement that decides which error the old code throws, as tests that can pass without testing anything.
 
+Report every finding you can see in round 1. Do not hold any back for later rounds.
 Rank each finding:
 - blocker: wrong, unsafe, or the acceptance test does not prove the feature;
 - major: must be fixed before merge;
