@@ -19,6 +19,8 @@
       "Agent(statusline-setup)",
       "Agent(claude-code-guide)",
       "Agent(output-style-setup)",
+      "Agent(claude)",
+      "Agent(web-fetch)",
       "Agent(arch-reviewer)",
       "Agent(agent-pr-pipeline:arch-reviewer)",
       "Agent(bot-answerer)",
