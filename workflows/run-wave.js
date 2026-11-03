@@ -829,7 +829,7 @@ const denylistFor = (changedPaths, results) => {
 
 async function evaluateWave(prs) {
   const none = { feedback: [], denylist: [], source: REPO, feedbackRepo: FEEDBACK_REPO }
-  if (!FEEDBACK || A.prs.every(pr => pr.landFix || pr.skipImpl || pr.resume)) return none
+  if (!FEEDBACK || A.prs.every(pr => pr.landFix || pr.resume || (pr.skipImpl && pr.kind !== 'plan'))) return none
   const evaluation = await call('evaluate', null, evaluatePrompt(prs), 'evaluate:wave', { schema: EVALUATION })
   if (!evaluation) {
     log('evaluation failed: no feedback this run')

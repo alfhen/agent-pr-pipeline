@@ -970,11 +970,14 @@ await check('quick: qa false on the PR beats a QA line in the stored brief', asy
   await simulate({ ...quickBase, qa: false, prs: [{ id: 'QQF', quick: { issue: 92 }, branch: 'fix/QQF' }] })
   assert.ok(!calls.some(c => c.label.startsWith('qa:')))
 })
-await check('evaluate: a wave of only skipImpl or resume PRs runs no evaluator', async () => {
+await check('evaluate: a wave of only reruns runs no evaluator, a plan PR with skipImpl still does', async () => {
   await simulate({ ...base, prs: only('P1', 'P3') })
+  assert.equal(calls.filter(c => c.label === 'evaluate:wave').length, 1)
+  const rerun = { id: 'R1', title: 't', branch: 'b7', skipImpl: true }
+  await simulate({ ...base, prs: [rerun] })
   assert.ok(calls.length > 0 && !calls.some(c => /^(evaluate|redact)/.test(c.label)))
   assert.deepEqual(lastResult.denylist, [])
-  await simulate({ ...base, prs: [{ id: 'C1', title: 't', branch: 'b1', resume: { history: [], minors: [], findings: [] } }, { ...only('P1')[0] }] })
+  await simulate({ ...base, prs: [{ id: 'C1', title: 't', branch: 'b1', resume: { history: [], minors: [], findings: [] } }, rerun] })
   assert.ok(!calls.some(c => /^evaluate/.test(c.label)))
   await simulate({ ...base, prs: only('P1', 'C1') })
   assert.equal(calls.filter(c => c.label === 'evaluate:wave').length, 1)
