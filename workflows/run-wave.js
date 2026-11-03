@@ -751,10 +751,13 @@ async function landFixCheck(pr, n, beforeSha, afterSha, history, minors) {
   const first = await landCode(1)
   if (typeof first !== 'string') return { ok: false, reason: first.fail }
   if (!first.trim()) return { ok: true, headSha: afterSha }
-  return checkNewCode(pr, { tag: 'land', label: 'landreview', role: 'landReview', what: 'land-fix check', reviewPrompt: async (round, prior) => {
+  const check = await checkNewCode(pr, { tag: 'land', label: 'landreview', role: 'landReview', what: 'land-fix check', reviewPrompt: async (round, prior) => {
     const output = round === 1 ? first : await landCode(round)
     return typeof output === 'string' ? landReviewPrompt(pr, round, output, prior) : output
   } }, history, minors)
+  // A commit that lands between the fixer's push and the tester's clone was not in the reviewed range.
+  if (check.ok && check.headSha !== head) return { ok: false, reason: `land-fix check: head moved (${check.headSha} is not the reviewed ${head})` }
+  return check
 }
 
 async function bots(pr, n, headSha, issues, history, minors) {

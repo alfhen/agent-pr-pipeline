@@ -32,7 +32,8 @@ const TRIAGES = {
 let evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'README.md'] }
 let corruptPut = false
 // Merge safety: ids the gate holds, ids the agent calls person, and ids where an agent fails or answers badly.
-const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), gateOdd: new Set(), headMoved: new Set(), blocked: new Set(), landOutput: new Set(), landFail: new Set(), landBad: new Set() }
+const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), gateOdd: new Set(), headMoved: new Set(), blocked: new Set(), landOutput: new Set(), landFail: new Set(), landBad: new Set(), testMoved: new Set() }
+const landHead = {}
 const lastHead = {}
 const agentRaw = async (prompt, o) => {
   calls.push({ label: o.label, model: o.model, effort: o.effort, agentType: o.agentType, isolation: o.isolation, prompt })
@@ -48,6 +49,7 @@ const agentRaw = async (prompt, o) => {
   if (o.label.startsWith('io:') && /#landhead\d*$/.test(o.label)) return { exitCode: 0, output: JSON.stringify({ head: (o.label.endsWith('#landhead') ? 'b' : 'c').repeat(40), approvedBy: [] }) }
   if (o.label.startsWith('io:') && /#landcommits\d*$/.test(o.label)) {
     if (land.landFail.has(id)) return { exitCode: 1, output: 'land-commits: cannot read ' + 'b'.repeat(40) }
+    landHead[id] = prompt.match(/land-commits\.sh \S+ \S+ (\S+)/)[1]
     return { exitCode: 0, output: land.landOutput.has(id) ? 'merge abc\n+resolved line\n' : '' }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#botstatus')) {
@@ -82,7 +84,7 @@ const agentRaw = async (prompt, o) => {
   }
   if (o.label.startsWith('implement')) return { pushed: true, branch: 'b', summary: 's', acceptanceTestPassed: true }
   const round = o.label.split('#')[1] || ''
-  if (o.label.startsWith('test')) return { pass: true, headSha: 'sha-' + id + (/^(docs|bots|land)/.test(round) ? '-' + round : ''), checks: [{ name: 'lint', pass: true }] }
+  if (o.label.startsWith('test')) return { pass: true, headSha: /^land/.test(round) && !land.testMoved.has(id) ? landHead[id] : 'sha-' + id + (/^(docs|bots|land)/.test(round) ? '-' + round : ''), checks: [{ name: 'lint', pass: true }] }
   if (o.label.startsWith('landreview')) return { summary: 's', findings: land.landBad.has(id) ? [{ severity: 'major', title: 'the resolution drops the new flag', detail: 'd' }] : [{ severity: 'minor', title: 'land nit', detail: 'd' }] }
   if (o.label.startsWith('botreview')) return { summary: 's', findings: id === 'B1' && round === '1' ? [{ severity: 'major', title: 'the new regex anchor rejects valid input', detail: 'd' }] : [{ severity: 'minor', title: 'late nit', detail: 'd' }] }
   if (o.label.startsWith('docsreview')) {
@@ -806,7 +808,13 @@ await check('land fix: output from land-commits.sh starts a tester and a diff re
   assert.match(rev.prompt, /\+resolved line/)
   assert.match(rev.prompt, /Read only this output/)
   assert.equal(rev.agentType, 'agent-pr-pipeline:reviewer')
-  assert.equal(x.LA.land.split(':')[1], 'sha-LA-land1')
+  assert.equal(x.LA.land.split(':')[1], 'abc')
+})
+await check('land fix: a tested head that is not the reviewed head makes the PR not ready', async () => {
+  const x = await landFixRun({ landOutput: ['LA'], testMoved: ['LA'] })
+  assert.equal(x.LA.ready, false)
+  assert.equal(x.LA.reason, 'land-fix check: head moved (sha-LA-land1 is not the reviewed abc)')
+  assert.ok(!calls.some(c => c.label === 'botwait:LA'))
 })
 await check('land fix: empty output from land-commits.sh starts no tester or reviewer', async () => {
   const x = await landFixRun({})
