@@ -1,11 +1,14 @@
 #!/bin/bash
 # A gh stand-in for tests. Answers `gh api` calls from fixture files and logs each call.
 # FAKE_GH_FIXTURES: folder of fixtures. FAKE_GH_LOG: file that gets one line per call.
-# The fixture for GET /repos/o/r/issues?x=1 is repos__o__r__issues.json (the query is ignored).
+# The fixture for GET /repos/o/r/issues?x=1 is repos__o__r__issues.json (the query is ignored unless a query fixture exists, see below).
 # With --paginate it reads repos__o__r__issues.1.json, .2.json, ... in order; --slurp wraps the pages in one array.
 # --method POST|PUT|PATCH|DELETE reads <name>.<METHOD>.json when it exists and otherwise answers {}.
 # <name>.<METHOD>.error (any method, GET included) holds a message: the call prints it and exits 1.
 # After a write, each line "from to" of <name>.<METHOD>.then copies fixture file from to to (state changes).
+# A query is logged (GET /path?ref=x), and a GET tries <name>@<query>.json before <name>.json (query fixtures, e.g. @ref=main).
+# Call sequences: when <name>.call1.json exists, the nth GET of that path reads <name>.call<n>.json (the last one repeats);
+# the count is kept in <name>.count in the fixture folder.
 # A path with no fixture exits 1, like a 404. Any other subcommand exits 1.
 log() { [ -n "$FAKE_GH_LOG" ] && echo "$*" >> "$FAKE_GH_LOG"; return 0; }
 if [ "$1" != "api" ]; then log "UNSUPPORTED gh $*"; echo "fake-gh: unsupported: gh $*" >&2; exit 1; fi
@@ -23,9 +26,11 @@ while [ $# -gt 0 ]; do
     *) [ -z "$path" ] && path=$1; shift ;;
   esac
 done
-path=${path#/}; path=${path%%\?*}
+path=${path#/}; query=""
+case "$path" in *\?*) query=${path#*\?} ;; esac
+path=${path%%\?*}
 name=${path//\//__}
-log "$method /$path${fields//$'\n'/\\n}"
+log "$method /$path${query:+?$query}${fields//$'\n'/\\n}"
 dir=${FAKE_GH_FIXTURES:?FAKE_GH_FIXTURES not set}
 if [ -f "$dir/$name.$method.error" ]; then cat "$dir/$name.$method.error" >&2; exit 1; fi
 emit() { if [ -n "$jqx" ]; then jq -r "$jqx"; else cat; fi; }
@@ -36,8 +41,16 @@ if [ "$method" = GET ]; then
     if [ "$slurp" = 1 ]; then jq -s . "${files[@]}" | emit; else cat "${files[@]}" | emit; fi
     exit 0
   fi
-  if [ -f "$dir/$name.json" ]; then
-    if [ "$paginate" = 1 ] && [ "$slurp" = 1 ]; then jq -s . "$dir/$name.json" | emit; else emit < "$dir/$name.json"; fi
+  file="$dir/$name.json"
+  if [ -f "$dir/$name.call1.json" ]; then
+    n=$(( $(cat "$dir/$name.count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$dir/$name.count"
+    while [ "$n" -gt 1 ] && [ ! -f "$dir/$name.call$n.json" ]; do n=$((n-1)); done
+    file="$dir/$name.call$n.json"
+  elif [ -n "$query" ] && [ -f "$dir/$name@$query.json" ]; then
+    file="$dir/$name@$query.json"
+  fi
+  if [ -f "$file" ]; then
+    if [ "$paginate" = 1 ] && [ "$slurp" = 1 ]; then jq -s . "$file" | emit; else emit < "$file"; fi
     exit 0
   fi
   echo "fake-gh: no fixture for GET /$path (HTTP 404)" >&2; exit 1

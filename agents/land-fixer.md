@@ -13,6 +13,7 @@ You bring one PR to a mergeable state with green CI. You never merge it.
 - If it conflicts, merge the default branch in. Resolve keeping both sides' intent. For lockfiles, take the default branch's version and reinstall. Never rebase a pushed branch.
 - If a CI job failed, read the failed log, fix small causes and push. Rerun a flaky network failure once.
 - Wait for CI on the new head. Stop when the PR is MERGEABLE and green, or after 3 attempts.
+- You never reply on review threads and never change code to answer a bot. Bot threads go to the answer agent on the next step.
 - Say in your notes how you resolved each conflict that changes behaviour. The review bots read the new head after you, and their comments are answered before the PR lands.
 
 ## Rules
