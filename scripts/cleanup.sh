@@ -20,6 +20,10 @@ case "$cmd" in
     home=$(canon "$HOME")
     if [ -z "$tmp" ] || [ "$tmp" = / ] || [ "$tmp" = "$home" ]; then echo "KEPT $1 refused: not a temp folder"; exit 0; fi
     if [ "$(git -C "$tmp" rev-parse --show-toplevel 2>/dev/null)" = "$tmp" ]; then echo "KEPT $1 refused: top of a git repo"; exit 0; fi
+    for shared in /tmp /private/tmp "${TMPDIR:-}"; do
+      [ -n "$shared" ] && [ "$tmp" = "$(canon "$shared")" ] && { echo "KEPT $1 refused: shared temp folder"; exit 0; }
+    done
+    if [ ! -f "$tmp/$MARK" ] && [ -n "$(find "$tmp" -mindepth 1 -maxdepth 1 -type d -print -quit)" ]; then echo "KEPT $1 refused: has folders and no $MARK marker"; exit 0; fi
     : > "$tmp/$MARK" && echo "MARKED $tmp" || echo "KEPT $1 cannot write the marker"
     ;;
   clones)
