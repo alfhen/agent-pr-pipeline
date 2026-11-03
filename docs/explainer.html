@@ -181,7 +181,7 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
         </g>
       </svg>
     </div>
-    <p class="caption">Test and review run at the same time, on the same commit. The dashed loop can go round up to four times. After that, a person decides. When the change is clean, a docs writer updates the docs it affects, and a short test and review check that commit before the PR opens.</p>
+    <p class="caption">Test and review run at the same time, on the same commit. The dashed loop can go round up to four times. After that, a person decides. When the change is clean, a docs writer updates the docs it affects, and a short test and review check that commit before the PR opens. When a PR's work ends, a small agent deletes its clones and finished worktrees.</p>
   </section>
 
   <section aria-labelledby="cast">
@@ -199,7 +199,8 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
       <div class="role fixer"><span class="who">FIXER</span><h3>Repairs, or argues back</h3><p>Fixes blockers and majors. If it thinks a finding is wrong, it has to say why, with evidence.</p></div>
       <div class="role agent"><span class="who">DOCS WRITER</span><h3>Keeps the docs true</h3><p>After the review passes, it reads the change and fixes every page it makes wrong: README, docs and the docs site. A separate reviewer checks its edits.</p></div>
       <div class="role agent"><span class="who">PR AGENT</span><h3>Talks to the bots</h3><p>Opens the pull request, files small findings as issues for later, and replies to every review-bot comment.</p></div>
-      <div class="role person"><span class="who">YOU</span><h3>Make the calls</h3><p>Approve the plan, approve rule changes, and own publishing. Agents merge only a PR that passed the gated-path check and the merge-safety agent. You merge every other PR. Releases are yours too, unless the repo's settings turn on automatic release. Then a script makes the release after the last wave, when its checks pass.</p></div>
+      <div class="role agent"><span class="who">ROUTINE</span><h3>Triages feedback each hour</h3><p>An optional hourly job reads the open feedback issues of a repo and decides for each one: build, plan or decline. It starts in observe mode, which changes nothing on GitHub. It never writes code, opens a PR or merges. See <code>docs/routine.md</code>.</p></div>
+      <div class="role person"><span class="who">YOU</span><h3>Make the calls</h3><p>Approve the plan, approve rule changes, and own publishing. Agents merge only a PR that passed the gated-path check and the merge-safety agent. You merge every other PR. You make the first release. After that, when the repo's settings turn on automatic release, a script makes the release after the last wave, once its checks pass. The script never publishes a package.</p></div>
     </div>
   </section>
 
@@ -210,8 +211,11 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
       <table>
         <thead><tr><th>Step</th><th>Model</th><th>Effort</th><th>What it spends its time on</th></tr></thead>
         <tbody>
-          <tr><td>You and the main session</td><td><span class="pill opus">Opus 5.5</span></td><td><span class="pill def">session</span></td><td>Triage, plans, reading results, and merges you ask for. Merging is a script, not an agent. Releases are made by hand with release.sh.</td></tr>
-          <tr><td>Triage and plan drafting</td><td><span class="pill opus">Opus 5.5</span></td><td><span class="pill def">session</span></td><td>Reading issues against the code. These agents inherit the session model.</td></tr>
+          <tr><td>You and the main session</td><td><span class="pill opus">Opus 5.5</span></td><td><span class="pill def">session</span></td><td>Triage, plans, reading results, and merges you ask for. Merging is a script, not an agent. With automatic release on, release.sh makes the release after the last wave. It never publishes a package.</td></tr>
+          <tr><td>Plan drafting</td><td><span class="pill opus">Opus 5.5</span></td><td><span class="pill def">session</span></td><td>Reading issues against the code. These agents inherit the session model.</td></tr>
+          <tr><td>Triager</td><td><span class="pill opus">Opus</span></td><td><span class="pill high">high</span></td><td>Reading one issue, the code and the goals, and deciding build, plan or decline. Read-only.</td></tr>
+          <tr><td>Merge safety</td><td><span class="pill opus">Opus</span></td><td><span class="pill high">high</span></td><td>Answering safe or person for a PR the path gate did not hold. Read-only.</td></tr>
+          <tr><td>Evaluator</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">medium</span></td><td>Reading the wave's results and writing feedback about the pipeline. Read-only.</td></tr>
           <tr><td>Builder</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Writing the change and tests, then running every check, including the full e2e suite.</td></tr>
           <tr><td>Tester</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Fresh clone, install, lint, types, unit tests and the full e2e suite (10 to 15 minutes), every round.</td></tr>
           <tr><td>Reviewer</td><td><span class="pill opus">Opus</span></td><td><span class="pill high">high</span></td><td>Reading the diff against the design and plan; sometimes running tests to check a suspicion.</td></tr>
@@ -290,7 +294,7 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
     <ul>
       <li>You agree the plan before anything is built.</li>
       <li>You approve anything that changes a hard rule. For example, payments on real stores stay a human step unless you sign off.</li>
-      <li>You merge every gated PR, and any PR the merge-safety agent called <code>person</code>. Use <code>--person</code> for a merge you ask for.</li>
+      <li>You merge every gated PR, any PR the merge-safety agent called <code>person</code>, and every rerun. Use <code>--person</code> for a merge you ask for.</li>
       <li>Agents merge only the other PRs, with the <code>:auto</code> land value. A rerun never gets <code>:auto</code>. Merges need green CI and a review bot that approved, or whose comments were all answered with nothing new raised.</li>
       <li>Publishing to npm is yours, with your one-time code.</li>
     </ul>
@@ -316,7 +320,7 @@ const steps = [
   { who: 'fixer', tag: 'FIXER', title: 'Repair it', body: 'The fixer changes the check so a cookie that was deleted and set again is not called "already set", and pushes a new commit on the same branch. It never rewrites history.' },
   { who: 'check', tag: 'TESTER + REVIEWER, ROUND 2', title: 'Clean', body: 'A new tester and a new reviewer look again. Tests pass and there are no blockers or majors. One small finding is filed as an issue for later.' },
   { who: 'agent', tag: 'PR AGENT', title: 'Open the PR, answer the bots', body: 'The PR agent opens PR #544, says how it was tested and that it took 2 review rounds, and waits for the review bots. Gitar approves.' },
-  { who: 'person', tag: 'YOU', title: 'Merge', body: 'CI is green on the exact commit that was checked, and a bot approved, so your session squash-merges it and deletes the branch. Then the next wave can start.' },
+  { who: 'person', tag: 'MERGE', title: 'Merge', body: 'CI is green on the exact commit that was checked, and a bot approved, so a script in the main session squash-merges it and deletes the branch. If the PR is gated or the safety agent said person, you merge it instead. Then the next wave can start.' },
 ];
 let at = 0;
 const track = document.getElementById('track');
