@@ -926,8 +926,12 @@ async function runPRSteps(input) {
   const history = pr.resume ? pr.resume.history || [] : []
   const minors = (pr.resume ? pr.resume.minors || [] : []).concat(quickMinors)
   let impl = { problems: '' }
-  if (pr.resume && (pr.resume.findings || []).length) {
-    await call('fix', pr, fixPrompt(pr, null, pr.resume.findings, history.length), `fix:${pr.id}#${history.length}`, { schema: FIX })
+  const decisionFindings = (pr.skipImpl || pr.resume) && (pr.architectureDecision || pr.productDecision)
+    ? [{ severity: 'major', title: 'Apply the maintainer decision', detail: `Apply the maintainer decision given in the brief to the branch. If the branch already follows it, change nothing.${pr.architectureDecision ? ` Architecture decision: ${pr.architectureDecision}` : ''}${pr.productDecision ? ` Product decision: ${pr.productDecision}` : ''}` }]
+    : []
+  const preFindings = ((pr.resume && pr.resume.findings) || []).concat(decisionFindings)
+  if (preFindings.length) {
+    await call('fix', pr, fixPrompt(pr, null, preFindings, history.length), `fix:${pr.id}#${history.length}`, { schema: FIX })
   } else if (!pr.skipImpl && !pr.resume) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl }
