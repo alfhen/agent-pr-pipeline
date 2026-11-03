@@ -245,6 +245,14 @@ test('a guard mode file that says triage lets put write', () => {
   assert.equal(putTriaged(s, '3', 'build', 'S', 'low', 'x').status, 0)
 })
 
+test('init from a guard folder is refused with no call logged', () => {
+  for (const mode of ['observe', 'triage']) {
+    const r = run(setup({ tracking: [] }, { guard: { mode } }), 'o/r', 'init')
+    assert.equal(r.status, 65, `mode ${mode}`)
+    assert.deepEqual(r.calls, [])
+  }
+})
+
 test('next works in observe mode', () => {
   const s = setup({ issues: [issue(3)] }, { guard: { mode: 'observe' } })
   assert.deepEqual(step(next(s)), { step: 'triage', issues: [3] })

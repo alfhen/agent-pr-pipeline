@@ -9,7 +9,7 @@
 # put is the one write path of the routine. Every argument is checked here, not in the prompt.
 # A build of size L or risk high is stored as plan; workflows/run-wave.js applies the same rule to quick fixes
 # and this is the source of the rule until #88 puts both in one place.
-# put runs in a guard folder only when its mode file says triage.
+# put runs in a guard folder only when its mode file says triage. init never runs in a guard folder.
 # Exit: 0 done, 2 two trusted records or tracking issues, 3 a call to GitHub failed, 64 a bad argument,
 # 65 refused (issue not eligible, wrong repo or mode).
 set -uo pipefail
@@ -43,6 +43,7 @@ in_guard=0
 if [ -n "$guard" ] && [ -f "$guard/repo" ]; then
   in_guard=1
   [ "$(tr -d '[:space:]' < "$guard/repo")" = "$repo" ] || die 65 "$repo is not the routine's repo"
+  [ "$cmd" != init ] || die 65 "init is for the maintainer, not the routine"
 fi
 
 if [ "$cmd" = put ]; then
