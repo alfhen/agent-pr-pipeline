@@ -34,11 +34,21 @@ let corruptPut = false
 // Merge safety: ids the gate holds, ids the agent calls person, and ids where an agent fails or answers badly.
 const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), gateOdd: new Set(), headMoved: new Set(), blocked: new Set(), landOutput: new Set(), landFail: new Set(), landBad: new Set(), landBadOnce: new Set(), landOther: new Set(), testMoved: new Set(), threads: new Set() }
 const landHead = {}
+const wt = o => '/wt/' + o.label.replace(/[:#]/g, '-')
+let cleanupMode = 'ok'
+const cleanupAnswer = label => cleanupMode === 'down' ? null : cleanupMode === 'fail' ? { exitCode: 1, output: 'cleanup: boom' } : { exitCode: 0, output: /(clones|all)$/.test(label) ? 'REMOVED /x/test-1' : '' }
 const lastHead = {}
+// Cleanup calls are kept apart so the step-by-step checks below see only the pipeline's own steps.
+let cleanupCalls = []
+let timeline = []
 const agentRaw = async (prompt, o) => {
-  calls.push({ label: o.label, model: o.model, effort: o.effort, agentType: o.agentType, isolation: o.isolation, prompt })
+  const entry = { label: o.label, model: o.model, effort: o.effort, agentType: o.agentType, isolation: o.isolation, prompt }
+  timeline.push(o.label)
+  if (/#cleanup/.test(o.label)) cleanupCalls.push(entry)
+  else calls.push(entry)
   const id = o.label.split(':')[1].split('#')[0]
   if (o.label.startsWith('preflight')) return preflight
+  if (/#cleanup/.test(o.label)) return cleanupAnswer(o.label, prompt)
   if (o.label.startsWith('triage')) return TRIAGES[id]
   if (o.label.startsWith('safety')) return land.safetyDown.has(id) ? null : land.person.has(id) ? { verdict: 'person', why: 'renames the --all flag' } : { verdict: 'safe', why: 'internal change' }
   if (o.label.startsWith('io:') && o.label.endsWith('#gate')) {
@@ -87,7 +97,8 @@ const agentRaw = async (prompt, o) => {
     if (id === 'N1' && round === 1) return { verdict: 'needs-change', summary: 's', newConcepts: [{ name: 'x', fits: false }], findings: [{ title: 'wrong layer', detail: 'd' }] }
     return { verdict: 'fits', summary: 's', newConcepts: [] }
   }
-  if (o.label.startsWith('implement')) return { pushed: true, branch: 'b', summary: 's', acceptanceTestPassed: true }
+  if (o.label.startsWith('implement')) return { pushed: true, branch: 'b', summary: 's', acceptanceTestPassed: true, worktree: wt(o) }
+  if (o.label.startsWith('fix:')) return { summary: 's', worktree: wt(o) }
   const round = o.label.split('#')[1] || ''
   if (o.label.startsWith('test')) return { pass: true, headSha: /^land/.test(round) && !land.testMoved.has(id) ? landHead[id].padEnd(40, 'c') : 'sha-' + id + (/^(docs|bots|land)/.test(round) ? '-' + round : ''), checks: [{ name: 'lint', pass: true }] }
   if (o.label.startsWith('landreview')) return { summary: 's', findings: land.landBad.has(id) || (land.landBadOnce.has(id) && round === '1') ? [{ severity: 'major', title: 'the resolution drops the new flag', detail: 'd' }] : [{ severity: 'minor', title: 'land nit', detail: 'd' }] }
@@ -99,14 +110,14 @@ const agentRaw = async (prompt, o) => {
   if (o.label.startsWith('qa')) return (id === 'Q1' && round === '1')
     ? { summary: 's', scenarios: [{ name: '--words with empty input', command: "printf '' | tally --words", expected: '0', actual: '1', pass: false }], findings: [{ severity: 'major', title: 'empty input prints 1', detail: 'd' }, { severity: 'minor', title: 'help wording', detail: 'd' }] }
     : { summary: 's', scenarios: [{ name: 'acceptance', pass: true }], findings: [] }
-  if (o.label.startsWith('docsfix')) return { changed: true, headSha: 'docsfix-' + id, files: ['README.md'], summary: 's' }
-  if (o.label.startsWith('docs')) return ['G1', 'G2', 'G3'].includes(id) ? { changed: true, headSha: 'docs-' + id, files: ['README.md'], summary: 's' } : { changed: false, summary: 'already right' }
+  if (o.label.startsWith('docsfix')) return { changed: true, headSha: 'docsfix-' + id, files: ['README.md'], summary: 's', worktree: wt(o) }
+  if (o.label.startsWith('docs')) return ['G1', 'G2', 'G3'].includes(id) ? { changed: true, headSha: 'docs-' + id, files: ['README.md'], summary: 's', worktree: wt(o) } : { changed: false, summary: 'already right', worktree: wt(o) }
   if (o.label.startsWith('review')) return { summary: 's', findings: id === 'P1' || ['QS', 'QY'].includes(id) || (id === 'QF' && round === '1') ? [{ severity: 'major', title: 'x', detail: 'd', file: 'src/secret/area.ts' }] : [{ severity: 'minor', title: 'm', detail: 'd' }] }
   if (o.label.startsWith('open') && land.blocked.has(id)) return { blocked: true, blockedReason: 'permission denied: gh pr create', commands: ['gh pr create -R o/r --head b1 --title "t"'] }
   if (o.label.startsWith('open')) return { prNumber: 100 + calls.length, prUrl: 'u', issuesCreated: id === 'C2' ? ['https://github.com/o/r/issues/21'] : [] }
   if (o.label.startsWith('botwait')) return id === 'C1' && failWait ? null : { approvedBy: ['the-waiter-says-so'], openComments: ['C2', 'L1', 'B1', 'W1'].includes(id) ? 2 : 0 }
-  if (o.label.startsWith('botanswer')) return { codeChanged: id !== 'W1', headSha: 'sha-answer-' + id, closesIssues: id === 'C2' ? [21] : [], notes: 'anchored the regex' }
-  if (o.label.startsWith('landfix')) return { readyToMerge: true, headSha: 'abc', notes: 'ok' }
+  if (o.label.startsWith('botanswer')) return { codeChanged: id !== 'W1', headSha: 'sha-answer-' + id, closesIssues: id === 'C2' ? [21] : [], notes: 'anchored the regex', worktree: wt(o) }
+  if (o.label.startsWith('landfix')) return { readyToMerge: true, headSha: 'abc', notes: 'ok', worktree: wt(o) }
   return null
 }
 const agent = async (prompt, o) => {
@@ -143,6 +154,8 @@ let lastResult
 const MAIN_DENYLIST = ['o', 'r', 'o/r', 'https://github.com/o/r', 'src/billing/invoice.ts', 'README.md', 'src/secret/area.ts', 'billing/invoice.ts', 'secret/area.ts', ...PRS.map(p => p.branch)]
 const simulate = async (args, pre = GOOD) => {
   calls = []
+  cleanupCalls = []
+  timeline = []
   logs = []
   preflight = pre
   const out = await run(args, agent, parallel, log)
@@ -154,6 +167,8 @@ const check = async (name, fn) => { await fn(); console.log('ok  ' + name) }
 // Main run: every path except the failures.
 const r = await simulate(base)
 const mainCalls = calls
+const mainCleanup = cleanupCalls
+const mainTimeline = timeline
 const mainResult = lastResult
 await check('clean code PR lands at the tested sha', () => {
   assert.equal(r.C1.ready, true)
@@ -328,8 +343,8 @@ await check('the evaluator runs once per wave, after the last PR, on sonnet/medi
   assert.match(ev[0].prompt, /"id":"C1"/)
   assert.match(ev[0].prompt, /repos\/o\/r\/pulls\/<n>\/files/)
 })
-await check('the result has the shape { prs, feedback, denylist, source, feedbackRepo }', () => {
-  assert.deepEqual(Object.keys(mainResult).sort(), ['denylist', 'feedback', 'feedbackRepo', 'prs', 'source'])
+await check('the result has the shape { prs, feedback, denylist, source, feedbackRepo, cleanup }', () => {
+  assert.deepEqual(Object.keys(mainResult).sort(), ['cleanup', 'denylist', 'feedback', 'feedbackRepo', 'prs', 'source'])
   assert.equal(mainResult.source, 'o/r')
   assert.equal(mainResult.feedbackRepo, 'alfhen/agent-pr-pipeline')
   assert.ok(Array.isArray(mainResult.prs) && mainResult.prs.length === PRS.length)
@@ -390,7 +405,7 @@ await check('a failed evaluation gives no feedback and does not fail the wave', 
 })
 await check('a refused wave still gets an evaluation, with the refusals in prs', () => {
   assert.deepEqual(refusedResult.feedback, REDACTED)
-  assert.deepEqual(Object.keys(refusedResult).sort(), ['denylist', 'feedback', 'feedbackRepo', 'prs', 'source'])
+  assert.deepEqual(Object.keys(refusedResult).sort(), ['cleanup', 'denylist', 'feedback', 'feedbackRepo', 'prs', 'source'])
   assert.ok(refusedResult.prs.every(x => x.refused))
   assert.match(refusedCalls.find(c => c.label === 'evaluate:wave').prompt, /"refused":true/)
 })
@@ -999,4 +1014,76 @@ await check('a PR whose run throws is null in the result, and the other PRs and 
   assert.equal(out.prs[1].id, 'C2')
   assert.ok(out.denylist.includes('b1'))
   assert.ok(calls.some(c => c.label === 'evaluate:wave'))
+})
+const cleanupOf = (cs, id, kind) => cs.filter(c => c.label === `io:${id}#cleanup${kind}`)
+await check('cleanup: init runs before the first agent', () => {
+  assert.equal(mainTimeline[0], 'io:wave#cleanupinit')
+  assert.match(mainCleanup[0].prompt, /cleanup\.sh init '\/x'/)
+  assert.equal(mainCleanup.filter(c => c.label.endsWith('cleanupinit')).length, 1)
+})
+await check('cleanup: a ready PR and a stopped PR each get one clones call and one worktrees call with their writers\' paths', () => {
+  for (const id of ['C1', 'E1']) {
+    assert.equal(cleanupOf(mainCleanup, id, 'clones').length, 1, id)
+    assert.match(cleanupOf(mainCleanup, id, 'clones')[0].prompt, new RegExp(`cleanup\\.sh clones '/x' '${id}'`))
+    assert.equal(cleanupOf(mainCleanup, id, 'worktrees').length, 1, id)
+    assert.match(cleanupOf(mainCleanup, id, 'worktrees')[0].prompt, new RegExp(`cleanup\\.sh worktrees 'o/r' '/wt/implement-${id}'`))
+  }
+  assert.equal(mainResult.prs.find(p => p.id === 'C1').ready, true)
+  assert.equal(mainResult.prs.find(p => p.id === 'E1').ready, false)
+  const b1 = cleanupOf(mainCleanup, 'B1', 'worktrees')[0].prompt
+  for (const w of ['implement-B1', 'fix-B1-bots1', 'botanswer-B1']) assert.ok(b1.includes(`'/wt/${w}'`), w)
+  const g2 = cleanupOf(mainCleanup, 'G2', 'worktrees')[0].prompt
+  assert.ok(g2.includes("'/wt/docs-G2'"))
+})
+await check('cleanup: clones run once the PR ended, so after its last other call', () => {
+  const at = (re) => mainTimeline.map(l => re.test(l)).lastIndexOf(true)
+  assert.ok(mainTimeline.indexOf('io:C1#cleanupclones') > at(/:C1#(?!cleanup)/))
+})
+await check('cleanup: clones --all runs once, after the evaluator and the redactor', () => {
+  const all = mainTimeline.indexOf('io:wave#cleanupall')
+  assert.ok(all > 0 && all === mainTimeline.length - 1)
+  assert.ok(all > mainTimeline.indexOf('evaluate:wave') && all > mainTimeline.indexOf('redact:wave'))
+  assert.match(mainCleanup.at(-1).prompt, /cleanup\.sh clones '\/x' --all/)
+  assert.deepEqual(mainResult.cleanup, ['REMOVED /x/test-1'])
+})
+await check('cleanup: the result lists what the script printed per PR', () => {
+  assert.deepEqual(mainResult.prs.find(p => p.id === 'C1').cleanup, ['REMOVED /x/test-1'])
+})
+await check('cleanup: false makes no cleanup call and adds no cleanup lines', async () => {
+  await simulate({ ...base, cleanup: false, prs: only('C1', 'E1') })
+  assert.equal(cleanupCalls.length, 0)
+  assert.ok(!timeline.some(l => /cleanup/.test(l)))
+  assert.ok(lastResult.prs.every(p => !('cleanup' in p)) && !('cleanup' in lastResult))
+})
+await check('cleanup: no pluginRoot skips cleanup and says so', async () => {
+  await simulate({ ...base, pluginRoot: undefined, prs: only('E1') })
+  assert.equal(cleanupCalls.length, 0)
+  assert.ok(logs.some(m => /cleanup skipped: pluginRoot missing/.test(m)))
+})
+await check('cleanup: a failing or missing cleanup answer never stops a PR', async () => {
+  for (const mode of ['fail', 'down']) {
+    cleanupMode = mode
+    try {
+      await simulate({ ...base, prs: only('C1', 'E1') })
+    } finally { cleanupMode = 'ok' }
+    const c1 = lastResult.prs.find(p => p.id === 'C1')
+    assert.equal(c1.ready, true, mode)
+    assert.ok(c1.cleanup.length > 0 && c1.cleanup.every(l => /failed|pipeline-io failed/.test(l)), mode)
+    assert.ok(Array.isArray(lastResult.cleanup) && lastResult.cleanup.length > 0, mode)
+  }
+})
+await check('cleanup: a PR whose run throws is still cleaned up', async () => {
+  calls = []; cleanupCalls = []; timeline = []
+  preflight = GOOD
+  const out = await run({ ...base, prs: only('C1', 'C2') }, async (p, o) => { if (o.label === 'open:C1') throw new Error('boom'); return agent(p, o) }, parallel, log)
+  assert.equal(out.prs[0], null)
+  assert.equal(cleanupOf(cleanupCalls, 'C1', 'clones').length, 1)
+  assert.match(cleanupOf(cleanupCalls, 'C1', 'worktrees')[0].prompt, /\/wt\/implement-C1/)
+})
+await check('cleanup: a path with a quote is passed as one shell word', async () => {
+  const quoting = async (p, o) => { const out = await agent(p, o); return o.label === 'implement:C1' ? { ...out, worktree: "/wt/it's" } : out }
+  calls = []; cleanupCalls = []; timeline = []
+  preflight = GOOD
+  await run({ ...base, prs: only('C1') }, quoting, parallel, log)
+  assert.ok(cleanupOf(cleanupCalls, 'C1', 'worktrees')[0].prompt.includes("'/wt/it'\\''s'"))
 })
