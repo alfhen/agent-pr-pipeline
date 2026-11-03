@@ -689,13 +689,17 @@ const ran = (re) => calls.filter(c => re.test(c.label)).map(c => c.label)
 const suffix = x => x.land.split(':').slice(2).join(':')
 await check('decision rerun: a skipImpl rerun with productDecision runs the fixer first, then reviews', async () => {
   const order = id => calls.filter(c => c.label.includes(`:${id}`)).map(c => c.label)
+  const findingsOf = label => JSON.parse(calls.find(c => c.label === label).prompt.split('\nFindings:\n')[1])
   const rerun = async (pr, text) => {
     await simulate({ ...base, prs: [pr] })
     const labels = order(pr.id)
     const fixAt = labels.indexOf(`fix:${pr.id}#0`)
     assert.ok(fixAt >= 0, pr.id)
     assert.ok(fixAt < labels.indexOf(`review:${pr.id}#1`) && fixAt < labels.indexOf(`test:${pr.id}#1`), pr.id)
-    assert.match(calls.find(c => c.label === `fix:${pr.id}#0`).prompt, new RegExp(text))
+    const items = findingsOf(`fix:${pr.id}#0`)
+    assert.equal(items.length, 1)
+    assert.equal(items[0].title, 'Apply the maintainer decision')
+    assert.match(items[0].detail, new RegExp(text))
     assert.deepEqual(ran(new RegExp(`^implement:${pr.id}$`)), [])
   }
   await rerun({ id: 'P1', title: 'plan', branch: 'b3', kind: 'plan', skipImpl: true, productDecision: 'ship the narrow scope' }, 'ship the narrow scope')
@@ -704,9 +708,11 @@ await check('decision rerun: a skipImpl rerun with productDecision runs the fixe
   await simulate({ ...base, prs: [{ id: 'C1', title: 't', branch: 'b1', resume: { history: [], minors: [], findings: [{ severity: 'major', title: 'old resume finding', detail: 'd' }] }, architectureDecision: 'use option A' }] })
   const pre = ran(/^fix:C1#0$/)
   assert.equal(pre.length, 1)
-  const prompt = calls.find(c => c.label === 'fix:C1#0').prompt
-  assert.match(prompt, /old resume finding/)
-  assert.match(prompt, /use option A/)
+  const items = findingsOf('fix:C1#0')
+  assert.equal(items.length, 2)
+  assert.equal(items[0].title, 'old resume finding')
+  assert.equal(items[1].title, 'Apply the maintainer decision')
+  assert.match(items[1].detail, /use option A/)
 
   await simulate({ ...base, prs: [{ id: 'P1', title: 'plan', branch: 'b3', kind: 'plan', skipImpl: true }] })
   assert.deepEqual(ran(/^fix:P1#0$/), [])
