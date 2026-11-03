@@ -16,5 +16,6 @@
     "**/migrations/**",
     "**/.env*"
   ],
+  "knownFlakes": [],
   "autoRelease": false
 }

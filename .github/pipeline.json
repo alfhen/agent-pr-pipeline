@@ -20,7 +20,9 @@
     "skills/**",
     "workflows/**",
     "templates/**",
-    ".claude-plugin/**"
+    ".claude-plugin/**",
+    "routine/**"
   ],
+  "knownFlakes": [],
   "autoRelease": true
 }
