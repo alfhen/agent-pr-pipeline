@@ -127,7 +127,7 @@ The workflow starts every agent as its role agent (`agentType: "agent-pr-pipelin
   "e2ePattern": "\\.e2e\\.test\\.ts$",
   "e2eCommand": "pnpm exec vitest run {files}",
   "maxRounds": 4,
-  "planRounds": 2,
+  "planRounds": 3,
   "botWaitMinutes": 20,
   "bots": "CodeRabbit (login coderabbitai) and Gitar (login contains \"gitar\")",
   "milestone": "1.2.0",
@@ -154,7 +154,7 @@ The workflow starts every agent as its role agent (`agentType: "agent-pr-pipelin
 - `feedback`: `false` turns the end-of-run evaluation off. `feedbackRepo`: where feedback is filed (default `alfhen/agent-pr-pipeline`). The redactor runs only when `repo` differs from it.
 - `docs`: where the docs are, for example `["README.md", "docs/", "site/"]`. Without it the docs agent finds them. `docsBuild`: the command that builds the docs site, if any. `docsUpdate: false` turns the docs step off for the wave (or for one PR). `docsRounds`: rounds for the docs check (default 2).
 - `skills`: which skills each step's agent loads before it starts. See "Pair skills with steps" below. Default: none.
-- `kind`: `code` (default), `docs` or `plan`. Docs and plan PRs get a Sonnet reviewer at high effort instead of Opus. Plan PRs stop after `planRounds` (default 2); fix what is left by hand, then rerun with `skipImpl`.
+- `kind`: `code` (default), `docs` or `plan`. Docs and plan PRs get a Sonnet reviewer at high effort instead of Opus. Plan PRs stop after `planRounds` (default 3); fix what is left by hand, then rerun with `skipImpl`.
 
 Models and effort per step are in the table under "Role agents". Override a step for the whole wave in `steps`, for example `{ "review": { "model": "opus", "effort": "xhigh" } }`. `reviewDocs` sets the reviewer of docs and plan PRs and the docs check (default sonnet, high).
 

@@ -212,8 +212,13 @@ await check('docs PR skips architecture and uses the docs reviewer', () => {
 await check('plan PR stops after planRounds', () => {
   assert.equal(r.P1.ready, false)
   assert.equal(r.P1.reason, 'rounds exhausted')
-  assert.equal(r.P1.history.length, 2)
+  assert.equal(r.P1.history.length, 3)
   assert.equal(r.P1.product.verdict, 'aligned')
+})
+await check('planRounds in the args overrides the default', async () => {
+  const x = await simulate({ ...base, planRounds: 2, prs: [{ id: 'P1', title: 'plan', branch: 'b3', kind: 'plan', skipImpl: true }] })
+  assert.equal(x.P1.reason, 'rounds exhausted')
+  assert.equal(x.P1.history.length, 2)
 })
 await check('land fix runs the land fixer, then waits for and answers the bots on the new head', () => {
   assert.equal(r.L1.ready, true)
