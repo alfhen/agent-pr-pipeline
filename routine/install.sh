@@ -14,6 +14,10 @@ home=${AGENT_PR_PIPELINE_HOME:-$HOME/.agent-pr-pipeline}
 slug=${repo//\//-}
 guard="$home/routine/$slug"
 
+claude_bin=$(command -v claude || true)
+[ -n "$claude_bin" ] || { echo "install.sh: claude is not on PATH; the hourly job could not start a session" >&2; exit 1; }
+claude_dir=$(dirname "$claude_bin")
+
 mkdir -p "$guard/logs" "$home/work/$slug"
 if [ -d "$guard/lock" ]; then echo "install.sh: a run holds $guard/lock; try again when it ends" >&2; exit 1; fi
 
@@ -31,7 +35,9 @@ glit=$(printf '%s' "$guard" | sed 's/[&|\\]/\\&/g')
 for f in "$guard"/plugin/routine/settings/*.json; do
   sed -i.bak -e "s|OWNER/REPO|$lit|g" -e "s|GUARD|$glit|g" "$f"; rm -f "$f.bak"
 done
-sed -e "s|OWNER/REPO|$lit|g" -e "s|GUARD|$glit|g" -e "s|OWNER-REPO|$slug|g" \
+# launchd's PATH is short; the job needs the folder that holds claude (the native installer uses ~/.local/bin).
+cdir=$(printf '%s' "$claude_dir" | sed 's/[&|\\]/\\&/g')
+sed -e "s|CLAUDE_DIR|$cdir|g" -e "s|OWNER/REPO|$lit|g" -e "s|GUARD|$glit|g" -e "s|OWNER-REPO|$slug|g" \
   "$guard/plugin/routine/launchd.plist" > "$guard/launchd.plist"
 
 [ -f "$guard/repo" ] && chmod u+w "$guard/repo"

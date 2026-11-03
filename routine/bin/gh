@@ -28,6 +28,8 @@ while [ $i -lt ${#args[@]} ]; do
     --paginate|--slurp) passthrough+=("$a") ;;
     --jq|-q)
       [ $((i + 1)) -lt ${#args[@]} ] || refuse "$@"
+      # gojq exposes the environment through `env` and `$ENV`; the session may hold tokens.
+      [[ ${args[$((i + 1))]} =~ (^|[^A-Za-z0-9_])(\$?ENV|env|\$__prog_args|inputs?)([^A-Za-z0-9_]|$) ]] && refuse "$@"
       passthrough+=("$a" "${args[$((i + 1))]}"); i=$((i + 1)) ;;
     -H|--header)
       [ $((i + 1)) -lt ${#args[@]} ] || refuse "$@"

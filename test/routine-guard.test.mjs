@@ -3,7 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, copyFileSync, chmodSync, cpSync, statSync, realpathSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, copyFileSync, chmodSync, symlinkSync, cpSync, statSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -138,6 +138,20 @@ test('the wrapper refuses writes, other repos, other paths and other commands wi
     assert.equal(r.err.trim().split('\n').length, 1, name)
     assert.match(r.err, /refused: gh /)
   }
+})
+
+test('the wrapper refuses jq expressions that read the environment, and keeps ordinary ones', () => {
+  const s = setup()
+  fixture(s, 'repos/o/r/issues')
+  for (const q of ['$ENV', 'env.GH_TOKEN', 'env', '[.[]|{t:$ENV.HOME}]', 'input', '$__prog_args']) {
+    for (const flag of ['--jq', '-q']) {
+      const r = gh(s, ['api', 'repos/o/r/issues', flag, q])
+      assert.equal(r.code, 77, `${flag} ${q}`)
+      assert.equal(r.calls.length, 0, `${flag} ${q} reached gh`)
+    }
+  }
+  const ok = gh(s, ['api', 'repos/o/r/issues', '--jq', '[.[] | {number, environment: .title}] | length'])
+  assert.equal(ok.code, 0, ok.err)
 })
 
 test('the refused api calls are ones the real gh stand-in would have answered', () => {
@@ -310,6 +324,7 @@ test('each settings file is valid JSON with an allow list and a deny list, and n
       assert.ok(deny.includes(bad), `${name} does not deny ${bad}`)
     }
     assert.ok(deny.includes('Bash(git *)'))
+    assert.ok(!allow.some(r => /^(Read|Glob|Grep)(\(|$)/.test(r)), `${name} has a read rule that reaches outside the clone`)
     assert.ok(!allow.some(r => /^Bash\((git|gh|routine-state\.sh)[ )]/.test(r)), 'Bash rules name files by absolute path')
     assert.ok(allow.filter(r => r.startsWith('Bash(')).every(r => r.startsWith(`Bash(${G}/plugin/`)))
     assert.ok(!allow.some(r => r === 'Bash' || r === 'Agent'), 'no blanket Bash or Agent')
@@ -359,7 +374,10 @@ test('the matcher itself tells a match from a miss', () => {
 test('install.sh builds the guard folder with the literal repo and keeps the mode', () => {
   const dir = mkdtempSync(join(tmpdir(), 'routine-install-test-'))
   const home = join(dir, 'home')
-  const run = () => spawnSync('bash', [join(root, 'routine/install.sh'), 'o/r'], { env: { ...process.env, AGENT_PR_PIPELINE_HOME: home, HOME: dir }, encoding: 'utf8' })
+  const cbin = join(dir, 'claude-bin'); mkdirSync(cbin)
+  writeFileSync(join(cbin, 'claude'), '#!/bin/sh\n'); chmodSync(join(cbin, 'claude'), 0o755)
+  const path = `${cbin}:${process.env.PATH}`
+  const run = () => spawnSync('bash', [join(root, 'routine/install.sh'), 'o/r'], { env: { ...process.env, PATH: path, AGENT_PR_PIPELINE_HOME: home, HOME: dir }, encoding: 'utf8' })
   let r = run()
   assert.equal(r.status, 0, r.stderr)
   const guard = join(home, 'routine/o-r')
@@ -373,6 +391,8 @@ test('install.sh builds the guard folder with the literal repo and keeps the mod
   const plist = readFileSync(join(guard, 'launchd.plist'), 'utf8')
   assert.ok(plist.includes(`${guard}/plugin/routine/run.sh`))
   assert.ok(plist.includes('com.agent-pr-pipeline.routine.o-r'))
+  assert.ok(plist.includes(`<string>${cbin}:`), 'the plist PATH starts with the folder of the claude found at install')
+  assert.ok(!plist.includes('CLAUDE_DIR'))
   assert.ok(!existsSync(join(dir, 'Library')), 'nothing is written to LaunchAgents')
   assert.ok(!writable(join(guard, 'plugin/routine/run.sh')))
 
@@ -383,4 +403,17 @@ test('install.sh builds the guard folder with the literal repo and keeps the mod
 
   r = spawnSync('bash', [join(root, 'routine/install.sh'), 'not a repo'], { env: { ...process.env, AGENT_PR_PIPELINE_HOME: home }, encoding: 'utf8' })
   assert.equal(r.status, 64)
+})
+
+test('install.sh refuses when claude is not on PATH', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'routine-install-test-'))
+  const tools = join(dir, 'tools'); mkdirSync(tools)
+  for (const t of ['dirname', 'cp', 'mkdir', 'rm', 'chmod', 'sed', 'tr', 'jq', 'cat']) {
+    const w = spawnSync('sh', ['-c', `command -v ${t}`], { encoding: 'utf8' }).stdout.trim()
+    if (w) symlinkSync(w, join(tools, t))
+  }
+  const r = spawnSync('/bin/bash', [join(root, 'routine/install.sh'), 'o/r'], { env: { PATH: tools, AGENT_PR_PIPELINE_HOME: join(dir, 'home'), HOME: dir }, encoding: 'utf8' })
+  assert.equal(r.status, 1)
+  assert.match(r.stderr, /claude is not on PATH/)
+  assert.ok(!existsSync(join(dir, 'home/routine/o-r/plugin')))
 })

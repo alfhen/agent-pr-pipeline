@@ -1,9 +1,6 @@
 {
   "permissions": {
     "allow": [
-      "Read",
-      "Glob",
-      "Grep",
       "Bash(GUARD/plugin/routine/bin/gh api *)",
       "Bash(GUARD/plugin/scripts/routine-state.sh OWNER/REPO next)",
       "Bash(GUARD/plugin/scripts/routine-state.sh OWNER/REPO put triaged *)",
