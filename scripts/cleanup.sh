@@ -58,9 +58,22 @@ case "$cmd" in
       gh api "repos/$R/commits/$sha" --jq .sha >/dev/null 2>&1 || { keep "head $sha is not on GitHub"; continue; }
       branch=$(git -C "$path" symbolic-ref --short -q HEAD)
       out=$(git --git-dir="$common" worktree remove "$path" 2>&1) || { keep "git worktree remove refused: $(echo "$out" | head -n 1)"; continue; }
-      if [ -z "$branch" ]; then echo "REMOVED $p"; continue; fi
-      if out=$(git --git-dir="$common" branch -D "$branch" 2>&1); then echo "REMOVED $p branch $branch"
-      else echo "REMOVED $p (branch $branch kept: $(echo "$out" | head -n 1))"; fi
+      msg="REMOVED $p"
+      if [ -n "$branch" ]; then
+        if out=$(git --git-dir="$common" branch -D "$branch" 2>&1); then msg="$msg branch $branch"
+        else msg="$msg (branch $branch kept: $(echo "$out" | head -n 1))"; fi
+      fi
+      # Claude Code starts each worktree on worktree-<folder>; the writer then switches away, so that branch is left behind.
+      auto="worktree-$(basename "$path")"
+      if [ "$auto" != "$branch" ] && git --git-dir="$common" show-ref --verify -q "refs/heads/$auto"; then
+        tip=$(git --git-dir="$common" rev-parse "refs/heads/$auto")
+        if git --git-dir="$common" worktree list --porcelain | grep -qx "branch refs/heads/$auto"; then msg="$msg (branch $auto kept: checked out in another worktree)"
+        elif git --git-dir="$common" merge-base --is-ancestor "$tip" "$sha" 2>/dev/null || gh api "repos/$R/commits/$tip" --jq .sha >/dev/null 2>&1; then
+          if out=$(git --git-dir="$common" branch -D "$auto" 2>&1); then msg="$msg branch $auto"
+          else msg="$msg (branch $auto kept: $(echo "$out" | head -n 1))"; fi
+        else msg="$msg (branch $auto kept: tip $tip is not on GitHub)"; fi
+      fi
+      echo "$msg"
     done
     ;;
   *) usage ;;

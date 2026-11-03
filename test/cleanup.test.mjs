@@ -129,6 +129,31 @@ test('a clean worktree whose head is on GitHub is removed with its branch', () =
   assert.ok(!branches(t).includes('branch-clean'))
 })
 
+test('the worktree-<name> branch Claude Code makes is deleted too, once the writer has switched branches', () => {
+  const t = build()
+  const wt = join(t.repo, '.claude/worktrees/wf_x-1')
+  must(t.repo, 'worktree', 'add', '-q', '-b', 'worktree-wf_x-1', wt)
+  must(wt, 'checkout', '-q', '-B', 'other')
+  t.onGitHub(must(wt, 'rev-parse', 'HEAD'))
+  const r = run(t, ['worktrees', 'o/r', wt])
+  assert.match(r.out, /^REMOVED .*branch other branch worktree-wf_x-1/)
+  assert.ok(!existsSync(wt))
+  assert.ok(!branches(t).includes('other'))
+  assert.ok(!branches(t).includes('worktree-wf_x-1'))
+})
+
+test('the worktree-<name> branch is kept when it holds commits not on GitHub', () => {
+  const t = build()
+  const wt = join(t.repo, '.claude/worktrees/wf_y-1')
+  must(t.repo, 'worktree', 'add', '-q', '-b', 'worktree-wf_y-1', wt)
+  writeFileSync(join(wt, 'b.txt'), 'b\n'); must(wt, 'add', '.'); must(wt, 'commit', '-qm', 'work')
+  must(wt, 'checkout', '-q', '-B', 'other', 'main')
+  t.onGitHub(must(wt, 'rev-parse', 'HEAD'))
+  const r = run(t, ['worktrees', 'o/r', wt])
+  assert.match(r.out, /branch worktree-wf_y-1 kept: tip .* is not on GitHub/)
+  assert.ok(branches(t).includes('worktree-wf_y-1'))
+})
+
 test('a detached worktree is removed and no branch is touched', () => {
   const t = build()
   const wt = t.worktree('detached')
