@@ -36,7 +36,9 @@ const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyD
 const landHead = {}
 const wt = o => '/wt/' + o.label.replace(/[:#]/g, '-')
 let cleanupMode = 'ok'
-const cleanupAnswer = label => cleanupMode === 'down' ? null : cleanupMode === 'fail' ? { exitCode: 1, output: 'cleanup: boom' } : { exitCode: 0, output: /(clones|all)$/.test(label) ? 'REMOVED /x/test-1' : '' }
+const cleanupAnswer = label => label.endsWith('init') ? { exitCode: 0, output: cleanupMode === 'refused' ? 'KEPT /x refused: shared temp folder' : 'MARKED /x' }
+  : cleanupMode === 'down' ? null : cleanupMode === 'fail' ? { exitCode: 1, output: 'cleanup: boom' }
+  : { exitCode: 0, output: /(clones|all)$/.test(label) ? 'REMOVED /x/test-1' : '' }
 const lastHead = {}
 // Cleanup calls are kept apart so the step-by-step checks below see only the pipeline's own steps.
 let cleanupCalls = []
@@ -1071,6 +1073,16 @@ await check('cleanup: a failing or missing cleanup answer never stops a PR', asy
     assert.ok(c1.cleanup.length > 0 && c1.cleanup.every(l => /failed|pipeline-io failed/.test(l)), mode)
     assert.ok(Array.isArray(lastResult.cleanup) && lastResult.cleanup.length > 0, mode)
   }
+})
+await check('cleanup: a refused init means no clones call and no --all call, but worktrees are still cleaned', async () => {
+  cleanupMode = 'refused'
+  try {
+    await simulate({ ...base, prs: only('C1', 'E1') })
+  } finally { cleanupMode = 'ok' }
+  assert.equal(cleanupCalls.filter(c => /cleanup(clones|all)$/.test(c.label)).length, 0)
+  assert.equal(cleanupOf(cleanupCalls, 'C1', 'worktrees').length, 1)
+  assert.ok(logs.some(m => /clones cleanup is off for this run: KEPT/.test(m)))
+  assert.ok(!('cleanup' in lastResult))
 })
 await check('cleanup: a PR whose run throws is still cleaned up', async () => {
   calls = []; cleanupCalls = []; timeline = []

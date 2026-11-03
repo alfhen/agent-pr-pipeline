@@ -11,18 +11,25 @@ MARK=.pipeline-tmp
 usage() { echo "usage: cleanup.sh init <tmp> | clones <tmp> <id>|--all | worktrees <owner/repo> <path>..." >&2; exit 2; }
 canon() { (cd "$1" 2>/dev/null && pwd -P); }
 
+# Prints why a folder may not hold clones and returns 0 when it is refused. init and clones both ask, so a stale marker in a refused folder deletes nothing.
+refused() {
+  local tmp=$1 home shared
+  home=$(canon "$HOME")
+  if [ -z "$tmp" ] || [ "$tmp" = / ] || [ "$tmp" = "$home" ]; then echo "not a temp folder"; return 0; fi
+  if [ "$(git -C "$tmp" rev-parse --show-toplevel 2>/dev/null)" = "$tmp" ]; then echo "top of a git repo"; return 0; fi
+  for shared in /tmp /private/tmp "${TMPDIR:-}"; do
+    [ -n "$shared" ] && [ "$tmp" = "$(canon "$shared")" ] && { echo "shared temp folder"; return 0; }
+  done
+  return 1
+}
+
 cmd=$1; shift
 case "$cmd" in
   init)
     [ $# -eq 1 ] || usage
     mkdir -p "$1" || { echo "KEPT $1 cannot make the folder"; exit 0; }
     tmp=$(canon "$1")
-    home=$(canon "$HOME")
-    if [ -z "$tmp" ] || [ "$tmp" = / ] || [ "$tmp" = "$home" ]; then echo "KEPT $1 refused: not a temp folder"; exit 0; fi
-    if [ "$(git -C "$tmp" rev-parse --show-toplevel 2>/dev/null)" = "$tmp" ]; then echo "KEPT $1 refused: top of a git repo"; exit 0; fi
-    for shared in /tmp /private/tmp "${TMPDIR:-}"; do
-      [ -n "$shared" ] && [ "$tmp" = "$(canon "$shared")" ] && { echo "KEPT $1 refused: shared temp folder"; exit 0; }
-    done
+    refusal=$(refused "$tmp") && { echo "KEPT $1 refused: $refusal"; exit 0; }
     if [ ! -f "$tmp/$MARK" ] && [ -n "$(find "$tmp" -mindepth 1 -maxdepth 1 -type d -print -quit)" ]; then echo "KEPT $1 refused: has folders and no $MARK marker"; exit 0; fi
     : > "$tmp/$MARK" && echo "MARKED $tmp" || echo "KEPT $1 cannot write the marker"
     ;;
@@ -30,6 +37,7 @@ case "$cmd" in
     [ $# -eq 2 ] || usage
     tmp=$(canon "$1"); id=$2
     [ -n "$tmp" ] && [ -f "$tmp/$MARK" ] || { echo "KEPT $1 no $MARK marker"; exit 0; }
+    refusal=$(refused "$tmp") && { echo "KEPT $1 refused: $refusal"; exit 0; }
     if [ "$id" = --all ]; then
       while IFS= read -r d; do rm -rf "$d" && echo "REMOVED $d"; done < <(find "$tmp" -mindepth 1 -maxdepth 1 -type d)
     else

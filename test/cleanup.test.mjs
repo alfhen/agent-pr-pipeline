@@ -59,7 +59,7 @@ test('init writes the marker and refuses /, the home folder and the top of a git
 
 test('init refuses shared temp folders and unmarked folders that hold folders, and accepts a marked one', () => {
   const t = build()
-  for (const shared of ['/tmp', '/private/tmp']) {
+  for (const shared of ['/tmp', '/private/tmp'].filter(existsSync)) {
     const r = run(t, ['init', shared])
     assert.match(r.out, /^KEPT .* refused/, shared)
     assert.ok(!existsSync(join(shared, '.pipeline-tmp')), shared)
@@ -72,6 +72,20 @@ test('init refuses shared temp folders and unmarked folders that hold folders, a
   assert.ok(existsSync(join(t.tmp, 'other-project/f')))
   writeFileSync(join(t.tmp, '.pipeline-tmp'), '')
   assert.match(run(t, ['init', t.tmp]).out, /^MARKED /)
+})
+
+test('clones deletes nothing in a refused folder even when a marker is there', () => {
+  const t = build()
+  mkdirs(t, 'test-T01-r1')
+  writeFileSync(join(t.tmp, '.pipeline-tmp'), '')
+  for (const args of [['clones', t.tmp, '--all'], ['clones', t.tmp, 'T01']]) {
+    const r = run(t, args, { TMPDIR: t.tmp })
+    assert.match(r.out, /^KEPT .* refused: shared temp folder/, args.join(' '))
+    assert.ok(existsSync(join(t.tmp, 'test-T01-r1')))
+  }
+  must(t.tmp, 'init', '-q')
+  assert.match(run(t, ['clones', t.tmp, '--all']).out, /^KEPT .* refused: top of a git repo/)
+  assert.ok(existsSync(join(t.tmp, 'test-T01-r1')))
 })
 
 test('clones deletes nothing without the marker', () => {

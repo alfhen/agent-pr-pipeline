@@ -871,9 +871,11 @@ async function cleanupRun(pr, command, label) {
   }
 }
 const cleanupReady = CLEANUP && !!PLUGIN_ROOT
+// False once init does not mark the folder, so no clones call can delete in a folder init refused.
+let clonesOn = cleanupReady
 async function cleanupPR(pr) {
   if (!cleanupReady) return []
-  const lines = await cleanupRun(pr, cleanupCommand('clones', shq(TMP), shq(pr.id)), 'clones')
+  const lines = clonesOn ? await cleanupRun(pr, cleanupCommand('clones', shq(TMP), shq(pr.id)), 'clones') : []
   const paths = [...(worktreesOf[pr.id] || [])]
   if (paths.length) lines.push(...await cleanupRun(pr, cleanupCommand('worktrees', shq(REPO), ...paths.map(shq)), 'worktrees'))
   return lines
@@ -964,10 +966,10 @@ async function runPRSteps(input) {
 
 if (cleanupReady) {
   const marked = await cleanupRun(null, cleanupCommand('init', shq(TMP)), 'init')
-  if (!marked.some(l => l.startsWith('MARKED'))) log(`cleanup is off for this run: ${marked.join(' ')}`)
+  if (!marked.some(l => l.startsWith('MARKED'))) { clonesOn = false; log(`clones cleanup is off for this run: ${marked.join(' ')}`) }
 } else if (CLEANUP) log('cleanup skipped: pluginRoot missing')
 const finish = async result => {
-  if (cleanupReady) result.cleanup = await cleanupRun(null, cleanupCommand('clones', shq(TMP), '--all'), 'all')
+  if (clonesOn) result.cleanup = await cleanupRun(null, cleanupCommand('clones', shq(TMP), '--all'), 'all')
   return result
 }
 const needsGoals = A.prs.some(pr => !pr.landFix)
