@@ -66,7 +66,7 @@ Read [skills/pr-pipeline/SKILL.md](skills/pr-pipeline/SKILL.md) for the loop, th
 
 ## The triage routine
 
-An optional hourly job triages the open `pipeline-feedback` issues of a repo, with guards that let it read and record but not build or merge. It starts in `observe` mode, which changes nothing on GitHub. Install it with `routine/install.sh <owner/repo>`. See [docs/routine.md](docs/routine.md).
+An optional scheduled job triages the open `pipeline-feedback` issues of a repo, with guards that let it read and record but not build or merge. It runs at the installed minutes of each hour (`install.sh --minutes`, default 7). It starts in `observe` mode, which changes nothing on GitHub. Install it with `routine/install.sh <owner/repo>`. See [docs/routine.md](docs/routine.md).
 
 ## Needs
 
