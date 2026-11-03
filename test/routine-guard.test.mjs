@@ -329,6 +329,12 @@ test('each settings file is valid JSON with an allow list and a deny list, and n
     assert.ok(allow.filter(r => r.startsWith('Bash(')).every(r => r.startsWith(`Bash(${G}/plugin/`)))
     assert.ok(!allow.some(r => r === 'Bash' || r === 'Agent'), 'no blanket Bash or Agent')
     assert.ok(allow.includes('Agent(triager)'))
+    const plugin = readdirSync(join(root, 'agents')).map(f => f.replace(/\.md$/, '')).filter(n => n !== 'triager')
+    for (const n of [...plugin, 'Explore', 'Plan', 'general-purpose', 'statusline-setup', 'claude-code-guide', 'output-style-setup']) {
+      assert.ok(deny.includes(`Agent(${n})`), `${name} does not deny Agent(${n})`)
+    }
+    for (const n of plugin) assert.ok(deny.includes(`Agent(agent-pr-pipeline:${n})`), `${name} does not deny Agent(agent-pr-pipeline:${n})`)
+    assert.ok(!deny.includes('Agent(triager)') && !deny.includes('Agent(agent-pr-pipeline:triager)'))
     assert.ok(!settings(name).permissions.defaultMode, 'the runner sets the mode')
   }
 })
