@@ -80,6 +80,7 @@ for arg in "$@"; do
         echo "RERUN #$pr: known flake(s) [$failing], failed jobs rerun once"
         sleep "$((pause / 3))"
         wait_ci
+        if [ "$head" != "$sha" ]; then echo "HEAD MOVED #$pr: checked ${sha:0:7}, now ${head:0:7}. Check the new head before merging."; exit 6; fi
         read_failing
       fi
     fi

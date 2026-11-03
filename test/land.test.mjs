@@ -63,6 +63,22 @@ test('land: a known flake that passes after one rerun merges', () => {
   assert.equal(r.log.filter((l) => /^PUT .*\/pulls\/7\/merge/.test(l)).length, 1)
 })
 
+test('land: a head that moves during the rerun wait stops with HEAD MOVED', () => {
+  const s = landSetup({ checks: [[failed('e2e')], [failed('e2e')], [passed('e2e')]] })
+  const NEW = 'b'.repeat(40)
+  const pull = (sha) => ({ merged: false, mergeable: true, head: { sha, ref: 'feat/x', repo: { full_name: 'o/r' } } })
+  put(s.fx, `${PULL}.call1.json`, pull(SHA))
+  put(s.fx, `${PULL}.call2.json`, pull(SHA))
+  put(s.fx, `${PULL}.call3.json`, pull(NEW))
+  put(s.fx, `${P}__commits__${NEW}__check-runs.json`, { check_runs: [passed('e2e')] })
+  put(s.fx, `${P}__commits__${NEW}__status.json`, { state: 'success', statuses: [] })
+  const r = land(s)
+  assert.equal(r.code, 6, r.out)
+  assert.match(r.out, /HEAD MOVED #7: checked aaaaaaa, now bbbbbbb/)
+  assert.equal(reruns(r).length, 1)
+  assert.equal(r.log.filter((l) => /^PUT .*\/pulls\/7\/merge/.test(l)).length, 0)
+})
+
 test('land: a known flake that fails again stops with LAND FIX after one rerun', () => {
   const r = land(landSetup({ checks: [[failed('e2e')]] }))
   assert.equal(r.code, 3, r.out)
