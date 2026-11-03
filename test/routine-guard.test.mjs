@@ -452,7 +452,7 @@ test('the triager agent names the comments path and the maintainer-account rule'
   const t = readFileSync(join(root, 'agents/triager.md'), 'utf8')
   assert.match(t, /issues\/<n>\/comments/)
   assert.match(t, /Comments by the account `gh api user` returns count as part of the issue/)
-  assert.match(t, /<!-- pipeline:/)
+  assert.match(t, /another account, including one that starts with `<!-- pipeline:`/)
 })
 
 test('the triager agent is told to use a ready clone and a gh path', () => {
