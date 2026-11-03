@@ -45,8 +45,8 @@ const agentRaw = async (prompt, o) => {
     if (land.gateOdd.has(id)) return { exitCode: 0, output: 'GATED #1: scripts/x.sh' }
     return land.gated.has(id) ? { exitCode: 1, output: 'GATED #1: scripts/merge-pr.sh' } : { exitCode: 0, output: 'not gated #1' }
   }
-  if (o.label.startsWith('io:') && o.label.endsWith('#landhead')) return { exitCode: 0, output: 'b'.repeat(40) + '\n' }
-  if (o.label.startsWith('io:') && o.label.endsWith('#landcommits')) {
+  if (o.label.startsWith('io:') && /#landhead\d*$/.test(o.label)) return { exitCode: 0, output: JSON.stringify({ head: (o.label.endsWith('#landhead') ? 'b' : 'c').repeat(40), approvedBy: [] }) }
+  if (o.label.startsWith('io:') && /#landcommits\d*$/.test(o.label)) {
     if (land.landFail.has(id)) return { exitCode: 1, output: 'land-commits: cannot read ' + 'b'.repeat(40) }
     return { exitCode: 0, output: land.landOutput.has(id) ? 'merge abc\n+resolved line\n' : '' }
   }
@@ -190,7 +190,7 @@ await check('plan PR stops after planRounds', () => {
 })
 await check('land fix runs the land fixer, then waits for and answers the bots on the new head', () => {
   assert.equal(r.L1.ready, true)
-  assert.deepEqual(mainCalls.filter(c => c.label.includes(':L1')).map(c => c.label), ['io:L1#landhead', 'landfix:L1', 'io:L1#landcommits', 'botwait:L1', 'io:L1#botstatus', 'botanswer:L1', 'test:L1#bots1', 'botreview:L1#1'])
+  assert.deepEqual(mainCalls.filter(c => c.label.includes(':L1')).map(c => c.label), ['io:L1#landhead', 'landfix:L1', 'io:L1#landcommits1', 'botwait:L1', 'io:L1#botstatus', 'botanswer:L1', 'test:L1#bots1', 'botreview:L1#1'])
   assert.equal(r.L1.land, '7:sha-L1-bots1')
 })
 await check('architecture escalate stops the PR with the question', () => {
@@ -799,8 +799,8 @@ await check('land fix: output from land-commits.sh starts a tester and a diff re
   const x = await landFixRun({ landOutput: ['LA'] })
   assert.equal(x.LA.ready, true)
   const labels = calls.map(c => c.label)
-  assert.deepEqual(labels.filter(l => l.includes(':LA')).slice(0, 6), ['io:LA#landhead', 'landfix:LA', 'io:LA#landcommits', 'test:LA#land1', 'landreview:LA#1', 'botwait:LA'])
-  const io = calls.find(c => c.label === 'io:LA#landcommits')
+  assert.deepEqual(labels.filter(l => l.includes(':LA')).slice(0, 6), ['io:LA#landhead', 'landfix:LA', 'io:LA#landcommits1', 'test:LA#land1', 'landreview:LA#1', 'botwait:LA'])
+  const io = calls.find(c => c.label === 'io:LA#landcommits1')
   assert.match(io.prompt, new RegExp('bash /plug/scripts/land-commits\\.sh o/r ' + 'b'.repeat(40) + ' abc /x'))
   const rev = calls.find(c => c.label === 'landreview:LA#1')
   assert.match(rev.prompt, /\+resolved line/)
@@ -811,7 +811,7 @@ await check('land fix: output from land-commits.sh starts a tester and a diff re
 await check('land fix: empty output from land-commits.sh starts no tester or reviewer', async () => {
   const x = await landFixRun({})
   assert.equal(x.LA.ready, true)
-  assert.ok(calls.some(c => c.label === 'io:LA#landcommits'))
+  assert.ok(calls.some(c => c.label === 'io:LA#landcommits1'))
   assert.ok(!calls.some(c => /^(test|landreview|fix):LA/.test(c.label)))
   assert.equal(x.LA.land.split(':')[1], 'abc')
 })
@@ -833,7 +833,22 @@ await check('land fix: blockers in the check run the fixer, then stop after the 
 await check('land fix: an unreadable head before the fix stops before the fixer runs', async () => {
   const x = await run({ ...base, prs: [{ ...LANDS[0], id: 'LH' }] }, async (p, o) => o.label.endsWith('#landhead') ? { exitCode: 1, output: 'gh: HTTP 404' } : agent(p, o), parallel, log)
   assert.equal(x.prs[0].ready, false)
-  assert.match(x.prs[0].reason, /cannot read the head before the fix/)
+  assert.match(x.prs[0].reason, /cannot read the head/)
+})
+await check('land fix: round 2 reads the code again from the head after the fix and reviews that output', async () => {
+  await landFixRun({ landOutput: ['LA'], landBad: ['LA'] })
+  const io2 = calls.find(c => c.label === 'io:LA#landcommits2')
+  assert.ok(io2)
+  assert.match(io2.prompt, new RegExp('land-commits\\.sh o/r abc ' + 'c'.repeat(40)))
+  assert.ok(calls.some(c => c.label === 'io:LA#landhead2'))
+  assert.ok(calls.findIndex(c => c.label === 'fix:LA#land1') < calls.findIndex(c => c.label === 'io:LA#landcommits2'))
+  assert.match(calls.find(c => c.label === 'landreview:LA#2').prompt, /\+resolved line/)
+})
+await check('land fix: without pluginRoot the fixer does not run', async () => {
+  const { pluginRoot, ...noRoot } = base
+  const x = await simulate({ ...noRoot, prs: [LANDS[0]] })
+  assert.match(x.LA.reason, /^pluginRoot missing/)
+  assert.ok(!calls.some(c => /^(landfix|io):LA/.test(c.label)))
 })
 await check('the land-fixer role file tells it never to answer bot threads', () => {
   const text = readFileSync(new URL('agents/land-fixer.md', new URL('../', import.meta.url)), 'utf8')

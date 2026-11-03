@@ -1,7 +1,7 @@
 // Runs land-commits.sh against a real temporary git repo (LAND_COMMITS_REMOTE replaces the GitHub URL).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -95,4 +95,20 @@ test('a before that is not a sha is refused', () => {
   const r = run(t, '--output=x', must(t.work, 'rev-parse', 'HEAD'))
   assert.notEqual(r.status, 0)
   assert.match(r.stderr, /not a commit sha/)
+})
+
+test('calls that overlap in the same tmp dir all succeed', async () => {
+  const t = build(); push(t)
+  const after = commit(t.work, 'fix.txt', 'the fix\n', 'fix a test')
+  push(t)
+  const once = () => new Promise(resolve => {
+    const c = spawn('bash', [join(root, 'scripts/land-commits.sh'), 'o/r', t.before, after, join(t.dir, 'tmp')], { env: { ...GIT_ENV, LAND_COMMITS_REMOTE: t.remote } })
+    let out = ''
+    c.stdout.on('data', d => { out += d })
+    c.on('close', status => resolve({ status, out }))
+  })
+  for (const r of await Promise.all([once(), once(), once()])) {
+    assert.equal(r.status, 0)
+    assert.match(r.out, /fix a test/)
+  }
 })

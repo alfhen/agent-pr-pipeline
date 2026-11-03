@@ -12,8 +12,8 @@ for sha in "$before" "$after"; do
   [[ "$sha" =~ ^[0-9a-f]{7,40}$ ]] || fail "not a commit sha: $sha"
 done
 
-dir="$tmp/land-commits"
-rm -rf "$dir"
+mkdir -p "$tmp" && dir=$(mktemp -d "$tmp/land-commits.XXXXXX") || fail "cannot make a clone folder"
+trap 'rm -rf "$dir"' EXIT
 git clone --quiet "${LAND_COMMITS_REMOTE:-https://github.com/$R.git}" "$dir" || fail "cannot clone"
 cd "$dir" || fail "cannot enter the clone"
 git rev-parse --quiet --verify origin/HEAD >/dev/null || fail "the clone has no default branch"

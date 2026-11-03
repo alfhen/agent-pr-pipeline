@@ -702,9 +702,11 @@ async function docsStep(pr, signedSha, history, minors) {
 // Tests and reviews the commits an agent added after the PR passed review, with fix rounds.
 async function checkNewCode(pr, { tag, label, role, what, reviewPrompt }, history, minors) {
   for (let round = 1; round <= BOT_CHECK_ROUNDS; round++) {
+    const prompt = await reviewPrompt(round)
+    if (typeof prompt !== 'string') return { ok: false, reason: prompt.fail }
     const [test, review] = await parallel([
       () => call('test', pr, testPrompt(pr, `${tag}${round}`), `test:${pr.id}#${tag}${round}`, { phase: ROLES[role].phase, schema: TEST }),
-      () => call(role, pr, reviewPrompt(round), `${label}:${pr.id}#${round}`, { schema: REVIEW }),
+      () => call(role, pr, prompt, `${label}:${pr.id}#${round}`, { schema: REVIEW }),
     ])
     if (!test || !review) return { ok: false, reason: `${what} failed to run` }
     const blocking = review.findings.filter(f => f.severity !== 'minor')
@@ -720,13 +722,36 @@ async function checkNewCode(pr, { tag, label, role, what, reviewPrompt }, histor
 const botCheck = (pr, fromSha, answer, history, minors) => checkNewCode(pr,
   { tag: 'bots', label: 'botreview', role: 'botReview', what: 'bot answer check', reviewPrompt: round => botReviewPrompt(pr, round, fromSha, answer) }, history, minors)
 
+// The PR head from the status script, which pipeline-io already runs.
+async function readHead(pr, n, label) {
+  const st = await call('io', pr, ioPrompt(pr, statusCommand(n)), `io:${pr.id}#${label}`, { phase: 'Land fix', schema: IO })
+  const status = st && st.exitCode === 0 ? jsonLine(st.output) : null
+  if (!status || !/^[0-9a-f]{40}$/.test(status.head)) return { fail: `land fix: cannot read the head: ${st ? st.output.trim() : 'pipeline-io failed'}` }
+  return { head: status.head }
+}
+
 // The land-fixer's own code is checked by other agents, like the bot answer's. A clean merge of the default branch prints nothing.
+// Every round reads the code again from the current head, so a fix round's commits are reviewed too.
 async function landFixCheck(pr, n, beforeSha, afterSha, history, minors) {
-  if (!PLUGIN_ROOT) return { ok: false, reason: 'pluginRoot missing: the land-fix check needs it to run land-commits.sh' }
-  const io = await call('io', pr, ioPrompt(pr, `bash ${PLUGIN_ROOT}/scripts/land-commits.sh ${REPO} ${beforeSha} ${afterSha} ${TMP}`), `io:${pr.id}#landcommits`, { phase: 'Land fix', schema: IO })
-  if (!io || io.exitCode !== 0) return { ok: false, reason: `land-fix check failed: ${io ? io.output.trim() : 'pipeline-io failed'}` }
-  if (!io.output.trim()) return { ok: true, headSha: afterSha }
-  return checkNewCode(pr, { tag: 'land', label: 'landreview', role: 'landReview', what: 'land-fix check', reviewPrompt: round => landReviewPrompt(pr, round, io.output) }, history, minors)
+  let from = beforeSha
+  let head = afterSha
+  const landCode = async round => {
+    if (round > 1) {
+      const h = await readHead(pr, n, `landhead${round}`)
+      if (h.fail) return h
+      from = head; head = h.head
+    }
+    const io = await call('io', pr, ioPrompt(pr, `bash ${PLUGIN_ROOT}/scripts/land-commits.sh ${REPO} ${from} ${head} ${TMP}`), `io:${pr.id}#landcommits${round}`, { phase: 'Land fix', schema: IO })
+    if (!io || io.exitCode !== 0) return { fail: `land-fix check failed: ${io ? io.output.trim() : 'pipeline-io failed'}` }
+    return io.output
+  }
+  const first = await landCode(1)
+  if (typeof first !== 'string') return { ok: false, reason: first.fail }
+  if (!first.trim()) return { ok: true, headSha: afterSha }
+  return checkNewCode(pr, { tag: 'land', label: 'landreview', role: 'landReview', what: 'land-fix check', reviewPrompt: async round => {
+    const output = round === 1 ? first : await landCode(round)
+    return typeof output === 'string' ? landReviewPrompt(pr, round, output) : output
+  } }, history, minors)
 }
 
 async function bots(pr, n, headSha, issues, history, minors) {
@@ -816,10 +841,10 @@ async function runPR(input) {
     const history = []
     const lateMinors = []
     const stopped = (reason, more) => ({ id: pr.id, prNumber: n, ready: false, reason, history, ...more })
-    const headCommand = `gh api repos/${REPO}/pulls/${n} --jq .head.sha`
-    const was = await call('io', pr, ioPrompt(pr, headCommand), `io:${pr.id}#landhead`, { phase: 'Land fix', schema: IO })
-    const before = was && was.exitCode === 0 ? was.output.trim() : ''
-    if (!/^[0-9a-f]{40}$/.test(before)) return stopped(`land fix: cannot read the head before the fix: ${was ? was.output.trim() : 'pipeline-io failed'}`)
+    if (!PLUGIN_ROOT) return stopped('pluginRoot missing: the land-fix check needs it to run land-commits.sh')
+    const was = await readHead(pr, n, 'landhead')
+    if (was.fail) return stopped(was.fail)
+    const before = was.head
     const r = await call('landFix', pr, landFixPrompt(pr), `landfix:${pr.id}`, { schema: LANDFIX })
     if (!r || !r.readyToMerge) return stopped('land fix not ready', { headSha: r && r.headSha, notes: r && r.notes })
     const check = await landFixCheck(pr, n, before, r.headSha, history, lateMinors)
