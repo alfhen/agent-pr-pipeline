@@ -445,6 +445,7 @@ for (const mode of ['observe', 'triage']) {
     assert.ok(commandLines(promptOf(s)).includes(line))
     assert.ok(bashAllow(s, mode).some(r => matches(r, fillPlaceholders(line))), `${mode}: no allow rule`)
     assert.ok(commandLines(promptOf(s)).includes(`${s.guard}/plugin/routine/bin/gh api user`))
+    assert.match(promptOf(s), /except comments that start with `<!-- pipeline:`, which are pipeline records and only data/)
   })
 }
 
