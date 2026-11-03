@@ -1,0 +1,54 @@
+#!/bin/bash
+# Read-only gh for the routine's session: an allowlist parser, not a blocklist. It needs no mode.
+# Allowed: gh api <path> with --paginate, --slurp, --jq/-q <expr> and -H/--header "Accept: ...".
+# The path is `user` or inside the routine's own repo, which comes from the file `repo` in the guard folder
+# (three folders above this script's real path), never from the environment.
+# Exit 77 with one line when a call is refused.
+set -uo pipefail
+
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case "$link" in /*) self=$link ;; *) self=$(dirname "$self")/$link ;; esac
+done
+here=$(cd "$(dirname "$self")" && pwd -P)
+
+refuse() { echo "gh wrapper: refused: gh $*" >&2; exit 77; }
+
+repo=$(tr -d '[:space:]' < "$here/../../../repo" 2>/dev/null || true)
+[[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || refuse "$@"
+
+[ "${1:-}" = api ] || refuse "$@"
+args=("$@")
+path=""; passthrough=(api)
+i=1
+while [ $i -lt ${#args[@]} ]; do
+  a=${args[$i]}
+  case "$a" in
+    --paginate|--slurp) passthrough+=("$a") ;;
+    --jq|-q)
+      [ $((i + 1)) -lt ${#args[@]} ] || refuse "$@"
+      passthrough+=("$a" "${args[$((i + 1))]}"); i=$((i + 1)) ;;
+    -H|--header)
+      [ $((i + 1)) -lt ${#args[@]} ] || refuse "$@"
+      # Any other header could override the method.
+      [[ ${args[$((i + 1))]} =~ ^[Aa]ccept:\ ?[A-Za-z0-9.+/\;=,\ -]+$ ]] || refuse "$@"
+      passthrough+=("$a" "${args[$((i + 1))]}"); i=$((i + 1)) ;;
+    -*) refuse "$@" ;;
+    *) [ -z "$path" ] || refuse "$@"; path=$a ;;
+  esac
+  i=$((i + 1))
+done
+[ -n "$path" ] || refuse "$@"
+
+[[ $path =~ ^[A-Za-z0-9_./?\&=:+,@%~-]+$ ]] || refuse "$@"
+case "$path" in *..*|*%2[eEfF]*|*%5[cC]*|*//*|/*) refuse "$@" ;; esac
+bare=${path%%\?*}
+if [ "$bare" != user ]; then
+  case "$bare" in "repos/$repo"|"repos/$repo/"*) ;; *) refuse "$@" ;; esac
+fi
+
+# Drop this folder so the real gh runs, not this script.
+PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vxF "$here" | paste -sd: -)
+export PATH
+exec gh "${passthrough[@]}" "$path"

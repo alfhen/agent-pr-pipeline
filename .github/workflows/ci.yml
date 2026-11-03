@@ -30,6 +30,9 @@ jobs:
           for f in scripts/*.sh; do
             bash -n "$f" || exit 1
           done
+          for f in routine/*.sh routine/bin/gh; do
+            bash -n "$f" || exit 1
+          done
       - name: Manifest version
         env:
           BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
