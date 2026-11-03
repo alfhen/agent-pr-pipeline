@@ -177,3 +177,39 @@ test('a denylist entry that starts or ends with punctuation matches next to lett
     assert.equal(r.posts.length, 0)
   }
 })
+
+test('a POST failure keeps exit 1 whether a refusal comes before or after it', () => {
+  const bad = item('Fixer loops', { detail: 'Seen in acme builds.' })
+  const ok = item('Land step waits too long')
+  for (const items of [[ok, bad], [bad, ok]]) {
+    const s = setup({ items, deny: ['acme'] })
+    writeFileSync(join(s.dir, 'fx', `${ISSUES}.POST.error`), 'HTTP 500')
+    const r = s.run()
+    assert.equal(r.status, 1, items.map(i => i.title).join(' then '))
+    assert.match(r.stdout, /FAILED Land step waits too long/)
+    assert.match(r.stdout, /REFUSED Fixer loops/)
+  }
+})
+
+test('a repo named api does not refuse every item, but still refuses the word', () => {
+  const run = detail => setup({ items: [item('Fixer loops', { detail })], deny: ['unrelated'], source: 'acme/api' }).run()
+  const ok = run('It calls the apis and a rapid retry.')
+  assert.equal(ok.status, 0, ok.stdout)
+  assert.equal(ok.posts.length, 1)
+  assert.equal(run('It calls the API twice.').status, 2)
+})
+
+test('a path entry matches as a substring next to letters', () => {
+  const r = setup({ items: [item('Reviewer misses a file', { detail: 'It opens src/billing/invoice.tsx twice.' })], deny: ['src/billing/invoice.ts'] }).run()
+  assert.equal(r.status, 2)
+  assert.match(r.stdout, /contains "src\/billing\/invoice.ts"/)
+})
+
+test('a long slash-free entry matches inside longer forms, a bare short number does not', () => {
+  for (const [entry, detail] of [['billing-refactor', 'See billing-refactor2.'], ['acmepay.config.js', 'Reads acmepay.config.json.']]) {
+    const r = setup({ items: [item('Fixer loops', { detail })], deny: [entry] }).run()
+    assert.equal(r.status, 2, entry)
+  }
+  const r = setup({ items: [item('Fixer loops', { detail: 'See PR123.' })], deny: ['123'] }).run()
+  assert.equal(r.status, 0)
+})

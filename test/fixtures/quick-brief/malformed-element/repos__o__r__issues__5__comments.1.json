@@ -1,0 +1,13 @@
+[
+ null,
+ "a string",
+ {"id": 3, "user": "alfhen", "body": "<!-- pipeline:quick-brief -->\nnot the brief"},
+ {"id": 4, "user": {"login": "alfhen"}, "body": null},
+ {
+  "id": 2,
+  "user": {
+   "login": "alfhen"
+  },
+  "body": "<!-- pipeline:quick-brief -->\nTouches: src/a.js\nAcceptance: node --test passes"
+ }
+]

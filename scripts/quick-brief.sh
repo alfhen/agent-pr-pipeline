@@ -16,6 +16,7 @@ if [ -z "$repo" ] || ! [[ "$issue" =~ ^[0-9]+$ ]]; then usage; fi
 user=$(gh api user --jq .login) || { echo "quick-brief: cannot read GET /user" >&2; exit 3; }
 [ -n "$user" ] || { echo "quick-brief: GET /user returned no login" >&2; exit 3; }
 pages=$(gh api --paginate --slurp "repos/$repo/issues/$issue/comments") || { echo "quick-brief: cannot read the comments of issue $issue" >&2; exit 3; }
+[ -n "$pages" ] || { echo "quick-brief: the comments of issue $issue came back empty" >&2; exit 3; }
 comments=$(printf '%s' "$pages" | jq 'add // [] | if type == "array" then . else error("not a list of comments") end') || { echo "quick-brief: the comments of issue $issue are not valid JSON" >&2; exit 3; }
 body=$(printf '%s' "$comments" | jq -r --arg prefix "$PREFIX" --arg user "$user" -f "$here/trusted-comment.jq") || { echo "quick-brief: more than one trusted brief on issue $issue" >&2; exit 2; }
 
