@@ -835,14 +835,16 @@ await check('land fix: an unreadable head before the fix stops before the fixer 
   assert.equal(x.prs[0].ready, false)
   assert.match(x.prs[0].reason, /cannot read the head/)
 })
-await check('land fix: round 2 reads the code again from the head after the fix and reviews that output', async () => {
+await check('land fix: round 2 reads from the head before the land fix to the new head and gets the last blockers', async () => {
   await landFixRun({ landOutput: ['LA'], landBad: ['LA'] })
   const io2 = calls.find(c => c.label === 'io:LA#landcommits2')
   assert.ok(io2)
-  assert.match(io2.prompt, new RegExp('land-commits\\.sh o/r abc ' + 'c'.repeat(40)))
+  assert.match(io2.prompt, new RegExp('land-commits\\.sh o/r ' + 'b'.repeat(40) + ' ' + 'c'.repeat(40)))
   assert.ok(calls.some(c => c.label === 'io:LA#landhead2'))
   assert.ok(calls.findIndex(c => c.label === 'fix:LA#land1') < calls.findIndex(c => c.label === 'io:LA#landcommits2'))
   assert.match(calls.find(c => c.label === 'landreview:LA#2').prompt, /\+resolved line/)
+  assert.match(calls.find(c => c.label === 'landreview:LA#2').prompt, /the resolution drops the new flag/)
+  assert.doesNotMatch(calls.find(c => c.label === 'landreview:LA#1').prompt, /last round found/)
 })
 await check('land fix: without pluginRoot the fixer does not run', async () => {
   const { pluginRoot, ...noRoot } = base

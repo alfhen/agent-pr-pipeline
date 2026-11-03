@@ -82,6 +82,17 @@ test('a merge plus one fix commit prints only the fix commit', () => {
   assert.doesNotMatch(r.stdout, /main adds a file|other\.txt|main edits shared/)
 })
 
+test('a conflict resolved to the default branch side prints the dropped change', () => {
+  const t = build(); push(t)
+  const after = mergeMain(t, 'main one\ntwo\n')
+  push(t)
+  const r = run(t, t.before, after)
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stdout, /-feature one/)
+  assert.match(r.stdout, /took one side of shared\.txt/)
+  assert.doesNotMatch(r.stdout, /other\.txt/)
+})
+
 test('an unreadable before exits non-zero', () => {
   const t = build(); push(t)
   const after = must(t.work, 'rev-parse', 'HEAD')
