@@ -687,6 +687,41 @@ const landRun = async (cfg, prs, extra = {}) => {
 }
 const ran = (re) => calls.filter(c => re.test(c.label)).map(c => c.label)
 const suffix = x => x.land.split(':').slice(2).join(':')
+await check('decision rerun: a skipImpl rerun with productDecision runs the fixer first, then reviews', async () => {
+  const order = id => calls.filter(c => c.label.includes(`:${id}`)).map(c => c.label)
+  const findingsOf = label => JSON.parse(calls.find(c => c.label === label).prompt.split('\nFindings:\n')[1])
+  const rerun = async (pr, text) => {
+    await simulate({ ...base, prs: [pr] })
+    const labels = order(pr.id)
+    const fixAt = labels.indexOf(`fix:${pr.id}#0`)
+    assert.ok(fixAt >= 0, pr.id)
+    assert.ok(fixAt < labels.indexOf(`review:${pr.id}#1`) && fixAt < labels.indexOf(`test:${pr.id}#1`), pr.id)
+    const items = findingsOf(`fix:${pr.id}#0`)
+    assert.equal(items.length, 1)
+    assert.equal(items[0].title, 'Apply the maintainer decision')
+    assert.match(items[0].detail, new RegExp(text))
+    assert.deepEqual(ran(new RegExp(`^implement:${pr.id}$`)), [])
+  }
+  await rerun({ id: 'P1', title: 'plan', branch: 'b3', kind: 'plan', skipImpl: true, productDecision: 'ship the narrow scope' }, 'ship the narrow scope')
+  await rerun({ id: 'C1', title: 't', branch: 'b1', skipImpl: true, architectureDecision: 'use option A' }, 'use option A')
+
+  await simulate({ ...base, prs: [{ id: 'C1', title: 't', branch: 'b1', resume: { history: [], minors: [], findings: [{ severity: 'major', title: 'old resume finding', detail: 'd' }] }, architectureDecision: 'use option A' }] })
+  const pre = ran(/^fix:C1#0$/)
+  assert.equal(pre.length, 1)
+  const items = findingsOf('fix:C1#0')
+  assert.equal(items.length, 2)
+  assert.equal(items[0].title, 'old resume finding')
+  assert.equal(items[1].title, 'Apply the maintainer decision')
+  assert.match(items[1].detail, /use option A/)
+
+  await simulate({ ...base, prs: [{ id: 'P1', title: 'plan', branch: 'b3', kind: 'plan', skipImpl: true }] })
+  assert.deepEqual(ran(/^fix:P1#0$/), [])
+  await simulate({ ...base, prs: [{ id: 'C2', title: 't', branch: 'b2', architectureDecision: 'use A' }] })
+  assert.deepEqual(ran(/^implement:C2$/), ['implement:C2'])
+  assert.deepEqual(ran(/^fix:C2#0$/), [])
+  await simulate({ ...base, prs: only('L1') })
+  assert.deepEqual(ran(/^(implement|fix):L1/), [])
+})
 await check('merge safety: :auto only when the gate passed and the agent said safe', async () => {
   const x = await landRun({ gated: ['D1'], person: ['C2'] }, only('C1', 'D1', 'C2', 'W1'))
   assert.equal(suffix(x.C1), 'auto')
