@@ -1434,6 +1434,15 @@ await check('untested: a refused check in a bot-answer test round updates the PR
   assert.equal(y.C2.ready, false)
   assert.match(y.C2.reason, /PR body not updated/)
 })
+await check('untested: a bot-answer test round that clears a refused check updates the PR body', async () => {
+  const x = await hooked(only1('C2'), (p, o) => o.label === 'test:C2#1' ? { pass: true, headSha: (lastHead.C2 = 'sha-C2'), checks: [chk('unit'), { name: 'lint', pass: false, refused: true }] }
+    : o.label === 'test:C2#bots1' ? { headSha: 'sha-answer-C2', pass: true, checks: [chk('unit'), chk('lint')] } : undefined)
+  assert.equal(x.C2.ready, true, x.C2.reason)
+  assert.deepEqual(x.C2.untested, [])
+  const body = calls.find(c => c.label === 'open:C2#body')
+  assert.ok(body)
+  assert.match(body.prompt, /Untested items: \[\]/)
+})
 await check('untested: no body update when the open prompt already listed every item', async () => {
   await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('unit'), { name: 'lint', pass: false, refused: true }] }))
   assert.ok(!calls.some(c => c.label === 'open:C1#body'))

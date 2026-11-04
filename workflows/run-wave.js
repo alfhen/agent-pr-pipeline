@@ -614,16 +614,16 @@ Minor findings: ${JSON.stringify(minors, null, 1)}`
 
 const bodyPrompt = (pr, n, untested) => `${ctx(pr)}
 
-Task: update the body of pull request #${n} in ${REPO}. It must list every untested item below in its "Untested" section; add the section if it is missing. Keep the rest of the body as it is.
+Task: update the body of pull request #${n} in ${REPO}. Its "Untested" section must list exactly the untested items below: add the section if it is missing, drop items not listed, and remove the section when the list is empty. Keep the rest of the body as it is.
 Read the body with \`gh pr view ${n} -R ${REPO} --json body\`. Write the new body to a file under \`${TMP}/open-${pr.id}/\` with the Write tool, and pass it with \`gh pr edit ${n} -R ${REPO} --body-file <file>\`. Never pass a body inline, and write no other file.
 Return updated true when the body is saved.
 
 Untested items: ${JSON.stringify(untested)}`
 
-// Test rounds after the PR opens (bot fixes, land fixes) can add untested items; the maintainer merges from the body.
+// Test rounds after the PR opens (bot fixes, land fixes) can add or clear untested items; the maintainer merges from the body.
 async function syncUntested(pr, n, listed) {
   const untested = untestedOf(pr)
-  if (untested.every(u => listed.includes(u))) return { ok: true }
+  if (untested.length === listed.length && untested.every(u => listed.includes(u))) return { ok: true }
   const r = await call('open', pr, bodyPrompt(pr, n, untested), `open:${pr.id}#body`, { schema: BODY })
   return r && r.updated ? { ok: true } : { ok: false, reason: 'PR body not updated with the untested items' }
 }
