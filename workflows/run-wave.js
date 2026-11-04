@@ -166,10 +166,49 @@ const foldSameAs = (findings, sameAs) => {
   }
   return out.filter((f, i) => !drop.has(i))
 }
-const historyRow = (round, test, blocking, conflicts) => ({
-  round, testPass: test.pass, failingChecks: test.checks.filter(c => !c.pass).map(c => c.name), blockersAndMajors: blocking.map(findingLine),
+// The only place that reads a tester's answer. The agent's own `pass` is ignored. A refused command did not run, so it is neither
+// a pass nor a failure, and a fixer cannot clear it. The acceptance rule needs the check named by `acceptance.check`; the workflow
+// never reads the plan entry or matches names to a test.
+const testOutcome = (pr, test) => {
+  const checks = test.checks || []
+  const failed = checks.filter(c => !c.pass && !c.refused)
+  const passed = checks.filter(c => c.pass && !c.refused)
+  const refused = checks.filter(c => c.refused)
+  const acc = test.acceptance
+  const rule = !!(acc && acc.declared) && pr.kind !== 'plan'
+  const named = rule ? checks.filter(c => c.name === acc.check) : []
+  const accMissing = rule && named.length === 0
+  const findings = accMissing ? [{ severity: 'major', title: 'acceptance test did not run', detail: `The tester ran checks, but none is named ${JSON.stringify(acc.check || '')}, the acceptance test from the plan entry. Make sure it exists and runs.` }] : []
+  const nothingRan = failed.length === 0 && passed.length === 0
+  return {
+    failed, refused, nothingRan, findings,
+    notRun: refused.map(c => `${c.name} (refused)`),
+    pass: !nothingRan && failed.length === 0 && !accMissing,
+  }
+}
+// Per PR: the refused checks of the last test round and the QA scenarios that did not run. Every test round replaces `checks`.
+const untestedState = {}
+const untestedFor = pr => untestedState[pr.id] || (untestedState[pr.id] = { checks: [], qa: [] })
+const noteTest = (pr, outcome) => { untestedFor(pr).checks = outcome.notRun }
+const untestedOf = pr => { const u = untestedFor(pr); return u.checks.concat(u.qa) }
+const historyRow = (round, outcome, blocking, conflicts) => ({
+  round, testPass: outcome.pass, failingChecks: outcome.failed.map(c => c.name), blockersAndMajors: blocking.map(findingLine),
+  ...(outcome.notRun.length ? { notRun: outcome.notRun } : {}),
   ...(conflicts ? { severityConflicts: conflicts } : {}),
 })
+// Tracks QA scenarios by name across runs (see the QA states in the plan). A name that a run leaves out keeps its state, and an open
+// scenario stays open on `not-run`. Returns one major per open scenario.
+const noteQa = (pr, loopState, qa) => {
+  const seen = loopState.qaScenarios
+  for (const s of qa.scenarios) {
+    const name = String(s.name).trim()
+    if (s.result === 'pass') seen.delete(name)
+    else if (s.result === 'fail') seen.set(name, { state: 'open', detail: `Command: ${s.command || '(none)'}\nExpected: ${s.expected || ''}\nActual: ${s.actual || ''}` })
+    else if (!seen.has(name) || seen.get(name).state !== 'open') seen.set(name, { state: 'untested', why: s.whyNotRun || '' })
+  }
+  untestedFor(pr).qa = [...seen].filter(([, v]) => v.state === 'untested').map(([name, v]) => `QA scenario ${name} (not run${v.why ? `: ${v.why}` : ''})`)
+  return [...seen].filter(([, v]) => v.state === 'open').map(([name, v]) => ({ severity: 'major', title: `QA scenario failed: ${name}`, detail: v.detail }))
+}
 const reviewStep = pr => (pr.kind === 'plan' || pr.kind === 'docs') ? STEPS.reviewDocs : STEPS.review
 const productRuns = pr => A.productReview !== false && (pr.kind === 'plan' || (A.productReview === 'all' && pr.kind !== 'docs'))
 const docsRuns = pr => pr.kind !== 'docs' && pr.kind !== 'plan' && A.docsUpdate !== false && pr.docsUpdate !== false
@@ -239,7 +278,8 @@ const TEST = {
   type: 'object',
   properties: {
     pass: { type: 'boolean' }, headSha: { type: 'string' },
-    checks: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, pass: { type: 'boolean' }, log: { type: 'string' } }, required: ['name', 'pass'] } },
+    checks: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, pass: { type: 'boolean' }, refused: { type: 'boolean' }, log: { type: 'string' } }, required: ['name', 'pass'] } },
+    acceptance: { type: 'object', properties: { declared: { type: 'boolean' }, check: { type: 'string' } }, required: ['declared'] },
   },
   required: ['pass', 'checks'],
 }
@@ -299,7 +339,7 @@ const QA = {
     headSha: { type: 'string' }, summary: { type: 'string' },
     scenarios: {
       type: 'array',
-      items: { type: 'object', properties: { name: { type: 'string' }, command: { type: 'string' }, expected: { type: 'string' }, actual: { type: 'string' }, pass: { type: 'boolean' } }, required: ['name', 'pass'] },
+      items: { type: 'object', properties: { name: { type: 'string' }, command: { type: 'string' }, expected: { type: 'string' }, actual: { type: 'string' }, result: { type: 'string', enum: ['pass', 'fail', 'not-run'] }, whyNotRun: { type: 'string' } }, required: ['name', 'result'] },
     },
     findings: {
       type: 'array',
@@ -453,7 +493,7 @@ const testPrompt = (pr, round) => `${ctx(pr)}
 Task: test the branch from a clean clone.
 1. \`rm -rf ${TMP}/test-${pr.id}-r${round} && git clone --branch ${pr.branch} https://github.com/${REPO}.git ${TMP}/test-${pr.id}-r${round}\` and cd there.
 2. Run in order: ${fastText}. Then run ${ownE2e}.
-Return pass, headSha, and one entry per check with the failing log excerpt.
+Return pass, headSha, one entry per check with the failing log excerpt (\`refused\`: true for a command that a permission check denied, so it did not run), and \`acceptance\`: \`declared\` is true when the entry has an Acceptance line that names a runnable test, and \`check\` is the name of the check that runs it.
 
 ${prBlock(pr)}`
 
@@ -474,15 +514,15 @@ Return the verdict, a short summary, one row per entry, and the escalation (for 
 
 ${prBlock(pr)}`
 
-const qaPrompt = (pr, round, last) => `${ctx(pr)}
+const qaPrompt = (pr, round, last, scenarios) => `${ctx(pr)}
 
 Task: try the change on the branch like a user, and check it does what the plan entry and the docs say.
 Clone it: ${cloneTo(`qa-${pr.id}-r${round}`, pr)}. Install with \`${FAST_CHECKS[0]}\`. The diff is \`git diff origin/HEAD...HEAD\`.
 What to try: ${typeof pr.qa === 'string' ? pr.qa : "the plan entry's QA line, if it has one, and its Acceptance line"}. Then add your own cases.
-Return headSha, a summary, every scenario you ran, and the findings.
+Return headSha, a summary, every scenario you ran with its \`result\` (pass, fail or not-run; for not-run give \`whyNotRun\`), and the findings. Never report a scenario you could not run as pass.
 
 ${prBlock(pr)}
-${last && last.length ? `\nYour findings from the last round (check each is really fixed):\n${JSON.stringify(last, null, 1)}` : ''}`
+${scenarios && scenarios.size ? `\nScenarios still open or untested. Use the same names, and run the open ones again (one left out stays open): ${JSON.stringify([...scenarios].map(([name, v]) => ({ name, state: v.state })))}` : ''}${last && last.length ? `\nYour findings from the last round (check each is really fixed):\n${JSON.stringify(last, null, 1)}` : ''}`
 
 const archPrompt = (pr, round, earlier = []) => `${ctx(pr)}
 
@@ -501,7 +541,7 @@ const numbered = findings => {
   return [...groups].map(([file, items]) => `File ${file}:\n${JSON.stringify(items, null, 1)}`).join('\n')
 }
 // findings come from mergeDuplicates, so their order is the order of the numbers.
-const fixPrompt = (pr, test, findings, round, sweep) => `${ctx(pr)}
+const fixPrompt = (pr, outcome, findings, round, sweep) => `${ctx(pr)}
 
 Task: fix the branch after review round ${round}.
 1. You are in a fresh git worktree. ${freshBranch('fix', pr, round)}
@@ -512,7 +552,7 @@ Return a short summary of each fix, any finding you disagree with and why, \`sib
 ${prBlock(pr)}
 
 Failing checks:
-${JSON.stringify((test && test.checks || []).filter(c => !c.pass), null, 1)}
+${JSON.stringify(outcome ? outcome.failed : [], null, 1)}
 Findings, numbered. Findings of one file are together:
 ${numbered(findings)}${sweep && sweep.length ? `\nThe reviewer's sweep of sibling places this round:\n${JSON.stringify(sweep, null, 1)}` : ''}`
 
@@ -529,7 +569,7 @@ Return changed, headSha (\`git rev-parse HEAD\` after your push), the files you 
 
 ${prBlock(pr)}`
 
-const docsFixPrompt = (pr, test, findings, round, signedSha) => `${ctx(pr)}
+const docsFixPrompt = (pr, outcome, findings, round, signedSha) => `${ctx(pr)}
 
 Task: fix the docs after docs check round ${round}. Change docs only.
 1. You are in a fresh git worktree. ${freshBranch('docsfix', pr, round)}
@@ -541,7 +581,7 @@ Return changed, headSha (\`git rev-parse HEAD\` after your push), the files you 
 ${prBlock(pr)}
 
 Failing checks:
-${JSON.stringify((test && test.checks || []).filter(c => !c.pass), null, 1)}
+${JSON.stringify(outcome ? outcome.failed : [], null, 1)}
 Findings:
 ${JSON.stringify(findings, null, 1)}`
 
@@ -555,11 +595,12 @@ ${prBlock(pr)}
 
 Docs agent summary: ${JSON.stringify(docs)}`
 
-const openPrompt = (pr, rounds, minors, arch) => `${ctx(pr)}
+const openPrompt = (pr, rounds, minors, arch, untested = []) => `${ctx(pr)}
 
 Task: open the pull request for ${pr.branch} and file the minor findings.
-1. Issues: \`gh issue create -R ${REPO} --label ${LABEL}${MILESTONE}\`. Body ends with "Found in review of ${pr.id}."
-2. PR: \`gh pr create -R ${REPO} --head ${pr.branch}\`, title "${pr.title}". Include "Review: no blockers or majors after round N." (N from the history).${pr.quick ? ` Put "Closes #${pr.quick.issue}" on its own line in the body.` : ''}
+Write each issue body and the PR body to a file under \`${TMP}/open-${pr.id}/\` with the Write tool, and pass it with \`--body-file\`. Never pass a body inline, and write no other file.
+1. Issues: \`gh issue create -R ${REPO} --label ${LABEL}${MILESTONE} --body-file <file>\`. Body ends with "Found in review of ${pr.id}."
+2. PR: \`gh pr create -R ${REPO} --head ${pr.branch} --body-file <file>\`, title "${pr.title}". Include "Review: no blockers or majors after round N." (N from the history).${untested.length ? ` Add an "Untested" section that lists each untested item below.` : ''}${pr.quick ? ` Put "Closes #${pr.quick.issue}" on its own line in the body.` : ''}
 Return prNumber, prUrl and the issues you created.
 If a permission check denies a command, stop: return blocked true, blockedReason, and commands (the exact commands you prepared and could not run). Never work around a denial.
 
@@ -567,6 +608,7 @@ ${prBlock(pr)}
 
 Review history: ${JSON.stringify(rounds)}
 Architecture, product and docs: ${JSON.stringify(arch || [])}
+Untested items: ${JSON.stringify(untested)}
 Minor findings: ${JSON.stringify(minors, null, 1)}`
 
 const statusCommand = n => `bash ${PLUGIN_ROOT}/scripts/bot-status.sh ${REPO} ${n}`
@@ -580,7 +622,7 @@ const answerPrompt = (pr, n, issues) => `${ctx(pr)}
 
 Task: answer the review bots on pull request #${n}.
 1. You are in a fresh git worktree. ${freshBranch('bots', pr, 0)}
-2. Reply on a thread with \`gh api repos/${REPO}/pulls/${n}/comments/<id>/replies -f body=...\`.
+2. Write each reply to a file under \`${TMP}/answer-${pr.id}/\`, then reply on a thread with \`gh api repos/${REPO}/pulls/${n}/comments/<id>/replies -F body=@<file>\`. Never pass a body inline.
 3. Checks if you changed code: ${fastText}, and ${ownE2e}.
 4. Minor issues already filed from this PR's review: ${issues && issues.length ? issues.join(', ') : '(none)'}. If a fix of yours settles one, add \`Closes #N\` on its own line to the PR body (\`gh pr view ${n} -R ${REPO} --json body\`, then \`gh pr edit ${n} -R ${REPO} --body-file <file>\`), so it closes when the PR merges.
 Return threads addressed, whether code changed, headSha (\`git rev-parse HEAD\` after your last push), closesIssues (the issue numbers you added), notes, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
@@ -732,6 +774,8 @@ async function landFor(pr, n, sha) {
   const rerunReason = pr.landFix ? 'a land fix run' : pr.resume ? 'a resume run after exhausted rounds' : pr.skipImpl ? 'a skipImpl rerun'
     : pr.architectureDecision || pr.productDecision ? 'a run after an escalation' : null
   if (rerunReason) return person(`${rerunReason}: only a normal first run can get :auto`)
+  const untested = untestedOf(pr)
+  if (untested.length) return person(`untested: ${untested.join(', ')}`)
   if (!PLUGIN_ROOT) return person('pluginRoot missing: no gate or safety check ran')
   const gate = await call('io', pr, ioPrompt(pr, `bash ${PLUGIN_ROOT}/scripts/gate-files.sh ${REPO} ${n}`), `io:${pr.id}#gate`, { phase: 'Merge safety', schema: IO })
   if (!gate || gate.exitCode !== 0 || !/^not gated/m.test(gate.output)) return person(`gate: ${gate ? gate.output.trim() : 'pipeline-io failed'}`)
@@ -754,9 +798,15 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
       () => call('review', pr, reviewPrompt(pr, round, history, loopState.siblings), `review:${pr.id}#${round}`, { schema: REVIEW }),
       () => wantArch ? call('arch', pr, archPrompt(pr, round, pr.kind === 'plan' ? loopState.reports : []), `arch:${pr.id}#${round}`, { schema: ARCHREV }) : Promise.resolve(null),
       () => wantProduct ? call('product', pr, productPrompt(pr, round), `product:${pr.id}#${round}`, { schema: PRODUCT }) : Promise.resolve(null),
-      () => wantQa ? call('qa', pr, qaPrompt(pr, round, loopState.qaOpen), `qa:${pr.id}#${round}`, { schema: QA }) : Promise.resolve(null),
+      () => wantQa ? call('qa', pr, qaPrompt(pr, round, loopState.qaOpen, loopState.qaScenarios), `qa:${pr.id}#${round}`, { schema: QA }) : Promise.resolve(null),
     ])
     if (!test || !review) return { signedOff: false, reason: 'tester or reviewer failed' }
+    const outcome = testOutcome(pr, test)
+    noteTest(pr, outcome)
+    if (outcome.nothingRan) {
+      history.push(historyRow(round, outcome, [], 0))
+      return { signedOff: false, reason: 'tests did not run' }
+    }
     if (wantArch && !arch) return { signedOff: false, reason: 'architecture reviewer failed' }
     if (wantProduct && !product) return { signedOff: false, reason: 'product reviewer failed' }
     if (wantQa && !qa) return { signedOff: false, reason: 'QA agent failed' }
@@ -777,22 +827,22 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
       : (arch.findings && arch.findings.length) ? arch.findings
       : arch.verdict === 'needs-change' ? [{ severity: 'major', title: 'Architecture review asked for changes', detail: arch.summary }] : []
     const invariantFindings = (review.invariants || []).filter(i => !i.holds).map(i => ({ severity: 'major', title: `[invariant] ${i.text}`, detail: i.evidence }))
-    const qaFindings = qa ? qa.findings : []
-    const split = splitFindings([[review.findings.concat(invariantFindings), 'review'], [archFindings, 'architecture'], [qaFindings, 'qa']])
+    const qaFindings = qa ? qa.findings.concat(noteQa(pr, loopState, qa)) : []
+    const split = splitFindings([[review.findings.concat(invariantFindings), 'review'], [archFindings, 'architecture'], [qaFindings, 'qa'], [outcome.findings, 'test']])
     const blocking = split.blocking
     minors.push(...split.minors)
     if (arch) loopState.archOpen = blocking.some(f => f.sources.includes('architecture'))
     if (qa) {
       loopState.qaOpen = blocking.filter(f => f.sources.includes('qa'))
-      loopState.qa.push({ round, summary: qa.summary, scenarios: qa.scenarios.length, failed: qa.scenarios.filter(s => !s.pass).map(s => s.name) })
+      loopState.qa.push({ round, summary: qa.summary, scenarios: qa.scenarios.length, failed: qa.scenarios.filter(s => s.result === 'fail').map(s => s.name), notRun: qa.scenarios.filter(s => s.result === 'not-run').map(s => s.name) })
       log(`${pr.id} round ${round}: QA ${qa.scenarios.length} scenarios, ${loopState.qaOpen.length} blockers/majors`)
     }
-    const row = historyRow(round, test, blocking, split.conflicts)
+    const row = historyRow(round, outcome, blocking, split.conflicts)
     history.push(row)
-    log(`${pr.id} round ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
-    if (test.pass && blocking.length === 0) return { signedOff: true, headSha: test.headSha || review.headSha }
+    log(`${pr.id} round ${round}: tests ${outcome.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
+    if (outcome.pass && blocking.length === 0) return { signedOff: true, headSha: test.headSha || review.headSha }
     if (round === startRound + max - 1) return { signedOff: false, reason: exhausted('', max, max, cap), lastFindings: blocking, lastTest: test }
-    const fix = await call('fix', pr, fixPrompt(pr, test, blocking, round, review.sweep), `fix:${pr.id}#${round}`, { schema: FIX })
+    const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, round, review.sweep), `fix:${pr.id}#${round}`, { schema: FIX })
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
     loopState.siblings = (fix && fix.siblings) || []
   }
@@ -809,14 +859,17 @@ async function docsStep(pr, signedSha, history, minors) {
       () => call('docsReview', pr, docsReviewPrompt(pr, round, signedSha, docs), `docsreview:${pr.id}#${round}`, { schema: REVIEW }),
     ])
     if (!test || !review) return { ok: false, reason: 'docs check failed to run', docs }
-    const split = splitFindings([[review.findings, 'docs-check']])
+    const outcome = testOutcome(pr, test)
+    noteTest(pr, outcome)
+    if (outcome.nothingRan) return { ok: false, reason: 'docs check: tests did not run', docs }
+    const split = splitFindings([[review.findings, 'docs-check'], [outcome.findings, 'test']])
     const blocking = split.blocking
     minors.push(...split.minors)
-    history.push(historyRow(`docs${round}`, test, blocking, split.conflicts))
-    log(`${pr.id} docs round ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
-    if (test.pass && blocking.length === 0) return { ok: true, headSha: test.headSha || review.headSha, docs }
+    history.push(historyRow(`docs${round}`, outcome, blocking, split.conflicts))
+    log(`${pr.id} docs round ${round}: tests ${outcome.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
+    if (outcome.pass && blocking.length === 0) return { ok: true, headSha: test.headSha || review.headSha, docs }
     if (round === DOCS_ROUNDS) return { ok: false, reason: exhausted('docs check: ', DOCS_ROUNDS, DOCS_ROUNDS, 'docsRounds'), lastFindings: blocking, docs }
-    await call('docs', pr, docsFixPrompt(pr, test, blocking, round, signedSha), `docsfix:${pr.id}#${round}`, { schema: DOCS })
+    await call('docs', pr, docsFixPrompt(pr, outcome, blocking, round, signedSha), `docsfix:${pr.id}#${round}`, { schema: DOCS })
   }
 }
 
@@ -831,16 +884,19 @@ async function checkNewCode(pr, { tag, label, role, what, reviewPrompt }, histor
       () => call(role, pr, prompt, `${label}:${pr.id}#${round}`, { schema: REVIEW }),
     ])
     if (!test || !review) return { ok: false, reason: `${what} failed to run` }
-    const split = splitFindings([[review.findings, what]])
+    const outcome = testOutcome(pr, test)
+    noteTest(pr, outcome)
+    if (outcome.nothingRan) return { ok: false, reason: `${what}: tests did not run` }
+    const split = splitFindings([[review.findings, what], [outcome.findings, 'test']])
     const blocking = split.blocking
     minors.push(...split.minors)
-    const row = historyRow(`${tag}${round}`, test, blocking, split.conflicts)
+    const row = historyRow(`${tag}${round}`, outcome, blocking, split.conflicts)
     history.push(row)
-    log(`${pr.id} ${what} ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
-    if (test.pass && blocking.length === 0) return { ok: true, headSha: test.headSha || review.headSha }
+    log(`${pr.id} ${what} ${round}: tests ${outcome.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
+    if (outcome.pass && blocking.length === 0) return { ok: true, headSha: test.headSha || review.headSha }
     if (round === BOT_CHECK_ROUNDS) return { ok: false, reason: exhausted(`${what}: `, BOT_CHECK_ROUNDS, BOT_CHECK_ROUNDS, 'botCheckRounds'), lastFindings: blocking }
     prior = blocking
-    const fix = await call('fix', pr, fixPrompt(pr, test, blocking, `${tag}${round}`), `fix:${pr.id}#${tag}${round}`, { schema: FIX })
+    const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, `${tag}${round}`), `fix:${pr.id}#${tag}${round}`, { schema: FIX })
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
   }
 }
@@ -1030,7 +1086,7 @@ async function runPRSteps(input) {
     if (!b.ok) return stopped(b.reason, { headSha: b.headSha, lastFindings: b.lastFindings, notes: r.notes, lateMinors })
     const landing = await landFor(pr, n, b.headSha)
     return {
-      id: pr.id, prNumber: n, ready: true, headSha: b.headSha, ...landing, notes: r.notes,
+      id: pr.id, prNumber: n, ready: true, headSha: b.headSha, ...landing, untested: untestedOf(pr), notes: r.notes,
       approvedBy: b.wait.approvedBy || [], botNotes: b.wait.notes, codeChangedByBots: !!(b.answer && b.answer.codeChanged),
       lateMinors, history,
     }
@@ -1048,7 +1104,7 @@ async function runPRSteps(input) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl }
   }
-  const loopState = { archOpen: false, siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [] }
+  const loopState = { archOpen: false, siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
   let loop = await reviewLoop(pr, history.length + 1, history, minors, loopState)
   if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: loopState.reports, product: loopState.product }
 
@@ -1060,7 +1116,7 @@ async function runPRSteps(input) {
     docs = { changed: d.docs.changed, files: d.docs.files || [], summary: d.docs.summary }
   }
 
-  const opened = await call('open', pr, openPrompt(pr, history, minors, { architecture: loopState.reports, product: loopState.product, docs }), `open:${pr.id}`, { schema: OPEN })
+  const opened = await call('open', pr, openPrompt(pr, history, minors, { architecture: loopState.reports, product: loopState.product, docs }, untestedOf(pr)), `open:${pr.id}`, { schema: OPEN })
   if (opened && opened.blocked) return { id: pr.id, ready: false, reason: 'needs human: permission', blockedReason: opened.blockedReason, commands: opened.commands || [], history }
   if (!opened || !opened.prNumber) return { id: pr.id, ready: false, reason: 'PR not opened', history }
   const n = opened.prNumber
@@ -1072,7 +1128,7 @@ async function runPRSteps(input) {
   const landing = await landFor(pr, n, headSha)
   return {
     id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl, headSha,
-    ...landing,
+    ...landing, untested: untestedOf(pr),
     approvedBy: (wait && wait.approvedBy) || [], botNotes: wait && wait.notes,
     codeChangedByBots: !!(answer && answer.codeChanged), closesIssues: (answer && answer.closesIssues) || [], lateMinors: b.lateMinors || [],
     docs,
