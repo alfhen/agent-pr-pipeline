@@ -44,39 +44,39 @@ Each claim was checked against `main` at 28932aa.
   - A recovered entry is rerun with `skipImpl: true` when its branch exists, so it never gets `:auto` and the maintainer merges it.
   - `observe` keeps its triage-only view. To see what full mode would do, the maintainer runs `routine-state.sh <repo> next --mode full` by hand. It only reads.
 
-## Decisions needed from the maintainer
+## Maintainer decisions (2026-11-04)
 
-The entries build the recommended option of each. If the maintainer picks another option, the plan PR changes before any entry is built.
+The maintainer chose option (a), the recommendation, for each of D1 to D5. The entries build these options. The other options are kept below for the record.
 
 **D1. Where the routine's wave settings live (#13 point 4).** A full-mode wave needs the fixed `run-wave` arguments (`checks`, `goals`, `spec`, `bots`, `context`, `botWaitMinutes`) and the routine's limits.
 - (a) A file `routine.json` in the guard folder. `install.sh --routine-json <file>` copies it in, checks it, and keeps the old one on a reinstall without the flag. It is read-only, like `mode`. It changes only when the maintainer runs `install.sh`, the same as the plugin copy. The SKILL.md split between repo policy (`.github/pipeline.json`) and run choices (workflow arguments) does not change: the file holds one runner's choices.
 - (b) A `routine` key in `.github/pipeline.json`, read from the default branch at each run. A change needs a PR, which the gate holds. SKILL.md's "Policy and choices are split" paragraph must change, and a merged PR changes the routine with no `install.sh`.
 - (c) No settings. The routine uses the workflow defaults. The defaults (`pnpm` checks) do not fit this repo, so every wave fails.
-- Recommendation: (a). It keeps one rule for the routine: nothing changes it but `install.sh`. It needs no change to the policy split. Full mode without the file acts as `triage` and logs why.
+- Decision (maintainer, 2026-11-04): (a). It keeps one rule for the routine: nothing changes it but `install.sh`. It needs no change to the policy split. Full mode without the file acts as `triage` and logs why.
 
 **D2. Who merges and releases unattended (#88 point 11).**
 - (a) The runner script runs `land-wave.sh` with only the `:auto` pairs the workflow recorded, never `--person`. It runs `release.sh --dry-run`, then `release.sh`, when every entry of a merged plan has landed or was dropped. `release.sh` keeps all its checks: `autoRelease` true, a green default branch, a merge record for every commit since the last tag, the manifest version. SKILL.md, `AGENTS.md` and `templates/AGENTS-section.md` say the routine's runner may do both.
 - (b) As (a) for merges. The release waits: the step is `wait` with the reason `release needs the maintainer`, and starts no session.
 - (c) Neither. The routine stops at ready PRs. The maintainer lands and releases everything.
-- Recommendation: (a). Goal 7 says agents may merge, tag and publish when an evaluation says the build is safe, and only where CI allows releases. `:auto` and `release.sh` are that evaluation. In this repo every PR touches a gated path, so in practice the maintainer still merges every routine PR here, and `autoRelease` in `.github/pipeline.json` (a gated file) turns releases off for agents and the routine together.
+- Decision (maintainer, 2026-11-04): (a). Goal 7 says agents may merge, tag and publish when an evaluation says the build is safe, and only where CI allows releases. `:auto` and `release.sh` are that evaluation. In this repo every PR touches a gated path, so in practice the maintainer still merges every routine PR here, and `autoRelease` in `.github/pipeline.json` (a gated file) turns releases off for agents and the routine together.
 
 **D3. Permissions of a full-mode session (a new permission for the routine).** A wave's agents write code, run checks, push branches and open PRs. `observe` and `triage` allow none of that.
 - (a) `routine/settings/full.json` turns on the Claude Code sandbox in strict mode (`sandbox.enabled`, `allowUnsandboxedCommands: false`, `failIfUnavailable`). Bash and the Edit and Write tools may write only in the work folder (`<home>/work/<owner>-<repo>/`), and `denyWrite` names the guard folder. The network allows only the GitHub hosts. Bash is allowed in general inside the sandbox. A full-mode `gh` wrapper and `git` wrapper (`routine/bin-full/`) refuse the dangerous call shapes, and narrow deny rules repeat them. The runner checks a checksum of the guard copy before each run.
 - (b) No sandbox. A tight allow list of each command shape the role prompts and the routine's `checks` run, plus the wrappers.
 - (c) Both (a) and the allow list of (b).
-- Recommendation: (a). The sandbox is the only one of these that the operating system enforces, so the session cannot change the guard copy, `mode` or the runner, even with a command no deny rule names. An allow list of every command a wave can run breaks when a repo's checks change, and does not stop `find -exec`. The GitHub side stays advisory under one identity whatever is chosen.
+- Decision (maintainer, 2026-11-04): (a). The sandbox is the only one of these that the operating system enforces, so the session cannot change the guard copy, `mode` or the runner, even with a command no deny rule names. An allow list of every command a wave can run breaks when a repo's checks change, and does not stop `find -exec`. The GitHub side stays advisory under one identity whatever is chosen.
 
 **D4. How the maintainer approves a feedback draft (#13 point 8, #88 point 4).**
 - (a) The label `feedback-approved` on the tracking issue. The routine files each draft whose comment was last changed before the latest `labeled` event for that label, then removes the label. To drop an item, the maintainer edits the draft comment before adding the label. A draft posted or edited after the label waits for the next label.
 - (b) A terminal command, `routine-state.sh <repo> approve <run id>`, that posts an approval record for one draft, refused under `CLAUDECODE`.
 - (c) Each draft is its own issue, and the maintainer closes it as completed to approve it.
-- Recommendation: (a). It works from the GitHub app with one click, it ties the approval to the text the maintainer read through the comment's `updated_at`, and #13 suggested a label.
+- Decision (maintainer, 2026-11-04): (a). It works from the GitHub app with one click, it ties the approval to the text the maintainer read through the comment's `updated_at`, and #13 suggested a label.
 
 **D5. Cost limits.**
 - (a) Limits in `routine.json` (D1), with these defaults, applied by `next`: at most 3 open routine PRs before `build` and `wave` wait (`openPRs`), at most 2 waves started in 24 hours (`wavesPerDay`), at most 3 issues in a build wave (`buildIssues`), one plan in flight at a time, and 2 recover attempts per wave before a block. One step per run, one run at a time.
 - (b) Only the per-run limits (one step per run, at most 3 build issues, one plan in flight). No daily cap and no open-PR cap.
 - (c) A token budget per run, passed to the workflow.
-- Recommendation: (a). The workflow has no hook that stops agents at a token count unless the session sets a budget directive, so (c) is not reliable. The open-PR cap matters most in this repo, where every PR waits for the maintainer: without it the routine opens PRs faster than they are merged.
+- Decision (maintainer, 2026-11-04): (a). The workflow has no hook that stops agents at a token count unless the session sets a budget directive, so (c) is not reliable. The open-PR cap matters most in this repo, where every PR waits for the maintainer: without it the routine opens PRs faster than they are merged.
 
 ## Scope
 
