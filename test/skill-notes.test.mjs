@@ -31,3 +31,10 @@ test('step 1 has the plan-author checklist with its six items', () => {
   ]
   for (const re of items) assert.match(step1, re)
 })
+
+test('skill names the version warnings, the gate error and the older approval label', () => {
+  assert.match(skill, /`warnings`/)
+  assert.match(skill, /GATE ERROR/)
+  assert.match(skill, /approved earlier/)
+  assert.match(skill, /`gateOutput`/)
+})
