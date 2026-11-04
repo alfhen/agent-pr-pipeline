@@ -4,6 +4,12 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import assert from 'node:assert/strict'
 
 const src = readFileSync(new URL('../workflows/run-wave.js', import.meta.url), 'utf8').replace('export const meta', 'const meta')
+const RealDate = globalThis.Date
+Date.now = () => { throw new Error('Date.now is forbidden in a workflow') }
+Math.random = () => { throw new Error('Math.random is forbidden in a workflow') }
+globalThis.Date = class extends RealDate { constructor(...a) { if (!a.length) throw new Error('argless new Date is forbidden in a workflow'); super(...a) } }
+globalThis.Date.now = Date.now
+assert.doesNotMatch(src, /Date\.now\(|Math\.random\(|new Date\(\)/, 'run-wave.js uses a call the runtime forbids')
 const run = new Function('args', 'agent', 'parallel', 'log', `return (async () => { ${src} })()`)
 
 let calls = []
@@ -17,20 +23,23 @@ const ITEMS = [
 const REDACTED = ITEMS.map(i => ({ ...i, title: `generic: ${i.title}`, detail: 'generic detail' }))
 const briefs = {}
 const storedInstead = {}
+let triageCount = 0
+// Each build entry touches its own file, so quick PRs in one run never overlap unless a test makes them.
 const triage = (decision, size, risk, extra = {}) => ({
   decision, size, risk, why: `why ${decision} ${size} ${risk}`, newConcepts: [],
-  ...(decision === 'build' ? { entry: { touches: 'src/x.js', acceptance: 'node --test passes' } } : {}), ...extra,
+  ...(decision === 'build' ? { entry: { touches: `src/t${++triageCount}.js`, acceptance: 'node --test passes' } } : {}), ...extra,
 })
 const TRIAGES = {
   QS: triage('build', 'S', 'low'), QN: triage('build', 'S', 'low', { newConcepts: ['job queue'] }),
   QM: triage('build', 'M', 'medium'), QF: triage('build', 'M', 'medium'), QY: triage('build', 'M', 'medium'),
   QL: triage('build', 'L', 'low'), QH: triage('build', 'S', 'high'),
   QP: triage('plan', 'M', 'medium'), QD: triage('decline', 'S', 'low'),
-  QA: triage('build', 'S', 'low', { entry: { touches: 'src/x.js', acceptance: 'node --test passes', qa: 'try --words with empty input' } }),
+  QA: triage('build', 'S', 'low', { entry: { touches: 'src/qa.js', acceptance: 'node --test passes', qa: 'try --words with empty input' } }),
   QE: triage('build', 'S', 'low'), QT: triage('build', 'S', 'low'),
 }
 let evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'README.md'] }
-let corruptPut = false
+// Exit codes the put script gives, per PR id: the first call, then the #put2 retry. Default 0.
+const putPlan = {}
 // Merge safety: ids the gate holds, ids the agent calls person, and ids where an agent fails or answers badly.
 const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), gateOdd: new Set(), headMoved: new Set(), blocked: new Set(), landOutput: new Set(), landFail: new Set(), landBad: new Set(), landBadOnce: new Set(), landOther: new Set(), testMoved: new Set(), threads: new Set() }
 const landHead = {}
@@ -73,12 +82,15 @@ const agentRaw = async (prompt, o) => {
     return land.statusDown.has(id) ? { exitCode: 1, output: 'bot-status: cannot read the reviews' } : { exitCode: 0, output: JSON.stringify({ head: land.headMoved.has(id) ? 'moved' : lastHead[id], approvedBy: ['gitar-bot'], seenHead: ['gitar-bot'], openThreads: land.threads.has(id) ? 1 : 0 }) }
   }
   if (o.label.startsWith('io:')) {
-    if (o.label.endsWith('#put')) {
-      const posted = Buffer.from(/--b64 (\S+)/.exec(prompt)[1], 'base64').toString('utf8')
-      if (corruptPut) return { exitCode: 65, output: 'quick-brief: the entry does not match its checksum; nothing posted' }
+    if (o.label.endsWith('#put') || o.label.endsWith('#put2')) {
+      const code = (putPlan[id] || [])[o.label.endsWith('#put2') ? 1 : 0] ?? 0
+      if (code === 65) return { exitCode: 65, output: 'quick-brief: the entry does not match its checksum; nothing posted' }
+      if (code === 4) return { exitCode: 4, output: 'quick-brief: the brief on issue 1 was edited by a person or has no sum; nothing changed' }
+      const posted = putText(prompt)
       briefs[id] = storedInstead[id] || posted
       return { exitCode: 0, output: briefs[id] }
     }
+    if (putPlan[id] && putPlan[id].get === 4) return { exitCode: 4, output: 'quick-brief: the brief on issue 1 was edited by a person' }
     return briefs[id] ? { exitCode: 0, output: briefs[id] } : { exitCode: 1, output: 'quick-brief: no trusted brief on issue 1' }
   }
   if (o.label.startsWith('evaluate')) return evaluation
@@ -123,8 +135,13 @@ const agentRaw = async (prompt, o) => {
   if (o.label.startsWith('landfix')) return { readyToMerge: true, headSha: 'abc', notes: 'ok', worktree: wt(o) }
   return null
 }
+// The entry that a put prompt asks the agent to write: the text between the two fences.
+const putText = prompt => /\n(`{3,})\n([\s\S]*?)\n\1\n/.exec(prompt)[2]
+// A pipeline-io answer as the real agent returns it: the script's text between the two io.sh lines. The fake's own exitCode stays in the answer and must be ignored.
+const ioWrap = (label, out) => out && label.startsWith('io:') && typeof out.exitCode === 'number' && !out.raw
+  ? { exitCode: out.exitCode, output: `pipeline-io: begin\n${out.output}${out.output ? '\n' : ''}pipeline-io: exit ${out.exitCode}` } : out
 const agent = async (prompt, o) => {
-  const out = await agentRaw(prompt, o)
+  const out = ioWrap(o.label, await agentRaw(prompt, o))
   if (out && out.headSha) lastHead[o.label.split(':')[1].split('#')[0]] = out.headSha
   return out
 }
@@ -513,12 +530,14 @@ await check('only the tester, bot waiter and preflight leave out CLAUDE.md', () 
     assert.equal(frontmatter(name).omitClaudeMd === 'true', ['tester', 'bot-waiter', 'goals-preflight', 'pipeline-io'].includes(name), name)
   }
 })
-await check('read-only agents have no edit tools', () => {
+await check('read-only agents have no edit tools, except pipeline-io with Write', () => {
   for (const name of [...new Set(Object.values(AGENT_OF))].filter(n => !WRITERS.includes(n) && n !== 'qa')) {
     const tools = frontmatter(name).tools
-    assert.ok(tools && !/\b(Edit|Write|NotebookEdit|Agent)\b/.test(tools.replace(name === 'pr-opener' ? 'Write' : '', '')), name)
+    const allowed = name === 'pr-opener' || name === 'pipeline-io' ? 'Write' : ''
+    assert.ok(tools && !/\b(Edit|Write|NotebookEdit|Agent)\b/.test(tools.replace(allowed, '')), name)
   }
   assert.match(frontmatter('pr-opener').tools, /\bWrite\b/)
+  assert.equal(frontmatter('pipeline-io').tools, 'Bash, Write', 'pipeline-io may write the one brief file and nothing else')
   assert.equal(frontmatter('qa').tools, undefined, 'qa keeps browser and other MCP tools')
   assert.deepEqual(frontmatter('qa').disallowedTools.split(', ').sort(), ['Agent', 'Edit', 'NotebookEdit', 'Write'])
   for (const name of WRITERS) assert.match(frontmatter(name).disallowedTools || '', /\bAgent\b/, name)
@@ -542,7 +561,7 @@ const quickBase = { repo: 'o/r', tmp: '/x', goals: 'docs/goals.md', architecture
 const qr = await simulate(quickBase)
 const quickCalls = calls
 const forPr = (id, re) => quickCalls.filter(c => c.label.split(':')[1].split('#')[0] === id && re.test(c.label))
-const entryOf = id => `Touches: src/x.js\nAcceptance: node --test passes\nTriage: size ${TRIAGES[id].size}, risk ${TRIAGES[id].risk}`
+const entryOf = id => `Touches: ${TRIAGES[id].entry.touches}\nAcceptance: node --test passes\nTriage: size ${TRIAGES[id].size}, risk ${TRIAGES[id].risk}`
 await check('quick: an L or high-risk build becomes a plan and builds nothing', () => {
   for (const id of ['QL', 'QH']) {
     assert.equal(qr[id].ready, false)
@@ -611,16 +630,35 @@ await check('quick: the goals path reaches the triager and the entry check', () 
 await check('quick: the triage prompt names the issue comments path', () => {
   assert.match(forPr('QM', /^triage/)[0].prompt, /repos\/o\/r\/issues\/42\/comments/)
 })
-await check('quick: pluginRoot reaches every pipeline-io prompt, which names the script and the plugin folder rule', () => {
+await check('quick: pluginRoot reaches every pipeline-io prompt, which names io.sh, the script and the plugin folder rule', () => {
   const io = quickCalls.filter(c => /^io:[^#]*#(get|put)$/.test(c.label))
   assert.ok(io.length > 0)
-  for (const c of quickCalls.filter(c => c.label.startsWith('io:'))) assert.ok(c.prompt.includes('Plugin folder: /plug'), c.label)
+  for (const c of quickCalls.filter(c => c.label.startsWith('io:'))) {
+    assert.ok(c.prompt.includes('Plugin folder: /plug'), c.label)
+    assert.ok(c.prompt.includes('bash /plug/scripts/io.sh '), c.label)
+    assert.doesNotMatch(c.prompt, /bash \/plug\/scripts\/(?!io\.sh)/, c.label)
+  }
   for (const c of io) {
-    assert.ok(c.prompt.includes('bash /plug/scripts/quick-brief.sh'), c.label)
+    assert.ok(c.prompt.includes('io.sh quick-brief.sh '), c.label)
     assert.match(c.prompt, /never from a clone of o\/r/)
     assert.equal(c.agentType, 'agent-pr-pipeline:pipeline-io')
-    assert.equal(`${c.model}/${c.effort}`, 'haiku/low')
   }
+})
+await check('quick: only the put calls run on the brief step (sonnet), every other pipeline-io call stays on haiku', async () => {
+  const puts = quickCalls.filter(c => /^io:[^#]*#put2?$/.test(c.label))
+  assert.ok(puts.length > 0)
+  for (const c of puts) assert.equal(`${c.model}/${c.effort}`, 'sonnet/low', c.label)
+  const others = quickCalls.filter(c => c.label.startsWith('io:') && !/#put2?$/.test(c.label))
+  assert.ok(others.length > 0)
+  for (const c of others) assert.equal(`${c.model}/${c.effort}`, 'haiku/low', c.label)
+  const src = readFileSync(new URL('workflows/run-wave.js', root), 'utf8')
+  assert.match(src, /brief: \{ model: 'sonnet', effort: 'low' \}/)
+  assert.match(src, /ioBrief: \{ agent: 'pipeline-io', phase: 'Triage', skills: null, model: 'brief' \}/)
+  assert.equal(src.match(/role: 'ioBrief'/g).length, 1, 'one call site serves the put and the #put2 retry')
+  TRIAGES.QSO = triage('build', 'M', 'medium')
+  await simulate({ ...quickBase, steps: { brief: { model: 'opus', effort: 'high' } }, prs: [{ id: 'QSO', quick: { issue: 96 }, branch: 'fix/QSO' }] })
+  assert.equal(calls.find(c => c.label === 'io:QSO#put').model, 'opus')
+  assert.equal(calls.find(c => c.label === 'io:QSO#get').model, 'haiku')
 })
 await check('quick: without pluginRoot the PR stops and no agent runs for it', async () => {
   const { pluginRoot, ...noRoot } = quickBase
@@ -657,26 +695,156 @@ await check('quick: a put that returns a different stored brief stops the PR bef
   assert.match(r6.QW.reason, /^quick brief differs/)
   assert.ok(!calls.some(c => /^(implement|test|review)/.test(c.label)))
 })
-await check('quick: the entry goes into the put command as base64, never as inline text', () => {
-  const put = forPr('QM', /^io:QM#put/)[0].prompt
-  assert.doesNotMatch(put, /Acceptance: node --test/)
-  assert.match(put, /quick-brief\.sh put o\/r 42 --b64 [A-Za-z0-9+\/=]+/)
+const BASE64_RUN = /[A-Za-z0-9+\/=]{60,}/
+await check('quick: the put prompt holds the path, --sum and the entry in a fenced block, and no --b64 or base64 run', () => {
+  const put = forPr('QM', /^io:QM#put$/)[0].prompt
+  assert.match(put, /File: \/x\/brief-QM\/entry-1\.md\n/)
+  assert.match(put, /quick-brief\.sh put o\/r 42 \/x\/brief-QM\/entry-1\.md --sum \d+:\d+`/)
+  assert.ok(putText(put).startsWith(entryOf('QM')))
+  assert.match(put, /Write tool/)
+  for (const c of quickCalls.filter(c => c.label.startsWith('io:'))) {
+    assert.doesNotMatch(c.prompt, /--b64/, c.label)
+    assert.doesNotMatch(c.prompt, BASE64_RUN, c.label)
+  }
 })
-await check('quick: the sum in the put command matches cksum of the decoded entry', async () => {
+await check('quick: the get call clears the brief folder and runs before the put', async () => {
+  delete briefs.QM
+  await simulate({ ...quickBase, prs: [quickBase.prs[2]] })
+  const labels = calls.map(c => c.label)
+  const get = calls.find(c => c.label === 'io:QM#get')
+  assert.ok(get.prompt.includes('quick-brief.sh get o/r 42 --clear /x/brief-QM`'), get.prompt)
+  assert.ok(labels.indexOf('io:QM#get') >= 0 && labels.indexOf('io:QM#get') < labels.indexOf('io:QM#put'))
+})
+await check('quick: the fence is longer than any backtick run in the entry', async () => {
+  TRIAGES.QG = triage('build', 'M', 'medium', { entry: { touches: 'src/qg.js', acceptance: 'run ```x``` and pass' } })
+  await simulate({ ...quickBase, prs: [{ id: 'QG', quick: { issue: 95 }, branch: 'fix/QG' }] })
+  const put = calls.find(c => c.label === 'io:QG#put').prompt
+  assert.match(put, /\n````\nTouches: src\/qg\.js\n/)
+  assert.ok(putText(put).includes('```x```'))
+})
+await check('quick: the sum in the put command equals cksum of the entry', async () => {
   const { execFileSync } = await import('node:child_process')
-  const put = forPr('QM', /^io:QM#put/)[0].prompt
-  const [, b64, sum] = /--b64 (\S+) --sum (\d+:\d+)/.exec(put)
-  const out = execFileSync('cksum', { input: Buffer.from(b64, 'base64') }).toString().trim().split(/\s+/)
+  const put = forPr('QM', /^io:QM#put$/)[0].prompt
+  const sum = /--sum (\d+:\d+)/.exec(put)[1]
+  const out = execFileSync('cksum', { input: putText(put) }).toString().trim().split(/\s+/)
   assert.equal(sum, `${out[0]}:${out[1]}`)
 })
-await check('quick: a corrupted --b64 from the io agent posts nothing and stops the PR', async () => {
-  TRIAGES.QK = triage('build', 'M', 'medium')
-  corruptPut = true
-  const r7 = await simulate({ ...quickBase, prs: [{ id: 'QK', quick: { issue: 81 }, branch: 'fix/QK' }] })
-  corruptPut = false
-  assert.match(r7.QK.reason, /^quick brief not posted/)
+const quickOne = async (id, issue, extra = {}) => {
+  TRIAGES[id] = TRIAGES[id] || triage('build', 'M', 'medium')
+  return (await simulate({ ...quickBase, prs: [{ id, quick: { issue }, branch: `fix/${id}`, ...extra }] }))[id]
+}
+const built = () => calls.some(c => /^(implement|test|review)/.test(c.label))
+await check('quick: a put that gives 65 and then 0 runs #put2 and the PR goes on', async () => {
+  putPlan.QU = [65, 0]
+  const r = await quickOne('QU', 83)
+  delete putPlan.QU
+  assert.ok(calls.some(c => c.label === 'io:QU#put2'))
+  assert.equal(calls.filter(c => /^io:QU#put/.test(c.label)).length, 2)
+  const fileOf = c => c.prompt.match(/\S*brief-QU\/entry-\d+\.md/g)
+  const [p1, p2] = ['io:QU#put', 'io:QU#put2'].map(l => fileOf(calls.find(c => c.label === l)))
+  assert.ok(p1 && p2 && p1[0] !== p2[0], 'each put attempt writes a file that does not exist yet')
+  assert.ok(briefs.QU)
+  assert.ok(calls.some(c => c.label.startsWith('implement:QU')))
+  assert.equal(r.ready, true)
+})
+await check('quick: 65 twice stops the PR with the checksum reason and builds nothing', async () => {
+  putPlan.QK = [65, 65]
+  const r = await quickOne('QK', 81)
+  delete putPlan.QK
+  assert.equal(r.reason, 'quick brief not posted: checksum, twice')
+  assert.equal(calls.filter(c => /^io:QK#put/.test(c.label)).length, 2)
   assert.equal(briefs.QK, undefined)
-  assert.ok(!calls.some(c => /^(implement|test|review)/.test(c.label)))
+  assert.ok(!built())
+})
+await check('quick: exit 4 from get or put stops the PR with the edited-by-a-person reason', async () => {
+  putPlan.QV = { get: 4 }
+  const g = await quickOne('QV', 84)
+  delete putPlan.QV
+  assert.equal(g.reason, 'quick brief edited by a person')
+  assert.ok(!calls.some(c => /^(triage|implement|test|review)/.test(c.label)))
+  putPlan.QV2 = [4]
+  const p = await quickOne('QV2', 85)
+  delete putPlan.QV2
+  assert.equal(p.reason, 'quick brief edited by a person')
+  assert.ok(!built())
+})
+// A real agent answer that the fake builds by hand: the script's text may have anything around it.
+const withIo = (match, answer) => (p, o) => match(o.label) ? answer : agent(p, o)
+const runWith = (args, fn) => { calls = []; cleanupCalls = []; timeline = []; logs = []; preflight = GOOD; return run(args, fn, parallel, log) }
+await check('quick: text outside the begin and exit lines never reaches the result', async () => {
+  briefs.QJ = 'Touches: src/qj.js\nAcceptance: wrapped test\nTriage: size M, risk medium, new concepts: none'
+  const answer = { output: `MCP Server Instructions\nnoise before\npipeline-io: begin\n${briefs.QJ}\npipeline-io: exit 0\nthanks, done` }
+  const r = (await runWith({ ...quickBase, prs: [{ id: 'QJ', quick: { issue: 86 }, branch: 'fix/QJ', skipImpl: true }] }, withIo(l => l === 'io:QJ#get', answer))).prs[0]
+  assert.equal(r.ready, true)
+  const reviews = calls.filter(c => c.label.startsWith('review:QJ'))
+  assert.ok(reviews.length > 0)
+  for (const c of reviews) {
+    assert.ok(c.prompt.includes('Acceptance: wrapped test'))
+    assert.doesNotMatch(c.prompt, /noise before|thanks, done|pipeline-io: /)
+  }
+})
+await check('quick: the exit code comes from the exit line, not from the agent\'s exitCode', async () => {
+  const lie = { exitCode: 0, output: 'pipeline-io: begin\nboom\npipeline-io: exit 3\n' }
+  const r = (await runWith({ ...quickBase, prs: [{ id: 'QJ2', quick: { issue: 87 }, branch: 'fix/QJ2' }] }, withIo(l => l === 'io:QJ2#get', lie))).prs[0]
+  assert.match(r.reason, /^quick brief not found: boom/)
+  assert.ok(!calls.some(c => /^(triage|implement|test|review)/.test(c.label)), 'exit 3 is not read as 0')
+  const one = { exitCode: 0, output: 'pipeline-io: begin\nquick-brief: no trusted brief on issue 87\npipeline-io: exit 1' }
+  TRIAGES.QJ3 = triage('build', 'M', 'medium')
+  await runWith({ ...quickBase, prs: [{ id: 'QJ3', quick: { issue: 88 }, branch: 'fix/QJ3' }] }, withIo(l => l === 'io:QJ3#get', one))
+  assert.ok(calls.some(c => c.label === 'triage:QJ3'), 'exit 1 on the line goes to the triager')
+})
+await check('quick: an answer with no exit line is a failed call', async () => {
+  for (const output of ['boom', 'pipeline-io: begin\nhalf an answer', 'pipeline-io: exit 0']) {
+    const r = (await runWith({ ...quickBase, prs: [{ id: 'QJ4', quick: { issue: 89 }, branch: 'fix/QJ4' }] }, withIo(l => l === 'io:QJ4#get', { exitCode: 0, output }))).prs[0]
+    assert.match(r.reason, /^quick brief not found: pipeline-io: no exit line/, output)
+    assert.ok(!built(), output)
+  }
+})
+await check('pipeline-io calls outside the brief read the exit line too', async () => {
+  const odd = (p, o) => o.label === 'io:C1#gate' ? { exitCode: 0, output: 'pipeline-io: begin\nnot gated #1\npipeline-io: exit 1' } : agent(p, o)
+  const x = Object.fromEntries((await runWith({ ...base, prs: PRS.filter(p => p.id === 'C1') }, odd)).prs.map(r => [r.id, r]))
+  assert.equal(x.C1.landMode, 'person')
+  assert.match(x.C1.landWhy, /^gate: not gated/)
+})
+await check('quick: the overlap check stops the later of two quick PRs that share a path, after both briefs are posted and before any build', async () => {
+  TRIAGES.QO1 = triage('build', 'M', 'medium', { entry: { touches: 'src/x.js', acceptance: 'a' } })
+  TRIAGES.QO2 = triage('build', 'M', 'medium', { entry: { touches: 'test/y.mjs, `./src/x.js` (the loader), docs/z.md', acceptance: 'b' } })
+  TRIAGES.QO3 = triage('build', 'M', 'medium', { entry: { touches: 'src/other.js [new]', acceptance: 'c' } })
+  const res = await simulate({ ...quickBase, prs: ['QO1', 'QO2', 'QO3'].map((id, i) => ({ id, quick: { issue: 100 + i }, branch: `fix/${id}` })) })
+  assert.equal(res.QO2.reason, 'quick fix: touches overlap with QO1 (src/x.js); run it in a later wave')
+  assert.ok(!calls.some(c => /^(implement|test|review|open)[:]QO2/.test(c.label)), 'QO2 builds nothing')
+  assert.ok(calls.some(c => c.label.startsWith('implement:QO1')) && res.QO1.ready, 'QO1 builds')
+  assert.ok(calls.some(c => c.label.startsWith('implement:QO3')) && res.QO3.ready, 'no shared path builds')
+  assert.ok(briefs.QO2, 'the brief of the stopped PR stays on the issue')
+  const firstBuild = timeline.findIndex(l => /^implement:/.test(l))
+  const lastPut = timeline.map(l => /^io:QO\d#put$/.test(l)).lastIndexOf(true)
+  assert.ok(lastPut > -1 && lastPut < firstBuild, 'every brief is set up before the first build')
+})
+await check('quick: touchesOf drops backticks, bracket notes and ./ and splits on commas', () => {
+  const src = readFileSync(new URL('workflows/run-wave.js', root), 'utf8')
+  const fn = new Function(`${/const touchesOf = [\s\S]*?\n}\n/.exec(src)[0]}; return touchesOf`)()
+  assert.deepEqual(fn('Touches: `./a.js`, b/c.md (new, big), [x] d.js\nAcceptance: z'), ['a.js', 'b/c.md', 'd.js'])
+  assert.deepEqual(fn('Acceptance: z'), [])
+})
+await check('quick: two quick PRs with no shared path both build', async () => {
+  const res = await simulate({ ...quickBase, prs: ['QM', 'QF'].map((id, i) => ({ id, quick: { issue: 110 + i }, branch: `fix/${id}` })) })
+  assert.ok(res.QM.reason === undefined || !/overlap/.test(res.QM.reason))
+  assert.ok(!/overlap/.test(res.QF.reason || ''))
+  for (const id of ['QM', 'QF']) assert.ok(calls.some(c => c.label.startsWith(`implement:${id}`)), id)
+})
+await check('quick: a stored brief with the same path as an earlier PR also stops', async () => {
+  briefs.QOS = 'Touches: src/x.js\nAcceptance: stored\nTriage: size M, risk medium, new concepts: none'
+  const res = await simulate({ ...quickBase, prs: [{ id: 'QO1', quick: { issue: 100 }, branch: 'fix/QO1' }, { id: 'QOS', quick: { issue: 120 }, branch: 'fix/QOS', skipImpl: true }] })
+  assert.match(res.QOS.reason, /^quick fix: touches overlap with QO1 \(src\/x\.js\)/)
+  assert.ok(!calls.some(c => /^(review|test):QOS/.test(c.label)))
+})
+await check('pipeline-io front matter has Write and its body limits the write to the named file', () => {
+  const text = readFileSync(new URL('agents/pipeline-io.md', root), 'utf8')
+  assert.match(frontmatter('pipeline-io').tools, /\bWrite\b/)
+  const body = text.split('---').slice(2).join('---')
+  assert.match(body, /Write tool/)
+  assert.match(body, /no other file/)
+  assert.match(body, /pipeline-io: exit/)
 })
 await check('quick: quick state stays off the caller options', () => {
   assert.equal(quickBase.prs[0].quickState, undefined)
@@ -802,7 +970,7 @@ await check('merge safety: a normal clean first run still gets :auto', async () 
 await check('merge safety: the gate command runs from pluginRoot on the PR, and the agent is the read-only merge-safety role on opus/high', async () => {
   await landRun({}, only('C1'))
   const gate = calls.find(c => c.label === 'io:C1#gate')
-  assert.match(gate.prompt, /bash \/plug\/scripts\/gate-files\.sh o\/r \d+/)
+  assert.match(gate.prompt, /bash \/plug\/scripts\/io\.sh gate-files\.sh o\/r \d+/)
   assert.match(gate.prompt, /never from a clone of o\/r/)
   const s = calls.find(c => c.label === 'safety:C1#land')
   assert.equal(`${s.agentType} ${s.model}/${s.effort}`, 'agent-pr-pipeline:merge-safety opus/high')
@@ -827,7 +995,7 @@ await check('bot status: approvedBy comes from the script through pipeline-io, n
   const x = await landRun({}, only('C1'))
   assert.deepEqual(x.C1.approvedBy, ['gitar-bot'])
   const st = calls.find(c => c.label === 'io:C1#botstatus')
-  assert.match(st.prompt, /bash \/plug\/scripts\/bot-status\.sh o\/r \d+/)
+  assert.match(st.prompt, /bash \/plug\/scripts\/io\.sh bot-status\.sh o\/r \d+/)
   assert.match(st.prompt, /never from a clone of o\/r/)
   assert.equal(st.agentType, 'agent-pr-pipeline:pipeline-io')
   const wait = calls.find(c => c.label === 'botwait:C1')
@@ -878,7 +1046,7 @@ await check('land fix: output from land-commits.sh starts a tester and a diff re
   const labels = calls.map(c => c.label)
   assert.deepEqual(labels.filter(l => l.includes(':LA')).slice(0, 7), ['io:LA#landhead', 'landfix:LA', 'io:LA#landhead1', 'io:LA#landcommits1', 'test:LA#land1', 'landreview:LA#1', 'botwait:LA'])
   const io = calls.find(c => c.label === 'io:LA#landcommits1')
-  assert.match(io.prompt, new RegExp('bash /plug/scripts/land-commits\\.sh o/r ' + 'b'.repeat(40) + ' ' + ABC + ' /x'))
+  assert.match(io.prompt, new RegExp('bash /plug/scripts/io\\.sh land-commits\\.sh o/r ' + 'b'.repeat(40) + ' ' + ABC + ' /x'))
   const rev = calls.find(c => c.label === 'landreview:LA#1')
   assert.match(rev.prompt, /\+resolved line/)
   assert.match(rev.prompt, /Read only this output/)
@@ -914,7 +1082,7 @@ await check('land fix: blockers in the check run the fixer, then stop after the 
   assert.deepEqual(x.LA.lastFindings.map(f => f.title), ['the resolution drops the new flag'])
 })
 await check('land fix: an unreadable head before the fix stops before the fixer runs', async () => {
-  const x = await run({ ...base, prs: [{ ...LANDS[0], id: 'LH' }] }, async (p, o) => o.label.endsWith('#landhead') ? { exitCode: 1, output: 'gh: HTTP 404' } : agent(p, o), parallel, log)
+  const x = await run({ ...base, prs: [{ ...LANDS[0], id: 'LH' }] }, async (p, o) => o.label.endsWith('#landhead') ? { output: 'pipeline-io: begin\ngh: HTTP 404\npipeline-io: exit 1' } : agent(p, o), parallel, log)
   assert.equal(x.prs[0].ready, false)
   assert.match(x.prs[0].reason, /cannot read the head/)
 })
@@ -1302,7 +1470,7 @@ await check('invariants: a row that does not hold becomes a major and one that h
   assert.match(fixCalls('C1')[0].prompt, /docs path does not/)
 })
 await check('invariants: a stored brief with an Invariants line reaches the reviewer', async () => {
-  TRIAGES.QI = triage('build', 'M', 'medium', { entry: { touches: 'src/x.js', acceptance: 'node --test passes', invariants: 'a refused input never writes' } })
+  TRIAGES.QI = triage('build', 'M', 'medium', { entry: { touches: 'src/qi.js', acceptance: 'node --test passes', invariants: 'a refused input never writes' } })
   await simulate({ ...quickBase, prs: [{ id: 'QI', quick: { issue: 93 }, branch: 'fix/QI' }] })
   assert.match(briefs.QI, /^Invariants: a refused input never writes$/m)
   assert.match(calls.find(c => c.label === 'review:QI#1').prompt, /Invariants: a refused input never writes/)
