@@ -56,7 +56,6 @@ if [ "$cmd" = put ]; then
   [ -n "$why" ] || die 64 "why is empty"
   # Cc includes the C1 controls, which are multibyte and slip past [[:cntrl:]] in the C locale.
   jq -en --arg w "$why" '$w | test("\\p{Cc}") | not' >/dev/null || die 64 "why holds a control character"
-  [ "$(jq -n --arg w "$why" '$w | length')" -le 500 ] || die 64 "why is longer than 500 characters"
   if [ "$in_guard" = 1 ]; then
     [ "$(tr -d '[:space:]' < "$guard/mode" 2>/dev/null)" = triage ] || die 65 "put needs the mode triage"
   fi
@@ -134,8 +133,11 @@ case "$cmd" in
     stored=1
     if [ -z "$rec" ]; then
       stored=0
+      # The cut is done in jq so it counts code points and never splits a multibyte character.
       rec=$(jq -nc --arg d "$decision" --arg s "$size" --arg r "$risk" --arg w "$why" '
-        {decision: $d, size: $s, risk: $r, why: $w}
+        ([$w | match("[.!?](?= |\\z)"; "g") | select(.offset < 500) | .offset + 1] | last // 500) as $end
+        | {decision: $d, size: $s, risk: $r, why: (if ($w | length) > 500 then $w[:$end] else $w end)}
+        | if ($w | length) > 500 then . + {whyCut: true} else . end
         | if .decision == "build" and (.size == "L" or .risk == "high") then . + {decision: "plan", triagerDecision: "build"} else . end')
     fi
     final=$(jq -r .decision <<<"$rec")

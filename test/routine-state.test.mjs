@@ -188,7 +188,6 @@ for (const [name, args] of [
   ['an unknown decision', ['3', 'merge', 'S', 'low', 'x']],
   ['a size XL', ['3', 'build', 'XL', 'low', 'x']],
   ['a risk of none', ['3', 'build', 'S', 'none', 'x']],
-  ['a why of 501 characters', ['3', 'build', 'S', 'low', 'x'.repeat(501)]],
   ['a why with a newline', ['3', 'build', 'S', 'low', 'a\nb']],
   ['a why with a C1 control character', ['3', 'build', 'S', 'low', 'a\u0085b']],
   ['a why with DEL', ['3', 'build', 'S', 'low', 'a\u007fb']],
@@ -202,9 +201,67 @@ for (const [name, args] of [
   })
 }
 
-test('put accepts a why of exactly 500 characters', () => {
-  const r = putTriaged(setup({ issues: [issue(3)] }), '3', 'build', 'S', 'low', 'x'.repeat(500))
+const sentenceWhy = 'Short start. ' + 'a'.repeat(300) + '. ' + 'b'.repeat(300)
+
+test('put cuts a why over 500 characters at the last sentence end', () => {
+  const r = putTriaged(setup({ issues: [issue(3)] }), '3', 'build', 'S', 'low', sentenceWhy)
   assert.equal(r.status, 0, r.stderr)
+  const rec = JSON.parse(r.stdout)
+  assert.equal(rec.why, 'Short start. ' + 'a'.repeat(300) + '.')
+  assert.ok(rec.why.length <= 500)
+  assert.equal(rec.whyCut, true)
+  assert.ok(r.writes.some(l => l.includes(`/issues/${TRACKING}/comments`) && l.includes('whyCut')))
+})
+
+test('put cuts a why with no sentence end at 500 characters', () => {
+  const r = putTriaged(setup({ issues: [issue(3)] }), '3', 'build', 'S', 'low', 'x'.repeat(600))
+  assert.equal(r.status, 0, r.stderr)
+  const rec = JSON.parse(r.stdout)
+  assert.equal(rec.why, 'x'.repeat(500))
+  assert.equal(rec.whyCut, true)
+})
+
+test('put stores a short why unchanged', () => {
+  for (const why of ['x'.repeat(500), 'short one. ok']) {
+    const r = putTriaged(setup({ issues: [issue(3)] }), '3', 'build', 'S', 'low', why)
+    assert.equal(r.status, 0, r.stderr)
+    const rec = JSON.parse(r.stdout)
+    assert.equal(rec.why, why)
+    assert.ok(!('whyCut' in rec))
+  }
+})
+
+test('put cuts a why with multibyte characters at 500 code points and keeps valid UTF-8', () => {
+  const why = 'a'.repeat(498) + '\u00e9\u{1F600}' + 'z'.repeat(50)
+  const r = putTriaged(setup({ issues: [issue(3)] }), '3', 'build', 'S', 'low', why)
+  assert.equal(r.status, 0, r.stderr)
+  const rec = JSON.parse(r.stdout)
+  assert.equal([...rec.why].length, 500)
+  assert.equal(rec.why, [...why].slice(0, 500).join(''))
+  assert.ok(!rec.why.includes('\ufffd'))
+  assert.equal(rec.whyCut, true)
+})
+
+test('put cuts a long why to its last sentence end and treats a period without a space as no end', () => {
+  const why = 'a'.repeat(100) + '.b' + 'c'.repeat(500)
+  const r = putTriaged(setup({ issues: [issue(3)] }), '3', 'build', 'S', 'low', why)
+  assert.equal(JSON.parse(r.stdout).why, why.slice(0, 500))
+})
+
+test('put posts the cut why as the decline comment', () => {
+  const r = putTriaged(setup({ issues: [issue(3)] }), '3', 'decline', 'S', 'low', sentenceWhy)
+  assert.equal(r.status, 0, r.stderr)
+  const post = r.writes.find(l => l.includes('/issues/3/comments'))
+  assert.ok(post, r.writes.join('\n'))
+  assert.ok(post.includes('a'.repeat(300) + '.'))
+  assert.ok(!post.includes('b'.repeat(10)))
+})
+
+test('put cuts a long why of a build of size L and keeps the plan rule', () => {
+  const r = putTriaged(setup({ issues: [issue(3)] }), '3', 'build', 'L', 'low', 'x'.repeat(600))
+  const rec = JSON.parse(r.stdout)
+  assert.equal(rec.decision, 'plan')
+  assert.equal(rec.whyCut, true)
 })
 
 test('put and init refuse a trailing extra argument before any call', () => {
