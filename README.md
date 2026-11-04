@@ -9,7 +9,7 @@ It grew out of building [Tagreeve](https://github.com/alfhen/tagreeve) (first ca
 - **Skills.** `pr-pipeline` runs the loop: plan, waves, land and merge. `write-goals` interviews the maintainer and writes the product goals document that the pipeline needs before its first run.
 - **Role agents.** `implementer`, `tester`, `reviewer`, `qa`, `arch-reviewer`, `product-reviewer`, `fixer`, `docs-writer`, `docs-reviewer`, `pr-opener`, `bot-waiter`, `bot-answerer`, `land-fixer`, `merge-safety`, `goals-preflight`, `triager`, `pipeline-io`, `evaluator` and `feedback-redactor`. Each has its own rules, model, effort and the smallest tool set its role needs.
 - **Workflow.** `run-wave` runs one wave of PRs through the loop with the role agents.
-- **Scripts and templates.** The land and merge scripts, `gate-files.sh`, `bot-status.sh`, `wait-bots.sh`, `quick-brief.sh`, `io.sh`, `check-syntax.sh`, `cleanup.sh`, `check-version.sh`, `scripts/release.sh`, the goals check, `scripts/file-feedback.sh`, and the plan, goals, `AGENTS.md` and `pipeline.json` templates.
+- **Scripts and templates.** The land and merge scripts, `gate-files.sh`, `plugin-version.sh`, `semver.sh`, `bot-status.sh`, `wait-bots.sh`, `quick-brief.sh`, `io.sh`, `check-syntax.sh`, `cleanup.sh`, `check-version.sh`, `scripts/release.sh`, the goals check, `scripts/file-feedback.sh`, and the plan, goals, `AGENTS.md` and `pipeline.json` templates.
 
 ## Install
 

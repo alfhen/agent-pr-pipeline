@@ -23,7 +23,7 @@ export const meta = {
 
 // args: see SKILL.md, "Workflow arguments".
 // The version of the plugin that holds this script; a test keeps it equal to .claude-plugin/plugin.json.
-const VERSION = '0.5.0'
+const VERSION = '0.6.0'
 const A = args || {}
 const REPO = A.repo
 const TMP = A.tmp
