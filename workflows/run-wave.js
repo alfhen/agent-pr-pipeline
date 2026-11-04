@@ -22,6 +22,8 @@ export const meta = {
 }
 
 // args: see SKILL.md, "Workflow arguments".
+// The version of the plugin that holds this script; a test keeps it equal to .claude-plugin/plugin.json.
+const VERSION = '0.5.0'
 const A = args || {}
 const REPO = A.repo
 const TMP = A.tmp
@@ -836,7 +838,12 @@ async function landFor(pr, n, sha) {
   if (untested.length) return person(`untested: ${untested.join(', ')}`)
   if (!PLUGIN_ROOT) return person('pluginRoot missing: no gate or safety check ran')
   const gate = await ioCall(pr, `io:${pr.id}#gate`, 'gate-files.sh', `${REPO} ${n}`, { phase: 'Merge safety' })
-  if (!gate || gate.exitCode !== 0 || !/^not gated/m.test(gate.output)) return person(`gate: ${gate ? gate.output.trim() : 'pipeline-io failed'}`)
+  if (!gate) return person('gate check failed: pipeline-io failed')
+  if (gate.exitCode !== 0 || !/^not gated/m.test(gate.output)) {
+    const first = gate.output.trim().split('\n')[0]
+    const hit = gate.exitCode === 1 && /^GATED #\d+: /.exec(first)
+    return person(hit ? `gated paths, the maintainer merges: ${first.slice(hit[0].length)}` : `gate check failed: ${first}`, { gateOutput: gate.output.trim() })
+  }
   if (pr.quickState && /^Triage: .*risk high/m.test(pr.quickState.brief)) return person('the quick-fix triage says high risk')
   const verdict = await call('safety', pr, safetyPrompt(pr, n, sha), `safety:${pr.id}#land`, { schema: SAFETY })
   if (!verdict) return person('the merge-safety agent failed')
@@ -1203,13 +1210,37 @@ if (cleanupReady) {
   const marked = await cleanupRun(null, cleanupArgs('init', shq(TMP)), 'init')
   if (!marked.some(l => l.startsWith('MARKED'))) { clonesOn = false; log(`clones cleanup is off for this run: ${marked.join(' ')}`) }
 } else if (CLEANUP) log('cleanup skipped: pluginRoot missing')
+const warnings = []
+// Only warns: the wave never stops for an old plugin, and nothing is installed.
+async function checkVersion() {
+  if (!PLUGIN_ROOT) return ['version check could not run: pluginRoot missing']
+  try {
+    const io = await ioCall(null, 'io:wave#version', 'plugin-version.sh', VERSION, { phase: 'Preflight' })
+    if (!io) return ['version check could not run: pipeline-io failed']
+    if (io.exitCode !== 0 && io.exitCode !== 3) return [`version check could not run: exit ${io.exitCode}`]
+    const lines = String(io.output).split('\n').map(l => l.trim()).filter(Boolean)
+    if (io.exitCode === 3) return [`version check could not run: ${lines.join(' ') || 'no output'}`]
+    const warns = lines.filter(l => l.startsWith('WARN '))
+    return warns.length || lines.includes('OK') ? warns : ['version check could not run: unexpected output']
+  } catch (e) {
+    return [`version check could not run: ${e && e.message}`]
+  }
+}
 const finish = async result => {
+  result.warnings = warnings
   if (clonesOn) result.cleanup = await cleanupRun(null, cleanupArgs('clones', shq(TMP), '--all'), 'all')
   return result
 }
 const needsGoals = A.prs.some(pr => !pr.landFix)
+const [versionLines, pre] = await parallel([
+  () => checkVersion(),
+  () => needsGoals ? call('preflight', null, preflightPrompt(), 'preflight:goals', { schema: PREFLIGHT }) : Promise.resolve(null),
+])
+for (const line of versionLines) {
+  log(line)
+  if (line.startsWith('WARN ')) warnings.push(line)
+}
 if (needsGoals) {
-  const pre = await call('preflight', null, preflightPrompt(), 'preflight:goals', { schema: PREFLIGHT })
   if (!pre || !pre.ok) {
     const missing = pre ? pre.missing.join(', ') : 'the preflight agent did not answer'
     log(`refused: ${GOALS} is missing or incomplete (${missing})`)

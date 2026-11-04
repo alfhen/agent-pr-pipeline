@@ -23,7 +23,9 @@ tries=6; pause=5
 
 mode=person
 if [ "$person" = 0 ] && { [ "$auto" = 1 ] || [ -n "$CLAUDECODE" ]; }; then
-  bash "$here/gate-files.sh" "$R" "$pr" || { echo "PR $pr NOT merged: the gate holds it, the maintainer merges it"; exit 7; }
+  bash "$here/gate-files.sh" "$R" "$pr"; gate=$?
+  if [ "$gate" = 3 ]; then echo "PR $pr NOT merged: the gate could not run, the maintainer merges it"; exit 7; fi
+  [ "$gate" = 0 ] || { echo "PR $pr NOT merged: the gate holds it, the maintainer merges it"; exit 7; }
   [ "$auto" = 1 ] || { echo "PR $pr NOT merged: an agent merge needs --auto (a :auto land pair); use --person only for a merge the maintainer asked for"; exit 8; }
   mode=auto
 fi

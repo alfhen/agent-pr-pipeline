@@ -97,20 +97,20 @@ test('gate: a root-level package.json matches **/package.json', () => {
 test('gate: an API error on the file list fails closed', () => {
   const s = setup({ files: null })
   const r = run(s, 'gate-files.sh', ['o/r', '7'])
-  assert.equal(r.code, 1)
-  assert.match(r.out, /GATED #7: cannot list/)
+  assert.equal(r.code, 3)
+  assert.match(r.out, /GATE ERROR #7: cannot list/)
 })
 
 test('gate: a settings read error other than 404 fails closed', () => {
   const r = run(setup({ files: 'clean', settings: 'error' }), 'gate-files.sh', ['o/r', '7'])
-  assert.equal(r.code, 1)
-  assert.match(r.out, /GATED #7: cannot read \.github\/pipeline\.json/)
+  assert.equal(r.code, 3)
+  assert.match(r.out, /GATE ERROR #7: cannot read \.github\/pipeline\.json/)
 })
 
 test('gate: settings without a valid gates list fail closed', () => {
   const r = run(setup({ files: 'clean', settings: 'bad' }), 'gate-files.sh', ['o/r', '7'])
-  assert.equal(r.code, 1)
-  assert.match(r.out, /no valid gates/)
+  assert.equal(r.code, 3)
+  assert.match(r.out, /GATE ERROR #7: .*no valid gates/)
 })
 
 test('gate: with no settings file the plugin template gates apply', () => {
@@ -124,8 +124,31 @@ test('gate: with no settings file the plugin template gates apply', () => {
 test('gate: no settings file and no template fails closed', () => {
   const s = setup({ files: 'clean', settings: 'missing', scripts: true })
   const r = run(s, 'gate-files.sh', ['o/r', '7'])
+  assert.equal(r.code, 3)
+  assert.match(r.out, /GATE ERROR #7: no settings file and no template/)
+})
+
+test('gate: 3000 changed files or more is a gate error, not a hit', () => {
+  const s = setup({ files: null })
+  put(s.fx, `${PULL}__files.1.json`, Array.from({ length: 3000 }, (_, i) => ({ filename: `src/f${i}.js` })))
+  const r = run(s, 'gate-files.sh', ['o/r', '7'])
+  assert.equal(r.code, 3)
+  assert.match(r.out, /^GATE ERROR #7: 3000 changed files/)
+  assert.doesNotMatch(r.out, /GATED/)
+})
+
+test('gate: a hit prints GATED and never GATE ERROR', () => {
+  const r = run(setup({ files: 'gated' }), 'gate-files.sh', ['o/r', '7'])
   assert.equal(r.code, 1)
-  assert.match(r.out, /no settings file and no template/)
+  assert.doesNotMatch(r.out, /GATE ERROR/)
+})
+
+test('merge-pr: a gate that could not run says so, exits 7 and makes no merge call', () => {
+  const r = run(setup({ files: 'clean', settings: 'error' }), 'merge-pr.sh', ['--auto', 'o/r', '7', SHA, 'feat/x'], { CLAUDECODE: '1' })
+  assert.equal(r.code, 7)
+  assert.match(r.out, /the gate could not run/)
+  assert.doesNotMatch(r.out, /the gate holds it/)
+  assert.equal(merges(r).length, 0)
 })
 
 const AGENT = { CLAUDECODE: '1' }
