@@ -612,19 +612,22 @@ Architecture, product and docs: ${JSON.stringify(arch || [])}
 Untested items: ${JSON.stringify(untested)}
 Minor findings: ${JSON.stringify(minors, null, 1)}`
 
-const bodyPrompt = (pr, n, untested) => `${ctx(pr)}
+const bodyPrompt = (pr, n, untested, exact) => `${ctx(pr)}
 
-Task: update the body of pull request #${n} in ${REPO}. Its "Untested" section must list exactly the untested items below: add the section if it is missing, drop items not listed, and remove the section when the list is empty. Keep the rest of the body as it is.
+Task: update the body of pull request #${n} in ${REPO}. ${exact
+    ? 'Its "Untested" section must list exactly the untested items below: add the section if it is missing, drop items not listed, and remove the section when the list is empty.'
+    : 'Add every untested item below that its "Untested" section does not list yet (add the section if it is missing). Keep the items already listed.'} Keep the rest of the body as it is.
 Read the body with \`gh pr view ${n} -R ${REPO} --json body\`. Write the new body to a file under \`${TMP}/open-${pr.id}/\` with the Write tool, and pass it with \`gh pr edit ${n} -R ${REPO} --body-file <file>\`. Never pass a body inline, and write no other file.
 Return updated true when the body is saved.
 
 Untested items: ${JSON.stringify(untested)}`
 
 // Test rounds after the PR opens (bot fixes, land fixes) can add or clear untested items; the maintainer merges from the body.
+// listed is null when this run does not know what the body lists (a land fix); the prompt then only adds.
 async function syncUntested(pr, n, listed) {
   const untested = untestedOf(pr)
-  if (untested.length === listed.length && untested.every(u => listed.includes(u))) return { ok: true }
-  const r = await call('open', pr, bodyPrompt(pr, n, untested), `open:${pr.id}#body`, { schema: BODY })
+  if (listed ? untested.length === listed.length && untested.every(u => listed.includes(u)) : !untested.length) return { ok: true }
+  const r = await call('open', pr, bodyPrompt(pr, n, untested, !!listed), `open:${pr.id}#body`, { schema: BODY })
   return r && r.updated ? { ok: true } : { ok: false, reason: 'PR body not updated with the untested items' }
 }
 
@@ -1101,7 +1104,7 @@ async function runPRSteps(input) {
     if (!check.ok) return stopped(check.reason, { headSha: r.headSha, lastFindings: check.lastFindings, notes: r.notes, lateMinors })
     const b = await bots(pr, n, check.headSha, [], history, lateMinors)
     if (!b.ok) return stopped(b.reason, { headSha: b.headSha, lastFindings: b.lastFindings, notes: r.notes, lateMinors })
-    const sync = await syncUntested(pr, n, [])
+    const sync = await syncUntested(pr, n, null)
     if (!sync.ok) return stopped(sync.reason, { headSha: b.headSha, notes: r.notes, lateMinors })
     const landing = await landFor(pr, n, b.headSha)
     return {

@@ -1443,6 +1443,19 @@ await check('untested: a bot-answer test round that clears a refused check updat
   assert.ok(body)
   assert.match(body.prompt, /Untested items: \[\]/)
 })
+await check('untested: a land fix with a refused check sends a body prompt that only adds items', async () => {
+  land.landOutput.add('LA')
+  try {
+    const x = await hooked([{ ...LANDS[0], branch: 'b-LA' }], (p, o) => o.label === 'test:LA#land1' ? { headSha: ABC, pass: true, checks: [chk('unit'), { name: 'lint', pass: false, refused: true }] } : undefined)
+    assert.equal(x.LA.ready, true, x.LA.reason)
+    assert.deepEqual(x.LA.untested, ['lint (refused)'])
+    const body = calls.find(c => c.label === 'open:LA#body')
+    assert.ok(body)
+    assert.match(body.prompt, /Untested items: \["lint \(refused\)"\]/)
+    assert.match(body.prompt, /Keep the items already listed/)
+    assert.doesNotMatch(body.prompt, /drop|remove the section|exactly/)
+  } finally { land.landOutput.delete('LA') }
+})
 await check('untested: no body update when the open prompt already listed every item', async () => {
   await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('unit'), { name: 'lint', pass: false, refused: true }] }))
   assert.ok(!calls.some(c => c.label === 'open:C1#body'))
