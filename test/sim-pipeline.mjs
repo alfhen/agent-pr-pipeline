@@ -1201,6 +1201,24 @@ await check('severity: an architecture minor goes to the minors and starts no fi
   assert.match(calls.find(c => c.label === 'open:C1').prompt, /"title": "naming"/)
   assert.equal(x.C1.history[0].severityConflicts, 1)
 })
+await check('severity: a fits architecture report keeps its minors and starts no fix and no second architecture run', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'arch:C1#1' ? { verdict: 'fits', summary: 's', newConcepts: [], findings: [f('minor', 'naming')] } : undefined)
+  assert.equal(x.C1.ready, true)
+  assert.equal(fixCalls('C1').length, 0)
+  assert.equal(calls.filter(c => c.label.startsWith('arch:C1')).length, 1)
+  assert.match(calls.find(c => c.label === 'open:C1').prompt, /"title": "naming"/)
+})
+await check('severity: a review finding goes through splitFindings, so a severity word in the title is stripped', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)
+  assert.equal(x.C1.history[0].blockersAndMajors[0], 'major [review]: x')
+  assert.equal(x.C1.history[0].severityConflicts, 1)
+})
+await check('duplicates: a minor from one source and a major from another merge into one major and no minor', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('minor', 'Wrong layer', { file: 'a.js' })])
+    : o.label === 'arch:C1#1' ? { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [f('major', 'wrong layer', { file: 'a.js' })] } : undefined)
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [review, architecture]: Wrong layer'])
+  assert.doesNotMatch(calls.find(c => c.label === 'open:C1').prompt, /"title": "Wrong layer"/)
+})
 await check('severity: a needs-change with no findings is a fallback major and the architecture review runs again', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'arch:C1#1' ? { verdict: 'needs-change', summary: 'too big', newConcepts: [], findings: [] } : undefined)
   assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [architecture]: Architecture review asked for changes'])

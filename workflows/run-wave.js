@@ -107,7 +107,7 @@ const SEVERITY_WORD = /^\s*(?:[[(]\s*(blocker|major|minor)\s*[\])]\s*[:\-\u2013]
 const normTitle = t => String(t).toLowerCase().replace(/[^a-z0-9]/g, '')
 const RANK = { minor: 0, major: 1, blocker: 2 }
 const byFile = (a, b) => (a.file ? 0 : 1) - (b.file ? 0 : 1) || String(a.file || '').localeCompare(String(b.file || ''))
-// The only place that sorts findings by severity. The field decides; a severity word in the title is stripped and counted when it disagrees.
+// The field decides the severity; a severity word in the title is stripped and counted when it disagrees.
 const normalizeFindings = (findings, source) => {
   let conflicts = 0
   const items = (findings || []).map(f => {
@@ -120,9 +120,10 @@ const normalizeFindings = (findings, source) => {
   return { items, conflicts }
 }
 const partition = items => ({ blocking: items.filter(f => f.severity !== 'minor'), minors: items.filter(f => f.severity === 'minor') })
-const splitFindings = (findings, source) => {
-  const { items, conflicts } = normalizeFindings(findings, source)
-  return { ...partition(mergeDuplicates(items)), conflicts }
+// The only place that sorts findings by severity. groups is a list of [findings, source]; duplicates merge across groups before the split.
+const splitFindings = groups => {
+  const normalized = groups.map(([findings, source]) => normalizeFindings(findings, source))
+  return { ...partition(mergeDuplicates(normalized.flatMap(n => n.items))), conflicts: normalized.reduce((n, x) => n + x.conflicts, 0) }
 }
 // One item per file and normalized title, with the highest severity and every source. The result is sorted by file, so the fix prompt numbers match the history.
 const mergeDuplicates = findings => {
@@ -735,32 +736,32 @@ async function landFor(pr, n, sha) {
   return { land: `${pair}:auto`, landMode: 'auto', landWhy: verdict.why, safety }
 }
 
-async function reviewLoop(pr, startRound, history, minors, archState) {
+async function reviewLoop(pr, startRound, history, minors, loopState) {
   const { max, cap } = roundsFor(pr)
   for (let round = startRound; round < startRound + max; round++) {
-    const wantArch = archRuns(pr) && (round === startRound || archState.archOpen || pr.kind === 'plan')
+    const wantArch = archRuns(pr) && (round === startRound || loopState.archOpen || pr.kind === 'plan')
     const wantProduct = productRuns(pr) && round === startRound
-    const wantQa = qaRuns(pr) && (round === startRound || archState.qaOpen.length > 0)
+    const wantQa = qaRuns(pr) && (round === startRound || loopState.qaOpen.length > 0)
     const [test, review, arch, product, qa] = await parallel([
       () => call('test', pr, testPrompt(pr, round), `test:${pr.id}#${round}`, { schema: TEST }),
-      () => call('review', pr, reviewPrompt(pr, round, history, archState.siblings), `review:${pr.id}#${round}`, { schema: REVIEW }),
-      () => wantArch ? call('arch', pr, archPrompt(pr, round, pr.kind === 'plan' ? archState.reports : []), `arch:${pr.id}#${round}`, { schema: ARCHREV }) : Promise.resolve(null),
+      () => call('review', pr, reviewPrompt(pr, round, history, loopState.siblings), `review:${pr.id}#${round}`, { schema: REVIEW }),
+      () => wantArch ? call('arch', pr, archPrompt(pr, round, pr.kind === 'plan' ? loopState.reports : []), `arch:${pr.id}#${round}`, { schema: ARCHREV }) : Promise.resolve(null),
       () => wantProduct ? call('product', pr, productPrompt(pr, round), `product:${pr.id}#${round}`, { schema: PRODUCT }) : Promise.resolve(null),
-      () => wantQa ? call('qa', pr, qaPrompt(pr, round, archState.qaOpen), `qa:${pr.id}#${round}`, { schema: QA }) : Promise.resolve(null),
+      () => wantQa ? call('qa', pr, qaPrompt(pr, round, loopState.qaOpen), `qa:${pr.id}#${round}`, { schema: QA }) : Promise.resolve(null),
     ])
     if (!test || !review) return { signedOff: false, reason: 'tester or reviewer failed' }
     if (wantArch && !arch) return { signedOff: false, reason: 'architecture reviewer failed' }
     if (wantProduct && !product) return { signedOff: false, reason: 'product reviewer failed' }
     if (wantQa && !qa) return { signedOff: false, reason: 'QA agent failed' }
     if (product) {
-      archState.product = { round, verdict: product.verdict, summary: product.summary, entries: product.entries }
+      loopState.product = { round, verdict: product.verdict, summary: product.summary, entries: product.entries }
       log(`${pr.id} round ${round}: product ${product.verdict}`)
       if (product.verdict === 'notes') {
         minors.push(...productMinors(product))
       }
     }
     if (arch) {
-      archState.reports.push({ round, verdict: arch.verdict, summary: arch.summary, newConcepts: arch.newConcepts })
+      loopState.reports.push({ round, verdict: arch.verdict, summary: arch.summary, newConcepts: arch.newConcepts })
       log(`${pr.id} round ${round}: architecture ${arch.verdict}`)
     }
     if (product && product.verdict === 'escalate') return { signedOff: false, reason: 'needs human: product', escalation: product.escalation }
@@ -768,31 +769,25 @@ async function reviewLoop(pr, startRound, history, minors, archState) {
     const archFindings = !arch || arch.verdict === 'escalate' ? []
       : (arch.findings && arch.findings.length) ? arch.findings
       : arch.verdict === 'needs-change' ? [{ severity: 'major', title: 'Architecture review asked for changes', detail: arch.summary }] : []
-    const archSplit = splitFindings(archFindings, 'architecture')
-    if (arch) archState.archOpen = archSplit.blocking.length > 0
-    const qaSplit = splitFindings(qa ? qa.findings : [], 'qa')
-    if (qa) {
-      archState.qaOpen = qaSplit.blocking
-      archState.qa.push({ round, summary: qa.summary, scenarios: qa.scenarios.length, failed: qa.scenarios.filter(s => !s.pass).map(s => s.name) })
-      log(`${pr.id} round ${round}: QA ${qa.scenarios.length} scenarios, ${archState.qaOpen.length} blockers/majors`)
-    }
     const invariantFindings = (review.invariants || []).filter(i => !i.holds).map(i => ({ severity: 'major', title: `[invariant] ${i.text}`, detail: i.evidence }))
-    const normalized = [
-      normalizeFindings(review.findings.concat(invariantFindings), 'review'),
-      normalizeFindings(archFindings, 'architecture'),
-      normalizeFindings(qa ? qa.findings : [], 'qa'),
-    ]
-    const pooled = partition(mergeDuplicates(normalized.flatMap(n => n.items)))
-    const blocking = pooled.blocking
-    minors.push(...pooled.minors)
-    const row = historyRow(round, test, blocking, normalized.reduce((n, x) => n + x.conflicts, 0))
+    const qaFindings = qa ? qa.findings : []
+    const split = splitFindings([[review.findings.concat(invariantFindings), 'review'], [archFindings, 'architecture'], [qaFindings, 'qa']])
+    const blocking = split.blocking
+    minors.push(...split.minors)
+    if (arch) loopState.archOpen = blocking.some(f => f.sources.includes('architecture'))
+    if (qa) {
+      loopState.qaOpen = blocking.filter(f => f.sources.includes('qa'))
+      loopState.qa.push({ round, summary: qa.summary, scenarios: qa.scenarios.length, failed: qa.scenarios.filter(s => !s.pass).map(s => s.name) })
+      log(`${pr.id} round ${round}: QA ${qa.scenarios.length} scenarios, ${loopState.qaOpen.length} blockers/majors`)
+    }
+    const row = historyRow(round, test, blocking, split.conflicts)
     history.push(row)
     log(`${pr.id} round ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (test.pass && blocking.length === 0) return { signedOff: true, headSha: test.headSha || review.headSha }
     if (round === startRound + max - 1) return { signedOff: false, reason: exhausted('', max, max, cap), lastFindings: blocking, lastTest: test }
     const fix = await call('fix', pr, fixPrompt(pr, test, blocking, round, review.sweep), `fix:${pr.id}#${round}`, { schema: FIX })
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
-    archState.siblings = (fix && fix.siblings) || []
+    loopState.siblings = (fix && fix.siblings) || []
   }
 }
 
@@ -807,7 +802,7 @@ async function docsStep(pr, signedSha, history, minors) {
       () => call('docsReview', pr, docsReviewPrompt(pr, round, signedSha, docs), `docsreview:${pr.id}#${round}`, { schema: REVIEW }),
     ])
     if (!test || !review) return { ok: false, reason: 'docs check failed to run', docs }
-    const split = splitFindings(review.findings, 'docs-check')
+    const split = splitFindings([[review.findings, 'docs-check']])
     const blocking = split.blocking
     minors.push(...split.minors)
     history.push(historyRow(`docs${round}`, test, blocking, split.conflicts))
@@ -829,7 +824,7 @@ async function checkNewCode(pr, { tag, label, role, what, reviewPrompt }, histor
       () => call(role, pr, prompt, `${label}:${pr.id}#${round}`, { schema: REVIEW }),
     ])
     if (!test || !review) return { ok: false, reason: `${what} failed to run` }
-    const split = splitFindings(review.findings, what)
+    const split = splitFindings([[review.findings, what]])
     const blocking = split.blocking
     minors.push(...split.minors)
     const row = historyRow(`${tag}${round}`, test, blocking, split.conflicts)
@@ -1046,19 +1041,19 @@ async function runPRSteps(input) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl }
   }
-  const archState = { archOpen: false, siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [] }
-  let loop = await reviewLoop(pr, history.length + 1, history, minors, archState)
-  if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: archState.reports, product: archState.product }
+  const loopState = { archOpen: false, siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [] }
+  let loop = await reviewLoop(pr, history.length + 1, history, minors, loopState)
+  if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: loopState.reports, product: loopState.product }
 
   let docs = null
   if (docsRuns(pr)) {
     const d = await docsStep(pr, loop.headSha, history, minors)
-    if (!d.ok) return { id: pr.id, ready: false, reason: d.reason, history, lastFindings: d.lastFindings, docs: d.docs, architecture: archState.reports, product: archState.product }
+    if (!d.ok) return { id: pr.id, ready: false, reason: d.reason, history, lastFindings: d.lastFindings, docs: d.docs, architecture: loopState.reports, product: loopState.product }
     loop.headSha = d.headSha
     docs = { changed: d.docs.changed, files: d.docs.files || [], summary: d.docs.summary }
   }
 
-  const opened = await call('open', pr, openPrompt(pr, history, minors, { architecture: archState.reports, product: archState.product, docs }), `open:${pr.id}`, { schema: OPEN })
+  const opened = await call('open', pr, openPrompt(pr, history, minors, { architecture: loopState.reports, product: loopState.product, docs }), `open:${pr.id}`, { schema: OPEN })
   if (opened && opened.blocked) return { id: pr.id, ready: false, reason: 'needs human: permission', blockedReason: opened.blockedReason, commands: opened.commands || [], history }
   if (!opened || !opened.prNumber) return { id: pr.id, ready: false, reason: 'PR not opened', history }
   const n = opened.prNumber
@@ -1074,7 +1069,7 @@ async function runPRSteps(input) {
     approvedBy: (wait && wait.approvedBy) || [], botNotes: wait && wait.notes,
     codeChangedByBots: !!(answer && answer.codeChanged), closesIssues: (answer && answer.closesIssues) || [], lateMinors: b.lateMinors || [],
     docs,
-    triage, issues: opened.issuesCreated || [], rounds: history.length, history, architecture: archState.reports, product: archState.product, qa: archState.qa, implProblems: impl.problems || '',
+    triage, issues: opened.issuesCreated || [], rounds: history.length, history, architecture: loopState.reports, product: loopState.product, qa: loopState.qa, implProblems: impl.problems || '',
   }
 }
 
