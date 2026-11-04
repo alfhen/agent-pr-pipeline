@@ -1,17 +1,31 @@
 #!/bin/bash
 # Usage: quick-brief.sh get <owner/repo> <issue>
-#        quick-brief.sh put <owner/repo> <issue> <entry-file>|--b64 <base64-entry> --sum <crc>:<bytes>
-# The quick-fix brief is one issue comment that starts with MARKER and was written by the account from GET /user.
-# get prints the entry (without the marker line). It exits 1 when there is no brief and 2 when two exist.
-# put --b64 posts nothing when the decoded bytes do not match --sum (the POSIX cksum output as <crc>:<bytes>).
-# put posts the entry once. When a trusted brief exists already it posts nothing and prints that one.
+#        quick-brief.sh put <owner/repo> <issue> <entry-file> --sum <crc>:<bytes>
+# The quick-fix brief is one issue comment whose first line is a marker, written by the account from GET /user.
+# The marker is `<!-- pipeline:quick-brief <crc>:<bytes> -->`: the POSIX cksum of the text under it. A 0.4 marker has no sum.
+# get prints the entry (without the marker line). It exits 1 when there is no brief, 2 when two exist,
+# and 4 when the text does not match the sum in its marker (a person edited it).
+# put posts nothing when the entry (trailing newlines removed) does not match --sum: exit 65. --b64 is refused: exit 64.
+# put posts the entry once. A trusted brief with the same text is printed. A pipeline brief with other text is replaced
+# in place. Any other trusted brief (edited, or a 0.4 marker) is left alone: exit 4.
 set -uo pipefail
-MARKER='<!-- pipeline:quick-brief -->'
 PREFIX='<!-- pipeline:quick-brief'
 here=$(cd "$(dirname "$0")" && pwd)
 mode=${1:-}; repo=${2:-}; issue=${3:-}
-usage() { echo "usage: quick-brief.sh get|put <owner/repo> <issue> [entry-file]" >&2; exit 64; }
+usage() { echo "usage: quick-brief.sh get|put <owner/repo> <issue> [entry-file --sum <crc>:<bytes>]" >&2; exit 64; }
 if [ -z "$repo" ] || ! [[ "$issue" =~ ^[0-9]+$ ]]; then usage; fi
+# Command substitution drops trailing newlines, so a file and a comment body compare by the same text.
+sumOf() { printf '%s' "$1" | cksum | awk '{print $1 ":" $2}'; }
+
+text=""
+if [ "$mode" = put ]; then
+  entry=${4:-}
+  if [ "$entry" = --b64 ]; then echo "quick-brief: --b64 is not supported; write the entry to a file and pass --sum" >&2; exit 64; fi
+  [ -f "$entry" ] || usage
+  [ "${5:-}" = --sum ] && want=${6:-} || want=
+  text=$(cat "$entry")
+  if [ -z "$want" ] || [ "$(sumOf "$text")" != "$want" ]; then echo "quick-brief: the entry does not match its checksum; nothing posted" >&2; exit 65; fi
+fi
 
 user=$(gh api user --jq .login) || { echo "quick-brief: cannot read GET /user" >&2; exit 3; }
 [ -n "$user" ] || { echo "quick-brief: GET /user returned no login" >&2; exit 3; }
@@ -20,27 +34,37 @@ pages=$(gh api --paginate --slurp "repos/$repo/issues/$issue/comments") || { ech
 comments=$(printf '%s' "$pages" | jq 'add // [] | if type == "array" then . else error("not a list of comments") end') || { echo "quick-brief: the comments of issue $issue are not valid JSON" >&2; exit 3; }
 body=$(printf '%s' "$comments" | jq -r --arg prefix "$PREFIX" --arg user "$user" -f "$here/trusted-comment.jq") || { echo "quick-brief: more than one trusted brief on issue $issue" >&2; exit 2; }
 
-strip() { printf '%s\n' "$1" | tail -n +2; }
+# none: no brief. pipeline: the marker sum matches the text. edited: it does not. old: a 0.4 marker with no sum.
+brief_text=""; brief_state=none
+if [ "$body" != null ]; then
+  brief_text=$(printf '%s\n' "$body" | tail -n +2)
+  first=$(printf '%s\n' "$body" | head -n 1)
+  if [[ "$first" =~ ^"$PREFIX"\ ([0-9]+:[0-9]+)\ --\>$ ]]; then
+    if [ "${BASH_REMATCH[1]}" = "$(sumOf "$brief_text")" ]; then brief_state=pipeline; else brief_state=edited; fi
+  else
+    brief_state=old
+  fi
+fi
 
 case "$mode" in
   get)
-    if [ "$body" = null ]; then echo "quick-brief: no trusted brief on issue $issue" >&2; exit 1; fi
-    strip "$body" ;;
+    if [ "$brief_state" = none ]; then echo "quick-brief: no trusted brief on issue $issue" >&2; exit 1; fi
+    if [ "$brief_state" = edited ]; then echo "quick-brief: the brief on issue $issue was edited by a person" >&2; exit 4; fi
+    printf '%s\n' "$brief_text" ;;
   put)
-    entry=${4:-}
-    if [ "$entry" = --b64 ]; then
-      tmp=$(mktemp) || exit 3
-      trap 'rm -f "$tmp"' EXIT
-      printf '%s' "${5:-}" | base64 --decode > "$tmp" || { echo "quick-brief: the entry is not valid base64" >&2; exit 64; }
-      entry=$tmp
-      [ "${6:-}" = --sum ] && want=${7:-} || want=
-      got=$(cksum < "$tmp" | awk '{print $1 ":" $2}')
-      if [ -z "$want" ] || [ "$got" != "$want" ]; then echo "quick-brief: the entry does not match its checksum; nothing posted" >&2; exit 65; fi
-    fi
-    [ -f "$entry" ] || usage
-    if [ "$body" != null ]; then strip "$body"; exit 0; fi
-    gh api --method POST "repos/$repo/issues/$issue/comments" -f body="$MARKER
-$(cat "$entry")" >/dev/null || { echo "quick-brief: could not post the brief" >&2; exit 3; }
-    cat "$entry" ;;
+    new_body="$PREFIX $(sumOf "$text") -->
+$text"
+    if [ "$brief_state" != none ] && [ "$brief_text" = "$text" ]; then printf '%s\n' "$brief_text"; exit 0; fi
+    case "$brief_state" in
+      none)
+        gh api --method POST "repos/$repo/issues/$issue/comments" -f body="$new_body" >/dev/null || { echo "quick-brief: could not post the brief" >&2; exit 3; } ;;
+      pipeline)
+        id=$(printf '%s' "$comments" | jq -r --arg user "$user" --arg body "$body" '[.[] | objects | select((.user | objects | .login) == $user and .body == $body) | .id] | .[0] // empty')
+        [[ "$id" =~ ^[0-9]+$ ]] || { echo "quick-brief: cannot find the id of the brief comment" >&2; exit 3; }
+        gh api --method PATCH "repos/$repo/issues/comments/$id" -f body="$new_body" >/dev/null || { echo "quick-brief: could not replace the brief" >&2; exit 3; } ;;
+      *)
+        echo "quick-brief: the brief on issue $issue was edited by a person or has no sum; nothing changed" >&2; exit 4 ;;
+    esac
+    printf '%s\n' "$text" ;;
   *) usage ;;
 esac
