@@ -692,8 +692,8 @@ await check('quick: a put that returns a different stored brief stops the PR bef
 const BASE64_RUN = /[A-Za-z0-9+\/=]{60,}/
 await check('quick: the put prompt holds the path, --sum and the entry in a fenced block, and no --b64 or base64 run', () => {
   const put = forPr('QM', /^io:QM#put$/)[0].prompt
-  assert.match(put, /File: \/x\/brief-QM\/entry-1\.md\n/)
-  assert.match(put, /quick-brief\.sh put o\/r 42 \/x\/brief-QM\/entry-1\.md --sum \d+:\d+`/)
+  assert.match(put, /File: \/x\/brief-QM\/entry-[a-z0-9]+-1\.md\n/)
+  assert.match(put, /quick-brief\.sh put o\/r 42 \/x\/brief-QM\/entry-[a-z0-9]+-1\.md --sum \d+:\d+`/)
   assert.ok(putText(put).startsWith(entryOf('QM')))
   assert.match(put, /Write tool/)
   for (const c of quickCalls.filter(c => c.label.startsWith('io:'))) {
@@ -726,7 +726,7 @@ await check('quick: a put that gives 65 and then 0 runs #put2 and the PR goes on
   delete putPlan.QU
   assert.ok(calls.some(c => c.label === 'io:QU#put2'))
   assert.equal(calls.filter(c => /^io:QU#put/.test(c.label)).length, 2)
-  const fileOf = c => c.prompt.match(/\S*brief-QU\/entry-\d+\.md/g)
+  const fileOf = c => c.prompt.match(/\S*brief-QU\/entry-[a-z0-9]+-\d+\.md/g)
   const [p1, p2] = ['io:QU#put', 'io:QU#put2'].map(l => fileOf(calls.find(c => c.label === l)))
   assert.ok(p1 && p2 && p1[0] !== p2[0], 'each put attempt writes a file that does not exist yet')
   assert.ok(briefs.QU)

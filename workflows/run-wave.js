@@ -760,7 +760,9 @@ const touchesOf = brief => {
   return line[1].replace(/\([^)]*\)|\[[^\]]*\]/g, '').replace(/`/g, '').split(',').map(t => t.trim().replace(/^\.\//, '')).filter(Boolean)
 }
 const briefArgs = (pr, mode) => `${mode} ${REPO} ${pr.quick.issue}`
-const briefFile = (pr, attempt) => `${TMP}/brief-${pr.id}/entry-${attempt}.md`
+// Write refuses a file that exists and was not read, and a folder from an earlier run can stay behind.
+const RUN_NONCE = Date.now().toString(36)
+const briefFile = (pr, attempt) => `${TMP}/brief-${pr.id}/entry-${RUN_NONCE}-${attempt}.md`
 
 const productEntryPrompt = pr => `${ctx(pr)}
 
