@@ -39,3 +39,19 @@ test('plan template has an Invariants line and a States table', () => {
   assert.match(plan, /^Invariants: /m);
   assert.match(plan, /\| State \| How it starts \| What ends it \|/);
 });
+
+const qa = bodyOf('agents/qa.md');
+const opener = bodyOf('agents/pr-opener.md');
+const answerer = bodyOf('agents/bot-answerer.md');
+
+test('qa reports a scenario it could not run as not-run, never as pass', () => {
+  assert.match(qa, /`not-run` with `whyNotRun`/);
+  assert.match(qa, /Never report it as `pass`/);
+  assert.match(qa, /run them again and use the same names/);
+});
+
+test('the pr opener and the bot answerer write bodies to files in the temp folder', () => {
+  assert.match(opener, /Write each issue body and the PR body to a file with the Write tool, only inside the temp folder your task names, and pass it with `--body-file`/);
+  assert.match(answerer, /Write each reply to a file inside the temp folder your task names, and send it with `-F body=@<file>`/);
+  assert.match(opener, /Untested section/);
+});
