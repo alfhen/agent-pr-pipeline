@@ -52,12 +52,17 @@ const lastHead = {}
 // Cleanup calls are kept apart so the step-by-step checks below see only the pipeline's own steps.
 let cleanupCalls = []
 let timeline = []
+// The version check is kept apart like cleanup, so step lists see only the pipeline's own calls.
+let versionCalls = []
+let versionAnswer = { exitCode: 0, output: 'OK' }
 const agentRaw = async (prompt, o) => {
   const entry = { label: o.label, model: o.model, effort: o.effort, agentType: o.agentType, isolation: o.isolation, prompt }
   timeline.push(o.label)
-  if (/#cleanup/.test(o.label)) cleanupCalls.push(entry)
+  if (o.label === 'io:wave#version') versionCalls.push(entry)
+  else if (/#cleanup/.test(o.label)) cleanupCalls.push(entry)
   else calls.push(entry)
   const id = o.label.split(':')[1].split('#')[0]
+  if (o.label === 'io:wave#version') return versionAnswer
   if (o.label.startsWith('preflight')) return preflight
   if (/#cleanup/.test(o.label)) return cleanupAnswer(o.label, prompt)
   if (o.label.startsWith('triage')) return TRIAGES[id]
@@ -175,6 +180,7 @@ const MAIN_DENYLIST = ['o', 'r', 'o/r', 'https://github.com/o/r', 'src/billing/i
 const simulate = async (args, pre = GOOD) => {
   calls = []
   cleanupCalls = []
+  versionCalls = []
   timeline = []
   logs = []
   preflight = pre
@@ -369,7 +375,7 @@ await check('the evaluator runs once per wave, after the last PR, on sonnet/medi
   assert.match(ev[0].prompt, /repos\/o\/r\/pulls\/<n>\/files/)
 })
 await check('the result has the shape { prs, feedback, denylist, source, feedbackRepo, cleanup }', () => {
-  assert.deepEqual(Object.keys(mainResult).sort(), ['cleanup', 'denylist', 'feedback', 'feedbackRepo', 'prs', 'source'])
+  assert.deepEqual(Object.keys(mainResult).sort(), ['cleanup', 'denylist', 'feedback', 'feedbackRepo', 'prs', 'source', 'warnings'])
   assert.equal(mainResult.source, 'o/r')
   assert.equal(mainResult.feedbackRepo, 'alfhen/agent-pr-pipeline')
   assert.ok(Array.isArray(mainResult.prs) && mainResult.prs.length === PRS.length)
@@ -430,7 +436,7 @@ await check('a failed evaluation gives no feedback and does not fail the wave', 
 })
 await check('a refused wave still gets an evaluation, with the refusals in prs', () => {
   assert.deepEqual(refusedResult.feedback, REDACTED)
-  assert.deepEqual(Object.keys(refusedResult).sort(), ['cleanup', 'denylist', 'feedback', 'feedbackRepo', 'prs', 'source'])
+  assert.deepEqual(Object.keys(refusedResult).sort(), ['cleanup', 'denylist', 'feedback', 'feedbackRepo', 'prs', 'source', 'warnings'])
   assert.ok(refusedResult.prs.every(x => x.refused))
   assert.match(refusedCalls.find(c => c.label === 'evaluate:wave').prompt, /"refused":true/)
 })
@@ -770,7 +776,7 @@ await check('quick: exit 4 from get or put stops the PR with the edited-by-a-per
 })
 // A real agent answer that the fake builds by hand: the script's text may have anything around it.
 const withIo = (match, answer) => (p, o) => match(o.label) ? answer : agent(p, o)
-const runWith = (args, fn) => { calls = []; cleanupCalls = []; timeline = []; logs = []; preflight = GOOD; return run(args, fn, parallel, log) }
+const runWith = (args, fn) => { calls = []; cleanupCalls = []; versionCalls = []; timeline = []; logs = []; preflight = GOOD; return run(args, fn, parallel, log) }
 await check('quick: text outside the begin and exit lines never reaches the result', async () => {
   briefs.QJ = 'Touches: src/qj.js\nAcceptance: wrapped test\nTriage: size M, risk medium, new concepts: none'
   const answer = { output: `MCP Server Instructions\nnoise before\npipeline-io: begin\n${briefs.QJ}\npipeline-io: exit 0\nthanks, done` }
@@ -804,7 +810,7 @@ await check('pipeline-io calls outside the brief read the exit line too', async 
   const odd = (p, o) => o.label === 'io:C1#gate' ? { exitCode: 0, output: 'pipeline-io: begin\nnot gated #1\npipeline-io: exit 1' } : agent(p, o)
   const x = Object.fromEntries((await runWith({ ...base, prs: PRS.filter(p => p.id === 'C1') }, odd)).prs.map(r => [r.id, r]))
   assert.equal(x.C1.landMode, 'person')
-  assert.match(x.C1.landWhy, /^gate: not gated/)
+  assert.match(x.C1.landWhy, /^gate check failed: not gated #1$/)
 })
 await check('quick: the overlap check stops the later of two quick PRs that share a path, after both briefs are posted and before any build', async () => {
   TRIAGES.QO1 = triage('build', 'M', 'medium', { entry: { touches: 'src/x.js', acceptance: 'a' } })
@@ -904,7 +910,7 @@ await check('merge safety: :auto only when the gate passed and the agent said sa
   assert.equal(suffix(x.D1), '')
   assert.equal(suffix(x.C2), '')
   assert.deepEqual([x.C1.landMode, x.D1.landMode, x.C2.landMode], ['auto', 'person', 'person'])
-  assert.match(x.D1.landWhy, /^gate: GATED #1: scripts\/merge-pr\.sh/)
+  assert.match(x.D1.landWhy, /^gated paths, the maintainer merges: scripts\/merge-pr\.sh$/)
   assert.match(x.C2.landWhy, /renames the --all flag/)
   assert.deepEqual(x.C2.safety, { verdict: 'person', why: 'renames the --all flag' })
   for (const v of Object.values(x)) assert.match(v.land, /^\d+:[^:]+(:auto)?$/)
@@ -919,6 +925,8 @@ await check('merge safety: a gate that fails to run, a gate with no "not gated" 
   assert.equal(land.gateOdd.size, 0)
   for (const id of ['C1', 'C2', 'W1']) { assert.equal(x[id].ready, true); assert.equal(suffix(x[id]), '', id) }
   assert.match(x.C1.landWhy, /pipeline-io failed/)
+  assert.equal(x.C1.landWhy, 'gate check failed: pipeline-io failed')
+  assert.equal(x.C1.gateOutput, undefined)
   assert.match(x.W1.landWhy, /merge-safety agent failed/)
   assert.deepEqual(ran(/:(C1|C2)#land$/), [])
 })
@@ -1680,4 +1688,65 @@ await check('bot answer: the prompt sends the reply from a file and never inline
   const prompt = calls.find(c => c.label === 'botanswer:B1').prompt
   assert.match(prompt, /-F body=@<file>/)
   assert.doesNotMatch(prompt, /-f body=/)
+})
+
+const WARN = 'WARN plugin 0.4.0 (running) is older than the latest release v0.5.0: run claude plugin update agent-pr-pipeline@agent-pr-pipeline, then /reload-plugins'
+const withVersion = async (answer, args, pre = GOOD) => {
+  versionAnswer = answer
+  try { return await simulate(args, pre) } finally { versionAnswer = { exitCode: 0, output: 'OK' } }
+}
+await check('version: a WARN line is logged before the preflight answer is read and lands in warnings', async () => {
+  let readAt = -1
+  const pre = { get ok() { readAt = logs.length; return true }, missing: [] }
+  await withVersion({ exitCode: 0, output: WARN }, { ...base, prs: only('C1') }, pre)
+  assert.deepEqual(lastResult.warnings, [WARN])
+  assert.ok(logs.indexOf(WARN) >= 0 && logs.indexOf(WARN) < readAt)
+  assert.deepEqual(versionCalls.map(c => c.label), ['io:wave#version'])
+  assert.match(versionCalls[0].prompt, /bash \/plug\/scripts\/io\.sh plugin-version\.sh 0\.5\.0/)
+  assert.ok(lastResult.prs[0].ready, 'the wave goes on')
+})
+await check('version: OK gives an empty warnings list', async () => {
+  await simulate({ ...base, prs: only('C1') })
+  assert.deepEqual(lastResult.warnings, [])
+})
+await check('version: exit 3, a failed call and an odd answer give a log line and no warning', async () => {
+  for (const answer of [{ exitCode: 3, output: 'CHECK FAILED cannot read the latest release' }, null, { exitCode: 0, output: 'hello' }, { exitCode: 1, output: 'boom' }]) {
+    await withVersion(answer, { ...base, prs: only('C1') })
+    assert.deepEqual(lastResult.warnings, [])
+    assert.ok(logs.some(l => l.startsWith('version check could not run: ')), JSON.stringify(answer))
+    assert.ok(lastResult.prs[0].ready)
+  }
+})
+await check('version: no pluginRoot makes no io call for it and logs that it could not run', async () => {
+  const { pluginRoot, ...noRoot } = base
+  await simulate({ ...noRoot, prs: only('C1') })
+  assert.equal(versionCalls.length, 0)
+  assert.deepEqual(lastResult.warnings, [])
+  assert.ok(logs.includes('version check could not run: pluginRoot missing'))
+})
+await check('version: a wave of only land fixes runs the check too', async () => {
+  await withVersion({ exitCode: 0, output: WARN }, { ...base, prs: only('L1') })
+  assert.deepEqual(lastResult.warnings, [WARN])
+  assert.equal(versionCalls.length, 1)
+})
+await check('version: a refused wave has warnings', async () => {
+  await withVersion({ exitCode: 0, output: WARN }, base, { ok: false, exists: true, goals: 2, nonGoals: 0, missing: ['Non-goals items'] })
+  assert.deepEqual(lastResult.warnings, [WARN])
+})
+const gateAnswer = answer => (p, o) => o.label === 'io:C1#gate' ? answer : agent(p, o)
+const landOf = async answer => (await runWith({ ...base, prs: PRS.filter(p => p.id === 'C1') }, gateAnswer(answer))).prs[0]
+await check('land reason: GATED with exit 1 names the files and keeps the raw output', async () => {
+  const x = await landOf({ exitCode: 0, output: 'pipeline-io: begin\nGATED #7: a.js\npipeline-io: exit 1' })
+  assert.equal(x.landWhy, 'gated paths, the maintainer merges: a.js')
+  assert.equal(x.gateOutput, 'GATED #7: a.js')
+  assert.equal(suffix(x), '')
+})
+await check('land reason: GATE ERROR, exit 2 and GATED with exit 0 are gate check failed, never :auto', async () => {
+  for (const [code, out] of [[3, 'GATE ERROR #7: cannot read .github/pipeline.json'], [2, 'usage: gate-files.sh <owner/repo> <pr>'], [0, 'GATED #7: a.js']]) {
+    const x = await landOf({ exitCode: 0, output: `pipeline-io: begin\n${out}\npipeline-io: exit ${code}` })
+    assert.equal(x.landWhy, `gate check failed: ${out}`)
+    assert.equal(x.gateOutput, out)
+    assert.equal(x.landMode, 'person')
+    assert.equal(suffix(x), '')
+  }
 })
