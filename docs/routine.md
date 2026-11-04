@@ -23,7 +23,7 @@ The routine allows no Bash command that lists or reads files, such as `ls`, `fin
 
 ## The `why` in the record
 
-In `triage` mode the session passes the `why` to `routine-state.sh put` inside double quotes. It keeps the triager's words and changes only four characters: `"` becomes `'`, `$` becomes `S`, a backtick becomes `'` and `\` becomes `/`. It replaces line breaks with spaces. `put` and its checks do not change.
+In `triage` mode the session passes the `why` to `routine-state.sh put` inside double quotes. It keeps the triager's words and changes only four characters: `"` becomes `'`, `$` becomes `S`, a backtick becomes `'` and `\` becomes `/`. It replaces line breaks with spaces. `put` refuses an empty `why` and a `why` with a control character. It does not refuse a long `why`. When the `why` is longer than 500 characters, `put` cuts it at the last sentence end (`.`, `!` or `?` followed by a space or the end) within the first 500 characters, or at 500 characters when there is none, and stores `whyCut: true`. The cut counts characters, not bytes. A `why` of 500 characters or fewer is stored as given.
 
 ## One run
 
@@ -98,7 +98,7 @@ To remove the routine, unload the job, delete the plist, and delete `<home>/rout
 
 ## The `triaged` record
 
-A record is a comment on the tracking issue (the open issue with the label `pipeline-routine`). Its body starts with `<!-- pipeline:routine triaged <issue number> -->` and has one line of JSON: `decision`, `size`, `risk` and `why`. A `build` of size `L`, or with risk `high`, is stored as `plan`, and the original decision is kept in `triagerDecision`. A comment by another account never counts.
+A record is a comment on the tracking issue (the open issue with the label `pipeline-routine`). Its body starts with `<!-- pipeline:routine triaged <issue number> -->` and has one line of JSON: `decision`, `size`, `risk` and `why`, and `whyCut` (`true`) only when `put` cut the `why`. A `build` of size `L`, or with risk `high`, is stored as `plan`, and the original decision is kept in `triagerDecision`. A comment by another account never counts.
 
 ## Limits to know
 
