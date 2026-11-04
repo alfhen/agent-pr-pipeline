@@ -98,7 +98,7 @@ const withSkills = (step, pr, prompt, inClone) => {
 ${prompt}`
 }
 
-const roundsFor = pr => pr.roundsCap ? { max: pr.maxRounds, cap: pr.roundsCap }
+const roundsFor = pr => pr.quickState && pr.quickState.roundsCap && pr.maxRounds ? { max: pr.maxRounds, cap: pr.quickState.roundsCap }
   : pr.maxRounds ? { max: pr.maxRounds, cap: 'prs[].maxRounds' }
   : pr.kind === 'plan' ? { max: A.planRounds || 3, cap: 'planRounds' } : { max: A.maxRounds || 4, cap: 'maxRounds' }
 const exhausted = (what, used, max, cap) => `${what}rounds exhausted: ${used} of ${max} (${cap})`
@@ -108,18 +108,21 @@ const normTitle = t => String(t).toLowerCase().replace(/[^a-z0-9]/g, '')
 const RANK = { minor: 0, major: 1, blocker: 2 }
 const byFile = (a, b) => (a.file ? 0 : 1) - (b.file ? 0 : 1) || String(a.file || '').localeCompare(String(b.file || ''))
 // The only place that sorts findings by severity. The field decides; a severity word in the title is stripped and counted when it disagrees.
-const splitFindings = (findings, source) => {
-  const out = { blocking: [], minors: [], conflicts: 0 }
-  for (const f of findings || []) {
+const normalizeFindings = (findings, source) => {
+  let conflicts = 0
+  const items = (findings || []).map(f => {
     const m = SEVERITY_WORD.exec(f.title)
     const word = m && (m[1] || m[2]).toLowerCase()
     const severity = f.severity || word || 'major'
-    if (word && word !== severity) out.conflicts++
-    const item = { ...f, severity, title: m ? String(f.title).slice(m[0].length) : f.title, source }
-    ;(severity === 'minor' ? out.minors : out.blocking).push(item)
-  }
-  out.blocking = mergeDuplicates(out.blocking)
-  return out
+    if (word && word !== severity) conflicts++
+    return { ...f, severity, title: m ? String(f.title).slice(m[0].length) : f.title, source }
+  })
+  return { items, conflicts }
+}
+const partition = items => ({ blocking: items.filter(f => f.severity !== 'minor'), minors: items.filter(f => f.severity === 'minor') })
+const splitFindings = (findings, source) => {
+  const { items, conflicts } = normalizeFindings(findings, source)
+  return { ...partition(mergeDuplicates(items)), conflicts }
 }
 // One item per file and normalized title, with the highest severity and every source. The result is sorted by file, so the fix prompt numbers match the history.
 const mergeDuplicates = findings => {
@@ -477,7 +480,7 @@ const archPrompt = (pr, round, earlier = []) => `${ctx(pr)}
 
 Task: review the branch for architecture against ${ARCH}.
 Clone it: ${cloneTo(`arch-${pr.id}-r${round}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`.
-Return the verdict, a short summary, the new concepts, the findings (for needs-change, each with a severity) and the escalation (for escalate).
+Return the verdict, a short summary, the new concepts, the findings (each with a severity; a fits may list minors) and the escalation (for escalate).
 
 ${prBlock(pr)}${earlier.length ? `\n\nYour earlier reports on this PR. The plan changed since. Check each earlier \`fits\` against the new head, and report it as a finding if it no longer holds:\n${JSON.stringify(earlier, null, 1)}` : ''}`
 
@@ -629,7 +632,7 @@ const entryText = (t, e) => `Touches: ${e.touches}\nAcceptance: ${e.acceptance}$
 const withBrief = (pr, brief) => {
   const small = /^Triage: size S, risk low, new concepts: (.*)$/m.exec(brief)
   const qa = /^QA: (.+)$/m.exec(brief)
-  return { ...pr, ...(qa && pr.qa === undefined ? { qa: true } : {}), quickState: { brief, skipArch: !!small && small[1].trim() === 'none' }, ...(small && !pr.maxRounds ? { maxRounds: 2, roundsCap: 'quick S/low' } : {}) }
+  return { ...pr, ...(qa && pr.qa === undefined ? { qa: true } : {}), quickState: { brief, skipArch: !!small && small[1].trim() === 'none', ...(small && !pr.maxRounds ? { roundsCap: 'quick S/low' } : {}) }, ...(small && !pr.maxRounds ? { maxRounds: 2 } : {}) }
 }
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 // Plain JS: the script has no Buffer or btoa. The command line gets text that a shell cannot interpret.
@@ -762,9 +765,10 @@ async function reviewLoop(pr, startRound, history, minors, archState) {
     }
     if (product && product.verdict === 'escalate') return { signedOff: false, reason: 'needs human: product', escalation: product.escalation }
     if (arch && arch.verdict === 'escalate') return { signedOff: false, reason: 'needs human: architecture', escalation: arch.escalation }
-    const archSplit = splitFindings(arch && arch.verdict === 'needs-change'
-      ? ((arch.findings && arch.findings.length) ? arch.findings : [{ severity: 'major', title: 'Architecture review asked for changes', detail: arch.summary }])
-      : [], 'architecture')
+    const archFindings = !arch || arch.verdict === 'escalate' ? []
+      : (arch.findings && arch.findings.length) ? arch.findings
+      : arch.verdict === 'needs-change' ? [{ severity: 'major', title: 'Architecture review asked for changes', detail: arch.summary }] : []
+    const archSplit = splitFindings(archFindings, 'architecture')
     if (arch) archState.archOpen = archSplit.blocking.length > 0
     const qaSplit = splitFindings(qa ? qa.findings : [], 'qa')
     if (qa) {
@@ -773,10 +777,15 @@ async function reviewLoop(pr, startRound, history, minors, archState) {
       log(`${pr.id} round ${round}: QA ${qa.scenarios.length} scenarios, ${archState.qaOpen.length} blockers/majors`)
     }
     const invariantFindings = (review.invariants || []).filter(i => !i.holds).map(i => ({ severity: 'major', title: `[invariant] ${i.text}`, detail: i.evidence }))
-    const reviewSplit = splitFindings(review.findings.concat(invariantFindings), 'review')
-    const blocking = mergeDuplicates(reviewSplit.blocking.concat(archSplit.blocking, qaSplit.blocking))
-    minors.push(...reviewSplit.minors, ...archSplit.minors, ...qaSplit.minors)
-    const row = historyRow(round, test, blocking, reviewSplit.conflicts + archSplit.conflicts + qaSplit.conflicts)
+    const normalized = [
+      normalizeFindings(review.findings.concat(invariantFindings), 'review'),
+      normalizeFindings(archFindings, 'architecture'),
+      normalizeFindings(qa ? qa.findings : [], 'qa'),
+    ]
+    const pooled = partition(mergeDuplicates(normalized.flatMap(n => n.items)))
+    const blocking = pooled.blocking
+    minors.push(...pooled.minors)
+    const row = historyRow(round, test, blocking, normalized.reduce((n, x) => n + x.conflicts, 0))
     history.push(row)
     log(`${pr.id} round ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (test.pass && blocking.length === 0) return { signedOff: true, headSha: test.headSha || review.headSha }
