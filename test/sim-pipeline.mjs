@@ -707,6 +707,14 @@ await check('quick: the put prompt holds the path, --sum and the entry in a fenc
     assert.doesNotMatch(c.prompt, BASE64_RUN, c.label)
   }
 })
+await check('quick: the get call clears the brief folder and runs before the put', async () => {
+  delete briefs.QM
+  await simulate({ ...quickBase, prs: [quickBase.prs[2]] })
+  const labels = calls.map(c => c.label)
+  const get = calls.find(c => c.label === 'io:QM#get')
+  assert.ok(get.prompt.includes('quick-brief.sh get o/r 42 --clear /x/brief-QM`'), get.prompt)
+  assert.ok(labels.indexOf('io:QM#get') >= 0 && labels.indexOf('io:QM#get') < labels.indexOf('io:QM#put'))
+})
 await check('quick: the fence is longer than any backtick run in the entry', async () => {
   TRIAGES.QG = triage('build', 'M', 'medium', { entry: { touches: 'src/qg.js', acceptance: 'run ```x``` and pass' } })
   await simulate({ ...quickBase, prs: [{ id: 'QG', quick: { issue: 95 }, branch: 'fix/QG' }] })
