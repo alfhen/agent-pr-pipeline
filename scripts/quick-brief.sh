@@ -34,15 +34,17 @@ pages=$(gh api --paginate --slurp "repos/$repo/issues/$issue/comments") || { ech
 comments=$(printf '%s' "$pages" | jq 'add // [] | if type == "array" then . else error("not a list of comments") end') || { echo "quick-brief: the comments of issue $issue are not valid JSON" >&2; exit 3; }
 body=$(printf '%s' "$comments" | jq -r --arg prefix "$PREFIX" --arg user "$user" -f "$here/trusted-comment.jq") || { echo "quick-brief: more than one trusted brief on issue $issue" >&2; exit 2; }
 
-# none: no brief. pipeline: the marker sum matches the text. edited: it does not. old: a 0.4 marker with no sum.
+# none: no brief. pipeline: the marker sum matches the text. edited: it does not. old: exactly the 0.4 marker with no sum. Any other first line (a CR from a web edit, extra text) is edited.
 brief_text=""; brief_state=none
 if [ "$body" != null ]; then
   brief_text=$(printf '%s\n' "$body" | tail -n +2)
   first=$(printf '%s\n' "$body" | head -n 1)
   if [[ "$first" =~ ^"$PREFIX"\ ([0-9]+:[0-9]+)\ --\>$ ]]; then
     if [ "${BASH_REMATCH[1]}" = "$(sumOf "$brief_text")" ]; then brief_state=pipeline; else brief_state=edited; fi
-  else
+  elif [ "$first" = "$PREFIX -->" ]; then
     brief_state=old
+  else
+    brief_state=edited
   fi
 fi
 

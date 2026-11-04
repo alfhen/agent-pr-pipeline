@@ -164,6 +164,13 @@ test('put leaves a brief whose text does not match its marker sum alone: exit 4'
   assert.equal(r.calls.filter(l => !l.startsWith('GET ')).length, 0)
 })
 
+test('a brief saved with CRLF line endings is edited: get and put exit 4, put writes nothing', () => {
+  assert.equal(run('pipeline-edited-crlf').status, 4)
+  const r = run('pipeline-edited-crlf', 'put', [], undefined, undefined, NEW)
+  assert.equal(r.status, 4)
+  assert.equal(r.calls.filter(l => !l.startsWith('GET ')).length, 0)
+})
+
 test('put leaves a 0.4 brief (no sum) alone when the entry differs: exit 4', () => {
   const r = run('trusted', 'put', [], undefined, undefined, NEW)
   assert.equal(r.status, 4)

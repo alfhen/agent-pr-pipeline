@@ -1,0 +1,9 @@
+[
+ {
+  "id": 2,
+  "user": {
+   "login": "alfhen"
+  },
+  "body": "<!-- pipeline:quick-brief 452653:48 -->\r\nTouches: src/a.js\r\nAcceptance: node --test passes"
+ }
+]
