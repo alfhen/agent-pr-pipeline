@@ -21,3 +21,13 @@ test('tester does not name qa as an owner of the revert check', () => {
 test('tester keeps the exists and ran rule', () => {
   assert.ok(body.includes('exists and really ran (was not skipped)'));
 });
+
+test('tester reports a refused command as refused and never works around it', () => {
+  assert.match(body, /Report it with `refused: true`/);
+  assert.match(body, /Never work around the denial/);
+});
+
+test('tester fills acceptance honestly and reports the acceptance test as its own check', () => {
+  assert.match(body, /Report the acceptance test as a check of its own/);
+  assert.match(body, /Fill `acceptance` honestly: `declared` is true only when/);
+});

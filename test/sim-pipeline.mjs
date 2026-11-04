@@ -116,11 +116,12 @@ const agentRaw = async (prompt, o) => {
     return { summary: 's', findings: major ? [{ severity: 'major', title: 'docs say the flag is --all, code has --every', detail: 'd' }] : [] }
   }
   if (o.label.startsWith('qa')) return (id === 'Q1' && round === '1')
-    ? { summary: 's', scenarios: [{ name: '--words with empty input', command: "printf '' | tally --words", expected: '0', actual: '1', pass: false }], findings: [{ severity: 'major', title: 'empty input prints 1', detail: 'd' }, { severity: 'minor', title: 'help wording', detail: 'd' }] }
-    : { summary: 's', scenarios: [{ name: 'acceptance', pass: true }], findings: [] }
+    ? { summary: 's', scenarios: [{ name: '--words with empty input', command: "printf '' | tally --words", expected: '0', actual: '1', result: 'fail' }], findings: [{ severity: 'major', title: 'empty input prints 1', detail: 'd' }, { severity: 'minor', title: 'help wording', detail: 'd' }] }
+    : { summary: 's', scenarios: [{ name: 'acceptance', result: 'pass' }, { name: '--words with empty input', result: 'pass' }], findings: [] }
   if (o.label.startsWith('docsfix')) return { changed: true, headSha: 'docsfix-' + id, files: ['README.md'], summary: 's', worktree: wt(o) }
   if (o.label.startsWith('docs')) return ['G1', 'G2', 'G3'].includes(id) ? { changed: true, headSha: 'docs-' + id, files: ['README.md'], summary: 's', worktree: wt(o) } : { changed: false, summary: 'already right', worktree: wt(o) }
   if (o.label.startsWith('review')) return { summary: 's', findings: id === 'P1' || ['QS', 'QY'].includes(id) || (id === 'QF' && round === '1') ? [{ severity: 'major', title: 'x', detail: 'd', file: 'src/secret/area.ts' }] : [{ severity: 'minor', title: 'm', detail: 'd' }] }
+  if (o.label.endsWith('#body')) return { updated: true }
   if (o.label.startsWith('open') && land.blocked.has(id)) return { blocked: true, blockedReason: 'permission denied: gh pr create', commands: ['gh pr create -R o/r --head b1 --title "t"'] }
   if (o.label.startsWith('open')) return { prNumber: 100 + calls.length, prUrl: 'u', issuesCreated: id === 'C2' ? ['https://github.com/o/r/issues/21'] : [] }
   if (o.label.startsWith('botwait')) return id === 'C1' && failWait ? null : { approvedBy: ['the-waiter-says-so'], openComments: ['C2', 'L1', 'B1', 'W1'].includes(id) ? 2 : 0 }
@@ -526,8 +527,10 @@ await check('only the tester, bot waiter and preflight leave out CLAUDE.md', () 
 await check('read-only agents have no edit tools, except pipeline-io with Write', () => {
   for (const name of [...new Set(Object.values(AGENT_OF))].filter(n => !WRITERS.includes(n) && n !== 'qa')) {
     const tools = frontmatter(name).tools
-    assert.ok(tools && !/\b(Edit|Write|NotebookEdit|Agent)\b/.test(tools) === (name !== 'pipeline-io'), name)
+    const allowed = name === 'pr-opener' || name === 'pipeline-io' ? 'Write' : ''
+    assert.ok(tools && !/\b(Edit|Write|NotebookEdit|Agent)\b/.test(tools.replace(allowed, '')), name)
   }
+  assert.match(frontmatter('pr-opener').tools, /\bWrite\b/)
   assert.equal(frontmatter('pipeline-io').tools, 'Bash, Write', 'pipeline-io may write the one brief file and nothing else')
   assert.equal(frontmatter('qa').tools, undefined, 'qa keeps browser and other MCP tools')
   assert.deepEqual(frontmatter('qa').disallowedTools.split(', ').sort(), ['Agent', 'Edit', 'NotebookEdit', 'Write'])
@@ -645,7 +648,7 @@ await check('quick: only the put calls run on the brief step (sonnet), every oth
   const src = readFileSync(new URL('workflows/run-wave.js', root), 'utf8')
   assert.match(src, /brief: \{ model: 'sonnet', effort: 'low' \}/)
   assert.match(src, /ioBrief: \{ agent: 'pipeline-io', phase: 'Triage', skills: null, model: 'brief' \}/)
-  assert.equal(src.match(/role: 'ioBrief'/g).length, 2, 'the put and the #put2 call')
+  assert.equal(src.match(/role: 'ioBrief'/g).length, 1, 'one call site serves the put and the #put2 retry')
   TRIAGES.QSO = triage('build', 'M', 'medium')
   await simulate({ ...quickBase, steps: { brief: { model: 'opus', effort: 'high' } }, prs: [{ id: 'QSO', quick: { issue: 96 }, branch: 'fix/QSO' }] })
   assert.equal(calls.find(c => c.label === 'io:QSO#put').model, 'opus')
@@ -723,6 +726,9 @@ await check('quick: a put that gives 65 and then 0 runs #put2 and the PR goes on
   delete putPlan.QU
   assert.ok(calls.some(c => c.label === 'io:QU#put2'))
   assert.equal(calls.filter(c => /^io:QU#put/.test(c.label)).length, 2)
+  const fileOf = c => c.prompt.match(/\S*brief-QU\/entry-\d+\.md/g)
+  const [p1, p2] = ['io:QU#put', 'io:QU#put2'].map(l => fileOf(calls.find(c => c.label === l)))
+  assert.ok(p1 && p2 && p1[0] !== p2[0], 'each put attempt writes a file that does not exist yet')
   assert.ok(briefs.QU)
   assert.ok(calls.some(c => c.label.startsWith('implement:QU')))
   assert.equal(r.ready, true)
@@ -1339,7 +1345,7 @@ await check('severity: a land-fix-check finding titled [minor] x is one major li
   assert.equal(row.severityConflicts, 1)
 })
 await check('severity: a QA finding titled (Minor) x is one major line and a conflict', async () => {
-  const x = await hooked(only1('Q1'), (p, o) => o.label === 'qa:Q1#1' ? { summary: 's', scenarios: [{ name: 's', pass: false }], findings: [f('major', '(Minor) x')] } : undefined)
+  const x = await hooked(only1('Q1'), (p, o) => o.label === 'qa:Q1#1' ? { summary: 's', scenarios: [{ name: 's', result: 'pass' }], findings: [f('major', '(Minor) x')] } : undefined)
   assert.deepEqual(x.Q1.history[0].blockersAndMajors, ['major [qa]: x'])
   assert.equal(x.Q1.history[0].severityConflicts, 1)
 })
@@ -1463,4 +1469,201 @@ await check('plan review: a plan PR runs the architecture review in every round 
   assert.match(third, /earlier reports/)
   assert.match(third, /"round": 1/)
   assert.match(third, /"round": 2/)
+})
+
+// U01: untested is not passed.
+const chk = (name, extra = {}) => ({ name, pass: true, ...extra })
+const tested = (id, answer, round = '1') => (p, o) => o.label === `test:${id}#${round}` ? { headSha: 'sha-' + id, ...answer } : undefined
+const cleanReview = (id, hook) => (p, o) => o.label.startsWith('review:') && o.label.includes(`:${id}#`) ? reviewOf([f('minor', 'm')]) : hook(p, o)
+const openOf = id => calls.find(c => c.label === `open:${id}`)
+await check('untested: a refused check starts no fix, signs off, and is listed, with no :auto and a body file', async () => {
+  const x = await hooked(only1('C1'), tested('C1', { pass: false, checks: [chk('unit'), { name: 'lint', pass: false, refused: true }] }))
+  assert.equal(x.C1.ready, true)
+  assert.equal(fixCalls('C1').length, 0)
+  assert.equal(x.C1.history.length, 1)
+  assert.equal(x.C1.history[0].testPass, true)
+  assert.deepEqual(x.C1.history[0].notRun, ['lint (refused)'])
+  assert.deepEqual(x.C1.history[0].failingChecks, [])
+  assert.deepEqual(x.C1.untested, ['lint (refused)'])
+  assert.equal(x.C1.landMode, 'person')
+  assert.match(x.C1.landWhy, /^untested: lint \(refused\)$/)
+  assert.ok(!x.C1.land.endsWith(':auto'))
+  assert.match(openOf('C1').prompt, /Untested items: \["lint \(refused\)"\]/)
+  assert.match(openOf('C1').prompt, /--body-file/)
+  assert.match(openOf('C1').prompt, /Untested" section/)
+})
+await check('untested: a clean run has an empty untested list and keeps :auto', async () => {
+  const x = await hooked(only1('C1'), () => undefined)
+  assert.deepEqual(x.C1.untested, [])
+  assert.equal(x.C1.landMode, 'auto')
+})
+await check('untested: a real failure next to a refused check gives a fix prompt with only the real failure', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? { pass: true, headSha: 'sha-C1', checks: [chk('unit', { pass: false, log: 'boom in unit' }), { name: 'lint', pass: false, refused: true }, chk('types')] } : undefined)
+  assert.equal(fixCalls('C1').length, 1)
+  const prompt = fixCalls('C1')[0].prompt
+  assert.match(prompt, /boom in unit/)
+  assert.doesNotMatch(prompt.split('Failing checks:')[1], /lint/)
+  assert.deepEqual(x.C1.history[0].failingChecks, ['unit'])
+})
+await check('untested: the agent pass is ignored in both directions', async () => {
+  const bad = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('unit'), chk('lint', { pass: false })] }))
+  assert.equal(bad.C1.history[0].testPass, false)
+  assert.equal(fixCalls('C1').length, 1)
+  const good = await hooked(only1('C1'), tested('C1', { pass: false, checks: [chk('unit'), chk('lint')] }))
+  assert.equal(good.C1.history.length, 1)
+  assert.equal(fixCalls('C1').length, 0)
+})
+for (const [what, answer] of [['pass true with no checks', { pass: true, checks: [] }], ['pass false with no checks', { pass: false, checks: [] }],
+  ['every check refused', { pass: false, checks: [{ name: 'a', pass: false, refused: true }, { name: 'b', pass: false, refused: true }] }]]) {
+  await check(`untested: ${what} stops the PR with tests did not run, no fixer and no sign-off`, async () => {
+    const x = await hooked(only1('C1'), tested('C1', answer))
+    assert.equal(x.C1.ready, false)
+    assert.equal(x.C1.reason, 'tests did not run')
+    assert.equal(fixCalls('C1').length, 0)
+    assert.ok(!calls.some(c => /^(open|docs):C1/.test(c.label)))
+  })
+}
+const acc = (check, declared = true) => ({ declared, check })
+await check('untested: a declared acceptance test that is missing or failed gives a fix round and no sign-off', async () => {
+  const missing = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? { pass: true, headSha: 'sha-C1', checks: [chk('lint')], acceptance: acc('x') } : undefined)
+  assert.match(fixCalls('C1')[0].prompt, /acceptance test did not run/)
+  assert.deepEqual(missing.C1.history[0].blockersAndMajors, ['major [test]: acceptance test did not run'])
+  assert.equal(missing.C1.history[0].testPass, false)
+  const failed = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? { pass: true, headSha: 'sha-C1', checks: [chk('lint'), chk('x', { pass: false, log: 'x exploded' })], acceptance: acc('x') } : undefined)
+  const prompt = fixCalls('C1')[0].prompt
+  assert.match(prompt, /x exploded/)
+  assert.doesNotMatch(prompt, /acceptance test did not run/)
+  assert.equal(failed.C1.history[0].testPass, false)
+})
+await check('untested: the same list with declared false signs off, and a passed acceptance check signs off', async () => {
+  const off = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint')], acceptance: acc('x', false) }))
+  assert.equal(off.C1.history.length, 1)
+  assert.equal(fixCalls('C1').length, 0)
+  const on = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint'), chk('x')], acceptance: acc('x') }))
+  assert.equal(on.C1.history.length, 1)
+  assert.equal(on.C1.landMode, 'auto')
+})
+await check('untested: a refused acceptance check starts no fix, signs off, is untested and gets no :auto', async () => {
+  const x = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint'), { name: 'x', pass: false, refused: true }], acceptance: acc('x') }))
+  assert.equal(x.C1.ready, true)
+  assert.equal(fixCalls('C1').length, 0)
+  assert.deepEqual(x.C1.untested, ['x (refused)'])
+  assert.deepEqual(x.C1.history[0].notRun, ['x (refused)'])
+  assert.ok(!x.C1.land.endsWith(':auto'))
+})
+await check('untested: a plan PR signs off with a declared acceptance test that is not in the list', async () => {
+  const x = await hooked(only1('P1'), cleanReview('P1', tested('P1', { pass: true, checks: [chk('lint')], acceptance: acc('x') })))
+  assert.equal(x.P1.ready, true)
+  assert.equal(x.P1.history.length, 1)
+})
+await check('untested: a docs re-check with no check that ran stops the PR', async () => {
+  const x = await hooked(only1('G1'), tested('G1', { pass: true, checks: [] }, 'docs1'))
+  assert.equal(x.G1.ready, false)
+  assert.equal(x.G1.reason, 'docs check: tests did not run')
+})
+await check('untested: a bot-answer check with no check that ran stops the PR', async () => {
+  const x = await hooked(only1('B1'), tested('B1', { pass: true, checks: [] }, 'bots1'))
+  assert.equal(x.B1.ready, false)
+  assert.equal(x.B1.reason, 'bot answer check: tests did not run')
+})
+await check('untested: the refused checks of the last test round replace those of an earlier one', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? { pass: true, headSha: 'sha-C1', checks: [chk('lint', { refused: true, pass: false }), chk('unit', { pass: false })] }
+    : o.label === 'test:C1#2' ? { pass: true, headSha: 'sha-C1', checks: [chk('lint'), chk('unit')] } : undefined)
+  assert.equal(x.C1.history.length, 2)
+  assert.deepEqual(x.C1.untested, [])
+  assert.equal(x.C1.landMode, 'auto')
+})
+
+await check('untested: a refused check in a bot-answer test round updates the PR body, and a failed update stops the PR', async () => {
+  const refusedBots = (p, o) => o.label === 'test:C2#bots1' ? { headSha: 'sha-answer-C2', pass: true, checks: [chk('unit'), { name: 'lint', pass: false, refused: true }] } : undefined
+  const x = await hooked(only1('C2'), refusedBots)
+  assert.equal(x.C2.ready, true)
+  assert.deepEqual(x.C2.untested, ['lint (refused)'])
+  assert.equal(x.C2.landMode, 'person')
+  const body = calls.find(c => c.label === 'open:C2#body')
+  assert.ok(body)
+  assert.match(body.prompt, /Untested items: \["lint \(refused\)"\]/)
+  assert.match(body.prompt, /--body-file/)
+  const y = await hooked(only1('C2'), (p, o) => o.label === 'open:C2#body' ? { updated: false } : refusedBots(p, o))
+  assert.equal(y.C2.ready, false)
+  assert.match(y.C2.reason, /PR body not updated/)
+})
+await check('untested: a bot-answer test round that clears a refused check updates the PR body', async () => {
+  const x = await hooked(only1('C2'), (p, o) => o.label === 'test:C2#1' ? { pass: true, headSha: (lastHead.C2 = 'sha-C2'), checks: [chk('unit'), { name: 'lint', pass: false, refused: true }] }
+    : o.label === 'test:C2#bots1' ? { headSha: 'sha-answer-C2', pass: true, checks: [chk('unit'), chk('lint')] } : undefined)
+  assert.equal(x.C2.ready, true, x.C2.reason)
+  assert.deepEqual(x.C2.untested, [])
+  const body = calls.find(c => c.label === 'open:C2#body')
+  assert.ok(body)
+  assert.match(body.prompt, /Untested items: \[\]/)
+})
+await check('untested: a land fix with a refused check sends a body prompt that only adds items', async () => {
+  land.landOutput.add('LA')
+  try {
+    const x = await hooked([{ ...LANDS[0], branch: 'b-LA' }], (p, o) => o.label === 'test:LA#land1' ? { headSha: ABC, pass: true, checks: [chk('unit'), { name: 'lint', pass: false, refused: true }] } : undefined)
+    assert.equal(x.LA.ready, true, x.LA.reason)
+    assert.deepEqual(x.LA.untested, ['lint (refused)'])
+    const body = calls.find(c => c.label === 'open:LA#body')
+    assert.ok(body)
+    assert.match(body.prompt, /Untested items: \["lint \(refused\)"\]/)
+    assert.match(body.prompt, /Keep the items already listed/)
+    assert.doesNotMatch(body.prompt, /drop|remove the section|exactly/)
+  } finally { land.landOutput.delete('LA') }
+})
+await check('untested: no body update when the open prompt already listed every item', async () => {
+  await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('unit'), { name: 'lint', pass: false, refused: true }] }))
+  assert.ok(!calls.some(c => c.label === 'open:C1#body'))
+})
+
+const scen = (name, result, extra = {}) => ({ name, result, ...extra })
+const qaRun = (...rounds) => (p, o) => {
+  const m = /^qa:Q1#(\d+)$/.exec(o.label)
+  return m ? { summary: 's', findings: [], ...rounds[Math.min(m[1], rounds.length) - 1] } : undefined
+}
+const quietReview = hook => (p, o) => o.label.startsWith('review:Q1#') ? reviewOf([f('minor', 'm')]) : hook(p, o)
+await check('QA: a failed scenario with only a minor finding makes QA run again with the name, and a pass there signs off', async () => {
+  const x = await hooked(only1('Q1'), quietReview(qaRun({ scenarios: [scen('empty input', 'fail', { actual: '1' })], findings: [f('minor', 'wording')] }, { scenarios: [scen('empty input', 'pass')] })))
+  assert.match(fixCalls('Q1')[0].prompt, /QA scenario failed: empty input/)
+  assert.match(calls.find(c => c.label === 'qa:Q1#2').prompt, /"name":"empty input","state":"open"/)
+  assert.equal(x.Q1.ready, true)
+  assert.equal(x.Q1.history.length, 2)
+})
+await check('QA: a scenario that fails in every round stops with rounds exhausted and the name', async () => {
+  const x = await hooked(only1('Q1'), quietReview(qaRun({ scenarios: [scen('empty input', 'fail')] })), { maxRounds: 2 })
+  assert.equal(x.Q1.ready, false)
+  assert.equal(x.Q1.reason, 'rounds exhausted: 2 of 2 (maxRounds)')
+  assert.ok(x.Q1.lastFindings.some(g => g.title === 'QA scenario failed: empty input'))
+})
+await check('QA: a run that leaves out the open name keeps it open', async () => {
+  const x = await hooked(only1('Q1'), quietReview(qaRun({ scenarios: [scen('empty input', 'fail')] }, { scenarios: [scen('other', 'pass')] })), { maxRounds: 2 })
+  assert.equal(x.Q1.ready, false)
+  assert.ok(x.Q1.lastFindings.some(g => g.title === 'QA scenario failed: empty input'))
+  assert.ok(calls.some(c => c.label === 'qa:Q1#2'))
+})
+await check('QA: not-run on an open scenario keeps it open', async () => {
+  const x = await hooked(only1('Q1'), quietReview(qaRun({ scenarios: [scen('empty input', 'fail')] }, { scenarios: [scen('empty input', 'not-run', { whyNotRun: 'denied' })] })), { maxRounds: 2 })
+  assert.equal(x.Q1.ready, false)
+  assert.ok(x.Q1.lastFindings.some(g => g.title === 'QA scenario failed: empty input'))
+})
+await check('QA: a not-run scenario gives a ready PR with no :auto and the scenario in the body and the result', async () => {
+  const x = await hooked(only1('Q1'), quietReview(qaRun({ scenarios: [scen('triage mode', 'not-run', { whyNotRun: 'no scratch repo' }), scen('acceptance', 'pass')] })))
+  assert.equal(x.Q1.ready, true)
+  assert.equal(fixCalls('Q1').length, 0)
+  assert.deepEqual(x.Q1.untested, ['QA scenario triage mode (not run: no scratch repo)'])
+  assert.ok(!x.Q1.land.endsWith(':auto'))
+  assert.match(x.Q1.landWhy, /^untested: QA scenario triage mode/)
+  assert.match(openOf('Q1').prompt, /QA scenario triage mode \(not run: no scratch repo\)/)
+  assert.deepEqual(x.Q1.qa[0].notRun, ['triage mode'])
+})
+await check('QA: a later pass ends an untested scenario', async () => {
+  const x = await hooked(only1('Q1'), quietReview(qaRun({ scenarios: [scen('triage mode', 'not-run'), scen('empty input', 'fail')] }, { scenarios: [scen('triage mode', 'pass'), scen('empty input', 'pass')] })))
+  assert.equal(x.Q1.ready, true)
+  assert.equal(x.Q1.history.length, 2)
+  assert.deepEqual(x.Q1.untested, [])
+})
+await check('bot answer: the prompt sends the reply from a file and never inline', async () => {
+  await hooked(only1('B1'), () => undefined)
+  const prompt = calls.find(c => c.label === 'botanswer:B1').prompt
+  assert.match(prompt, /-F body=@<file>/)
+  assert.doesNotMatch(prompt, /-f body=/)
 })
