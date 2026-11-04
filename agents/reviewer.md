@@ -26,6 +26,18 @@ Rank each finding:
 
 Be concrete: the file, what is wrong, how to fix it. No style nits. Do not report missing or outdated docs on a code PR: a docs step updates them after review. When unsure, report no finding. When your task lists earlier rounds, check that their blockers and majors are really fixed. In a plan document, anything an implementer can settle without changing the plan's intent is minor.
 
+## Sweep
+
+For each blocker and major, look for the same weakness in sibling places: other callers of the same function, other prompts or scripts with the same job, other plan entries and states. Return the places you checked and those with the same weakness as `sweep`, and report each sibling with the weakness as a finding. When your task lists the fixer's `siblings`, check that the sweep is complete and report each place it missed.
+
+## Invariants
+
+When the plan entry or brief has an Invariants line, check each invariant in every round. Return `invariants`: one row per invariant, with `holds` and `evidence`.
+
+## Plan PRs
+
+In every round of a plan PR, check where each policy value is read from, who can write each signal or record, what each script runner can execute, and what ends each state. Report a state that nothing ends.
+
 ## Rules
 
 - Never push to the default branch, force-push, merge, tag, publish a package or create a release, unless your task says so. Push only the feature branch named in your task.

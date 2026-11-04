@@ -211,13 +211,13 @@ await check('docs PR skips architecture and uses the docs reviewer', () => {
 })
 await check('plan PR stops after planRounds', () => {
   assert.equal(r.P1.ready, false)
-  assert.equal(r.P1.reason, 'rounds exhausted')
+  assert.equal(r.P1.reason, 'rounds exhausted: 3 of 3 (planRounds)')
   assert.equal(r.P1.history.length, 3)
   assert.equal(r.P1.product.verdict, 'aligned')
 })
 await check('planRounds in the args overrides the default', async () => {
   const x = await simulate({ ...base, planRounds: 2, prs: [{ id: 'P1', title: 'plan', branch: 'b3', kind: 'plan', skipImpl: true }] })
-  assert.equal(x.P1.reason, 'rounds exhausted')
+  assert.equal(x.P1.reason, 'rounds exhausted: 2 of 2 (planRounds)')
   assert.equal(x.P1.history.length, 2)
 })
 await check('land fix runs the land fixer, then waits for and answers the bots on the new head', () => {
@@ -299,7 +299,7 @@ await check('a docs finding gets a docs-only fix by the docs writer, then a seco
 })
 await check('docs findings left after docsRounds stop the PR', () => {
   assert.equal(r.G3.ready, false)
-  assert.equal(r.G3.reason, 'docs check: rounds exhausted')
+  assert.equal(r.G3.reason, 'docs check: rounds exhausted: 2 of 2 (docsRounds)')
   assert.ok(!mainCalls.some(c => c.label === 'open:G3'))
 })
 await check('docsUpdate false turns it off for the wave', async () => {
@@ -583,7 +583,7 @@ await check('quick: the prompts name the issue and not a plan, and the PR closes
   assert.match(forPr('QM', /^open/)[0].prompt, /"Closes #42" on its own line/)
 })
 await check('quick: S and low risk get 2 rounds and no architecture review unless a new concept is named', () => {
-  assert.equal(qr.QS.reason, 'rounds exhausted')
+  assert.equal(qr.QS.reason, 'rounds exhausted: 2 of 2 (quick S/low)')
   assert.equal(qr.QS.history.length, 2)
   assert.equal(forPr('QS', /^arch/).length, 0)
   assert.ok(forPr('QN', /^arch/).length > 0)
@@ -694,7 +694,7 @@ const ran = (re) => calls.filter(c => re.test(c.label)).map(c => c.label)
 const suffix = x => x.land.split(':').slice(2).join(':')
 await check('decision rerun: a skipImpl rerun with productDecision runs the fixer first, then reviews', async () => {
   const order = id => calls.filter(c => c.label.includes(`:${id}`)).map(c => c.label)
-  const findingsOf = label => JSON.parse(calls.find(c => c.label === label).prompt.split('\nFindings:\n')[1])
+  const findingsOf = label => calls.find(c => c.label === label).prompt.split('together:\n')[1].split(/^File .*:\n/m).filter(Boolean).flatMap(g => JSON.parse(g)).sort((x, y) => x.n - y.n)
   const rerun = async (pr, text) => {
     await simulate({ ...base, prs: [pr] })
     const labels = order(pr.id)
@@ -905,7 +905,7 @@ await check('land fix: a non-zero exit of land-commits.sh makes the PR not ready
 await check('land fix: blockers in the check run the fixer, then stop after the rounds', async () => {
   const x = await landFixRun({ landOutput: ['LA'], landBad: ['LA'] })
   assert.equal(x.LA.ready, false)
-  assert.equal(x.LA.reason, 'land-fix check: rounds exhausted')
+  assert.equal(x.LA.reason, 'land-fix check: rounds exhausted: 2 of 2 (botCheckRounds)')
   assert.deepEqual(calls.filter(c => c.label.startsWith('fix:LA')).map(c => c.label), ['fix:LA#land1'])
   assert.equal(calls.filter(c => c.label.startsWith('landreview:LA')).length, 2)
   assert.ok(!calls.some(c => c.label === 'botwait:LA'))
@@ -1141,4 +1141,176 @@ await check('cleanup: a path with a quote is passed as one shell word', async ()
   preflight = GOOD
   await run({ ...base, prs: only('C1') }, quoting, parallel, log)
   assert.ok(cleanupOf(cleanupCalls, 'C1', 'worktrees')[0].prompt.includes("'/wt/it'\\''s'"))
+})
+
+// Findings: one severity source, duplicates, sweep, invariants and round caps.
+const hooked = async (prs, hook, extra = {}) => {
+  calls = []; cleanupCalls = []; timeline = []; logs = []
+  preflight = GOOD
+  const out = await run({ ...base, ...extra, prs }, async (p, o) => { const h = hook(p, o); if (h === undefined) return agent(p, o); calls.push({ label: o.label, model: o.model, prompt: p }); return h }, parallel, log)
+  return Object.fromEntries(out.prs.map(x => [x.id, x]))
+}
+const only1 = id => PRS.filter(p => p.id === id)
+const f = (severity, title, extra = {}) => ({ severity, title, detail: 'd', ...extra })
+const reviewOf = (findings, extra = {}) => ({ summary: 's', findings, ...extra })
+const fixCalls = id => calls.filter(c => c.label.startsWith(`fix:${id}#`))
+await check('severity: a review major titled [minor] x is one major line, a conflict and a clean title for the fixer', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [review]: x'])
+  assert.equal(x.C1.history[0].severityConflicts, 1)
+  assert.equal(x.C1.history[1].severityConflicts, undefined)
+  assert.match(fixCalls('C1')[0].prompt, /"title": "x"/)
+  assert.doesNotMatch(fixCalls('C1')[0].prompt, /\[minor\] x/)
+})
+await check('severity: every word form is stripped, and a word inside the title stays', async () => {
+  const titles = ['(Major) a1', 'blocker: a2', 'minor - a3', 'MINOR: a4', '[ Blocker ] a5', 'Major rewrite of the parser']
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf(titles.map(t => f('major', t))) : undefined)
+  assert.deepEqual(x.C1.history[0].blockersAndMajors.map(l => l.replace('major [review]: ', '')).sort(), ['Major rewrite of the parser', 'a1', 'a2', 'a3', 'a4', 'a5'])
+  assert.equal(x.C1.history[0].severityConflicts, 4)
+})
+await check('severity: a docs-check finding titled [minor] x is one major line and a conflict', async () => {
+  const x = await hooked(only1('G2'), (p, o) => o.label === 'docsreview:G2#1' ? reviewOf([f('major', '[minor] x')]) : undefined)
+  const row = x.G2.history.find(h => h.round === 'docs1')
+  assert.deepEqual(row.blockersAndMajors, ['major [docs-check]: x'])
+  assert.equal(row.severityConflicts, 1)
+})
+await check('severity: a bot-answer-check finding titled [minor] x is one major line and a conflict', async () => {
+  const x = await hooked(only1('B1'), (p, o) => o.label === 'botreview:B1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)
+  const row = x.B1.history.find(h => h.round === 'bots1')
+  assert.deepEqual(row.blockersAndMajors, ['major [bot answer check]: x'])
+  assert.equal(row.severityConflicts, 1)
+})
+await check('severity: a land-fix-check finding titled [minor] x is one major line and a conflict', async () => {
+  land.landOutput.add('LA')
+  let x
+  try { x = await hooked(LANDS, (p, o) => o.label === 'landreview:LA#1' ? reviewOf([f('major', '[minor] x')]) : undefined) } finally { for (const k of Object.keys(land)) land[k] = new Set() }
+  const row = x.LA.history.find(h => h.round === 'land1')
+  assert.deepEqual(row.blockersAndMajors, ['major [land-fix check]: x'])
+  assert.equal(row.severityConflicts, 1)
+})
+await check('severity: a QA finding titled (Minor) x is one major line and a conflict', async () => {
+  const x = await hooked(only1('Q1'), (p, o) => o.label === 'qa:Q1#1' ? { summary: 's', scenarios: [{ name: 's', pass: false }], findings: [f('major', '(Minor) x')] } : undefined)
+  assert.deepEqual(x.Q1.history[0].blockersAndMajors, ['major [qa]: x'])
+  assert.equal(x.Q1.history[0].severityConflicts, 1)
+})
+await check('severity: an architecture minor goes to the minors and starts no fix and no second architecture run', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'y')])
+    : o.label === 'arch:C1#1' ? { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [f('minor', '[major] naming')] } : undefined)
+  assert.ok(calls.some(c => c.label === 'review:C1#2'))
+  assert.ok(!calls.some(c => c.label === 'arch:C1#2'))
+  assert.match(calls.find(c => c.label === 'open:C1').prompt, /"title": "naming"/)
+  assert.equal(x.C1.history[0].severityConflicts, 1)
+})
+await check('severity: a fits architecture report keeps its minors and starts no fix and no second architecture run', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'y')])
+    : o.label === 'arch:C1#1' ? { verdict: 'fits', summary: 's', newConcepts: [], findings: [f('minor', 'naming')] } : undefined)
+  assert.ok(calls.some(c => c.label === 'review:C1#2'))
+  assert.ok(!calls.some(c => c.label === 'arch:C1#2'))
+  assert.match(calls.find(c => c.label === 'open:C1').prompt, /"title": "naming"/)
+})
+await check('severity: a review finding goes through splitFindings, so a severity word in the title is stripped', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)
+  assert.equal(x.C1.history[0].blockersAndMajors[0], 'major [review]: x')
+  assert.equal(x.C1.history[0].severityConflicts, 1)
+})
+await check('duplicates: a minor from one source and a major from another merge into one major and no minor', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('minor', 'Wrong layer', { file: 'a.js' })])
+    : o.label === 'arch:C1#1' ? { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [f('major', 'wrong layer', { file: 'a.js' })] } : undefined)
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [review, architecture]: Wrong layer'])
+  assert.doesNotMatch(calls.find(c => c.label === 'open:C1').prompt, /"title": "Wrong layer"/)
+})
+await check('severity: a needs-change with no findings is a fallback major and the architecture review runs again', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'arch:C1#1' ? { verdict: 'needs-change', summary: 'too big', newConcepts: [], findings: [] } : undefined)
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [architecture]: Architecture review asked for changes'])
+  assert.ok(calls.some(c => c.label === 'arch:C1#2'))
+})
+await check('severity: an architecture major keeps the architecture review running until it fits', () => {
+  assert.ok(mainCalls.some(c => c.label === 'arch:N1#2'))
+  assert.ok(!mainCalls.some(c => c.label === 'arch:N1#3'))
+  assert.ok(!mainCalls.some(c => c.label === 'arch:C1#2'))
+})
+await check('duplicates: one finding from the reviewer and the architecture reviewer is one line, one item and the highest severity', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'Wrong layer!', { file: 'a.js' })])
+    : o.label === 'arch:C1#1' ? { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [f('blocker', 'wrong layer', { file: 'a.js' })] } : undefined)
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, ['blocker [review, architecture]: Wrong layer!'])
+  assert.equal((fixCalls('C1')[0].prompt.match(/"n":/g) || []).length, 1)
+})
+await check('duplicates: the same title in two files stays two items', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'same', { file: 'a.js' }), f('major', 'same', { file: 'b.js' })]) : undefined)
+  assert.equal(x.C1.history[0].blockersAndMajors.length, 2)
+})
+await check('duplicates: a higher severity keeps its own detail and fix, with the lower detail appended', async () => {
+  await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('minor', 'Wrong layer', { file: 'a.js', detail: 'minor text' })])
+    : o.label === 'arch:C1#1' ? { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [f('major', 'wrong layer', { file: 'a.js', detail: 'arch reasoning', suggestedFix: 'move it' })] } : undefined)
+  const prompt = fixCalls('C1')[0].prompt
+  assert.match(prompt, /arch reasoning/)
+  assert.match(prompt, /move it/)
+  assert.match(prompt, /Also: minor text/)
+})
+await check('duplicates: the fix prompt numbers the findings and groups them by file', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'one', { file: 'b.js' }), f('major', 'two', { file: 'a.js' }), f('major', 'three', { file: 'b.js' })]) : undefined)
+  const prompt = fixCalls('C1')[0].prompt
+  assert.ok(prompt.indexOf('File a.js') < prompt.indexOf('File b.js'))
+  assert.equal((prompt.match(/File b\.js/g) || []).length, 1)
+  assert.deepEqual(x.C1.history[0].blockersAndMajors.map(l => l.replace('major [review]: ', '')), ['two', 'one', 'three'])
+  assert.match(prompt, /"n": 1,\s+"severity": "major",\s+"title": "two"/)
+})
+await check('duplicates: sameAs folds two lines into one with every source, and bad groups change nothing', async () => {
+  const two = (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'one', { file: 'a.js' }), f('minor', 'x'), f('blocker', 'two', { file: 'b.js' })]) : undefined
+  const x = await hooked(only1('C1'), (p, o) => two(p, o) || (o.label === 'fix:C1#1' ? { summary: 's', worktree: '/w', sameAs: [[1, 2]] } : undefined))
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, ['blocker [review]: one'])
+  const y = await hooked(only1('C1'), (p, o) => two(p, o) || (o.label === 'fix:C1#1' ? { summary: 's', worktree: '/w', sameAs: [[1, 1], [5, 6], [2]] } : undefined))
+  assert.equal(y.C1.history[0].blockersAndMajors.length, 2)
+})
+await check('caps: a code PR stops with both numbers and maxRounds', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : undefined)
+  assert.equal(x.C1.reason, 'rounds exhausted: 4 of 4 (maxRounds)')
+  assert.equal(x.C1.history.length, 4)
+  const y = await hooked(only1('C1'), (p, o) => o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : undefined, { maxRounds: 2 })
+  assert.equal(y.C1.reason, 'rounds exhausted: 2 of 2 (maxRounds)')
+})
+await check('caps: a PR with its own maxRounds names prs[].maxRounds', async () => {
+  const x = await hooked([{ ...only1('C1')[0], maxRounds: 1 }], (p, o) => o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : undefined)
+  assert.equal(x.C1.reason, 'rounds exhausted: 1 of 1 (prs[].maxRounds)')
+})
+await check('caps: the bot answer check names botCheckRounds, and the args change the numbers', async () => {
+  const bad = (p, o) => o.label.startsWith('botreview:B1') ? reviewOf([f('major', 'x')]) : undefined
+  const x = await hooked(only1('B1'), bad)
+  assert.equal(x.B1.reason, 'bot answer check: rounds exhausted: 2 of 2 (botCheckRounds)')
+  const y = await hooked(only1('B1'), bad, { botCheckRounds: 3 })
+  assert.equal(y.B1.reason, 'bot answer check: rounds exhausted: 3 of 3 (botCheckRounds)')
+  const z = await hooked(only1('G3'), () => undefined, { docsRounds: 1 })
+  assert.equal(z.G3.reason, 'docs check: rounds exhausted: 1 of 1 (docsRounds)')
+})
+await check('sweep: the reviewer sweep is in the fix prompt and the fixer siblings are in the next review prompt', async () => {
+  const sweep = [{ finding: 'x', checked: ['callers of parse in b.js'], sameWeakness: ['c.js'] }]
+  const siblings = [{ finding: 1, checked: ['d.js'], fixed: ['d.js'] }]
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x')], { sweep })
+    : o.label === 'fix:C1#1' ? { summary: 's', worktree: '/w', siblings } : undefined)
+  assert.equal(x.C1.ready, true)
+  assert.match(fixCalls('C1')[0].prompt, /callers of parse in b\.js/)
+  assert.doesNotMatch(calls.find(c => c.label === 'review:C1#1').prompt, /sweep of sibling places in the last fix round/)
+  const next = calls.find(c => c.label === 'review:C1#2').prompt
+  assert.match(next, /sweep of sibling places in the last fix round/)
+  assert.match(next, /"fixed": \[\s+"d\.js"/)
+})
+await check('invariants: a row that does not hold becomes a major and one that holds does not', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([], { invariants: [{ text: 'every path calls splitFindings', holds: false, evidence: 'docs path does not' }, { text: 'caps name both numbers', holds: true, evidence: 'e' }] }) : undefined)
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [review]: [invariant] every path calls splitFindings'])
+  assert.match(fixCalls('C1')[0].prompt, /docs path does not/)
+})
+await check('invariants: a stored brief with an Invariants line reaches the reviewer', async () => {
+  TRIAGES.QI = triage('build', 'M', 'medium', { entry: { touches: 'src/x.js', acceptance: 'node --test passes', invariants: 'a refused input never writes' } })
+  await simulate({ ...quickBase, prs: [{ id: 'QI', quick: { issue: 93 }, branch: 'fix/QI' }] })
+  assert.match(briefs.QI, /^Invariants: a refused input never writes$/m)
+  assert.match(calls.find(c => c.label === 'review:QI#1').prompt, /Invariants: a refused input never writes/)
+  assert.doesNotMatch(entryOf('QS'), /Invariants/)
+})
+await check('plan review: a plan PR runs the architecture review in every round with its earlier reports', () => {
+  for (const n of [1, 2, 3]) assert.ok(mainCalls.some(c => c.label === `arch:P1#${n}`), `round ${n}`)
+  assert.doesNotMatch(mainCalls.find(c => c.label === 'arch:P1#1').prompt, /earlier reports/)
+  const third = mainCalls.find(c => c.label === 'arch:P1#3').prompt
+  assert.match(third, /earlier reports/)
+  assert.match(third, /"round": 1/)
+  assert.match(third, /"round": 2/)
 })
