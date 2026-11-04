@@ -1143,7 +1143,7 @@ const review = (state, commit, at, login = BOT) => ({ user: { login }, state, co
 const thread = (id, login = BOT) => ({ id, in_reply_to_id: null, user: { login } })
 const reply = (to, id = to + 1000) => ({ id, in_reply_to_id: to, user: { login: 'alfhen' } })
 await check('gate: a bot whose latest review is APPROVED clears it', () => {
-  assert.deepEqual(gate([review('APPROVED', 'OLD', '1')]), [BOT])
+  assert.deepEqual(gate([review('APPROVED', 'OLD', '1')]), [`${BOT} (approved earlier)`])
 })
 await check('gate: an answered comment on an older commit, not repeated on the head, clears it', () => {
   assert.deepEqual(gate([review('APPROVED', 'A', '1'), review('COMMENTED', 'OLD', '2')], [thread(7), reply(7)]), [`${BOT} (answered)`])
@@ -1159,7 +1159,7 @@ await check('gate: changes requested blocks', () => {
 })
 await check('gate: an earlier changes request still blocks after a later comment, until the bot approves', () => {
   assert.deepEqual(gate([review('CHANGES_REQUESTED', 'A', '1'), review('COMMENTED', 'OLD', '2')], [thread(7), reply(7)]), [])
-  assert.deepEqual(gate([review('CHANGES_REQUESTED', 'A', '1'), review('APPROVED', 'OLD', '2')]), [BOT])
+  assert.deepEqual(gate([review('CHANGES_REQUESTED', 'A', '1'), review('APPROVED', 'OLD', '2')]), [`${BOT} (approved earlier)`])
 })
 await check('gate: answered comments clear only if the bot check ran on the head and passed', () => {
   const answered = [[review('COMMENTED', 'OLD', '2')], [thread(7), reply(7)]]
