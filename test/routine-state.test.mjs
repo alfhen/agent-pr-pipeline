@@ -248,6 +248,26 @@ test('put cuts a long why to its last sentence end and treats a period without a
   assert.equal(JSON.parse(r.stdout).why, why.slice(0, 500))
 })
 
+test('put keeps a sentence-end cut within 500 characters when a later sentence end lies past 500', () => {
+  const why = 'a'.repeat(200) + '. ' + 'b'.repeat(400) + '. tail'
+  const r = putTriaged(setup({ issues: [issue(3)] }), '3', 'build', 'S', 'low', why)
+  assert.equal(r.status, 0, r.stderr)
+  const rec = JSON.parse(r.stdout)
+  assert.equal(rec.why, 'a'.repeat(200) + '.')
+  assert.equal(rec.whyCut, true)
+})
+
+test('put cuts at a sentence end at index 499 and never stores 501 characters for one at index 500', () => {
+  const at499 = 'a'.repeat(499) + '. ' + 'b'.repeat(50)
+  const rec1 = JSON.parse(putTriaged(setup({ issues: [issue(3)] }), '3', 'build', 'S', 'low', at499).stdout)
+  assert.equal(rec1.why, 'a'.repeat(499) + '.')
+  assert.equal(rec1.whyCut, true)
+  const at500 = 'a'.repeat(500) + '. ' + 'b'.repeat(50)
+  const rec2 = JSON.parse(putTriaged(setup({ issues: [issue(3)] }), '3', 'build', 'S', 'low', at500).stdout)
+  assert.equal(rec2.why, 'a'.repeat(500))
+  assert.equal(rec2.whyCut, true)
+})
+
 test('put posts the cut why as the decline comment', () => {
   const r = putTriaged(setup({ issues: [issue(3)] }), '3', 'decline', 'S', 'low', sentenceWhy)
   assert.equal(r.status, 0, r.stderr)
@@ -255,6 +275,14 @@ test('put posts the cut why as the decline comment', () => {
   assert.ok(post, r.writes.join('\n'))
   assert.ok(post.includes('a'.repeat(300) + '.'))
   assert.ok(!post.includes('b'.repeat(10)))
+})
+
+test('put posts a decline why cut before a later sentence end past 500', () => {
+  const why = 'a'.repeat(200) + '. ' + 'b'.repeat(400) + '. tail'
+  const r = putTriaged(setup({ issues: [issue(3)] }), '3', 'decline', 'S', 'low', why)
+  const post = r.writes.find(l => l.includes('/issues/3/comments'))
+  assert.ok(post.includes('a'.repeat(200) + '.'))
+  assert.ok(!post.includes('bbbb') && !post.includes('tail'))
 })
 
 test('put cuts a long why of a build of size L and keeps the plan rule', () => {
