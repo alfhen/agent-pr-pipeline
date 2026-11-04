@@ -1702,7 +1702,8 @@ await check('version: a WARN line is logged before the preflight answer is read 
   assert.deepEqual(lastResult.warnings, [WARN])
   assert.ok(logs.indexOf(WARN) >= 0 && logs.indexOf(WARN) < readAt)
   assert.deepEqual(versionCalls.map(c => c.label), ['io:wave#version'])
-  assert.match(versionCalls[0].prompt, /bash \/plug\/scripts\/io\.sh plugin-version\.sh 0\.5\.0/)
+  const running = src.match(/^const VERSION = '([^']+)'$/m)[1]
+  assert.ok(versionCalls[0].prompt.includes(`bash /plug/scripts/io.sh plugin-version.sh ${running}`))
   assert.ok(lastResult.prs[0].ready, 'the wave goes on')
 })
 await check('version: OK gives an empty warnings list', async () => {
