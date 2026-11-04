@@ -1239,6 +1239,14 @@ await check('duplicates: the same title in two files stays two items', async () 
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'same', { file: 'a.js' }), f('major', 'same', { file: 'b.js' })]) : undefined)
   assert.equal(x.C1.history[0].blockersAndMajors.length, 2)
 })
+await check('duplicates: a higher severity keeps its own detail and fix, with the lower detail appended', async () => {
+  await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('minor', 'Wrong layer', { file: 'a.js', detail: 'minor text' })])
+    : o.label === 'arch:C1#1' ? { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [f('major', 'wrong layer', { file: 'a.js', detail: 'arch reasoning', suggestedFix: 'move it' })] } : undefined)
+  const prompt = fixCalls('C1')[0].prompt
+  assert.match(prompt, /arch reasoning/)
+  assert.match(prompt, /move it/)
+  assert.match(prompt, /Also: minor text/)
+})
 await check('duplicates: the fix prompt numbers the findings and groups them by file', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'one', { file: 'b.js' }), f('major', 'two', { file: 'a.js' }), f('major', 'three', { file: 'b.js' })]) : undefined)
   const prompt = fixCalls('C1')[0].prompt

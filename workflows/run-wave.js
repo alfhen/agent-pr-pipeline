@@ -125,6 +125,13 @@ const splitFindings = groups => {
   const normalized = groups.map(([findings, source]) => normalizeFindings(findings, source))
   return { ...partition(mergeDuplicates(normalized.flatMap(n => n.items))), conflicts: normalized.reduce((n, x) => n + x.conflicts, 0) }
 }
+// The higher severity keeps its own detail and fix; the other detail is appended so no reasoning is lost.
+const absorb = (prev, f) => {
+  if (RANK[f.severity] > RANK[prev.severity]) {
+    const extra = prev.detail && prev.detail !== f.detail ? `\n\nAlso: ${prev.detail}` : ''
+    Object.assign(prev, { severity: f.severity, detail: `${f.detail || ''}${extra}`, ...(f.suggestedFix ? { suggestedFix: f.suggestedFix } : {}) })
+  } else if (f.detail && f.detail !== prev.detail) prev.detail = `${prev.detail || ''}\n\nAlso: ${f.detail}`
+}
 // One item per file and normalized title, with the highest severity and every source. The result is sorted by file, so the fix prompt numbers match the history.
 const mergeDuplicates = findings => {
   const seen = new Map()
@@ -134,7 +141,7 @@ const mergeDuplicates = findings => {
     const prev = seen.get(key)
     if (!prev) { seen.set(key, { ...f, sources: [...new Set(sources)] }); continue }
     prev.sources = [...new Set(prev.sources.concat(sources))]
-    if (RANK[f.severity] > RANK[prev.severity]) prev.severity = f.severity
+    absorb(prev, f)
   }
   return [...seen.values()].map(({ source, ...f }) => f).sort(byFile)
 }
@@ -153,7 +160,7 @@ const foldSameAs = (findings, sameAs) => {
       if (n === idx[0]) continue
       const g = out[n - 1]
       head.sources = [...new Set(head.sources.concat(g.sources))]
-      if (RANK[g.severity] > RANK[head.severity]) head.severity = g.severity
+      absorb(head, g)
       drop.add(n - 1)
     }
   }
