@@ -8,8 +8,7 @@ Run these before you push. CI (`.github/workflows/ci.yml`, check name `ci`) runs
 
 - `node test/sim-pipeline.mjs`
 - `node --test test/*.test.mjs` (when any exist)
-- `for f in scripts/*.sh; do bash -n "$f" || exit 1; done`
-- `for f in routine/*.sh routine/bin/gh; do bash -n "$f" || exit 1; done`
+- `bash scripts/check-syntax.sh`
 
 ## Docs style
 

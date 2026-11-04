@@ -26,13 +26,7 @@ jobs:
             node --test test/*.test.mjs
           fi
       - name: Shell syntax
-        run: |
-          for f in scripts/*.sh; do
-            bash -n "$f" || exit 1
-          done
-          for f in routine/*.sh routine/bin/gh; do
-            bash -n "$f" || exit 1
-          done
+        run: bash scripts/check-syntax.sh
       - name: Manifest version
         env:
           BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
