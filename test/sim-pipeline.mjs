@@ -115,6 +115,7 @@ const agentRaw = async (prompt, o) => {
   if (o.label.startsWith('docsfix')) return { changed: true, headSha: 'docsfix-' + id, files: ['README.md'], summary: 's', worktree: wt(o) }
   if (o.label.startsWith('docs')) return ['G1', 'G2', 'G3'].includes(id) ? { changed: true, headSha: 'docs-' + id, files: ['README.md'], summary: 's', worktree: wt(o) } : { changed: false, summary: 'already right', worktree: wt(o) }
   if (o.label.startsWith('review')) return { summary: 's', findings: id === 'P1' || ['QS', 'QY'].includes(id) || (id === 'QF' && round === '1') ? [{ severity: 'major', title: 'x', detail: 'd', file: 'src/secret/area.ts' }] : [{ severity: 'minor', title: 'm', detail: 'd' }] }
+  if (o.label.endsWith('#body')) return { updated: true }
   if (o.label.startsWith('open') && land.blocked.has(id)) return { blocked: true, blockedReason: 'permission denied: gh pr create', commands: ['gh pr create -R o/r --head b1 --title "t"'] }
   if (o.label.startsWith('open')) return { prNumber: 100 + calls.length, prUrl: 'u', issuesCreated: id === 'C2' ? ['https://github.com/o/r/issues/21'] : [] }
   if (o.label.startsWith('botwait')) return id === 'C1' && failWait ? null : { approvedBy: ['the-waiter-says-so'], openComments: ['C2', 'L1', 'B1', 'W1'].includes(id) ? 2 : 0 }
@@ -1417,6 +1418,25 @@ await check('untested: the refused checks of the last test round replace those o
   assert.equal(x.C1.history.length, 2)
   assert.deepEqual(x.C1.untested, [])
   assert.equal(x.C1.landMode, 'auto')
+})
+
+await check('untested: a refused check in a bot-answer test round updates the PR body, and a failed update stops the PR', async () => {
+  const refusedBots = (p, o) => o.label === 'test:C2#bots1' ? { headSha: 'sha-answer-C2', pass: true, checks: [chk('unit'), { name: 'lint', pass: false, refused: true }] } : undefined
+  const x = await hooked(only1('C2'), refusedBots)
+  assert.equal(x.C2.ready, true)
+  assert.deepEqual(x.C2.untested, ['lint (refused)'])
+  assert.equal(x.C2.landMode, 'person')
+  const body = calls.find(c => c.label === 'open:C2#body')
+  assert.ok(body)
+  assert.match(body.prompt, /Untested items: \["lint \(refused\)"\]/)
+  assert.match(body.prompt, /--body-file/)
+  const y = await hooked(only1('C2'), (p, o) => o.label === 'open:C2#body' ? { updated: false } : refusedBots(p, o))
+  assert.equal(y.C2.ready, false)
+  assert.match(y.C2.reason, /PR body not updated/)
+})
+await check('untested: no body update when the open prompt already listed every item', async () => {
+  await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('unit'), { name: 'lint', pass: false, refused: true }] }))
+  assert.ok(!calls.some(c => c.label === 'open:C1#body'))
 })
 
 const scen = (name, result, extra = {}) => ({ name, result, ...extra })
