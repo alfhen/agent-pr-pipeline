@@ -203,12 +203,12 @@ const status = (s) => JSON.parse(run(s, 'bot-status.sh', ['o/r', '7']).out)
 
 test('bot-status: approvedBy is the land gate rule, so an approval of an older commit counts', () => {
   const r = status(statusSetup([rv('APPROVED', 'old'.padEnd(40, '0'), '1')], []))
-  assert.deepEqual(r, { head: HEAD, approvedBy: [BOT], seenHead: [BOT], openThreads: 0 })
+  assert.deepEqual(r, { head: HEAD, approvedBy: [`${BOT} (approved earlier)`], seenHead: [BOT], openThreads: 0 })
 })
 
 test('bot-status: an approval of an older commit with the bot check still running has not seen the head', () => {
   const r = status(statusSetup([rv('APPROVED', 'old'.padEnd(40, '0'), '1')], [], [{ name: 'Gitar', status: 'in_progress', conclusion: null }]))
-  assert.deepEqual(r, { head: HEAD, approvedBy: [BOT], seenHead: [], openThreads: 0 })
+  assert.deepEqual(r, { head: HEAD, approvedBy: [], seenHead: [], openThreads: 0 })
 })
 
 test('bot-status: an approval on the head has seen it', () => {

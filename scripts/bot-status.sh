@@ -24,7 +24,7 @@ input=$(jq -n -c --arg head "$head" --arg bots "$bots" --slurpfile reviews "$tmp
   '{reviews: ($reviews | add // []), comments: ($comments | add // []), checks: [$checks[].check_runs[]], head: $head, bots: $bots}') || fail "cannot build the input"
 approved=$(jq -c -f "$here/bot-approval.jq" <<<"$input") || fail "cannot judge the reviews"
 seen=$(jq -c --argjson approved "$approved" '. as $in
-  | [$approved[] | sub(" \\(answered\\)$"; "") | . as $login
+  | [$approved[] | sub(" \\((answered|approved earlier)\\)$"; "") | . as $login
     | select(([$in.reviews[] | select(.user.login == $login)] | sort_by(.submitted_at) | last | .commit_id) == $in.head
         or ([$in.checks[] | select((.name | ascii_downcase) as $check | .status == "completed" and (($login | ascii_downcase) | contains($check)))] | length) > 0)]' <<<"$input") || fail "cannot judge which bots saw the head"
 open=$(jq --arg bots "$bots" '[.comments[] | select(.in_reply_to_id != null) | .in_reply_to_id] as $answered
