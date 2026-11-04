@@ -760,9 +760,11 @@ const touchesOf = brief => {
   return line[1].replace(/\([^)]*\)|\[[^\]]*\]/g, '').replace(/`/g, '').split(',').map(t => t.trim().replace(/^\.\//, '')).filter(Boolean)
 }
 const briefArgs = (pr, mode) => `${mode} ${REPO} ${pr.quick.issue}`
-// Write refuses a file that exists and was not read, and a folder from an earlier run can stay behind.
-const RUN_NONCE = Date.now().toString(36)
-const briefFile = (pr, attempt) => `${TMP}/brief-${pr.id}/entry-${RUN_NONCE}-${attempt}.md`
+// Date.now and Math.random throw in the Workflow runtime and would change the prompts on resume. The path is
+// fixed; the get call, which runs before any put, empties the folder, because Write refuses a file that exists
+// and was not read.
+const briefDir = pr => `${TMP}/brief-${pr.id}`
+const briefFile = (pr, attempt) => `${briefDir(pr)}/entry-${attempt}.md`
 
 const productEntryPrompt = pr => `${ctx(pr)}
 
@@ -778,7 +780,7 @@ async function quickSetup(pr) {
   const stop = (reason, more) => ({ stop: { id: pr.id, ready: false, reason, ...more } })
   if (!PLUGIN_ROOT) return stop('pluginRoot missing: a quick fix needs it to run the brief script')
   const rerun = !!(pr.skipImpl || pr.resume || pr.landFix)
-  const got = await ioCall(pr, `io:${pr.id}#get`, 'quick-brief.sh', briefArgs(pr, 'get'))
+  const got = await ioCall(pr, `io:${pr.id}#get`, 'quick-brief.sh', `${briefArgs(pr, 'get')} --clear ${briefDir(pr)}`)
   if (got && got.exitCode === 0 && got.output.trim()) return { pr: withBrief(pr, got.output.trim()), minors: [], product: null, triage: null }
   if (got && got.exitCode === 4) return stop(EDITED)
   if (rerun || !got || got.exitCode !== 1) return stop(`quick brief not found: ${got ? got.output : 'pipeline-io failed'}`)

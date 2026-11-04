@@ -1,5 +1,6 @@
 #!/bin/bash
 # Usage: quick-brief.sh get <owner/repo> <issue>
+#        quick-brief.sh get <owner/repo> <issue> --clear <brief-dir> (also empties that folder first; its name must start with brief-)
 #        quick-brief.sh put <owner/repo> <issue> <entry-file> --sum <crc>:<bytes>
 # The quick-fix brief is one issue comment whose first line is a marker, written by the account from GET /user.
 # The marker is `<!-- pipeline:quick-brief <crc>:<bytes> -->`: the POSIX cksum of the text under it. A 0.4 marker has no sum.
@@ -16,6 +17,10 @@ usage() { echo "usage: quick-brief.sh get|put <owner/repo> <issue> [entry-file -
 if [ -z "$repo" ] || ! [[ "$issue" =~ ^[0-9]+$ ]]; then usage; fi
 # Command substitution drops trailing newlines, so a file and a comment body compare by the same text.
 sumOf() { printf '%s' "$1" | cksum | awk '{print $1 ":" $2}'; }
+
+if [ "$mode" = get ] && [ "${4:-}" = --clear ]; then
+  case "$(basename "${5:-}")" in brief-?*) rm -rf -- "$5" ;; *) echo "quick-brief: --clear needs a brief-* folder" >&2; exit 64 ;; esac
+fi
 
 text=""
 if [ "$mode" = put ]; then

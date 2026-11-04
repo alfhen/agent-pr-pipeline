@@ -198,3 +198,18 @@ test('get exits 4 for an edited brief and reads a 0.4 marker and a sum marker', 
 test('the sum is the POSIX cksum of the text, the same as the workflow computes', () => {
   assert.equal(sumOf(ENTRY), '452653:48')
 })
+
+test('get --clear empties a brief-* folder and refuses any other folder', () => {
+  const base = mkdtempSync(join(tmpdir(), 'quick-brief-clear-'))
+  const dir = join(base, 'brief-X')
+  mkdirSync(dir)
+  writeFileSync(join(dir, 'entry-1.md'), 'old')
+  const r = run('trusted', 'get', ['--clear', dir])
+  assert.equal(r.status, 0, r.stderr)
+  assert.ok(!existsSync(dir))
+  const keep = join(base, 'keep')
+  mkdirSync(keep)
+  const bad = run('trusted', 'get', ['--clear', keep])
+  assert.equal(bad.status, 64)
+  assert.ok(existsSync(keep))
+})
