@@ -3,8 +3,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
-const WORKFLOW = new URL('../workflows/run-wave.js', import.meta.url).pathname
+const WORKFLOW = fileURLToPath(new URL('../workflows/run-wave.js', import.meta.url))
 const VALUE_END_PUNCT = new Set([')', ']', '}'])
 const REGEX_KEYWORDS = new Set(['return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'throw', 'new', 'else', 'do', 'yield', 'await'])
 const idStart = c => /[A-Za-z_$]/.test(c)
@@ -45,7 +46,10 @@ export function tokenize(src) {
     if (c === '"' || c === "'") {
       const start = i, ln = line
       i++
-      while (i < src.length && src[i] !== c && src[i] !== '\n') i += src[i] === '\\' ? 2 : 1
+      while (i < src.length && src[i] !== c && src[i] !== '\n') {
+        if (src[i] === '\\' && src[i + 1] === '\n') line++
+        i += src[i] === '\\' ? 2 : 1
+      }
       if (src[i] !== c) { unterminated = 'string'; push('string', src.slice(start + 1, i), ln); break }
       push('string', src.slice(start + 1, i), ln); i++; continue
     }
@@ -143,6 +147,10 @@ test('allows comments, prompt text, strings and new Date(argument)', () => {
   for (const s of ['// Date.now()', '/* Math.random() */', '`Date.now()`', "'Date[\"now\"]'", '"new Date()"', 'new Date(ms)', 'new Date(0)', 'x.Date.now', 'const d = Date.UTC(1)']) {
     assert.deepEqual(scan(s), [], s)
   }
+})
+
+test('counts a line continuation inside a quoted string', () => {
+  assert.deepEqual(scan("const s = 'a\\\nb'\nDate.now()"), [3])
 })
 
 test('refuses code inside template substitutions, including nested ones', () => {
