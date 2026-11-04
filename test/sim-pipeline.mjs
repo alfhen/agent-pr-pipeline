@@ -692,8 +692,8 @@ await check('quick: a put that returns a different stored brief stops the PR bef
 const BASE64_RUN = /[A-Za-z0-9+\/=]{60,}/
 await check('quick: the put prompt holds the path, --sum and the entry in a fenced block, and no --b64 or base64 run', () => {
   const put = forPr('QM', /^io:QM#put$/)[0].prompt
-  assert.match(put, /File: \/x\/brief-QM\/entry\.md\n/)
-  assert.match(put, /quick-brief\.sh put o\/r 42 \/x\/brief-QM\/entry\.md --sum \d+:\d+`/)
+  assert.match(put, /File: \/x\/brief-QM\/entry-1\.md\n/)
+  assert.match(put, /quick-brief\.sh put o\/r 42 \/x\/brief-QM\/entry-1\.md --sum \d+:\d+`/)
   assert.ok(putText(put).startsWith(entryOf('QM')))
   assert.match(put, /Write tool/)
   for (const c of quickCalls.filter(c => c.label.startsWith('io:'))) {
