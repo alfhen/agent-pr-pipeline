@@ -98,7 +98,67 @@ const withSkills = (step, pr, prompt, inClone) => {
 ${prompt}`
 }
 
-const roundsFor = pr => pr.maxRounds || (pr.kind === 'plan' ? (A.planRounds || 3) : (A.maxRounds || 4))
+const roundsFor = pr => pr.roundsCap ? { max: pr.maxRounds, cap: pr.roundsCap }
+  : pr.maxRounds ? { max: pr.maxRounds, cap: 'prs[].maxRounds' }
+  : pr.kind === 'plan' ? { max: A.planRounds || 3, cap: 'planRounds' } : { max: A.maxRounds || 4, cap: 'maxRounds' }
+const exhausted = (what, used, max, cap) => `${what}rounds exhausted: ${used} of ${max} (${cap})`
+
+const SEVERITY_WORD = /^\s*(?:[[(]\s*(blocker|major|minor)\s*[\])]\s*[:\-\u2013]?|(blocker|major|minor)\s*[:\-\u2013])\s*/i
+const normTitle = t => String(t).toLowerCase().replace(/[^a-z0-9]/g, '')
+const RANK = { minor: 0, major: 1, blocker: 2 }
+const byFile = (a, b) => (a.file ? 0 : 1) - (b.file ? 0 : 1) || String(a.file || '').localeCompare(String(b.file || ''))
+// The only place that sorts findings by severity. The field decides; a severity word in the title is stripped and counted when it disagrees.
+const splitFindings = (findings, source) => {
+  const out = { blocking: [], minors: [], conflicts: 0 }
+  for (const f of findings || []) {
+    const m = SEVERITY_WORD.exec(f.title)
+    const word = m && (m[1] || m[2]).toLowerCase()
+    const severity = f.severity || word || 'major'
+    if (word && word !== severity) out.conflicts++
+    const item = { ...f, severity, title: m ? String(f.title).slice(m[0].length) : f.title, source }
+    ;(severity === 'minor' ? out.minors : out.blocking).push(item)
+  }
+  out.blocking = mergeDuplicates(out.blocking)
+  return out
+}
+// One item per file and normalized title, with the highest severity and every source. The result is sorted by file, so the fix prompt numbers match the history.
+const mergeDuplicates = findings => {
+  const seen = new Map()
+  for (const f of findings) {
+    const key = `${f.file || ''}\n${normTitle(f.title)}`
+    const sources = f.sources || (f.source ? [f.source] : [])
+    const prev = seen.get(key)
+    if (!prev) { seen.set(key, { ...f, sources: [...new Set(sources)] }); continue }
+    prev.sources = [...new Set(prev.sources.concat(sources))]
+    if (RANK[f.severity] > RANK[prev.severity]) prev.severity = f.severity
+  }
+  return [...seen.values()].map(({ source, ...f }) => f).sort(byFile)
+}
+const findingLine = f => `${f.severity} [${(f.sources || []).join(', ')}]: ${f.title}`
+// sameAs holds groups of 1-based numbers from the fix prompt. A number counts once; a group of fewer than two valid numbers changes nothing.
+const foldSameAs = (findings, sameAs) => {
+  const used = new Set()
+  const drop = new Set()
+  const out = findings.map(f => ({ ...f }))
+  for (const group of Array.isArray(sameAs) ? sameAs : []) {
+    const idx = [...new Set(Array.isArray(group) ? group : [])].filter(n => Number.isInteger(n) && n >= 1 && n <= findings.length && !used.has(n))
+    if (idx.length < 2) continue
+    const head = out[idx[0] - 1]
+    for (const n of idx) {
+      used.add(n)
+      if (n === idx[0]) continue
+      const g = out[n - 1]
+      head.sources = [...new Set(head.sources.concat(g.sources))]
+      if (RANK[g.severity] > RANK[head.severity]) head.severity = g.severity
+      drop.add(n - 1)
+    }
+  }
+  return out.filter((f, i) => !drop.has(i))
+}
+const historyRow = (round, test, blocking, conflicts) => ({
+  round, testPass: test.pass, failingChecks: test.checks.filter(c => !c.pass).map(c => c.name), blockersAndMajors: blocking.map(findingLine),
+  ...(conflicts ? { severityConflicts: conflicts } : {}),
+})
 const reviewStep = pr => (pr.kind === 'plan' || pr.kind === 'docs') ? STEPS.reviewDocs : STEPS.review
 const productRuns = pr => A.productReview !== false && (pr.kind === 'plan' || (A.productReview === 'all' && pr.kind !== 'docs'))
 const docsRuns = pr => pr.kind !== 'docs' && pr.kind !== 'plan' && A.docsUpdate !== false && pr.docsUpdate !== false
@@ -187,6 +247,18 @@ const REVIEW = {
         required: ['severity', 'title', 'detail'],
       },
     },
+    sweep: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { finding: { type: 'string' }, checked: { type: 'array', items: { type: 'string' } }, sameWeakness: { type: 'array', items: { type: 'string' } } },
+        required: ['finding', 'checked', 'sameWeakness'],
+      },
+    },
+    invariants: {
+      type: 'array',
+      items: { type: 'object', properties: { text: { type: 'string' }, holds: { type: 'boolean' }, evidence: { type: 'string' } }, required: ['text', 'holds', 'evidence'] },
+    },
   },
   required: ['summary', 'findings'],
 }
@@ -201,7 +273,7 @@ const ARCHREV = {
     },
     findings: {
       type: 'array',
-      items: { type: 'object', properties: { title: { type: 'string' }, file: { type: 'string' }, detail: { type: 'string' }, suggestedFix: { type: 'string' } }, required: ['title', 'detail'] },
+      items: { type: 'object', properties: { severity: { type: 'string', enum: ['blocker', 'major', 'minor'] }, title: { type: 'string' }, file: { type: 'string' }, detail: { type: 'string' }, suggestedFix: { type: 'string' } }, required: ['severity', 'title', 'detail'] },
     },
     escalation: {
       type: 'object',
@@ -308,7 +380,18 @@ const LANDFIX = {
 
 const FIX = {
   type: 'object',
-  properties: { summary: { type: 'string' }, worktree: { type: 'string' } },
+  properties: {
+    summary: { type: 'string' }, worktree: { type: 'string' },
+    sameAs: { type: 'array', items: { type: 'array', items: { type: 'number' } } },
+    siblings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { finding: { type: 'number' }, checked: { type: 'array', items: { type: 'string' } }, fixed: { type: 'array', items: { type: 'string' } } },
+        required: ['finding', 'checked', 'fixed'],
+      },
+    },
+  },
 }
 const SAFETY = {
   type: 'object',
@@ -325,7 +408,7 @@ const TRIAGE = {
     newConcepts: { type: 'array', items: { type: 'string' } },
     entry: {
       type: 'object',
-      properties: { touches: { type: 'string' }, acceptance: { type: 'string' }, qa: { type: 'string' } },
+      properties: { touches: { type: 'string' }, acceptance: { type: 'string' }, invariants: { type: 'string' }, qa: { type: 'string' } },
       required: ['touches', 'acceptance'],
     },
   },
@@ -363,14 +446,14 @@ Return pass, headSha, and one entry per check with the failing log excerpt.
 
 ${prBlock(pr)}`
 
-const reviewPrompt = (pr, round, history) => `${ctx(pr)}
+const reviewPrompt = (pr, round, history, siblings) => `${ctx(pr)}
 
 Task: review the branch against ${SPEC ? `${SPEC} and ` : ''}${ref(pr)}.
 Clone it: ${cloneTo(`review-${pr.id}-r${round}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`.
-Return headSha, a summary and the findings.
+Return headSha, a summary, the findings, the sweep (for each blocker and major: the sibling places you checked and those with the same weakness) and, when the plan entry or brief has an Invariants line, \`invariants\`: one row per invariant, with holds and evidence.
 
 ${prBlock(pr)}
-${history.length ? `\nEarlier rounds (check their blockers and majors are really fixed):\n${JSON.stringify(history, null, 1)}` : ''}`
+${history.length ? `\nEarlier rounds (check their blockers and majors are really fixed):\n${JSON.stringify(history, null, 1)}` : ''}${siblings && siblings.length ? `\nThe fixer's sweep of sibling places in the last fix round. Check that it is complete, and report each sibling place it missed that has the same weakness:\n${JSON.stringify(siblings, null, 1)}` : ''}`
 
 const productPrompt = (pr, round) => `${ctx(pr)}
 
@@ -390,27 +473,37 @@ Return headSha, a summary, every scenario you ran, and the findings.
 ${prBlock(pr)}
 ${last && last.length ? `\nYour findings from the last round (check each is really fixed):\n${JSON.stringify(last, null, 1)}` : ''}`
 
-const archPrompt = (pr, round) => `${ctx(pr)}
+const archPrompt = (pr, round, earlier = []) => `${ctx(pr)}
 
 Task: review the branch for architecture against ${ARCH}.
 Clone it: ${cloneTo(`arch-${pr.id}-r${round}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`.
-Return the verdict, a short summary, the new concepts, the findings (for needs-change) and the escalation (for escalate).
+Return the verdict, a short summary, the new concepts, the findings (for needs-change, each with a severity) and the escalation (for escalate).
 
-${prBlock(pr)}`
+${prBlock(pr)}${earlier.length ? `\n\nYour earlier reports on this PR. The plan changed since. Check each earlier \`fits\` against the new head, and report it as a finding if it no longer holds:\n${JSON.stringify(earlier, null, 1)}` : ''}`
 
-const fixPrompt = (pr, test, findings, round) => `${ctx(pr)}
+const numbered = findings => {
+  const groups = new Map()
+  findings.forEach((f, i) => {
+    const key = f.file || '(no file)'
+    groups.set(key, (groups.get(key) || []).concat({ n: i + 1, ...f }))
+  })
+  return [...groups].map(([file, items]) => `File ${file}:\n${JSON.stringify(items, null, 1)}`).join('\n')
+}
+// findings come from mergeDuplicates, so their order is the order of the numbers.
+const fixPrompt = (pr, test, findings, round, sweep) => `${ctx(pr)}
 
 Task: fix the branch after review round ${round}.
 1. You are in a fresh git worktree. ${freshBranch('fix', pr, round)}
-2. Checks: ${fastText}, and ${ownE2e}.
-Return a short summary of each fix, any finding you disagree with and why, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
+2. For each finding, list every sibling place with the same weakness and fix them in the same round. For a plan, list the other entries and states each edit touches.
+3. Checks: ${fastText}, and ${ownE2e}.
+Return a short summary of each fix, any finding you disagree with and why, \`siblings\` (per finding number: the places you checked and the places you fixed), \`sameAs\` (groups of finding numbers that you fixed as one), and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}
 
 Failing checks:
 ${JSON.stringify((test && test.checks || []).filter(c => !c.pass), null, 1)}
-Findings:
-${JSON.stringify(findings, null, 1)}`
+Findings, numbered. Findings of one file are together:
+${numbered(findings)}${sweep && sweep.length ? `\nThe reviewer's sweep of sibling places this round:\n${JSON.stringify(sweep, null, 1)}` : ''}`
 
 const docsWhere = A.docs && A.docs.length
   ? `The docs of this repo are: ${A.docs.join(', ')}.`
@@ -527,16 +620,16 @@ const triagePrompt = pr => `${ctx(pr)}
 Task: triage ${ref(pr)} for a quick fix.
 1. Clone the default branch: \`rm -rf ${TMP}/triage-${pr.id} && git clone https://github.com/${REPO}.git ${TMP}/triage-${pr.id}\`.
 2. Read the issue with \`gh api repos/${REPO}/issues/${pr.quick.issue}\` and its comments with \`gh api --paginate repos/${REPO}/issues/${pr.quick.issue}/comments\`. Read the goals document ${GOALS} and the code the fix would touch.
-Return decision (build, plan or decline), size, risk, why, newConcepts, and for build the entry (touches, acceptance, qa).
+Return decision (build, plan or decline), size, risk, why, newConcepts, and for build the entry (touches, acceptance, invariants for a change that adds a check, qa).
 
 ${prBlock(pr)}`
 
-const entryText = (t, e) => `Touches: ${e.touches}\nAcceptance: ${e.acceptance}${e.qa ? `\nQA: ${e.qa}` : ''}\nTriage: size ${t.size}, risk ${t.risk}, new concepts: ${(t.newConcepts || []).join('; ') || 'none'}`
+const entryText = (t, e) => `Touches: ${e.touches}\nAcceptance: ${e.acceptance}${e.invariants ? `\nInvariants: ${e.invariants}` : ''}${e.qa ? `\nQA: ${e.qa}` : ''}\nTriage: size ${t.size}, risk ${t.risk}, new concepts: ${(t.newConcepts || []).join('; ') || 'none'}`
 // S and low risk get two rounds and no architecture review, unless the triager named a new concept.
 const withBrief = (pr, brief) => {
   const small = /^Triage: size S, risk low, new concepts: (.*)$/m.exec(brief)
   const qa = /^QA: (.+)$/m.exec(brief)
-  return { ...pr, ...(qa && pr.qa === undefined ? { qa: true } : {}), quickState: { brief, skipArch: !!small && small[1].trim() === 'none' }, ...(small ? { maxRounds: pr.maxRounds || 2 } : {}) }
+  return { ...pr, ...(qa && pr.qa === undefined ? { qa: true } : {}), quickState: { brief, skipArch: !!small && small[1].trim() === 'none' }, ...(small && !pr.maxRounds ? { maxRounds: 2, roundsCap: 'quick S/low' } : {}) }
 }
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 // Plain JS: the script has no Buffer or btoa. The command line gets text that a shell cannot interpret.
@@ -640,15 +733,15 @@ async function landFor(pr, n, sha) {
 }
 
 async function reviewLoop(pr, startRound, history, minors, archState) {
-  const max = roundsFor(pr)
+  const { max, cap } = roundsFor(pr)
   for (let round = startRound; round < startRound + max; round++) {
-    const wantArch = archRuns(pr) && (round === startRound || archState.last === 'needs-change')
+    const wantArch = archRuns(pr) && (round === startRound || archState.archOpen || pr.kind === 'plan')
     const wantProduct = productRuns(pr) && round === startRound
     const wantQa = qaRuns(pr) && (round === startRound || archState.qaOpen.length > 0)
     const [test, review, arch, product, qa] = await parallel([
       () => call('test', pr, testPrompt(pr, round), `test:${pr.id}#${round}`, { schema: TEST }),
-      () => call('review', pr, reviewPrompt(pr, round, history), `review:${pr.id}#${round}`, { schema: REVIEW }),
-      () => wantArch ? call('arch', pr, archPrompt(pr, round), `arch:${pr.id}#${round}`, { schema: ARCHREV }) : Promise.resolve(null),
+      () => call('review', pr, reviewPrompt(pr, round, history, archState.siblings), `review:${pr.id}#${round}`, { schema: REVIEW }),
+      () => wantArch ? call('arch', pr, archPrompt(pr, round, pr.kind === 'plan' ? archState.reports : []), `arch:${pr.id}#${round}`, { schema: ARCHREV }) : Promise.resolve(null),
       () => wantProduct ? call('product', pr, productPrompt(pr, round), `product:${pr.id}#${round}`, { schema: PRODUCT }) : Promise.resolve(null),
       () => wantQa ? call('qa', pr, qaPrompt(pr, round, archState.qaOpen), `qa:${pr.id}#${round}`, { schema: QA }) : Promise.resolve(null),
     ])
@@ -664,29 +757,33 @@ async function reviewLoop(pr, startRound, history, minors, archState) {
       }
     }
     if (arch) {
-      archState.last = arch.verdict
       archState.reports.push({ round, verdict: arch.verdict, summary: arch.summary, newConcepts: arch.newConcepts })
       log(`${pr.id} round ${round}: architecture ${arch.verdict}`)
     }
     if (product && product.verdict === 'escalate') return { signedOff: false, reason: 'needs human: product', escalation: product.escalation }
     if (arch && arch.verdict === 'escalate') return { signedOff: false, reason: 'needs human: architecture', escalation: arch.escalation }
-    const archFindings = arch && arch.verdict === 'needs-change'
-      ? ((arch.findings && arch.findings.length) ? arch.findings : [{ title: 'Architecture review asked for changes', detail: arch.summary }])
-          .map(f => Object.assign({ severity: 'major', source: 'architecture' }, f))
-      : []
-    const qaFindings = qa ? qa.findings.map(f => Object.assign({ source: 'qa' }, f)) : []
+    const archSplit = splitFindings(arch && arch.verdict === 'needs-change'
+      ? ((arch.findings && arch.findings.length) ? arch.findings : [{ severity: 'major', title: 'Architecture review asked for changes', detail: arch.summary }])
+      : [], 'architecture')
+    if (arch) archState.archOpen = archSplit.blocking.length > 0
+    const qaSplit = splitFindings(qa ? qa.findings : [], 'qa')
     if (qa) {
-      archState.qaOpen = qaFindings.filter(f => f.severity !== 'minor')
+      archState.qaOpen = qaSplit.blocking
       archState.qa.push({ round, summary: qa.summary, scenarios: qa.scenarios.length, failed: qa.scenarios.filter(s => !s.pass).map(s => s.name) })
       log(`${pr.id} round ${round}: QA ${qa.scenarios.length} scenarios, ${archState.qaOpen.length} blockers/majors`)
     }
-    const blocking = review.findings.filter(f => f.severity !== 'minor').concat(archFindings, archState.qaOpen)
-    minors.push(...review.findings.filter(f => f.severity === 'minor'), ...qaFindings.filter(f => f.severity === 'minor'))
-    history.push({ round, testPass: test.pass, failingChecks: test.checks.filter(c => !c.pass).map(c => c.name), blockersAndMajors: blocking.map(f => `${f.severity}: ${f.title}`) })
+    const invariantFindings = (review.invariants || []).filter(i => !i.holds).map(i => ({ severity: 'major', title: `[invariant] ${i.text}`, detail: i.evidence }))
+    const reviewSplit = splitFindings(review.findings.concat(invariantFindings), 'review')
+    const blocking = mergeDuplicates(reviewSplit.blocking.concat(archSplit.blocking, qaSplit.blocking))
+    minors.push(...reviewSplit.minors, ...archSplit.minors, ...qaSplit.minors)
+    const row = historyRow(round, test, blocking, reviewSplit.conflicts + archSplit.conflicts + qaSplit.conflicts)
+    history.push(row)
     log(`${pr.id} round ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (test.pass && blocking.length === 0) return { signedOff: true, headSha: test.headSha || review.headSha }
-    if (round === startRound + max - 1) return { signedOff: false, reason: 'rounds exhausted', lastFindings: blocking, lastTest: test }
-    await call('fix', pr, fixPrompt(pr, test, blocking, round), `fix:${pr.id}#${round}`, { schema: FIX })
+    if (round === startRound + max - 1) return { signedOff: false, reason: exhausted('', max, max, cap), lastFindings: blocking, lastTest: test }
+    const fix = await call('fix', pr, fixPrompt(pr, test, blocking, round, review.sweep), `fix:${pr.id}#${round}`, { schema: FIX })
+    row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
+    archState.siblings = (fix && fix.siblings) || []
   }
 }
 
@@ -701,12 +798,13 @@ async function docsStep(pr, signedSha, history, minors) {
       () => call('docsReview', pr, docsReviewPrompt(pr, round, signedSha, docs), `docsreview:${pr.id}#${round}`, { schema: REVIEW }),
     ])
     if (!test || !review) return { ok: false, reason: 'docs check failed to run', docs }
-    const blocking = review.findings.filter(f => f.severity !== 'minor')
-    minors.push(...review.findings.filter(f => f.severity === 'minor'))
-    history.push({ round: `docs${round}`, testPass: test.pass, failingChecks: test.checks.filter(c => !c.pass).map(c => c.name), blockersAndMajors: blocking.map(f => `${f.severity}: ${f.title}`) })
+    const split = splitFindings(review.findings, 'docs-check')
+    const blocking = split.blocking
+    minors.push(...split.minors)
+    history.push(historyRow(`docs${round}`, test, blocking, split.conflicts))
     log(`${pr.id} docs round ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (test.pass && blocking.length === 0) return { ok: true, headSha: test.headSha || review.headSha, docs }
-    if (round === DOCS_ROUNDS) return { ok: false, reason: 'docs check: rounds exhausted', lastFindings: blocking, docs }
+    if (round === DOCS_ROUNDS) return { ok: false, reason: exhausted('docs check: ', DOCS_ROUNDS, DOCS_ROUNDS, 'docsRounds'), lastFindings: blocking, docs }
     await call('docs', pr, docsFixPrompt(pr, test, blocking, round, signedSha), `docsfix:${pr.id}#${round}`, { schema: DOCS })
   }
 }
@@ -722,14 +820,17 @@ async function checkNewCode(pr, { tag, label, role, what, reviewPrompt }, histor
       () => call(role, pr, prompt, `${label}:${pr.id}#${round}`, { schema: REVIEW }),
     ])
     if (!test || !review) return { ok: false, reason: `${what} failed to run` }
-    const blocking = review.findings.filter(f => f.severity !== 'minor')
-    minors.push(...review.findings.filter(f => f.severity === 'minor'))
-    history.push({ round: `${tag}${round}`, testPass: test.pass, failingChecks: test.checks.filter(c => !c.pass).map(c => c.name), blockersAndMajors: blocking.map(f => `${f.severity}: ${f.title}`) })
+    const split = splitFindings(review.findings, what)
+    const blocking = split.blocking
+    minors.push(...split.minors)
+    const row = historyRow(`${tag}${round}`, test, blocking, split.conflicts)
+    history.push(row)
     log(`${pr.id} ${what} ${round}: tests ${test.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (test.pass && blocking.length === 0) return { ok: true, headSha: test.headSha || review.headSha }
-    if (round === BOT_CHECK_ROUNDS) return { ok: false, reason: `${what}: rounds exhausted`, lastFindings: blocking }
+    if (round === BOT_CHECK_ROUNDS) return { ok: false, reason: exhausted(`${what}: `, BOT_CHECK_ROUNDS, BOT_CHECK_ROUNDS, 'botCheckRounds'), lastFindings: blocking }
     prior = blocking
-    await call('fix', pr, fixPrompt(pr, test, blocking, `${tag}${round}`), `fix:${pr.id}#${tag}${round}`, { schema: FIX })
+    const fix = await call('fix', pr, fixPrompt(pr, test, blocking, `${tag}${round}`), `fix:${pr.id}#${tag}${round}`, { schema: FIX })
+    row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
   }
 }
 
@@ -929,14 +1030,14 @@ async function runPRSteps(input) {
   const decisionFindings = (pr.skipImpl || pr.resume) && (pr.architectureDecision || pr.productDecision)
     ? [{ severity: 'major', title: 'Apply the maintainer decision', detail: `Apply the maintainer decision given in the brief to the branch. If the branch already follows it, change nothing.${pr.architectureDecision ? ` Architecture decision: ${pr.architectureDecision}` : ''}${pr.productDecision ? ` Product decision: ${pr.productDecision}` : ''}` }]
     : []
-  const preFindings = ((pr.resume && pr.resume.findings) || []).concat(decisionFindings)
+  const preFindings = mergeDuplicates(((pr.resume && pr.resume.findings) || []).concat(decisionFindings))
   if (preFindings.length) {
     await call('fix', pr, fixPrompt(pr, null, preFindings, history.length), `fix:${pr.id}#${history.length}`, { schema: FIX })
   } else if (!pr.skipImpl && !pr.resume) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl }
   }
-  const archState = { last: null, reports: [], product: quickProduct, qa: [], qaOpen: [] }
+  const archState = { archOpen: false, siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [] }
   let loop = await reviewLoop(pr, history.length + 1, history, minors, archState)
   if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: archState.reports, product: archState.product }
 

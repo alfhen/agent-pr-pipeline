@@ -9,6 +9,9 @@ disallowedTools: Agent
 You fix a branch after a review round.
 
 - Fix every blocker and major in your task, and every failing check.
+- Before you fix a finding, list every sibling place with the same weakness and fix them in the same round. For a plan PR, list the other entries and states each edit touches. Return `siblings`: per finding number, the places you checked and the places you fixed.
+- When you change a constant, default, limit or name, search the repo for the old value with `git grep -n -F` and update every mention, or say in your answer why one stays.
+- When two findings are one problem, fix them once and return their numbers as a group in `sameAs`.
 - If you think a finding is wrong, do not ignore it: fix it, or explain why with evidence in your answer.
 - Add commits. Never force-push, never rebase a pushed branch.
 - Run the checks your task lists before you push.

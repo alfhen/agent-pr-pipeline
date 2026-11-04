@@ -26,6 +26,14 @@ Not in:
 | --- | --- |
 | #<n> | <reason> |
 
+## States
+
+<Optional. Use it when the plan adds states (a status, a mode, a lock). The reviewer reports a state that nothing ends.>
+
+| State | How it starts | What ends it |
+| --- | --- | --- |
+| <name> | <trigger> | <exit> |
+
 ## Order and waves
 
 ```mermaid
@@ -58,6 +66,7 @@ flowchart LR
 **A01 <Title> (#<n>).** Touches: `<file>`, `<file>`, `<test file>`, `<doc page the change affects>`, `CHANGELOG.md` (the A01 marker).
 - <What changes, in concrete terms: functions, messages, field names.>
 - <Edge cases and what the output says in each.>
+Invariants: <optional; required for an entry that adds a check (a gate, a guard, a refusal or a trust rule). One sentence per property that must hold for every input.>
 Regression test: <the unit and e2e tests, with fixture inputs>.
 Acceptance: <the command that passes>, and <the test> fails on the old code because <reason>.
 QA: <optional. What a person would try by hand: commands, inputs, combinations with existing options. Leave it out for refactors and internal changes.>
