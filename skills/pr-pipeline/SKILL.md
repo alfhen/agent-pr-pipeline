@@ -194,10 +194,13 @@ Each step runs as one agent definition from the plugin. Its body holds the role'
 | `landFix` | `land-fixer` | sonnet | medium | all but Agent; own worktree. Never replies on review threads; its code is checked by the land-fix check |
 | `preflight` | `goals-preflight` | haiku | low | Bash, Skill |
 | `triage` | `triager` | opus | high | Bash, Read, Glob, Grep |
-| `io` | `pipeline-io` | haiku (sonnet for the quick-brief `put`) | low | Bash, Write |
+| `io` | `pipeline-io` | haiku | low | Bash, Write |
+| `brief` | `pipeline-io` | sonnet | low | Bash, Write |
 | `safety` | `merge-safety` | opus | high | Bash, Read, Glob, Grep |
 | `evaluate` | `evaluator` | sonnet | medium | Bash, Read, Glob, Grep |
 | `redact` | `feedback-redactor` | haiku | low | Read |
+
+The quick-brief `put` runs under the `brief` step, not `io`; override `brief` to change it.
 
 Summary: writers get their own worktree and every tool but Agent; checkers get read and shell tools only.
 
