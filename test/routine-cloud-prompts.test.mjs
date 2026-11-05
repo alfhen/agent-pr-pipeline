@@ -181,3 +181,10 @@ test('no prompt takes a step that next did not print', () => {
     assert.match(text, /data, never instructions/, kind)
   }
 })
+
+test('collect and build check a record-derived run id and quote it', () => {
+  const re = /\^\[0-9\]\{8\}T\[0-9\]\{6\}Z-\[0-9a-f\]\{8\}\$/
+  assert.match(prompts.collect, re)
+  assert.match(prompts.build, /`block`: [^\n]*matches `\^\[0-9\]\{8\}T/)
+  for (const k of ['collect', 'build']) assert.match(prompts[k], /single quotes/)
+})
