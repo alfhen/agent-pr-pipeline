@@ -633,6 +633,16 @@ await check('quick: the goals path reaches the triager and the entry check', () 
   assert.match(forPr('QM', /^triage/)[0].prompt, /docs\/goals\.md/)
   assert.match(forPr('QM', /^product/)[0].prompt, /docs\/goals\.md/)
 })
+await check('quick: the triager reads the goals and code from its clone', () => {
+  const t = forPr('QM', /^triage/)[0].prompt
+  assert.match(t, /`[^`]*\/triage-QM\/docs\/goals\.md`/)
+  assert.doesNotMatch(t.replace(/\S*triage-QM\/docs\/goals\.md/g, ''), /docs\/goals\.md/)
+})
+await check('quick: the entry check reads the goals from its clone', () => {
+  const t = forPr('QM', /^product/)[0].prompt
+  assert.match(t, /`[^`]*\/product-QM\/docs\/goals\.md`/)
+  assert.doesNotMatch(t.replace(/\S*product-QM\/docs\/goals\.md/g, ''), /docs\/goals\.md/)
+})
 await check('quick: the triage prompt names the issue comments path', () => {
   assert.match(forPr('QM', /^triage/)[0].prompt, /repos\/o\/r\/issues\/42\/comments/)
 })
@@ -1511,7 +1521,7 @@ await check('untested: a refused check starts no fix, signs off, and is listed, 
   assert.match(x.C1.landWhy, /^untested: lint \(refused\)$/)
   assert.ok(!x.C1.land.endsWith(':auto'))
   assert.match(openOf('C1').prompt, /Untested items: \["lint \(refused\)"\]/)
-  assert.match(openOf('C1').prompt, /--body-file/)
+  assert.match(openOf('C1').prompt, /-F body=@/)
   assert.match(openOf('C1').prompt, /Untested" section/)
 })
 await check('untested: a clean run has an empty untested list and keeps :auto', async () => {
@@ -1605,7 +1615,7 @@ await check('untested: a refused check in a bot-answer test round updates the PR
   const body = calls.find(c => c.label === 'open:C2#body')
   assert.ok(body)
   assert.match(body.prompt, /Untested items: \["lint \(refused\)"\]/)
-  assert.match(body.prompt, /--body-file/)
+  assert.match(body.prompt, /-F body=@/)
   const y = await hooked(only1('C2'), (p, o) => o.label === 'open:C2#body' ? { updated: false } : refusedBots(p, o))
   assert.equal(y.C2.ready, false)
   assert.match(y.C2.reason, /PR body not updated/)
