@@ -541,6 +541,8 @@ test('full.json holds the sandbox keys, no allow rule under the guard folder, an
   assert.equal(sb.enabled, true)
   assert.equal(sb.failIfUnavailable, true)
   assert.equal(sb.allowUnsandboxedCommands, false)
+  assert.equal(sb.enableWeakerNetworkIsolation, true)
+  assert.equal(sb.filesystem.allowGitConfig, true)
   assert.deepEqual(sb.filesystem.allowWrite, ['/WORK'])
   assert.deepEqual(sb.filesystem.denyWrite, ['/GUARD'])
   assert.deepEqual(sb.network.allowedDomains, ['github.com', 'api.github.com', 'codeload.github.com', 'objects.githubusercontent.com', 'raw.githubusercontent.com', 'uploads.github.com'])

@@ -3,7 +3,9 @@
     "enabled": true,
     "failIfUnavailable": true,
     "allowUnsandboxedCommands": false,
+    "enableWeakerNetworkIsolation": true,
     "filesystem": {
+      "allowGitConfig": true,
       "allowWrite": ["/WORK"],
       "denyWrite": ["/GUARD"]
     },
