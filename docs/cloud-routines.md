@@ -2,7 +2,7 @@
 
 From 0.8.0 the unattended routine runs as Claude Code cloud routines, not as a job on the maintainer's Mac. This page is for the maintainer. It covers what the routines do, how to set up a repo, and how to retire the local routine.
 
-0.8.0 is stage 1 only. A routine triages issues, builds the small ones into PRs and files feedback. It never merges, tags, releases, deletes a branch or closes an issue. The maintainer merges every PR.
+0.8.0 is stage 1 only. A routine triages issues, builds the small ones into PRs and files feedback. It is told never to merge, tag, release, delete a branch or close an issue, and the maintainer merges every PR. See "What holds and what does not".
 
 There are no webhooks in 0.8.0 (K2). The Issue trigger showed no author filter and no label filter, so every routine runs on a schedule only. `routine/cloud/k2.json` records this, and `routine-spec.sh` emits no webhook entry while both filters are false.
 
@@ -131,7 +131,7 @@ flowchart TD
   E[environment setup script from cloud-setup.sh] --> F[fetch each file at the tag from raw.githubusercontent.com]
   F --> V{every blob sha matches files.txt?}
   V -- no --> X[exit 1: the session does not start]
-  V -- yes --> I[/opt/agent-pr-pipeline/tag/ and the prefixed agents]
+  V -- yes --> I["/opt/agent-pr-pipeline/tag/ and the prefixed agents"]
   I --> S[session: apl-start]
   S -- pin not installed or a file changed --> Y[APL STOP, one notice, no work]
   S -- ok --> W[pluginRoot and agentPrefix]
@@ -198,7 +198,16 @@ Records are advisory. A forged outbox can still put redacted text into a public 
 
 ## Self-modification
 
-At every stage no agent merges a PR that touches a gated path or a floor path. The floor always holds `.github/**`, `.claude/**`, `AGENTS.md`, `CLAUDE.md` and `docs/goals.md`. In this repo it also holds `agents/**`, `workflows/**`, `scripts/**`, `skills/**`, `routine/**`, `templates/**` and `.claude-plugin/**`. No setting removes a floor path. The pipeline cannot loosen its own guards.
+At every stage the merge script refuses a PR that touches a gated path or a floor path. The floor always holds `.github/**`, `.claude/**`, `AGENTS.md`, `CLAUDE.md` and `docs/goals.md`. In this repo it also holds `agents/**`, `workflows/**`, `scripts/**`, `skills/**`, `routine/**`, `templates/**` and `.claude-plugin/**`. No setting removes a floor path.
+
+## What holds and what does not
+
+The no-merge rule holds by prompt text and by the session's auto-mode classifier (K10). The proxy does not enforce it. The ruleset asks for 0 approvals, so a session that follows injected text could merge a PR with a green `ci` or close an issue. The classifier is a second guard that can change, and it judges each call in context.
+
+- The floor applies only to `merge-pr.sh`. It does not stop a REST merge of a green PR.
+- The proxy does not limit which branches a push can update.
+- Records are advisory, because there is one account.
+- The session can write to the installed files under `/opt/agent-pr-pipeline/<tag>/`. `apl-start` checks them only at session start.
 
 ## Rulesets for this repo
 
