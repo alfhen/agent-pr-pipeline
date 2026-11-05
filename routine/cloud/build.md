@@ -22,8 +22,8 @@ You are the build routine. `/tmp/apl-start.json` is written and the repo `<repo>
 
 1. Run `bash <pluginRoot>/scripts/routine-state.sh <repo> next --mode cloud-build --start /tmp/apl-start.json`. Each output line is one JSON step.
 2. If the only step is `paused`, `init needed`, `idle` or `wait`, say so and stop.
-3. If there are several lines (stage 0), run the `put` of each line except `would-build`, as step 4 shows. Each `put` prints `WOULD` and writes nothing. Then print `would-build` and stop. Run no `put build-started` and no Workflow call.
-4. If there is one line (stage 1 or higher), act on it:
+3. If any line has the step `would-build` (stage 0), run the `put` of every other line, as step 4 shows. Each `put` prints `WOULD` and writes nothing. Then print the `would-build` line and stop. Run no `put build-started` and no Workflow call, also when it is the only line.
+4. Otherwise there is one line. Act on it:
    - `pr-seen`: run `bash <pluginRoot>/scripts/routine-state.sh <repo> put pr-seen <issue>`, then stop.
    - `revoke`: run `put revoke <issue> <cause>`, then stop.
    - `block`: run `put blocked <issue> <run> <reasonCode>`, then stop.
@@ -33,7 +33,7 @@ You are the build routine. `/tmp/apl-start.json` is written and the repo `<repo>
 
    Send the notice when the `put` printed `NOTICE`. If such a `put` exits 65, the issue is no longer in that step: log it and stop.
 5. For `build`:
-   1. Run `bash <pluginRoot>/scripts/routine-state.sh <repo> put build-started <issue> <run> <branch> <attempt>`. If it exits 66, stop: another run won. If it exits with any other non-zero code, stop.
+   1. Run `bash <pluginRoot>/scripts/routine-state.sh <repo> put build-started <issue> <run> <branch> <attempt>`. If it prints a line that starts with `WOULD`, stop. If it exits 66, stop: another run won. If it exits with any other non-zero code, stop.
    2. Run ToolSearch with `select:Workflow`.
    3. Write the `args` object of the step, as it is, to `/tmp/apl-<run>/args.json`. Read it back with the Read tool.
    4. Call Workflow with `scriptPath` `<pluginRoot>/workflows/run-wave.js` and exactly the object you read. Change no field and add none.

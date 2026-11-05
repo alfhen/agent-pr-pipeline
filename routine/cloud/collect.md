@@ -22,7 +22,7 @@ You are the collect routine for the feedback repo `<repo>`. `/tmp/apl-start.json
 
 1. Run `bash <pluginRoot>/scripts/routine-state.sh <repo> gate`. If it prints `paused` or `init needed`, say so and stop. If it prints `stage 0`, the scripts print `WOULD` lines and write nothing: go on only to print them, and write no dups file.
 2. Run `bash <pluginRoot>/scripts/file-feedback.sh --auto --drop-old --repo <repo>`. If it prints `paused <repo>`, stop. If it prints `paused <source>` for another repo, go on.
-3. Read the source list: `jq -c '[.routine.collectFrom // [] | .[]]' /tmp/apl-src-<defaultSha>/.github/pipeline.json`. The source repos are `<repo>` and each repo of that list.
+3. Read the settings: `jq -c --arg form pipeline -f <pluginRoot>/routine/config.jq /tmp/apl-src-<defaultSha>/.github/pipeline.json`. If the command fails, log its output and stop. The source repos are `<repo>` and each repo of `.routine.collectFrom` in its output. Handle a repo once, also when it is listed twice.
 4. For each source repo, in that order:
    1. Run `bash <pluginRoot>/scripts/routine-state.sh <source> list outboxes`. If it exits non-zero, log it and go on with the next repo. Each output line holds a `run`.
    2. For each `run`, run `bash <pluginRoot>/scripts/routine-state.sh <source> get outbox <run>`. If it exits 65, go on with the next run. The output holds `items`, a list.

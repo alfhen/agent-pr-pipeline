@@ -33,12 +33,15 @@ function commandProblems(prompts) {
         if (sub !== 'outbox' || !rs.includes('get outbox')) bad.push(`${file}: get ${sub}`)
       } else if (!['gate', 'issue-text'].includes(cmd) || !rs.includes(cmd)) bad.push(`${file}: ${cmd}`)
     }
+    for (const m of text.matchAll(/`[^`]*\bput ([a-z][a-z-]*)[^`]*`/g)) {
+      if (!putKinds.has(m[1])) bad.push(`${file}: put ${m[1]}`)
+    }
     for (const m of text.matchAll(/file-feedback\.sh((?: (?:--[a-z-]+|<[a-z]+>))*)/g)) {
       for (const flag of m[1].match(/--[a-z-]+/g) || []) if (!ff.includes(flag)) bad.push(`${file}: file-feedback.sh ${flag}`)
     }
     if (/feedback-outbox\.sh/.test(text) && !/feedback-outbox\.sh <repo> \S+ --run <run>/.test(text)) bad.push(`${file}: feedback-outbox.sh form`)
   }
-  return bad
+  return [...new Set(bad)]
 }
 
 const prompts = Object.fromEntries(KINDS.map((k) => [k, read(`routine/cloud/${k}.md`)]))
@@ -59,6 +62,11 @@ test('a prompt that names next --mode cloud fails the command check', () => {
 test('a prompt that names a put kind the script lacks fails the command check', () => {
   const bad = commandProblems({ ...prompts, triage: prompts.triage.replace('put adopt <issue>', 'put adopted <issue>') })
   assert.deepEqual(bad, ['triage: put adopted'])
+})
+
+test('a prompt with a misspelled short put form fails the command check', () => {
+  const bad = commandProblems({ ...prompts, build: prompts.build.replace('`put needs-plan <issue>`', '`put need-plan <issue>`').replace('`put blocked ', '`put blockd ') })
+  assert.deepEqual(bad.sort(), ['build: put blockd', 'build: put need-plan'])
 })
 
 test('the forbidden scripts appear only in the never-run line', () => {
@@ -103,11 +111,29 @@ test('the shared paragraph names the notice, the root and env-stale', () => {
   for (const w of ['PushNotification', 'NOTICE', 'ROOT', 'put env-stale']) assert.ok(p.includes(w), w)
 })
 
-test('triage and build stop at the would- lines, and nothing starts before them', () => {
-  assert.match(prompts.triage, /print `would-triage` and stop\. Start no agent/)
-  assert.match(prompts.build, /print `would-build` and stop\. Run no `put build-started` and no Workflow call/)
+test('triage and build stop on the would- step, whatever the line count', () => {
+  assert.match(prompts.triage, /If any line has the step `would-triage` \(stage 0\)[^\n]*print the `would-triage` line and stop\. Start no agent, also when it is the only line/)
+  assert.match(prompts.build, /If any line has the step `would-build` \(stage 0\)[^\n]*print the `would-build` line and stop\. Run no `put build-started` and no Workflow call, also when it is the only line/)
+  for (const t of [prompts.triage, prompts.build]) {
+    assert.doesNotMatch(t, /several lines|one line \(stage 1/)
+    assert.match(t, /\n4\. Otherwise there is one line\./)
+  }
   assert.ok(prompts.triage.indexOf('would-triage') < prompts.triage.indexOf('<agentPrefix>triager'))
   assert.ok(prompts.build.indexOf('would-build') < prompts.build.indexOf('put build-started'))
+  assert.match(prompts.build, /put build-started[^\n]*If it prints a line that starts with `WOULD`, stop\./)
+})
+
+test('triage and collect read the settings through config.jq', () => {
+  for (const kind of ['triage', 'collect']) {
+    const t = prompts[kind]
+    assert.match(t, /jq -c --arg form pipeline -f <pluginRoot>\/routine\/config\.jq \/tmp\/apl-src-<defaultSha>\/\.github\/pipeline\.json/, kind)
+    assert.doesNotMatch(t, /docs\/goals\.md/, kind)
+    assert.doesNotMatch(t, /jq [^\n]*'[^'\n]*\.routine\./, kind)
+  }
+  assert.match(prompts.triage, /`\.routine\.waveArgs\.goals`/)
+  assert.match(prompts.triage, /\/tmp\/apl-src-<defaultSha>\/<goals>/)
+  assert.match(prompts.collect, /`\.routine\.collectFrom`/)
+  assert.match(prompts.collect, /Handle a repo once/)
 })
 
 test('collect names get outbox and paused, and stops on paused <repo>', () => {
@@ -137,6 +163,7 @@ test('triage gives issue text to the triager only through issue-text', () => {
   assert.match(t, /makes no `gh` call for the issue or its comments/)
   assert.doesNotMatch(t, /gh api/)
   assert.doesNotMatch(t, /repos\/<repo>\/issues/)
+  assert.match(t, /the ready clone is `\/tmp\/apl-src-<defaultSha>`[^\n]*only there and makes no clone/)
 })
 
 test('every agent a prompt names starts with <agentPrefix>', () => {
