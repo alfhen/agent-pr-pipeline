@@ -1,0 +1,30 @@
+[
+  {
+    "id": 1,
+    "event": "labeled",
+    "actor": {
+      "login": "alfhen",
+      "id": 5700924,
+      "type": "User"
+    },
+    "label": {
+      "name": "maintainer-approved"
+    },
+    "created_at": "2026-11-05T10:00:00Z",
+    "performed_via_github_app": null
+  },
+  {
+    "id": 2,
+    "event": "labeled",
+    "actor": {
+      "login": "alfhen",
+      "id": 5700924,
+      "type": "User"
+    },
+    "label": {
+      "name": "maintainer-approved"
+    },
+    "created_at": "2026-11-05T11:00:00Z",
+    "performed_via_github_app": null
+  }
+]
