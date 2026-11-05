@@ -450,3 +450,34 @@ test('the manual form does not use the quality bar, the cap or the markers', () 
   assert.equal(r.issuePosts.length, 1)
   assert.doesNotMatch(r.issuePosts[0], /auto-filed/)
 })
+
+const nonStrings = [
+  ['an object detail', { detail: { 'Seen in acme/widgets at https://github.com/acme/widgets': 1 } }],
+  ['a number detail', { detail: 4512 }],
+  ['an object detail with a marker key', { detail: { '<!-- pipeline:outbox 20261105T120000Z-0a1b2c3d:0 -->': 1 } }],
+  ['a number title', { title: 4512 }],
+]
+
+for (const [what, extra] of nonStrings) {
+  test(`--auto refuses ${what} and posts nothing`, () => {
+    const r = W.world().auto([item('Bad field', extra)], ['acme', 'widgets', '4512'])
+    assert.match(r.stdout, /REFUSED .*: a field is not a string/)
+    assert.equal(r.issuePosts.length, 0)
+    assert.equal(r.comments.length, 0)
+    const c = W.world().auto([item('Bad field', extra)], ['acme', 'widgets', '4512'], '--check')
+    assert.match(c.stdout, /^REFUSED 0: a field is not a string/)
+  })
+
+  test(`--outbox refuses ${what} and posts no issue`, () => {
+    const r = withOutbox({ rec: { items: [item('Bad field', extra)] } }).outbox(R1)
+    assert.equal(r.issuePosts.length, 0, r.stdout)
+    assert.match(r.stdout, /a field is not a string/)
+  })
+
+  test(`the manual form refuses ${what} and posts nothing`, () => {
+    const w = W.world()
+    const r = w.sh('file-feedback.sh', [w.file('m.json', [item('Bad field', extra)]), '--denylist', w.file('md.json', ['acme', 'widgets', '4512']), '--repo', W.FB, '--source', W.SRC])
+    assert.equal(r.status, 2, r.stdout)
+    assert.equal(r.issuePosts.length, 0)
+  })
+}

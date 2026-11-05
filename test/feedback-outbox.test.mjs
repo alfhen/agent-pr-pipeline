@@ -98,6 +98,13 @@ test('a second outbox with the same run is refused by the record rules', () => {
   noWrites(r)
 })
 
+test('an item with an object detail is dropped and does not reach the record', () => {
+  const r = outbox(W.world(), result([W.item('Bad', { detail: { 'Seen in acme/widgets': 1 } }), W.item('Good')]))
+  const rec = W.recordOf(r.records[0])
+  assert.deepEqual(rec.items.map(i => i.title), ['Good'])
+  assert.equal(rec.dropped, 1)
+})
+
 test('bad arguments exit 64', () => {
   const w = W.world()
   assert.equal(outbox(w, result([W.item('x')]), 'not-a-run').status, 64)

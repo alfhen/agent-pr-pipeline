@@ -158,10 +158,17 @@ deny_hit() { # item-json -> prints the first denylist string the item holds, or 
        ($deny.words[] | select(length > 0) | ascii_downcase | select(. as $d | $text | test($d | pat)))] | first // empty' <<<"$1"
 }
 
+# Every field the body prints must be a string: deny_hit reads strings only, and jq prints any other type
+# (an object prints its keys) into the issue.
+text_fields_ok() { # item-json
+  jq -e 'type == "object" and (.title | type == "string") and all(.detail, .evidence, .suggestedChange, .severity; . == null or type == "string")' <<<"$1" >/dev/null 2>&1
+}
+
 # Sets J_KIND to ok, drop or refused, and J_MSG. The quality bar and the marker check are for --auto only.
 judge() { # item-json
   local title hit
   J_KIND=ok; J_MSG=""
+  text_fields_ok "$1" || { J_KIND=refused; J_MSG="a field is not a string"; return; }
   title=$(jq -r '.title // ""' <<<"$1")
   [ -n "$title" ] || { J_KIND=refused; J_MSG="no title"; return; }
   if [ "$auto" = 1 ]; then
@@ -200,6 +207,7 @@ seen='[]'
 if [ "$auto" = 0 ]; then
   for ((i = 0; i < count; i++)); do
     item=$(jq -c ".[$i]" "$file")
+    text_fields_ok "$item" || { echo "REFUSED item $i: a field is not a string"; [ "$status" = 0 ] && status=2; continue; }
     title=$(jq -r '.title // ""' <<<"$item")
     [ -n "$title" ] || { echo "REFUSED item $i: no title"; [ "$status" = 0 ] && status=2; continue; }
     hit=$(deny_hit "$item") || { echo "REFUSED $title: denylist check failed"; [ "$status" = 0 ] && status=2; continue; }
