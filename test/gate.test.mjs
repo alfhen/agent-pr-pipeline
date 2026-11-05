@@ -373,3 +373,91 @@ test('land-wave: a pending commit status is waited for, then reported as still r
   assert.match(r.out, /WAITING #7/)
   assert.equal(merges(r).length, 0)
 })
+
+const emptyGates = (s) => put(s.fx, `${P}__contents__.github__pipeline.json.json`, { gates: [] })
+const writeManifest = (dir, repository) => {
+  mkdirSync(join(dir, '.claude-plugin'), { recursive: true })
+  writeFileSync(join(dir, '.claude-plugin/plugin.json'), JSON.stringify(repository === undefined ? { name: 'x' } : { name: 'x', repository }))
+}
+const PLUGIN = 'https://github.com/alfhen/agent-pr-pipeline'
+const floorRun = (files, { repo = 'o/r', repository = PLUGIN } = {}) => {
+  const s = setup({ files: null, scripts: true })
+  const rp = `repos__${repo.replace('/', '__')}`
+  writeManifest(s.dir, repository === null ? undefined : repository)
+  put(s.fx, `${rp}.json`, { default_branch: 'main' })
+  put(s.fx, `${rp}__contents__.github__pipeline.json.json`, { gates: [] })
+  put(s.fx, `${rp}__pulls__7__files.1.json`, files)
+  return run(s, 'gate-files.sh', [repo, '7'])
+}
+
+test('floor: empty gates still hold .github/pipeline.json', () => {
+  const r = floorRun([{ filename: '.github/pipeline.json' }])
+  assert.equal(r.code, 1)
+  assert.match(r.out, /^GATED #7: floor: \.github\/pipeline\.json/)
+})
+
+test('floor: empty gates still hold .claude, AGENTS.md, CLAUDE.md and docs/goals.md', () => {
+  for (const f of ['.claude/settings.json', 'AGENTS.md', 'CLAUDE.md', 'docs/goals.md']) {
+    const r = floorRun([{ filename: f }])
+    assert.equal(r.code, 1, f)
+    assert.match(r.out, /floor:/)
+  }
+})
+
+test('floor: a rename out of a floor path is gated', () => {
+  const r = floorRun([{ filename: 'lib/a.json', previous_filename: '.github/a.json' }])
+  assert.equal(r.code, 1)
+  assert.match(r.out, /\.github\/a\.json/)
+})
+
+test('floor: a rename out of scripts/ is gated in the plugin repo and not in another repo', () => {
+  const files = [{ filename: 'lib/a.sh', previous_filename: 'scripts/a.sh' }]
+  const plugin = floorRun(files, { repo: 'alfhen/agent-pr-pipeline' })
+  assert.equal(plugin.code, 1)
+  assert.match(plugin.out, /floor: .*scripts\/a\.sh/)
+  assert.equal(floorRun(files).code, 0)
+})
+
+test('floor: the plugin repo is matched ignoring case', () => {
+  const r = floorRun([{ filename: 'agents/x.md' }], { repo: 'Alfhen/Agent-PR-Pipeline' })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /floor: agents\/x\.md/)
+})
+
+test('floor: other repos get only the base floor, and src files pass', () => {
+  assert.equal(floorRun([{ filename: 'agents/x.md' }]).code, 0)
+  const r = floorRun([{ filename: 'src/x.ts' }])
+  assert.equal(r.code, 0)
+  assert.match(r.out, /not gated/)
+})
+
+test('floor: a manifest with no repository adds no plugin paths', () => {
+  assert.equal(floorRun([{ filename: 'scripts/x.sh' }], { repo: 'alfhen/agent-pr-pipeline', repository: null }).code, 0)
+})
+
+test('floor: a settings hit is reported without the floor prefix', () => {
+  const r = run(setup({ files: 'gated' }), 'gate-files.sh', ['o/r', '7'])
+  assert.equal(r.code, 1)
+  assert.doesNotMatch(r.out, /floor/)
+})
+
+const pluginRepo = (repository) => {
+  const dir = mkdtempSync(join(tmpdir(), 'plugin-repo-'))
+  mkdirSync(join(dir, 'scripts')); writeManifest(dir, repository)
+  copyFileSync(join(root, 'scripts/plugin-repo.sh'), join(dir, 'scripts/plugin-repo.sh'))
+  const r = spawnSync('bash', [join(dir, 'scripts/plugin-repo.sh')], { encoding: 'utf8' })
+  return { code: r.status, out: r.stdout.trim() }
+}
+
+test('plugin-repo: https, git@ and .git forms give one lowercase output', () => {
+  for (const f of ['https://github.com/Alfhen/Agent-PR-Pipeline', 'git@github.com:alfhen/agent-pr-pipeline', 'https://github.com/alfhen/agent-pr-pipeline.git']) {
+    const o = pluginRepo(f)
+    assert.equal(o.code, 0, f)
+    assert.equal(o.out, 'alfhen/agent-pr-pipeline')
+  }
+})
+
+test('plugin-repo: no usable repository exits 1', () => {
+  assert.equal(pluginRepo(undefined).code, 1)
+  assert.equal(pluginRepo('not-a-repo').code, 1)
+})
