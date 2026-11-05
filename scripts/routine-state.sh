@@ -216,9 +216,9 @@ next_full() {
     bs=$(record_state "$comments" build-started "$i") || exit $?
     bl=$(record_state "$comments" blocked "$i") || exit $?
     st=$(jq -r .state <<<"$bs")
+    if [ "$(jq -r .state <<<"$bl")" != absent ]; then add_held "$i" "blocked"; continue; fi
     if [ "$st" = bad ]; then add_held "$i" "bad build-started record"; continue; fi
     if [ "$st" = ok ]; then
-      if [ "$(jq -r .state <<<"$bl")" != absent ]; then add_held "$i" "blocked"; continue; fi
       if [ -z "$block_issue" ]; then
         hp=$(has_pr "$prefix" "$owner" "$i") || exit $?
         if [ "$hp" = false ]; then block_issue=$i; block_run=$(jq -r .rec.run <<<"$bs"); fi
@@ -283,6 +283,8 @@ put_run_record() { # build-started and blocked: the runner's records
     local rec
     rec=$(record_of "$comments" "$issue") || exit $?
     [ -n "$rec" ] && [ "$(jq -r .decision <<<"$rec")" = build ] || die 65 "issue $issue has no trusted triaged record with decision build"
+    existing=$(trusted_all "$comments" "<!-- pipeline:routine blocked $issue -->") || exit $?
+    [ "$(jq length <<<"$existing")" = 0 ] || die 65 "a blocked record for issue $issue exists"
     body=$(jq -nc --arg r "$run_id" --arg b "$branch" '{run: $r, branch: $b}')
   else
     body=$(jq -nc --arg r "$run_id" '{reason: "build ended with no PR", run: $r}')

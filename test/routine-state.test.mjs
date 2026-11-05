@@ -499,6 +499,19 @@ test('a blocked record holds the issue: no second block, and it is listed in hel
   assert.deepEqual(out.held, [{ issue: 4, why: 'blocked' }])
 })
 
+test('a blocked record with no build-started record gives no build step and is held', () => {
+  for (const b of [blockedRec(4), blockedRec(4, { raw: 'not json' })]) {
+    const out = step(nextFull(fullSetup({ issues: [buildIssue(4)], records: [record(4), b] })))
+    assert.equal(out.step, 'idle')
+    assert.deepEqual(out.held, [{ issue: 4, why: 'blocked' }])
+  }
+})
+
+test('put build-started is refused with exit 65 when a blocked record exists', () => {
+  const r = putStarted(ready({ records: [blockedRec(4)] }))
+  assert.equal(r.status, 65); assert.deepEqual(r.writes, [])
+})
+
 test('a forged blocked record by another account does not hold the issue', () => {
   const forged = blockedRec(4, {}, 'mallory')
   assert.ok(forged.body.startsWith(bmark('blocked', 4)))
