@@ -39,6 +39,16 @@ test('skill names the version warnings, the gate error and the older approval la
   assert.match(skill, /`gateOutput`/)
 })
 
+test('skill names the manifest, the cloud prompts and the pin; the cloud doc names its core terms', () => {
+  assert.match(skill, /manifest\.sh/)
+  assert.match(skill, /routine\/cloud\//)
+  assert.match(skill, /pipelineVersion/)
+  const cloud = readFileSync(new URL('../docs/cloud-routines.md', import.meta.url), 'utf8')
+  for (const term of ['maintainer-approved', 'routine-paused', 'performed_via_github_app', 'apl-start', 'stage'])
+    assert.ok(cloud.includes(term), `docs/cloud-routines.md misses ${term}`)
+  assert.match(cloud, /no webhooks/i)
+})
+
 test('routine doc names the cut, the new records and full-mode next; skill names config.jq', () => {
   const routine = readFileSync(new URL('../docs/routine.md', import.meta.url), 'utf8')
   assert.match(routine, /`whyCut`/)

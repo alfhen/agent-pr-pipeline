@@ -1,5 +1,7 @@
 # The triage routine
 
+Cloud routines replace the local routine from 0.8.0. See [cloud-routines.md](cloud-routines.md). The rest of this page stays until 0.9.0 deletes the local runner code.
+
 The routine is a scheduled job on the maintainer's Mac. It runs once an hour by default, and `--minutes` adds more starts per hour. It reads the open `pipeline-feedback` issues of one repo and decides for each one: `build`, `plan` or `decline`. It runs unattended, so it is limited by guards that are listed below.
 
 ## What it does in 0.4.0

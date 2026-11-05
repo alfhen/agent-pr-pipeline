@@ -1,6 +1,6 @@
 # Agent rules for this repo
 
-This repo is the agent-pr-pipeline plugin: `skills/`, `agents/`, `workflows/run-wave.js` (plain JavaScript, no filesystem access), `scripts/`, `templates/`, `routine/` (the hourly triage routine, see `docs/routine.md`).
+This repo is the agent-pr-pipeline plugin: `skills/`, `agents/`, `workflows/run-wave.js` (plain JavaScript, no filesystem access), `scripts/`, `templates/`, `routine/` (the cloud routine prompts in `routine/cloud/`, see `docs/cloud-routines.md`, and the local hourly routine, see `docs/routine.md`).
 
 ## Checks
 

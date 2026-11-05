@@ -65,9 +65,13 @@ Ask Claude Code to plan and build a release or a set of issues with the pipeline
 
 Read [skills/pr-pipeline/SKILL.md](skills/pr-pipeline/SKILL.md) for the loop, the workflow arguments, the role agents, cost and caching, and what to do when a step fails.
 
-## The triage routine
+## Cloud routines
 
-An optional scheduled job triages the open `pipeline-feedback` issues of a repo, with guards that let it read and record but not build or merge. It runs at the installed minutes of each hour (`install.sh --minutes`, default 7). It starts in `observe` mode, which changes nothing on GitHub. Install it with `routine/install.sh <owner/repo>`. See [docs/routine.md](docs/routine.md).
+From 0.8.0 the routine runs as Claude Code cloud routines: triage, build and collect, on schedules only (no webhooks). A setup script installs the release that a repo pins in `.github/pipeline.json`. The routines label issues, build the small ones into PRs and file feedback within limits. The maintainer merges every PR. See [docs/cloud-routines.md](docs/cloud-routines.md) for setup, the settings, onboarding a repo and retiring the local routine, and use the `cloud-routines` skill to create the routines.
+
+## The local triage routine
+
+The local routine is replaced by the cloud routines and is deleted in 0.9.0. An optional scheduled job triages the open `pipeline-feedback` issues of a repo, with guards that let it read and record but not build or merge. It runs at the installed minutes of each hour (`install.sh --minutes`, default 7). It starts in `observe` mode, which changes nothing on GitHub. Install it with `routine/install.sh <owner/repo>`. See [docs/routine.md](docs/routine.md).
 
 ## Needs
 

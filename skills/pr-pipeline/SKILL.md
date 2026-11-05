@@ -155,7 +155,7 @@ The workflow starts every agent as its role agent (`agentType: "agent-pr-pipelin
 ```
 
 - `pluginRoot` (set it from `${CLAUDE_PLUGIN_ROOT}`): the plugin folder. It goes into every `pipeline-io` prompt, and `pipeline-io` runs scripts only from there, never from a clone of the target repo, so a PR cannot change the script that judges it. A quick fix without it stops with the reason `pluginRoot missing`. Without it a PR stops at the bot step with the same reason.
-- Policy and choices are split. Repo policy that one run must not override (`gates`, `autoRelease`) lives in `.github/pipeline.json`, read from the default branch; `templates/pipeline.json` is the default for a repo without one. Choices for one run (`feedback`, `feedbackRepo`, `rounds`, models) are workflow arguments, never in that file.
+- Policy and choices are split. Repo policy that one run must not override (`gates`, `autoRelease`) lives in `.github/pipeline.json`, read from the default branch; `templates/pipeline.json` is the default for a repo without one. Choices for one run (`feedback`, `feedbackRepo`, `rounds`, models) are workflow arguments, never in that file. The one exception is the `routine` block: it holds the policy of unattended runs (stage, `pipelineVersion`, trusted authors, limits) and the fixed wave choices for them (`waveArgs`), because no person is there to pass them. See `docs/cloud-routines.md`.
 - `plan` is optional when every PR in the wave has `quick`.
 - `checks` are the **fast** checks. Agents also run the e2e files the PR adds or changes (`e2ePattern`, run with `e2eCommand`). The full e2e suite runs only in CI, so CI must run it on every PR.
 - `architecture`: the document the architecture reviewer checks against (defaults to `spec`). Set `"architectureReview": false` to turn the step off.
@@ -333,7 +333,7 @@ Show the maintainer the `feedback` items from the workflow result, and add the l
 - A release is made only from a green default branch. An agent may create one through `release.sh`, under its conditions. Publishing to a package registry stays with the repo's CI, and no agent runs a publish command.
 - Clean up after a release: leftover worktrees, temp clones and local branches whose tip is in a merged PR.
 - A shallow or single-branch clone (`git clone --depth 1`) cannot see a branch that another agent pushed later. Fetch it with an explicit refspec so `origin/<branch>` exists: `git fetch origin <branch>:refs/remotes/origin/<branch>`.
-- Set a milestone with `gh api -X PATCH repos/<repo>/issues/<n> -F milestone=<number>`. `gh issue edit --milestone` can fail with GraphQL errors.
+- Set a milestone with `gh api -X PATCH repos/<repo>/issues/<n> -F milestone=<number>`. This REST call stays the way. `gh issue edit --milestone` is named only as what fails: it can fail with GraphQL errors, and the cloud proxy does not serve GraphQL.
 
 ## Files
 
@@ -354,8 +354,13 @@ All paths are under `${CLAUDE_PLUGIN_ROOT}`.
 - `scripts/cleanup.sh`: delete the pipeline's own clones and finished worktrees (`init`, `clones`, `worktrees`). It prints `REMOVED` or `KEPT` and never fails a PR.
 - `scripts/check-syntax.sh`: runs `bash -n` on `scripts/*.sh`, `routine/*.sh` and `routine/bin/gh`. `AGENTS.md` and CI run it. It prints `SYNTAX <file>` or `MISSING <pattern>` and exits 1 on a failure.
 - `scripts/check-version.sh`: checks that the manifest version is semantic and, in a PR, higher than the latest tag.
-- `routine/`: the triage routine, which runs at the installed minutes of each hour (runner, prompt, settings, read-only `gh` wrapper, installer). `docs/routine.md` describes it.
-- `routine/config.jq`: checks a `routine.json` and fills in the limits. `routine/branch-prefix`: the branch prefix of routine PRs. No mode uses them yet.
+- `routine/`: the local triage routine, which runs at the installed minutes of each hour (runner, prompt, settings, read-only `gh` wrapper, installer). `docs/routine.md` describes it; 0.9.0 deletes it.
+- `routine/cloud/`: the prompts of the cloud routines (`prompt.md`, `triage.md`, `build.md`, `collect.md`) and `k2.json`, which says whether the Issue trigger has an author and a label filter (both false in 0.8.0, so no webhooks). `docs/cloud-routines.md` describes them.
+- `routine/config.jq`: checks a `routine.json` or the `routine` block of `.github/pipeline.json` and fills in the limits. `routine/branch-prefix`: the branch prefix of routine PRs.
+- `scripts/cloud-setup.sh`: prints the setup script of a cloud environment for the named release tags. `scripts/manifest.sh`: writes and checks `.claude-plugin/files.txt`. `scripts/plugin-repo.sh`: the plugin's own repo name.
+- `.claude-plugin/files.txt`: the release manifest, one `<git blob sha> <path>` line per shipped file. Run `scripts/manifest.sh --write` as the last change of every commit that changes a shipped file. `release.sh` refuses a release of this repo whose manifest does not match the tree.
+- `scripts/routine-spec.sh`: prints the routines and the setup script to create for a repo. `skills/cloud-routines/SKILL.md`: creates them with RemoteTrigger. `scripts/feedback-outbox.sh`: posts a cloud wave's feedback as an outbox record. `scripts/wait-ci.sh`: waits for CI through REST.
+- After a release, a repo that uses cloud routines needs a one-line PR that sets `routine.pipelineVersion` to the new tag (a gated path, merged by the maintainer), and a new setup script with every tag still in use, pasted in the web UI by the maintainer. `pipelineVersion` is the pin.
 - `agents/merge-safety.md`: the agent that decides `safe` or `person` for a PR the gate did not hold.
 - `.github/pipeline.json`, `templates/pipeline.json`: repo policy (`gates`, `knownFlakes`, `autoRelease`). `templates/pipeline.json` is the default policy file; copy it to `.github/pipeline.json` in another repo. `knownFlakes` lists check-run names (exact) that may fail for reasons outside the PR; `land-wave.sh` reruns the failed jobs of only those checks once, and reads the list from the default branch.
 - `scripts/file-feedback.sh`: file approved feedback items as `pipeline-feedback` issues, refusing any that hold a denylist string.
