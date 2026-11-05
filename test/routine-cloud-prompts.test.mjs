@@ -188,3 +188,8 @@ test('collect and build check a record-derived run id and quote it', () => {
   assert.match(prompts.build, /`block`: [^\n]*matches `\^\[0-9\]\{8\}T/)
   for (const k of ['collect', 'build']) assert.match(prompts[k], /single quotes/)
 })
+
+test('triage uses decision, size, risk and type only when exactly a listed word', () => {
+  assert.match(prompts.triage, /only when the decision is exactly `build`, `plan` or `decline`, the size is exactly `S`, `M` or `L`, the risk is exactly `low`, `medium` or `high`, and the type is exactly `bug`, `feat`, `docs`, `chore` or `test`/)
+  assert.match(prompts.triage, /treat the triager as failed/)
+})
