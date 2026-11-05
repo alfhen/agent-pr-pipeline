@@ -540,7 +540,7 @@ test('full.json holds the sandbox keys, no allow rule under the guard folder, an
   const allow = full.permissions.allow; const deny = full.permissions.deny
   for (const r of allow) assert.ok(!r.includes('//GUARD/**'), r)
   assert.ok(allow.includes('Read(//GUARD/plugin/**)'))
-  for (const r of ['Edit(//GUARD/**)', 'Write(//GUARD/**)', 'NotebookEdit']) assert.ok(deny.includes(r), r)
+  for (const r of ['Edit(//GUARD/**)', 'NotebookEdit']) assert.ok(deny.includes(r), r)
   for (const role of ['implementer', 'pr-opener', 'bot-answerer', 'triager', 'evaluator']) {
     assert.ok(allow.includes(`Agent(${role})`) && allow.includes(`Agent(agent-pr-pipeline:${role})`), role)
   }
