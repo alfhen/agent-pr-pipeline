@@ -38,3 +38,11 @@ test('skill names the version warnings, the gate error and the older approval la
   assert.match(skill, /approved earlier/)
   assert.match(skill, /`gateOutput`/)
 })
+
+test('routine doc names the cut, the new records and full-mode next; skill names config.jq', () => {
+  const routine = readFileSync(new URL('../docs/routine.md', import.meta.url), 'utf8')
+  assert.match(routine, /`whyCut`/)
+  assert.match(routine, /`build-started`/)
+  assert.match(routine, /next --mode full/)
+  assert.match(skill, /routine\/config\.jq/)
+})

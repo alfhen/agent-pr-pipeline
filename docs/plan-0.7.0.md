@@ -1,5 +1,12 @@
 # Plan for 0.7.0
 
+## Status (2026-11-05)
+
+- Shipped: R01 (#284) and the D3 amendment (#285). #277 also shipped.
+- R02 hit the D3 stop rule again after the amendment: `allowGitConfig` has no effect on Claude Code 2.1.318, so `.git/config` stays unwritable. Its branch `feat/070-r02-wrappers-sandbox` is kept unmerged for reference.
+- R03 was not built.
+- The maintainer chose scheduled agents in Anthropic's cloud as the next direction. 0.7.0 ships what is on main (V01).
+
 0.7.0 is stage 1 of the routine's full mode (design brief #88). A new mode word, `full`, makes the routine do what `triage` does, and also run a quick-fix wave for the open issues that the routine labelled `routine-build`, so that the wave opens their PRs. Full mode never merges, never lands, never releases and never files feedback. It does not plan `routine-plan` issues and does not run plan waves. Those come in later stages. The maintainer merges every PR that the routine opens. `observe` and `triage` do not change. The readers of the output are the maintainer and the routine. Each entry is one PR. A PR is done when its acceptance test passes in CI, an adversarial review reports no blockers or majors, and it is squash-merged.
 
 ## Goals this release serves
