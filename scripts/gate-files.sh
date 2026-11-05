@@ -3,7 +3,7 @@
 # Exit 0 when no changed file of the PR matches a gate; exit 1 ("GATED") when one does; exit 3
 # ("GATE ERROR") when that cannot be told (fails closed); exit 2 on a usage error.
 # A fixed floor is gated on top of the settings, and no settings file removes it: .github, .claude, AGENTS.md,
-# CLAUDE.md and docs/goals.md, and in the plugin's own repo (plugin-repo.sh) also the plugin's code folders.
+# CLAUDE.md (at any depth) and docs/goals.md, and in the plugin's own repo (plugin-repo.sh) also the plugin's code folders.
 # The gates come from .github/pipeline.json on the default branch, or from templates/pipeline.json when the repo has no settings file. Both filename and previous_filename count.
 R=$1; pr=$2
 [ -n "$pr" ] || { echo "usage: gate-files.sh <owner/repo> <pr>"; exit 2; }
@@ -27,7 +27,7 @@ list=$(jq -c 'if all(.[]; type == "array") then add // [] else error("pages") en
   || err "unexpected answer for the changed files"
 [ "$(jq length <<<"$list")" -lt 3000 ] || err "3000 changed files or more, the list may be cut"
 
-floor='[".github/**",".claude/**","AGENTS.md","CLAUDE.md","docs/goals.md"]'
+floor='[".github/**",".claude/**","**/AGENTS.md","**/CLAUDE.md","docs/goals.md"]'
 if [ "$(bash "$here/plugin-repo.sh" 2>/dev/null)" = "$(tr '[:upper:]' '[:lower:]' <<<"$R")" ]; then
   floor=$(jq -c '. + ["agents/**","workflows/**","scripts/**","skills/**","routine/**","templates/**",".claude-plugin/**"]' <<<"$floor")
 fi

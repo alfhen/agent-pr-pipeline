@@ -404,6 +404,15 @@ test('floor: empty gates still hold .claude, AGENTS.md, CLAUDE.md and docs/goals
   }
 })
 
+test('floor: nested AGENTS.md and CLAUDE.md are gated', () => {
+  for (const f of ['src/CLAUDE.md', 'docs/deep/AGENTS.md']) {
+    const r = floorRun([{ filename: f }])
+    assert.equal(r.code, 1, f)
+    assert.match(r.out, /floor:/)
+  }
+  assert.equal(floorRun([{ filename: 'src/NOTCLAUDE.md' }]).code, 0)
+})
+
 test('floor: a rename out of a floor path is gated', () => {
   const r = floorRun([{ filename: 'lib/a.json', previous_filename: '.github/a.json' }])
   assert.equal(r.code, 1)
