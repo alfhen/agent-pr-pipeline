@@ -42,7 +42,7 @@ const FEEDBACK = A.feedback !== false
 const CLEANUP = A.cleanup !== false
 const FEEDBACK_REPO = A.feedbackRepo || 'alfhen/agent-pr-pipeline'
 const MILESTONE = A.milestone ? ` -F milestone=<number>` : ''
-const MILESTONE_STEP = A.milestone ? `\nFirst read the milestone number: \`gh api repos/${REPO}/milestones --jq '.[] | select(.title == "${A.milestone}") | .number'\`. If it prints nothing, stop and return blocked true with blockedReason "milestone ${A.milestone} not found".` : ''
+const MILESTONE_STEP = A.milestone ? `\nFirst read the milestone number: \`gh api --paginate 'repos/${REPO}/milestones?per_page=100' --jq '.[] | select(.title == "${A.milestone.replace(/["\\]/g, '\\$&')}") | .number'\`. If it prints nothing, stop and return blocked true with blockedReason "milestone ${A.milestone} not found".` : ''
 const STEPS = Object.assign({
   impl: { model: 'sonnet', effort: 'medium' },
   test: { model: 'sonnet', effort: 'low' },
@@ -684,7 +684,7 @@ Task: bring PR #${pr.prNumber} (${pr.branch}) to a mergeable state with green CI
 1. You are in a fresh git worktree. ${freshBranch('land', pr, 0)}
 2. Conflict: \`git merge origin/HEAD\`, then ${fastText}, and ${ownE2e}.
 3. CI: list the failed jobs of a run with \`gh api repos/${REPO}/actions/runs/<run>/jobs\`, then read a job's log with \`gh api repos/${REPO}/actions/jobs/<job>/logs\`; rerun a flaky network failure with \`gh api -X POST repos/${REPO}/actions/runs/<run>/rerun-failed-jobs\`.
-4. Wait: \`bash ${PLUGIN_ROOT}/scripts/wait-ci.sh ${REPO} ${pr.prNumber} 9\`, with the Bash tool's timeout set to 600000 ms. It prints one JSON line with head, state (pending, success or failure), failed and timedOut. While timedOut is true, run it again.
+4. Wait: \`bash ${PLUGIN_ROOT}/scripts/wait-ci.sh ${REPO} ${pr.prNumber} 9\`, with the Bash tool's timeout set to 600000 ms. It prints one JSON line with head, state (pending, success or failure), failed and timedOut. While timedOut is true, run it again, at most 3 calls in all. If it is still timedOut, return readyToMerge false and say so in notes.
 Return readyToMerge, headSha, notes and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}`

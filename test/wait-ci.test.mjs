@@ -105,3 +105,15 @@ test('a bad minutes value exits 2', () => {
   const r = run(setup({}), 'x')
   assert.equal(r.status, 2)
 })
+
+test("commit statuses alone, all green: success", () => {
+  const out = JSON.parse(run(setup({ runs: [], statuses: [{ context: "legacy/ci", state: "success" }] })).stdout)
+  assert.equal(out.state, "success")
+  assert.equal(out.timedOut, false)
+})
+
+test("no check runs and no statuses: pending", () => {
+  const out = JSON.parse(run(setup({}), "2").stdout)
+  assert.equal(out.state, "pending")
+  assert.equal(out.timedOut, true)
+})
