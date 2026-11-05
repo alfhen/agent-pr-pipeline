@@ -1712,3 +1712,27 @@ test('build: a ready-to-build label alone does not build when the maintainer rem
   assert.equal(r.status, 65); c_onlyReads(r)
   assert.equal(c_one(c_cnext(mk(['ready-to-build', 'maintainer-approved']), 'cloud-build')).step, 'build')
 })
+
+// A jq that refuses any argument over 100000 bytes, like Linux (128 KB per argument) with some margin.
+function c_capJq(s) {
+  const real = spawnSync('bash', ['-c', 'command -v jq'], { encoding: 'utf8' }).stdout.trim()
+  const f = join(s.bin, 'jq')
+  writeFileSync(f, `#!/bin/bash\nfor a in "$@"; do if [ "\${#a}" -gt 100000 ]; then echo "jq: Argument list too long" >&2; exit 126; fi; done\nexec ${real} "$@"\n`)
+  chmodSync(f, 0o755)
+}
+
+test('cloud next works when the collected JSON is far above one argument cap', () => {
+  const pad = n => 'x'.repeat(n)
+  const issues = Array.from({ length: 60 }, (_, k) => c_ci(200 + k, { body: pad(4000), created: c_T(k) }))
+  const records = Array.from({ length: 4 }, (_, k) => c_cr('feedback-outbox', `${900 + k}:${c_CRUN(k)}`, { pad: pad(60000) }, { at: c_T(10 + k) }))
+  const pulls = Array.from({ length: 10 }, (_, k) => ({ ...c_cpr(`claude/issue-${300 + k}`, { number: 400 + k }), body: pad(20000) }))
+  const comments = Object.fromEntries(issues.map(i => [i.number, [c_cc('alfhen', c_T(1), pad(3000))]]))
+  const s = csetup({ issues, records, pulls, comments })
+  c_capJq(s)
+  const t = c_cnext(s)
+  assert.equal(t.status, 0, t.stderr); c_ok(t)
+  const sb = csetup({ issues: issues.map(i => ({ ...i, labels: [{ name: 'ready-to-build' }] })), records, pulls, comments })
+  c_capJq(sb)
+  const b = c_cnext(sb, 'cloud-build')
+  assert.equal(b.status, 0, b.stderr)
+})

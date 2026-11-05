@@ -348,8 +348,8 @@ gate_state() {
 records() {
   local t
   t=$(trusted_all "$1" "<!-- pipeline:routine ") || exit $?
-  jq -c --argjson t "$t" --arg user "$user" '
-    . as $c
+  jq -c --slurpfile t <(printf '%s' "$t") --arg user "$user" '
+    $t[0] as $t | . as $c
     | [$t[] | . as $b | ($b | split("\n")) as $lines
        | ($lines[0] | capture("^<!-- pipeline:routine (?<kind>[a-z-]+) (?<key>[^ ]+) -->\\z")?) as $h
        | ([$c[] | objects | select(.user.login == $user and .body == $b)] | last) as $m
@@ -398,7 +398,8 @@ would() { # words...: stage 0 prints what the put would do and writes nothing
 
 open_issues() { # all open issues, no pull requests, not the tracking issue
   pages "repos/$repo/issues?state=open&per_page=100" | jq -c --argjson t "${tracking:-0}" \
-    '[.[] | select((has("pull_request") | not) and .state == "open" and .number != $t)]'
+    '[.[] | select((has("pull_request") | not) and .state == "open" and .number != $t)
+      | {number, title, body, state, created_at, user: {login: .user.login}, labels: [.labels[]? | {name}]}]'
 }
 
 has_pr_from() { # issue -> true or false: a PR by the account from claude/issue-<n> or the 0.7.0 branch
@@ -413,7 +414,7 @@ gather() { # issues-json-array -> one context object per issue
   local n obj comments events appr rtb hash hp ctx='[]'
   for n in $(jq -r '.[].number' <<<"$1"); do
     obj=$(jq -c --argjson n "$n" 'map(select(.number == $n))[0]' <<<"$1")
-    comments=$(pages "repos/$repo/issues/$n/comments") || exit $?
+    comments=$(pages "repos/$repo/issues/$n/comments" | jq -c '[.[] | {id, created_at, updated_at, body, user: {login: .user.login}}]') || exit $?
     events='[]'
     if jq -e 'any(.labels[]?; .name == "maintainer-approved" or .name == "ready-to-build")' <<<"$obj" >/dev/null; then
       events=$(pages "repos/$repo/issues/$n/events") || exit $?
@@ -422,8 +423,8 @@ gather() { # issues-json-array -> one context object per issue
     rtb=$(jq -c '[.[]? | objects | select(.event == "labeled" and .label.name == "ready-to-build") | .created_at | strings] | if length == 0 then null else max end' <<<"$events") || exit 3
     hash=$(text_hash "$obj")
     hp=$(has_pr_from "$n") || exit $?
-    ctx=$(jq -c --argjson o "$obj" --argjson c "$comments" --argjson a "$appr" --argjson r "$rtb" --arg h "$hash" --argjson p "$hp" \
-      '. + [{issue: $o, comments: $c, approval: $a, rtb: $r, hash: $h, hasPr: $p}]' <<<"$ctx")
+    ctx=$(jq -c --slurpfile o <(printf '%s' "$obj") --slurpfile c <(printf '%s' "$comments") --argjson a "$appr" --argjson r "$rtb" --arg h "$hash" --argjson p "$hp" \
+      '. + [{issue: $o[0], comments: $c[0], approval: $a, rtb: $r, hash: $h, hasPr: $p}]' <<<"$ctx")
   done
   printf '%s' "$ctx"
 }
@@ -433,11 +434,13 @@ make_plan() {
   local ctx pulls='[]' start=null run prefix
   prefix=$(branch_prefix) || exit $?
   ctx=$(gather "$2") || exit $?
-  if [ "$1" = build ]; then pulls=$(pages "repos/$repo/pulls?state=open&per_page=100") || exit $?; fi
+  if [ "$1" = build ]; then pulls=$(pages "repos/$repo/pulls?state=open&per_page=100" | jq -c '[.[] | {user: {login: .user.login}, head: {ref: .head.ref}}]') || exit $?; fi
   [ -z "$start_json" ] || start=$start_json
   run="$(utc_stamp)-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
-  jq -nc --argjson ctx "$ctx" --argjson recs "$recs" --argjson cfg "$routine_cfg" --argjson pulls "$pulls" --argjson start "$start" \
-    --arg user "$user" --arg prefix "$prefix" --arg repo "$repo" --arg run "$run" --arg mode "$1" --argjson stage "$stage" "$PLAN_JQ" \
+  jq -nc --slurpfile ctx <(printf '%s' "$ctx") --slurpfile recs <(printf '%s' "$recs") --slurpfile cfg <(printf '%s' "$routine_cfg") \
+    --slurpfile pulls <(printf '%s' "$pulls") --argjson start "$start" \
+    --arg user "$user" --arg prefix "$prefix" --arg repo "$repo" --arg run "$run" --arg mode "$1" --argjson stage "$stage" \
+    '$ctx[0] as $ctx | $recs[0] as $recs | $cfg[0] as $cfg | $pulls[0] as $pulls | '"$PLAN_JQ" \
     || die 3 "the plan failed"
 }
 start_json=""
@@ -460,7 +463,7 @@ cloud_next() {
   load_records
   issues=$(open_issues) || exit $?
   if [ "$nmode" = cloud-build ]; then
-    issues=$(jq -c --argjson recs "$recs" '[.[] | .number as $n | select(any(.labels[]?; .name | IN("building", "ready-to-build", "maintainer-approved", "build-failed"))
+    issues=$(jq -c --slurpfile recs <(printf '%s' "$recs") '$recs[0] as $recs | [.[] | .number as $n | select(any(.labels[]?; .name | IN("building", "ready-to-build", "maintainer-approved", "build-failed"))
       or any($recs[]; .kind == "build-started" and .n == $n))]' <<<"$issues")
     p=$(make_plan build "$issues") || exit $?
   else
