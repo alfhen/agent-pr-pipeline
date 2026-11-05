@@ -198,7 +198,7 @@ def hasl($l): .L | index($l) != null;
   [$ctx[] | facts(.)] as $F
   | ([$F[] | select(.tr != null and (.tr.key | contains(":") | not) and ((.tr.rec | type) == "object") and .tr.rec.type == null
         and (.tr.rec.decision | IN("build", "plan", "decline"))
-        and (.L | any(inl($stateLabels)) | not) and (.excluded | not))] | byAge) as $adopt
+        and (.L | any(inl($stateLabels)) | not) and (.excluded | not) and .reason == null)] | byAge) as $adopt
   | ([$F[] | select((.trusted | not) and ge and (.skipped | not) and (.r | any(.kind == "untrusted") | not) and (.r | any(.kind == "triaged") | not))] | byAge) as $untrusted
   | ([$F[] | select(.authorPart and (.reason == "hash" or .reason == "comment") and (.excluded | not))] | byAge) as $revoke
   | ([$F[] | . as $f | select($f.authorPart and $f.reason == null and ($f | ge) and ($f.excluded | not) and ($f.trNew | not)

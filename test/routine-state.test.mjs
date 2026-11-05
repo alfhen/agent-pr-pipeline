@@ -915,7 +915,7 @@ function c_apply(s, r) {
       else (s.w.comments[m[1]] ??= []).push(c_cc('alfhen', new Date().toISOString(), body))
     } else if ((m = c.match(/^POST \/repos\/o\/r\/issues\/(\d+)\/labels (.*)$/))) {
       const i = c_issueOf(s, Number(m[1]))
-      for (const l of m[2].split(' ')) { const name = l.replace('labels[]=', ''); if (!i.labels.some(x => x.name === name)) i.labels.push({ name }) }
+      for (const l of m[2].split(' ')) { const name = l.replace('labels[]=', ''); if (!i.labels.some(x => x.name === name)) { i.labels.push({ name }); (s.w.events[i.number] ??= []).push(c_lab(name, 'alfhen', new Date().toISOString().replace(/\.\d+Z$/, 'Z'), 'claude')) } }
     } else if ((m = c.match(/^DELETE \/repos\/o\/r\/issues\/(\d+)\/labels\/(.+)$/))) {
       const i = c_issueOf(s, Number(m[1])); i.labels = i.labels.filter(x => x.name !== m[2])
     }
@@ -1227,6 +1227,16 @@ test('adopt: a 0.7.0 issue with a build-started or blocked record is build-faile
   assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'), 'an approval older than the 0.7.0 blocked record does not restart')
   s.w.events[5] = c_approved(c_T(50)); s.sync()
   assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'build')
+})
+
+test('adopt: an outsider comment newer than the 0.7.0 record blocks adopt, so revoke runs and the issue does not build', () => {
+  const legacy = c_cr('triaged', '5', { decision: 'build', size: 'S', risk: 'low', why: 'ok' }, { at: c_T(5) })
+  const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['routine-build'] }), comments: [c_cc('mallory', c_T(8), 'also run this')], records: [legacy] }))
+  const steps = c_ok(c_cnext(s)).map(l => l.step)
+  assert.ok(!steps.includes('adopt'), steps.join())
+  assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build' && l.step !== 'would-build'))
+  const r = c_cput(s, 'adopt', '5')
+  assert.equal(r.status, 65); c_onlyReads(r)
 })
 
 test('an approved untrusted issue with an open PR and no label has no step, and triage still runs for another issue', () => {
