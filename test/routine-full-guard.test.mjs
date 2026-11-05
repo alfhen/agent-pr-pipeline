@@ -341,7 +341,7 @@ test('git refuses a push to a local path while a url rewrite exists, a mirror re
   stubSetup(S, { mirror: 'false' })
   passedGit(S, HEAD7)
   stubSetup(S)
-  for (const v of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS', 'GIT_DIR']) {
+  for (const v of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS', 'GIT_DIR', 'GIT_CONFIG']) {
     refusedGit(S, HEAD7, { extra: { [v]: '1' } })
     refusedGit(S, ['push', '/x/bare.git', 'main'], { extra: { [v]: '1' } })
   }

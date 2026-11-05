@@ -91,6 +91,8 @@ fi
 # ---- push ----
 [ "$only_c" = 1 ] || refuse
 [ -z "${GIT_DIR:-}" ] || refuse
+# git config reads GIT_CONFIG as a file but git push ignores it, so the url and mirror checks below would read a different config than the push uses.
+[ -z "${GIT_CONFIG:-}" ] || refuse
 # Claude Code's sandbox sets a few config keys through the environment. Any other key could carry a pushurl or a
 # remote.*.push mapping, so only these pass.
 env_key_ok() {
