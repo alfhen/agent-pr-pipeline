@@ -4,7 +4,7 @@ A Claude Code plugin that builds a release as small PRs, each checked by separat
 
 ## Goals
 
-1. **Self-improvement (most important).** After each pipeline run ends, agents evaluate what worked well and what didn't. They show me the feedback first, then submit it to this repo as issues, with details of the other repo (code, data, names) left out.
+1. **Self-improvement (most important).** After each pipeline run ends, agents evaluate what worked well and what didn't. They file the feedback in this repo as issues, with details of the other repo (code, data, names) left out. When I watch a run, they show me the feedback first. An unattended run files it without my approval, within limits: at most three items for each run, only items with evidence and a suggested change, a daily cap, and an item that repeats an open issue becomes a comment on that issue.
 2. **Quality.** No agent checks its own work, and no code lands that no other agent checked.
 3. **My attention.** I step in only for decisions: scope, architecture, and any merge or tag the safety evaluation does not clear.
 4. **Cost.** Fewer tokens per merged PR.
@@ -23,7 +23,7 @@ Why: this is a personal tool for me, and I decide how my agents run.
 
 ## Users
 
-- **Me.** I decide scope and architecture, approve the evaluation feedback before it becomes issues, and handle any merge, tag or release the safety evaluation does not clear.
+- **Me.** I decide scope and architecture, approve the evaluation feedback of the runs I watch, and handle any merge, tag or release the safety evaluation does not clear.
 - **Claude sessions that work with me.** They plan releases and run waves on my repos.
 - **The scheduled routine.** It triages the filed issues, plans releases and runs them through the pipeline.
 
