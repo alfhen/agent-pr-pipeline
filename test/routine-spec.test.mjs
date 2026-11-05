@@ -35,9 +35,14 @@ test('this repo gets triage, build and collect', () => {
   assert.deepEqual(own(r.json), ['triage', 'build', 'collect'])
   assert.deepEqual(r.json.routines.map((x) => x.name), ['apl-alfhen-agent-pr-pipeline-triage', 'apl-alfhen-agent-pr-pipeline-build', 'apl-alfhen-agent-pr-pipeline-collect'])
   const collect = r.json.routines[2]
-  assert.deepEqual(collect.sources, ['alfhen/agent-pr-pipeline'])
-  assert.deepEqual(collect.collectFrom, ['alfhen/dogfood'])
+  assert.deepEqual(collect.sources, ['alfhen/agent-pr-pipeline', 'alfhen/dogfood'])
+  assert.deepEqual(r.json.routines[0].sources, ['alfhen/agent-pr-pipeline'])
   assert.deepEqual(collect.webhooks, [])
+})
+
+test('collect sources drop a repeat of the repo, ignoring case', () => {
+  const r = spec('alfhen/agent-pr-pipeline', settings({ collectFrom: ['Alfhen/Agent-PR-Pipeline', 'alfhen/a', 'ALFHEN/a'] }), ['--k2', k2File(BOTH)])
+  assert.deepEqual(r.json.routines[2].sources, ['alfhen/agent-pr-pipeline', 'alfhen/a'])
 })
 
 test('dogfood gets triage and build only', () => {
@@ -63,8 +68,9 @@ test('invalid settings exit 3', () => {
 test('two repos get different minutes', () => {
   const a = spec('alfhen/pipeline-dogfood', settings({})).json.routines
   const b = spec('alfhen/tagreeve', settings({})).json.routines
-  assert.notEqual(a[0].schedule, b[0].schedule)
-  assert.notEqual(a[0].schedule, a[1].schedule)
+  const minute = (x) => x.schedule.split(' ')[0]
+  assert.notEqual(minute(a[0]), minute(b[0]))
+  assert.notEqual(minute(a[0]), minute(a[1]))
   assert.match(a[0].schedule, /^([0-9]|[1-5][0-9]) ([0-9]|1[0-9]|2[0-3]) \* \* \*$/)
 })
 
@@ -156,7 +162,7 @@ test('a bad tag is refused', () => {
 test('the output depends on the settings only: the full good file works', () => {
   const r = spec('alfhen/agent-pr-pipeline', good, ['--k2', k2File(BOTH)])
   assert.equal(r.status, 0, r.stderr)
-  assert.deepEqual(r.json.routines[2].collectFrom, ['alfhen/tagreeve'])
+  assert.deepEqual(r.json.routines[2].sources, ['alfhen/agent-pr-pipeline', 'alfhen/tagreeve'])
 })
 
 test('the output holds no token', () => {
@@ -170,4 +176,7 @@ test('the skill says the maintainer pastes the setup script and deletes in the w
   assert.match(skill, /RemoteTrigger cannot delete a routine/)
   assert.match(skill, /routine-paused/)
   assert.match(skill, /`\/schedule` does not work inside a cloud session/)
+  assert.match(skill, /routine-state\.sh" <owner\/repo> init/)
+  assert.match(skill, /git_repository/)
+  assert.match(skill, /environment_id/)
 })

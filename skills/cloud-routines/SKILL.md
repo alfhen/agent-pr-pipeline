@@ -11,7 +11,8 @@ A repo that has a `routine` block in `.github/pipeline.json` gets up to three cl
 flowchart TD
   S[routine-spec.sh repo] --> V[show the result to the maintainer]
   V -- yes --> E[setup script: the maintainer pastes it in the web UI]
-  E -- saved --> R{routine with this name exists?}
+  E -- saved --> I[routine-state.sh init]
+  I --> R{routine with this name exists?}
   R -- no --> C[RemoteTrigger create]
   R -- yes --> U[RemoteTrigger update]
   C --> L[RemoteTrigger list and compare]
@@ -35,19 +36,24 @@ Show the maintainer, for each routine: the name, the schedule, the sources, the 
 
 No RemoteTrigger action reads or changes an environment or its setup script (K8). So the maintainer pastes the `setupScript` field in the web UI: write it to a file, show the path, and wait for a yes that it is saved. The environment's own part (for example the package manager of the repo) follows the printed part and is the maintainer's. Do not go on until the maintainer says it is saved.
 
-## 3. The routines
+## 3. The tracking issue
+
+With the maintainer's yes, run `bash "$ROOT/scripts/routine-state.sh" <owner/repo> init` from the main session. It prints the tracking issue number and is safe to run again. Without it every routine run prints `init needed` and stops, and a stale environment sends no notice.
+
+## 4. The routines
 
 Use RemoteTrigger from the main session. For each entry of `routines`:
 
 - `list` first. When a routine with the entry's `name` exists, call `update` with its id. Otherwise call `create`.
-- `create` takes `name`, `cron_expression` (the `schedule` field), `enabled`, `clear_mcp_connections: true` and `job_config.ccr` with `environment_id`, `session_context` (`model`, `sources`, `allowed_tools`) and `events` holding the `prompt`. Set `clear_mcp_connections: true`: without it a new routine gets the account's connectors. `sources` is the repo, and for collect also each repo in `collectFrom`.
+- `create` takes `name`, `cron_expression` (the `schedule` field), `enabled`, `clear_mcp_connections: true` and `job_config.ccr` with `environment_id`, `session_context` (`model`, `sources`, `allowed_tools`) and `events` holding the `prompt`. Set `clear_mcp_connections: true`: without it a new routine gets the account's connectors. Pass `sources` exactly as the spec gives it: it already holds the repo and, for collect, each repo of `collectFrom`. A session reaches only the repos attached as sources.
+- Body shapes that the API accepts (K8): `sources` is a list of `{"git_repository": {"url": "https://github.com/<owner>/<repo>"}}`, one per repo of the spec. `events` is a list of one `{"data": {"type": "user", "uuid": "<new uuid>", "session_id": "", "parent_tool_use_id": null, "message": {"role": "user", "content": "<the prompt>"}}}`. `allowed_tools` is `["Bash"]`. `model` is the model the maintainer names. `environment_id` is shown in the web UI after the maintainer saves the setup script: ask for it. A plain `["owner/repo"]` list in `sources` gets HTTP 400.
 - `update` can change `name`, `enabled`, `cron_expression` and the prompt.
 - Webhooks: `webhooks` is empty while K2 found no filter (`routine/cloud/k2.json` is `{"authorFilter": false, "labelFilter": false}` in 0.8.0), so the routines run on their schedules only. When an entry is present, call `create_webhook_trigger` with `routine_trigger_id`, `hook_type`, `source: github`, `scope_id` (`<owner>/<repo>`) and `events`, and then check with `get` that the filter was stored. A webhook whose filter shows nothing in `get` is not made.
-- Then `list` again and compare each routine with the spec: name, schedule, enabled, environment.
+- Then `list` again and compare each routine with the spec: name, schedule, enabled, environment, sources.
 
 Turn a routine off or on with `update` and `enabled`. Run one by hand with `run`, and read it with `list_runs` and `get_run_log`.
 
-## 4. Delete
+## 5. Delete
 
 RemoteTrigger cannot delete a routine or a webhook trigger. The maintainer deletes them in the web UI. Tell them which ones by name. Do not delete the environment either.
 

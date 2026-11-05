@@ -57,5 +57,5 @@ jq -nc --arg repo "$repo" --argjson cfg "$cfg" --argjson k2 "$k2_json" --arg bas
     [ (routine("triage") | .webhooks = (if $k2.authorFilter then [{event: "issues.opened", filter: {author: $cfg.trustedAuthors}}] else [] end)),
       (routine("build") | .webhooks = (if $k2.labelFilter then [{event: "issues.labeled", filter: {labels: ["ready-to-build", "maintainer-approved"]}}] else [] end)) ]
     + (if ($cfg.feedbackRepo | ascii_downcase) == ($repo | ascii_downcase)
-       then [(routine("collect") | .collectFrom = $cfg.collectFrom)] else [] end)),
+       then [(routine("collect") | .sources = (reduce ([$repo] + $cfg.collectFrom)[] as $s ([]; if any(.[]; ascii_downcase == ($s | ascii_downcase)) then . else . + [$s] end)))] else [] end)),
    setupScript: $setup}' || exit 1
