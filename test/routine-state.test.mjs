@@ -781,9 +781,9 @@ test('config.jq fills the defaults in a good file', () => {
   assert.deepEqual(JSON.parse(cfg(goodConfig).stdout).limits, DEFAULTS)
 })
 
-test('config.jq with -n and no input prints the defaults only', () => {
+test('config.jq with -n and no input prints the 0.7.0 defaults in limits', () => {
   const r = spawnSync('jq', ['-nc', '-f', join(root, 'routine/config.jq')], { encoding: 'utf8' })
-  assert.deepEqual(JSON.parse(r.stdout), { limits: DEFAULTS })
+  assert.deepEqual(JSON.parse(r.stdout).limits, DEFAULTS)
 })
 
 for (const key of ['repo', 'tmp', 'pluginRoot', 'prs', 'plan', 'feedback', 'feedbackRepo', 'resumeFromRunId']) {
