@@ -226,6 +226,19 @@ test('apl-start stops when a file changed after the install, or went missing', (
   stopped(aplStart(w, work), 'file missing from v9\\.9\\.9: scripts/semver\\.sh', 'v9.9.9', `ROOT ${join(w.opt, 'v9.9.9')}`)
 })
 
+test('apl-start stops when git hash-object fails', () => {
+  const w = world(); const { work } = setupRepo(w)
+  assert.equal(install(w).status, 0)
+  const realGit = sh('bash', ['-c', 'command -v git']).stdout.trim()
+  const gitStub = join(w.dir, 'gitstub'); mkdirSync(gitStub)
+  writeFileSync(join(gitStub, 'git'), `#!/bin/bash\n[ "$1" = hash-object ] && exit 128\nexec ${realGit} "$@"\n`)
+  chmodSync(join(gitStub, 'git'), 0o755)
+  const e = env(w); e.PATH = `${gitStub}:${e.PATH}`
+  const r = sh('bash', [join(w.bin, 'apl-start'), 'o/r'], { cwd: work, env: e })
+  assert.equal(r.status, 1)
+  assert.match(r.stdout, /^APL STOP cannot hash the files of v9\.9\.9/)
+})
+
 test('apl-start stops when an agent file differs from the release in more than the name line', () => {
   const w = world(); const { work } = setupRepo(w)
   assert.equal(install(w).status, 0)

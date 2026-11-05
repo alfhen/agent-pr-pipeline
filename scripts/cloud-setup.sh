@@ -84,7 +84,9 @@ grep -qvE '^[0-9a-f]{40} [A-Za-z0-9._/-]+$' "$manifest" && stop "files.txt of $p
 grep -qE '(^| |/)\.\.(/|$)|^/| /' "$manifest" && stop "files.txt of $pin has a path outside the release"
 paths=$(awk '{ print $2 }' "$manifest")
 for p in $paths; do [ -f "$root/$p" ] || stop "file missing from $pin: $p"; done
-changed=$(paste -d' ' <(awk '{ print $1 }' "$manifest") <(cd "$root" && git hash-object --stdin-paths <<<"$paths") <(echo "$paths") | awk '$1 != $2 { print $3; exit }')
+hashes=$(cd "$root" && git hash-object --stdin-paths <<<"$paths") || stop "cannot hash the files of $pin"
+[ "$(wc -l <<<"$hashes")" -eq "$(wc -l <"$manifest")" ] || stop "cannot hash the files of $pin"
+changed=$(paste -d' ' <(awk '{ print $1 }' "$manifest") <(echo "$hashes") <(echo "$paths") | awk '$1 != $2 { print $3; exit }')
 [ -z "$changed" ] || stop "file changed in $pin: $changed"
 
 prefix=apl-${pin//./-}-
@@ -130,10 +132,10 @@ install_tag() {
   STAGE=$(mktemp -d "$ROOT/.stage-$TAG.XXXXXX")
   export RAW TAG STAGE
   mkdir -p "$STAGE/.claude-plugin"
-  curl -fsSL --retry 3 -o "$STAGE/.claude-plugin/files.txt" "$RAW/$TAG/.claude-plugin/files.txt"
+  curl -fsSL --retry 3 -o "$STAGE/.claude-plugin/files.txt" "$RAW/$TAG/.claude-plugin/files.txt" || { echo "fetch failed: files.txt of $TAG" >&2; exit 1; }
   [ -s "$STAGE/.claude-plugin/files.txt" ] || { echo "files.txt of $TAG is empty" >&2; exit 1; }
   ! grep -qvE '^[0-9a-f]{40} [A-Za-z0-9._/-]+$' "$STAGE/.claude-plugin/files.txt" || { echo "files.txt of $TAG has a bad line" >&2; exit 1; }
-  xargs -P 8 -n 2 bash -c 'fetch_one "$0" "$1"' < "$STAGE/.claude-plugin/files.txt"
+  xargs -P 8 -n 2 bash -c 'fetch_one "$0" "$1"' < "$STAGE/.claude-plugin/files.txt" || { echo "fetch or check failed for $TAG" >&2; exit 1; }
   find "$STAGE" -name '*.sh' -exec chmod +x {} +
   chmod 755 "$STAGE"
   rm -rf "${ROOT:?}/$TAG"
