@@ -41,7 +41,8 @@ const LABEL = A.minorLabel || 'review-minor'
 const FEEDBACK = A.feedback !== false
 const CLEANUP = A.cleanup !== false
 const FEEDBACK_REPO = A.feedbackRepo || 'alfhen/agent-pr-pipeline'
-const MILESTONE = A.milestone ? ` --milestone "${A.milestone}"` : ''
+const MILESTONE = A.milestone ? ` -F milestone=<number>` : ''
+const MILESTONE_STEP = A.milestone ? `\nFirst read the milestone number: \`gh api --paginate 'repos/${REPO}/milestones?per_page=100' --jq '.[] | select(.title == "${A.milestone.replace(/["\\]/g, '\\$&')}") | .number'\`. If it prints nothing, stop and return blocked true with blockedReason "milestone ${A.milestone} not found".` : ''
 const STEPS = Object.assign({
   impl: { model: 'sonnet', effort: 'medium' },
   test: { model: 'sonnet', effort: 'low' },
@@ -603,9 +604,9 @@ Docs agent summary: ${JSON.stringify(docs)}`
 const openPrompt = (pr, rounds, minors, arch, untested = []) => `${ctx(pr)}
 
 Task: open the pull request for ${pr.branch} and file the minor findings.
-Write each issue body and the PR body to a file under \`${TMP}/open-${pr.id}/\` with the Write tool, and pass it with \`--body-file\`. Never pass a body inline, and write no other file.
-1. Issues: \`gh issue create -R ${REPO} --label ${LABEL}${MILESTONE} --body-file <file>\`. Body ends with "Found in review of ${pr.id}."
-2. PR: \`gh pr create -R ${REPO} --head ${pr.branch} --body-file <file>\`, title "${pr.title}". Include "Review: no blockers or majors after round N." (N from the history).${untested.length ? ` Add an "Untested" section that lists each untested item below.` : ''}${pr.quick ? ` Put "Closes #${pr.quick.issue}" on its own line in the body.` : ''}
+Write each issue body and the PR body to a file under \`${TMP}/open-${pr.id}/\` with the Write tool, and pass it with \`-F body=@<file>\`. Never pass a body inline, and write no other file.${MILESTONE_STEP}
+1. Issues: \`gh api -X POST repos/${REPO}/issues -f title=<title> -F body=@<file> -f 'labels[]=${LABEL}'${MILESTONE}\`. Body ends with "Found in review of ${pr.id}."
+2. PR: read the default branch with \`gh api repos/${REPO} --jq .default_branch\`, then \`gh api -X POST repos/${REPO}/pulls -f head=${pr.branch} -f base=<default branch> -f title=<title> -F body=@<file> --jq .number\`, title "${pr.title}". The PR URL is https://github.com/${REPO}/pull/<number>. Include "Review: no blockers or majors after round N." (N from the history).${untested.length ? ` Add an "Untested" section that lists each untested item below.` : ''}${pr.quick ? ` Put "Closes #${pr.quick.issue}" on its own line in the body.` : ''}
 Return prNumber, prUrl and the issues you created.
 If a permission check denies a command, stop: return blocked true, blockedReason, and commands (the exact commands you prepared and could not run). Never work around a denial.
 
@@ -621,7 +622,7 @@ const bodyPrompt = (pr, n, untested, exact) => `${ctx(pr)}
 Task: update the body of pull request #${n} in ${REPO}. ${exact
     ? 'Its "Untested" section must list exactly the untested items below: add the section if it is missing, drop items not listed, and remove the section when the list is empty.'
     : 'Add every untested item below that its "Untested" section does not list yet (add the section if it is missing). Keep the items already listed.'} Keep the rest of the body as it is.
-Read the body with \`gh pr view ${n} -R ${REPO} --json body\`. Write the new body to a file under \`${TMP}/open-${pr.id}/\` with the Write tool, and pass it with \`gh pr edit ${n} -R ${REPO} --body-file <file>\`. Never pass a body inline, and write no other file.
+Read the body with \`gh api repos/${REPO}/pulls/${n} --jq .body\`. Write the new body to a file under \`${TMP}/open-${pr.id}/\` with the Write tool, and pass it with \`gh api -X PATCH repos/${REPO}/pulls/${n} -F body=@<file>\`. Never pass a body inline, and write no other file.
 Return updated true when the body is saved.
 
 Untested items: ${JSON.stringify(untested)}`
@@ -648,7 +649,7 @@ Task: answer the review bots on pull request #${n}.
 1. You are in a fresh git worktree. ${freshBranch('bots', pr, 0)}
 2. Write each reply to a file under \`${TMP}/answer-${pr.id}/\`, then reply on a thread with \`gh api repos/${REPO}/pulls/${n}/comments/<id>/replies -F body=@<file>\`. Never pass a body inline.
 3. Checks if you changed code: ${fastText}, and ${ownE2e}.
-4. Minor issues already filed from this PR's review: ${issues && issues.length ? issues.join(', ') : '(none)'}. If a fix of yours settles one, add \`Closes #N\` on its own line to the PR body (\`gh pr view ${n} -R ${REPO} --json body\`, then \`gh pr edit ${n} -R ${REPO} --body-file <file>\`), so it closes when the PR merges.
+4. Minor issues already filed from this PR's review: ${issues && issues.length ? issues.join(', ') : '(none)'}. If a fix of yours settles one, add \`Closes #N\` on its own line to the PR body (\`gh api repos/${REPO}/pulls/${n} --jq .body\`, then \`gh api -X PATCH repos/${REPO}/pulls/${n} -F body=@<file>\`), so it closes when the PR merges.
 Return threads addressed, whether code changed, headSha (\`git rev-parse HEAD\` after your last push), closesIssues (the issue numbers you added), notes, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}`
@@ -682,8 +683,8 @@ const landFixPrompt = pr => `${ctx(pr)}
 Task: bring PR #${pr.prNumber} (${pr.branch}) to a mergeable state with green CI.
 1. You are in a fresh git worktree. ${freshBranch('land', pr, 0)}
 2. Conflict: \`git merge origin/HEAD\`, then ${fastText}, and ${ownE2e}.
-3. CI: \`gh run view <run> -R ${REPO} --log-failed\`; rerun a flaky network failure with \`gh run rerun <run> --failed\`.
-4. Wait: \`gh pr checks ${pr.prNumber} -R ${REPO} --watch --interval 30\`.
+3. CI: list the failed jobs of a run with \`gh api repos/${REPO}/actions/runs/<run>/jobs\`, then read a job's log with \`gh api repos/${REPO}/actions/jobs/<job>/logs\`; rerun a flaky network failure with \`gh api -X POST repos/${REPO}/actions/runs/<run>/rerun-failed-jobs\`.
+4. Wait: \`bash ${PLUGIN_ROOT}/scripts/wait-ci.sh ${REPO} ${pr.prNumber} 9\`, with the Bash tool's timeout set to 600000 ms. It prints one JSON line with head, state (pending, success or failure), failed and timedOut. While timedOut is true, run it again, at most 3 calls in all. If it is still timedOut, return readyToMerge false and say so in notes.
 Return readyToMerge, headSha, notes and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}`
@@ -696,7 +697,7 @@ const triagePrompt = pr => `${ctx(pr)}
 
 Task: triage ${ref(pr)} for a quick fix.
 1. Clone the default branch: \`rm -rf ${TMP}/triage-${pr.id} && git clone https://github.com/${REPO}.git ${TMP}/triage-${pr.id}\`.
-2. Read the issue with \`gh api repos/${REPO}/issues/${pr.quick.issue}\` and its comments with \`gh api --paginate repos/${REPO}/issues/${pr.quick.issue}/comments\`. Read the goals document ${GOALS} and the code the fix would touch.
+2. Read the issue with \`gh api repos/${REPO}/issues/${pr.quick.issue}\` and its comments with \`gh api --paginate repos/${REPO}/issues/${pr.quick.issue}/comments\`. Read the goals document \`${TMP}/triage-${pr.id}/${GOALS}\` and the code the fix would touch from \`${TMP}/triage-${pr.id}\`, never from the session's working folder.
 Return decision (build, plan or decline), size, risk, why, newConcepts, and for build the entry (touches, acceptance, invariants for a change that adds a check, qa).
 
 ${prBlock(pr)}`
@@ -770,8 +771,8 @@ const briefFile = (pr, attempt) => `${briefDir(pr)}/entry-${attempt}.md`
 
 const productEntryPrompt = pr => `${ctx(pr)}
 
-Task: check that this quick-fix entry stays true to the product goals in ${GOALS}. Nothing is built yet.
-Clone the default branch: \`rm -rf ${TMP}/product-${pr.id} && git clone https://github.com/${REPO}.git ${TMP}/product-${pr.id}\`. Read ${GOALS}, then the entry below and ${issueUrl(pr)}.
+Task: check that this quick-fix entry stays true to the product goals. Nothing is built yet.
+Clone the default branch: \`rm -rf ${TMP}/product-${pr.id} && git clone https://github.com/${REPO}.git ${TMP}/product-${pr.id}\`. Read \`${TMP}/product-${pr.id}/${GOALS}\`, never the copy in the session's working folder, then the entry below and ${issueUrl(pr)}.
 Return the verdict, a short summary, one row for the entry, and the escalation (for escalate).
 
 ${prBlock(pr)}`
