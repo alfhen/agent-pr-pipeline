@@ -51,7 +51,7 @@ test('qa reports a scenario it could not run as not-run, never as pass', () => {
 });
 
 test('the pr opener and the bot answerer write bodies to files in the temp folder', () => {
-  assert.match(opener, /Write each issue body and the PR body to a file with the Write tool, only inside the temp folder your task names, and pass it with `--body-file`/);
+  assert.match(opener, /Write each issue body and the PR body to a file with the Write tool, only inside the temp folder your task names, and pass it with `-F body=@<file>` on a `gh api` call/);
   assert.match(answerer, /Write each reply to a file inside the temp folder your task names, and send it with `-F body=@<file>`/);
   assert.match(opener, /Untested section/);
 });

@@ -175,7 +175,7 @@ The result is `{ prs, feedback, denylist, source, feedbackRepo, cleanup, warning
 
 ### Role agents
 
-Each step runs as one agent definition from the plugin. Its body holds the role's rules; its tools are the smallest set the role needs. Reviewers, the tester, the triager, the PR opener, the bot waiter, `pipeline-io`, the merge-safety agent, the preflight, the evaluator and the redactor have no edit tools, except that the PR opener and `pipeline-io` have `Write`. The PR opener writes only the issue and PR body files, inside the wave's temp folder, and passes them with `--body-file`. `pipeline-io` writes only the one file its task names, inside the temp folder (the quick brief). The bot answerer likewise sends its replies from a file with `-F body=@<file>`, never inline. No role agent can start other agents.
+Each step runs as one agent definition from the plugin. Its body holds the role's rules; its tools are the smallest set the role needs. Reviewers, the tester, the triager, the PR opener, the bot waiter, `pipeline-io`, the merge-safety agent, the preflight, the evaluator and the redactor have no edit tools, except that the PR opener and `pipeline-io` have `Write`. The PR opener writes only the issue and PR body files, inside the wave's temp folder, and passes them with `-F body=@<file>` on a `gh api` call. `pipeline-io` writes only the one file its task names, inside the temp folder (the quick brief). The bot answerer likewise sends its replies from a file with `-F body=@<file>`, never inline. No role agent can start other agents.
 
 | Step | Agent | Model | Effort | Tools |
 | --- | --- | --- | --- | --- |

@@ -7,7 +7,7 @@ import { join, relative } from 'node:path'
 
 const root = new URL('../', import.meta.url).pathname
 const FOLDERS = ['workflows', 'agents', 'scripts', 'routine', 'templates']
-const FORBIDDEN = /\bgh\s+(pr|issue|run|release|repo|label|search|workflow|project)\b|gh\s+api\s+graphql/
+const FORBIDDEN = /\bgh\s+(pr|issue|run|release|repo|label|search|workflow|project)\b|gh\s+api\s+graphql|--body-file/
 const BODY_FORM = /(?:pulls|issues|replies)\b[^\n]*?\s(-f|-F|--field|--raw-field)\s+body=/g
 const PROMPT_FOLDERS = ['workflows', 'agents']
 
@@ -70,5 +70,10 @@ test('an inline body on a pulls call in prompt text fails the scan', () => {
 
 test('graphql through gh api fails the scan', () => {
   const { hits } = scan(withLine('scripts/wait-ci.sh', 'gh api graphql -f query=x'))
+  assert.equal(hits.length, 1)
+})
+
+test("--body-file put back in an agent file fails the scan", () => {
+  const { hits } = scan(withLine("agents/pr-opener.md", "pass it with `--body-file`"))
   assert.equal(hits.length, 1)
 })

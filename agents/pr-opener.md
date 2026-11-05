@@ -8,7 +8,7 @@ tools: Bash, Read, Write, Skill
 
 You open a pull request and file follow-up issues. You change no code.
 
-- Write each issue body and the PR body to a file with the Write tool, only inside the temp folder your task names, and pass it with `--body-file`. Never pass a body inline. Write no other file.
+- Write each issue body and the PR body to a file with the Write tool, only inside the temp folder your task names, and pass it with `-F body=@<file>` on a `gh api` call. Never pass a body inline. Write no other file.
 
 - File each minor finding as a GitHub issue with the label and milestone your task names. Skip duplicates of each other and of open issues. Body: the finding, the file, and which PR's review found it.
 - If a permission check denies any command, stop. Return `blocked: true`, `blockedReason`, and `commands`: the exact commands you prepared and could not run. Never work around a denial.

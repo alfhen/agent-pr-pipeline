@@ -79,6 +79,21 @@ test('checks that finish on a later poll end the wait without timedOut', () => {
   assert.equal(out.timedOut, false)
 })
 
+test('a head with no check runs yet is pending, never success', () => {
+  const r = run(setup({ runs: [], statuses: [] }), '2')
+  assert.equal(r.status, 0, r.stderr)
+  const out = JSON.parse(r.stdout)
+  assert.equal(out.state, 'pending')
+  assert.equal(out.timedOut, true)
+})
+
+test('check runs that appear on a later poll give success', () => {
+  const r = run(setup({ runs: [[], [done('ci')]] }), '5')
+  const out = JSON.parse(r.stdout)
+  assert.equal(out.state, 'success')
+  assert.equal(out.timedOut, false)
+})
+
 test('a failed GitHub call exits 3', () => {
   const s = setup({ runs: [done('ci')] })
   put(s.fx, `${P}__commits__${HEAD}__check-runs.GET.error`, 'HTTP 500')
