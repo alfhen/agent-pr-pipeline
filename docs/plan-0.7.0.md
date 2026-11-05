@@ -48,13 +48,13 @@ Each claim was checked against `main` at 8fc1141.
   - In full mode the order of steps is `block`, `build`, `triage`, then `wait` or `idle`. A build that the limits hold back lets `triage` run.
   - Waves run with `feedback: false`. Stage 1 files no feedback, so an evaluation would cost tokens and reach nobody.
 
-## Decisions needed from the maintainer
+## Maintainer decision N1 (2026-11-05)
 
 **N1. How the maintainer retries or drops a build that ended with no PR.** In stage 1 a build that ends with no PR is held for good, so it never repeats. The maintainer needs a way to try it again or to drop it.
 - (a) On GitHub, with no new command. To retry, delete the issue's `build-started` and `blocked` record comments on the tracking issue; the next run builds it again on the same branch. To drop, remove the label `routine-build` or close the issue. This is the rule `triage` already uses ("the routine does not triage it again until the maintainer deletes the record"). The full `gh` wrapper refuses every `DELETE` and every label change, so a session cannot do either through it.
 - (b) Terminal commands, `routine-state.sh <repo> retry <issue>` and `drop <issue>`, that post maintainer records. They need a refusal for sessions, and the only signal for one in code is `CLAUDECODE`, which a by-hand `run.sh` from a Claude Code shell also has.
 - (c) No way in stage 1. The maintainer builds the issue by hand with a `quick` wave.
-- Recommendation: (a). It adds no command and no new trust rule, it works from the GitHub app, and it keeps "a by-hand `run.sh` works" true. The entries below build (a).
+- Decision (maintainer, 2026-11-05): (a). It adds no command and no new trust rule, it works from the GitHub app, and it keeps "a by-hand `run.sh` works" true. The entries below build (a).
 
 ## Scope
 
