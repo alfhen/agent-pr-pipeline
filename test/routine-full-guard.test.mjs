@@ -341,10 +341,17 @@ test('git refuses a push to a local path while a url rewrite exists, a mirror re
   stubSetup(S, { mirror: 'false' })
   passedGit(S, HEAD7)
   stubSetup(S)
-  for (const v of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS', 'GIT_SSH', 'GIT_SSH_COMMAND', 'GIT_DIR']) {
+  for (const v of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS', 'GIT_DIR']) {
     refusedGit(S, HEAD7, { extra: { [v]: '1' } })
     refusedGit(S, ['push', '/x/bare.git', 'main'], { extra: { [v]: '1' } })
   }
+  // The value Claude Code's macOS sandbox sets: https and local pushes still pass.
+  const sandboxSsh = { GIT_SSH_COMMAND: "ssh -o ControlMaster=no -o ControlPath=none -o ProxyCommand='nc -X 5 -x localhost:1080 %h %p'" }
+  passedGit(S, HEAD7, { extra: sandboxSsh })
+  passedGit(S, ['push', '/x/bare.git', 'main'], { extra: sandboxSsh })
+  stubSetup(S, { url: 'git@github.com:o/r' })
+  for (const v of ['GIT_SSH', 'GIT_SSH_COMMAND']) refusedGit(S, HEAD7, { extra: { [v]: '1' } })
+  stubSetup(S)
   stubSetup(S, { url: 'https://github.com/o/r.git\nhttps://github.com/o/other.git' })
   refusedGit(S, HEAD7)
   stubSetup(S, { url: '/x/bare.git\nhttps://github.com/o/r.git' })
@@ -529,7 +536,7 @@ test('the matcher tells a match from a miss', () => {
   assert.ok(matches('*merge*', 'a merge b'))
 })
 
-test('full.json holds the sandbox keys, no allow rule under the guard folder, and a deny rule for Edit and Write there', () => {
+test('full.json holds the sandbox keys, no allow rule under the guard folder, and a deny rule for Edit there', () => {
   const sb = full.sandbox
   assert.equal(sb.enabled, true)
   assert.equal(sb.failIfUnavailable, true)

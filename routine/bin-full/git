@@ -90,7 +90,7 @@ fi
 
 # ---- push ----
 [ "$only_c" = 1 ] || refuse
-[ -z "${GIT_CONFIG_PARAMETERS:-}${GIT_CONFIG_COUNT:-}${GIT_SSH:-}${GIT_SSH_COMMAND:-}${GIT_DIR:-}" ] || refuse
+[ -z "${GIT_CONFIG_PARAMETERS:-}${GIT_CONFIG_COUNT:-}${GIT_DIR:-}" ] || refuse
 
 opts=(); pos=()
 j=0
@@ -118,8 +118,11 @@ rewrites=$(qgit config --get-regexp '^url\.' 2>/dev/null || true)
 kind=""
 while IFS= read -r u; do
   if [[ $u == /* || $u == ./* || $u == file://* ]]; then k=local
-  elif [ "$u" = "https://github.com/$repo" ] || [ "$u" = "https://github.com/$repo.git" ] \
-    || [ "$u" = "git@github.com:$repo" ] || [ "$u" = "git@github.com:$repo.git" ]; then k=github
+  elif [ "$u" = "https://github.com/$repo" ] || [ "$u" = "https://github.com/$repo.git" ]; then k=github
+  elif [ "$u" = "git@github.com:$repo" ] || [ "$u" = "git@github.com:$repo.git" ]; then
+    # Claude Code's sandbox sets GIT_SSH_COMMAND, so only ssh pushes check it: https and local pushes never run ssh.
+    [ -z "${GIT_SSH:-}${GIT_SSH_COMMAND:-}" ] || refuse
+    k=github
   else refuse; fi
   [ -z "$kind" ] || [ "$kind" = "$k" ] || refuse
   kind=$k
