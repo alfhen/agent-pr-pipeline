@@ -164,13 +164,18 @@ text_fields_ok() { # item-json
   jq -e 'type == "object" and (.title == null or (.title | type == "string")) and all(.detail, .evidence, .suggestedChange, .severity; . == null or type == "string")' <<<"$1" >/dev/null 2>&1
 }
 
+# The title check comes before the type check so a missing title keeps its "no title" refusal for any item shape.
+item_title() { # item-json
+  jq -r 'try (.title // "") catch ""' <<<"$1" 2>/dev/null
+}
+
 # Sets J_KIND to ok, drop or refused, and J_MSG. The quality bar and the marker check are for --auto only.
 judge() { # item-json
   local title hit
   J_KIND=ok; J_MSG=""
-  text_fields_ok "$1" || { J_KIND=refused; J_MSG="a field is not a string"; return; }
-  title=$(jq -r '.title // ""' <<<"$1")
+  title=$(item_title "$1")
   [ -n "$title" ] || { J_KIND=refused; J_MSG="no title"; return; }
+  text_fields_ok "$1" || { J_KIND=refused; J_MSG="a field is not a string"; return; }
   if [ "$auto" = 1 ]; then
     J_MSG=$(jq -r 'def filled: type == "string" and (gsub("\\s"; "") | length) > 0;
       if (.evidence | filled | not) then "no evidence"
@@ -207,9 +212,9 @@ seen='[]'
 if [ "$auto" = 0 ]; then
   for ((i = 0; i < count; i++)); do
     item=$(jq -c ".[$i]" "$file")
-    text_fields_ok "$item" || { echo "REFUSED item $i: a field is not a string"; [ "$status" = 0 ] && status=2; continue; }
-    title=$(jq -r '.title // ""' <<<"$item")
+    title=$(item_title "$item")
     [ -n "$title" ] || { echo "REFUSED item $i: no title"; [ "$status" = 0 ] && status=2; continue; }
+    text_fields_ok "$item" || { echo "REFUSED item $i: a field is not a string"; [ "$status" = 0 ] && status=2; continue; }
     hit=$(deny_hit "$item") || { echo "REFUSED $title: denylist check failed"; [ "$status" = 0 ] && status=2; continue; }
     if [ -n "$hit" ]; then
       echo "REFUSED $title: contains \"$hit\""
@@ -252,7 +257,7 @@ open_numbers=$(jq -c '[add // [] | .[] | select(has("pull_request") | not) | .nu
 act=(); target=(); kept=0; refused=0; marker_hits=0
 for ((i = 0; i < count; i++)); do
   item=$(jq -c ".[$i]" "$file")
-  title=$(jq -r '.title // ""' <<<"$item")
+  title=$(item_title "$item")
   judge "$item"
   if [ "$J_KIND" != ok ]; then
     echo "REFUSED $title: $J_MSG"
@@ -294,7 +299,7 @@ fi
 filed=0; seen_again=0; created=0
 for ((i = 0; i < count; i++)); do
   item=$(jq -c ".[$i]" "$file")
-  title=$(jq -r '.title // ""' <<<"$item")
+  title=$(item_title "$item")
   omark=""
   [ -z "$outbox_src" ] || omark="<!-- pipeline:outbox $outbox_run:$i -->"
   case "${act[i]:-}" in

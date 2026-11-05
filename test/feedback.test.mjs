@@ -492,3 +492,23 @@ test('an item with no title key is refused as no title in every form', () => {
   const c = W.world().auto([noTitle], ['acme', 'widgets', '4512'], '--check')
   assert.match(c.stdout, /^REFUSED 0: no title/)
 })
+
+for (const [what, bad] of [
+  ['a null item', null],
+  ['a string item', 'text'],
+  ['a number item', 7],
+  ['an array item', ['x']],
+  ['a title of false', { title: false, detail: 'd' }],
+  ['an empty title with a non-string field', { title: '', detail: 4512 }],
+  ['no title with a non-string field', { detail: { a: 1 } }],
+]) {
+  test(`${what} is refused as no title in every form`, () => {
+    const w = W.world()
+    const r = w.sh('file-feedback.sh', [w.file('nt.json', [bad]), '--denylist', w.file('ntd.json', ['acme', 'widgets', '4512']), '--repo', W.FB, '--source', W.SRC])
+    assert.equal(r.status, 2, r.stdout)
+    assert.match(r.stdout, /^REFUSED item 0: no title$/m)
+    assert.equal(r.issuePosts.length, 0)
+    const c = W.world().auto([bad], ['acme', 'widgets', '4512'], '--check')
+    assert.match(c.stdout, /^REFUSED 0: no title/)
+  })
+}
