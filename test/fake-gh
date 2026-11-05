@@ -9,9 +9,19 @@
 # A query is logged (GET /path?ref=x), and a GET tries <name>@<query>.json before <name>.json (query fixtures, e.g. @ref=main).
 # Call sequences: when <name>.call1.json exists, the nth GET of that path reads <name>.call<n>.json (the last one repeats);
 # the count is kept in <name>.count in the fixture folder.
-# A path with no fixture exits 1, like a 404. Any other subcommand exits 1.
+# A path with no fixture exits 1, like a 404.
 log() { [ -n "$FAKE_GH_LOG" ] && echo "$*" >> "$FAKE_GH_LOG"; return 0; }
-if [ "$1" != "api" ]; then log "UNSUPPORTED gh $*"; echo "fake-gh: unsupported: gh $*" >&2; exit 1; fi
+# pr create|edit|view|diff|checks|list, issue create|view|list and run view|list: log the call and print the fixture
+# <sub>__<verb>.txt when it exists (a missing fixture prints nothing). Any other subcommand exits 1.
+if [ "$1" != "api" ]; then
+  case "$1 $2" in
+    "pr create"|"pr edit"|"pr view"|"pr diff"|"pr checks"|"pr list"|"issue create"|"issue view"|"issue list"|"run view"|"run list")
+      log "$*"
+      [ -f "${FAKE_GH_FIXTURES:-/nonexistent}/$1__$2.txt" ] && cat "$FAKE_GH_FIXTURES/$1__$2.txt"
+      exit 0 ;;
+  esac
+  log "UNSUPPORTED gh $*"; echo "fake-gh: unsupported: gh $*" >&2; exit 1
+fi
 shift
 method=GET; path=""; paginate=0; slurp=0; fields=""; jqx=""
 while [ $# -gt 0 ]; do
@@ -26,6 +36,7 @@ while [ $# -gt 0 ]; do
     *) [ -z "$path" ] && path=$1; shift ;;
   esac
 done
+[ -n "$fields" ] && [ "$method" = GET ] && method=POST
 path=${path#/}; query=""
 case "$path" in *\?*) query=${path#*\?} ;; esac
 path=${path%%\?*}

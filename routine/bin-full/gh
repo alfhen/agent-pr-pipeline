@@ -1,0 +1,188 @@
+#!/bin/bash
+# Full-mode gh for a build session: an allow-list parser that refuses by default.
+# Reads: gh api GET of `user`, the routine's repo and the plugin's latest release; gh pr/issue/run view, list, diff, checks.
+# Writes: only the ones a quick wave makes (pr create, pr edit, issue create with review-minor, quick-brief comment POST/PATCH,
+# bot reply). No body may hold a pipeline record marker, except a quick brief.
+# The repo comes from the file `repo` in the guard folder (three folders above this script's real path) and the branch prefix
+# from <plugin>/routine/branch-prefix, never from the environment. Exit 77 with one line when a call is refused.
+# This folder stays on PATH when the real gh runs, so a gh that a child starts by name comes back here.
+set -uo pipefail
+
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case "$link" in /*) self=$link ;; *) self=$(dirname "$self")/$link ;; esac
+done
+here=$(cd "$(dirname "$self")" && pwd -P)
+
+all=("$@")
+orig="$*"
+line=${orig//$'\n'/ }
+refuse() {
+  [ -z "${WRAPPER_REFUSAL_LOG:-}" ] || echo "gh $line" >> "$WRAPPER_REFUSAL_LOG"
+  echo "gh wrapper: refused: gh $orig" >&2
+  exit 77
+}
+passed() { [ -z "${WRAPPER_PASS_LOG:-}" ] || echo "gh $line" >> "$WRAPPER_PASS_LOG"; }
+
+repo=$({ tr -d '[:space:]' < "$here/../../../repo"; } 2>/dev/null || true)
+[[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || refuse
+prefix=$(head -n 1 "$here/../branch-prefix" 2>/dev/null || true)
+[[ $prefix =~ ^[A-Za-z0-9._-]+/$ ]] || prefix=""
+# Same parse as plugin-version.sh.
+plugin_repo=$(jq -r '.repository // ""' "$here/../../.claude-plugin/plugin.json" 2>/dev/null | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#(\.git)?/?$##')
+[[ $plugin_repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || plugin_repo=""
+
+real=""
+IFS=: read -ra dirs <<< "$PATH"
+for d in "${dirs[@]}"; do
+  [ -n "$d" ] && [ -x "$d/gh" ] || continue
+  [ "$(cd "$d" && pwd -P)" = "$here" ] && continue
+  real="$d/gh"; break
+done
+[ -n "$real" ] || refuse
+
+MARKER_RE='<!--[[:space:]]*pipeline:'
+QUICK='<!-- pipeline:quick-brief '
+
+file_text() { [ -f "$1" ] && [ ! -L "$1" ] || return 1; cat -- "$1"; }
+has_marker() { printf '%s' "$1" | grep -Eq "$MARKER_RE"; }
+starts_quick() { [ "${1:0:${#QUICK}}" = "$QUICK" ]; }
+# A quick brief starts with the quick-brief marker and holds no other marker.
+is_quick_brief() { starts_quick "$1" && [ "$(printf '%s' "$1" | grep -Eo "$MARKER_RE" | wc -l | tr -d ' ')" = 1 ]; }
+# gojq exposes the environment through env and $ENV; the session may hold tokens.
+jq_ok() { ! [[ $1 =~ (^|[^A-Za-z0-9_])(\$?ENV|env|\$__prog_args|inputs?)([^A-Za-z0-9_]|$) ]]; }
+
+sub=${1:-}
+case "$sub" in
+  api)
+    method=""; path=""; accept=(); jqx=(); flags=(); ftype=""; fval=""; nfields=0
+    i=1
+    while [ $i -lt ${#all[@]} ]; do
+      a=${all[$i]}
+      case "$a" in
+        --paginate|--slurp) flags+=("$a") ;;
+        --method|-X)
+          [ $((i + 1)) -lt ${#all[@]} ] && [ -z "$method" ] || refuse
+          method=${all[$((i + 1))]}; i=$((i + 1)) ;;
+        --jq|-q)
+          [ $((i + 1)) -lt ${#all[@]} ] && jq_ok "${all[$((i + 1))]}" || refuse
+          jqx=("$a" "${all[$((i + 1))]}"); i=$((i + 1)) ;;
+        -H|--header)
+          [ $((i + 1)) -lt ${#all[@]} ] || refuse
+          # Any other header could override the method.
+          [[ ${all[$((i + 1))]} =~ ^[Aa]ccept:\ ?[A-Za-z0-9.+/\;=,\ -]+$ ]] || refuse
+          accept=("$a" "${all[$((i + 1))]}"); i=$((i + 1)) ;;
+        -f|-F|--raw-field|--field)
+          [ $((i + 1)) -lt ${#all[@]} ] && [ "$nfields" = 0 ] && [[ ${all[$((i + 1))]} == body=* ]] || refuse
+          fval=${all[$((i + 1))]#body=}; ftype=$a; nfields=1; i=$((i + 1)) ;;
+        -*) refuse ;;
+        *) [ -z "$path" ] || refuse; path=$a ;;
+      esac
+      i=$((i + 1))
+    done
+    [ -n "$path" ] || refuse
+    [[ $path =~ ^[A-Za-z0-9_./?\&=:+,@%~-]+$ ]] || refuse
+    case "$path" in *..*|*%2[eEfF]*|*%5[cC]*|*//*|/*) refuse ;; esac
+    bare=${path%%\?*}
+
+    if [ "$nfields" = 0 ]; then
+      [ -z "$method" ] || [ "$method" = GET ] || refuse
+      ok=0
+      [ "$bare" = user ] && ok=1
+      case "$bare" in "repos/$repo"|"repos/$repo/"*) ok=1 ;; esac
+      [ -n "$plugin_repo" ] && [ "$bare" = "repos/$plugin_repo/releases/latest" ] && ok=1
+      [ "$ok" = 1 ] || refuse
+      passed
+      exec "$real" api ${flags[@]+"${flags[@]}"} ${jqx[@]+"${jqx[@]}"} ${accept[@]+"${accept[@]}"} "$path"
+    fi
+
+    # A write: one `body` field, no query, and a path from the list.
+    [ -z "$method" ] || [ "$method" = POST ] || [ "$method" = PATCH ] || refuse
+    [ ${#flags[@]} -eq 0 ] && [ ${#jqx[@]} -eq 0 ] && [ "$path" = "$bare" ] || refuse
+    effective=${method:-POST}
+    body=$fval
+    if [ "$ftype" = -F ] || [ "$ftype" = --field ]; then
+      if [[ $fval == @* ]]; then body=$(file_text "${fval#@}") || refuse; fi
+    fi
+    kind=""
+    case "$bare" in "repos/$repo/"*)
+      rest=${bare#"repos/$repo/"}
+      if [[ $rest =~ ^pulls/[0-9]+/comments/[0-9]+/replies$ ]]; then kind=reply
+      elif [[ $rest =~ ^issues/[0-9]+/comments$ ]]; then kind=comment
+      elif [[ $rest =~ ^issues/comments/[0-9]+$ ]]; then kind=patch; fi ;;
+    esac
+    case "$kind:$effective" in
+      reply:POST) has_marker "$body" && refuse ;;
+      comment:POST) if has_marker "$body"; then is_quick_brief "$body" || refuse; fi ;;
+      patch:PATCH)
+        is_quick_brief "$body" || refuse
+        stored=$("$real" api "$bare" --jq .body 2>/dev/null) || refuse
+        starts_quick "$stored" || refuse ;;
+      *) refuse ;;
+    esac
+    passed
+    exec "$real" "${all[@]}"
+    ;;
+
+  pr|issue|run)
+    verb=${2:-}
+    case "$sub $verb" in
+      "pr view"|"pr diff"|"pr checks"|"pr list"|"issue view"|"issue list"|"run view"|"run list")
+        i=2
+        while [ $i -lt ${#all[@]} ]; do
+          a=${all[$i]}
+          case "$a" in
+            -R|--repo) [ $((i + 1)) -lt ${#all[@]} ] && [ "${all[$((i + 1))]}" = "$repo" ] || refuse; i=$((i + 1)) ;;
+            --repo=*) [ "${a#--repo=}" = "$repo" ] || refuse ;;
+            --web|-w|--web=*) refuse ;;
+            --jq|-q) [ $((i + 1)) -lt ${#all[@]} ] && jq_ok "${all[$((i + 1))]}" || refuse; i=$((i + 1)) ;;
+            --jq=*) jq_ok "${a#--jq=}" || refuse ;;
+            --*) ;;
+            -?) ;;
+            -*) refuse ;;
+            *://*|*@*:*) refuse ;;
+          esac
+          i=$((i + 1))
+        done
+        passed
+        exec "$real" "${all[@]}" ;;
+      "pr create"|"pr edit"|"issue create")
+        r=""; head=""; bodyfile=""; label=""; milestone=""; num=""; have_title=0; have_ms=0
+        i=2
+        while [ $i -lt ${#all[@]} ]; do
+          a=${all[$i]}
+          case "$a" in
+            -R|--repo|--head|--title|-t|--body-file|-F|--label|-l|--milestone|-m)
+              [ $((i + 1)) -lt ${#all[@]} ] || refuse
+              v=${all[$((i + 1))]}; i=$((i + 1))
+              case "$a" in
+                -R|--repo) [ -z "$r" ] || refuse; r=$v ;;
+                --head) [ "$sub $verb" = "pr create" ] && [ -z "$head" ] || refuse; head=$v ;;
+                --title|-t) [ "$verb" != edit ] && [ "$have_title" = 0 ] || refuse; have_title=1 ;;
+                --body-file|-F) [ -z "$bodyfile" ] || refuse; bodyfile=$v ;;
+                --label|-l) [ "$sub $verb" = "issue create" ] && [ -z "$label" ] || refuse; label=$v ;;
+                --milestone|-m) [ "$sub $verb" = "issue create" ] && [ "$have_ms" = 0 ] || refuse; have_ms=1; milestone=$v ;;
+              esac ;;
+            -*) refuse ;;
+            *) [ "$sub $verb" = "pr edit" ] && [ -z "$num" ] && [[ $a =~ ^[0-9]+$ ]] || refuse; num=$a ;;
+          esac
+          i=$((i + 1))
+        done
+        [ "$r" = "$repo" ] && [ -n "$bodyfile" ] && [[ $milestone != -* ]] || refuse
+        case "$sub $verb" in
+          "pr create")
+            [ -n "$prefix" ] && [ "${head:0:${#prefix}}" = "$prefix" ] || refuse
+            name=${head:${#prefix}}
+            [[ $name =~ ^[A-Za-z0-9._/-]+$ ]] && [[ $name != *..* ]] || refuse ;;
+          "pr edit") [ -n "$num" ] || refuse ;;
+          "issue create") [ "$label" = review-minor ] || refuse ;;
+        esac
+        body=$(file_text "$bodyfile") || refuse
+        has_marker "$body" && refuse
+        passed
+        exec "$real" "${all[@]}" ;;
+      *) refuse ;;
+    esac ;;
+  *) refuse ;;
+esac

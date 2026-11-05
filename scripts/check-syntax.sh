@@ -8,7 +8,7 @@ cd "$root" || exit 1
 
 bad=0
 count=0
-for pattern in 'scripts/*.sh' 'routine/*.sh' 'routine/bin/gh'; do
+for pattern in 'scripts/*.sh' 'routine/*.sh' 'routine/bin/gh' 'routine/bin-full/*'; do
   files=()
   while IFS= read -r f; do files+=("$f"); done < <(compgen -G "$pattern" | sort)
   if [ "${#files[@]}" -eq 0 ]; then

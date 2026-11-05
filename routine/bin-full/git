@@ -1,0 +1,165 @@
+#!/bin/bash
+# Full-mode git for a build session. Local subcommands pass, because the plugin's scripts and the repo's checks use many
+# of them. Refused: an alias, any command that sends to a remote by another route, any global option not listed below,
+# and every push that is not one of the two kinds below.
+# - A push to a local path (all push URLs local, no url.* rewrite in the config) passes with any options and refspecs.
+# - A push to this repo on GitHub passes only to <prefix><name> on a branch, with no force, delete, glob, tag or mirror.
+# The repo comes from the file `repo` in the guard folder (three folders above this script's real path) and the prefix
+# from <plugin>/routine/branch-prefix, never from the environment. Exit 77 with one line when a call is refused.
+# This folder stays on PATH when the real git runs, so a git that a child starts by name comes back here.
+set -uo pipefail
+
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case "$link" in /*) self=$link ;; *) self=$(dirname "$self")/$link ;; esac
+done
+here=$(cd "$(dirname "$self")" && pwd -P)
+
+all=("$@")
+orig="$*"
+line=${orig//$'\n'/ }
+refuse() {
+  [ -z "${WRAPPER_REFUSAL_LOG:-}" ] || echo "git $line" >> "$WRAPPER_REFUSAL_LOG"
+  echo "git wrapper: refused: git $orig" >&2
+  exit 77
+}
+passed() { [ -z "${WRAPPER_PASS_LOG:-}" ] || echo "git $line" >> "$WRAPPER_PASS_LOG"; }
+
+repo=$({ tr -d '[:space:]' < "$here/../../../repo"; } 2>/dev/null || true)
+[[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || refuse
+prefix=$(head -n 1 "$here/../branch-prefix" 2>/dev/null || true)
+[[ $prefix =~ ^[A-Za-z0-9._-]+/$ ]] || prefix=""
+
+real=""
+IFS=: read -ra dirs <<< "$PATH"
+for d in "${dirs[@]}"; do
+  [ -n "$d" ] && [ -x "$d/git" ] || continue
+  [ "$(cd "$d" && pwd -P)" = "$here" ] && continue
+  real="$d/git"; break
+done
+[ -n "$real" ] || refuse
+
+# Global options, in any order.
+globals=(); cdirs=(); only_c=1; csets=()
+i=0
+while [ $i -lt ${#all[@]} ]; do
+  a=${all[$i]}
+  case "$a" in
+    -C) [ $((i + 1)) -lt ${#all[@]} ] || refuse
+        cdirs+=("${all[$((i + 1))]}"); globals+=("$a" "${all[$((i + 1))]}"); i=$((i + 1)) ;;
+    -c) [ $((i + 1)) -lt ${#all[@]} ] || refuse
+        csets+=("${all[$((i + 1))]}"); globals+=("$a" "${all[$((i + 1))]}"); only_c=0; i=$((i + 1)) ;;
+    --git-dir|--work-tree) [ $((i + 1)) -lt ${#all[@]} ] || refuse
+        globals+=("$a" "${all[$((i + 1))]}"); only_c=0; i=$((i + 1)) ;;
+    --git-dir=*|--work-tree=*|--no-pager|--bare|--literal-pathspecs|--no-replace-objects) globals+=("$a"); only_c=0 ;;
+    --version) [ ${#all[@]} -eq 1 ] || refuse; passed; exec "$real" --version ;;
+    -*) refuse ;;
+    *) break ;;
+  esac
+  i=$((i + 1))
+done
+[ $i -lt ${#all[@]} ] || refuse
+sub=${all[$i]}
+rest=("${all[@]:$((i + 1))}")
+
+# Reads for the checks below run with the same -C options and nothing else.
+qgit() {
+  local c=() d
+  for d in ${cdirs[@]+"${cdirs[@]}"}; do c+=(-C "$d"); done
+  "$real" ${c[@]+"${c[@]}"} "$@"
+}
+
+case "$sub" in
+  send-pack|http-push|svn|p4|cvsexportcommit|imap-send|send-email|remote-*) refuse ;;
+esac
+lsub=$(printf '%s' "$sub" | tr '[:upper:]' '[:lower:]')
+for kv in ${csets[@]+"${csets[@]}"}; do
+  key=$(printf '%s' "${kv%%=*}" | tr '[:upper:]' '[:lower:]')
+  [ "$key" = "alias.$lsub" ] && refuse
+done
+if "$real" ${globals[@]+"${globals[@]}"} --list-cmds=alias 2>/dev/null | grep -qxF -- "$sub"; then refuse; fi
+
+if [ "$sub" != push ]; then
+  passed
+  exec "$real" "${all[@]}"
+fi
+
+# ---- push ----
+[ "$only_c" = 1 ] || refuse
+[ -z "${GIT_CONFIG_PARAMETERS:-}${GIT_CONFIG_COUNT:-}${GIT_SSH:-}${GIT_SSH_COMMAND:-}${GIT_DIR:-}" ] || refuse
+
+opts=(); pos=()
+j=0
+while [ $j -lt ${#rest[@]} ]; do
+  a=${rest[$j]}
+  case "$a" in
+    --repo|--repo=*) refuse ;;
+    -o|--push-option|--receive-pack|--exec)
+      [ $((j + 1)) -lt ${#rest[@]} ] || refuse
+      opts+=("$a" "${rest[$((j + 1))]}"); j=$((j + 1)) ;;
+    -?*) opts+=("$a") ;;
+    *) pos+=("$a") ;;
+  esac
+  j=$((j + 1))
+done
+[ ${#pos[@]} -ge 2 ] || refuse
+remote=${pos[0]}
+refspecs=("${pos[@]:1}")
+
+configured=1
+urls=$(qgit remote get-url --push --all "$remote" 2>/dev/null) || { urls=$remote; configured=0; }
+[ -n "$urls" ] || refuse
+rewrites=$(qgit config --get-regexp '^url\.' 2>/dev/null || true)
+
+kind=""
+while IFS= read -r u; do
+  if [[ $u == /* || $u == ./* || $u == file://* ]]; then k=local
+  elif [ "$u" = "https://github.com/$repo" ] || [ "$u" = "https://github.com/$repo.git" ] \
+    || [ "$u" = "git@github.com:$repo" ] || [ "$u" = "git@github.com:$repo.git" ]; then k=github
+  else refuse; fi
+  [ -z "$kind" ] || [ "$kind" = "$k" ] || refuse
+  kind=$k
+done <<< "$urls"
+
+if [ "$kind" = local ]; then
+  [ -z "$rewrites" ] || refuse
+  passed
+  exec "$real" "${all[@]}"
+fi
+
+[ -z "$rewrites" ] || [ "$configured" = 1 ] || refuse
+[ -n "$prefix" ] || refuse
+for o in ${opts[@]+"${opts[@]}"}; do
+  case "$o" in -u|--set-upstream|-q|--quiet|-v|--porcelain|--no-verify) ;; *) refuse ;; esac
+done
+if [ "$configured" = 1 ]; then
+  [ "$(qgit config --bool --get "remote.$remote.mirror" 2>/dev/null || true)" != true ] || refuse
+fi
+
+is_branch() {
+  local src=$1
+  if [ "$src" = HEAD ]; then
+    [[ $(qgit symbolic-ref -q HEAD 2>/dev/null || true) == refs/heads/* ]]
+  elif [[ $src == refs/heads/* ]]; then
+    qgit show-ref --verify -q "$src"
+  else
+    qgit show-ref --verify -q "refs/heads/$src"
+  fi
+}
+
+for r in "${refspecs[@]}"; do
+  [[ $r != +* && $r != *'*'* ]] || refuse
+  if [[ $r == *:* ]]; then src=${r%%:*}; dst=${r#*:}; else src=$r; dst=$r; fi
+  [ -n "$src" ] || refuse
+  qualified=0
+  if [[ $dst == refs/heads/* ]]; then dst=${dst#refs/heads/}; qualified=1; fi
+  [ "${dst:0:${#prefix}}" = "$prefix" ] || refuse
+  name=${dst:${#prefix}}
+  [[ $name =~ ^[A-Za-z0-9._/-]+$ ]] && [[ $name != *..* ]] || refuse
+  # Without refs/heads/, git picks the kind of ref from the source, so a tag source would push a tag.
+  [ "$qualified" = 1 ] || is_branch "$src" || refuse
+done
+
+passed
+exec "$real" ${globals[@]+"${globals[@]}"} push --no-follow-tags --no-recurse-submodules "${rest[@]}"

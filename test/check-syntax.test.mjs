@@ -14,11 +14,13 @@ const bashN = (file) => spawnSync('bash', ['-n', file]).status
 
 const makeRoot = () => {
   const dir = mkdtempSync(join(tmpdir(), 'check-syntax-'))
-  for (const d of ['scripts', 'routine/bin']) mkdirSync(join(dir, d), { recursive: true })
+  for (const d of ['scripts', 'routine/bin', 'routine/bin-full']) mkdirSync(join(dir, d), { recursive: true })
   copyFileSync(join(repo, 'scripts/check-syntax.sh'), join(dir, 'scripts/check-syntax.sh'))
   writeFileSync(join(dir, 'scripts/a.sh'), GOOD)
   writeFileSync(join(dir, 'routine/r.sh'), GOOD)
   writeFileSync(join(dir, 'routine/bin/gh'), GOOD)
+  writeFileSync(join(dir, 'routine/bin-full/gh'), GOOD)
+  writeFileSync(join(dir, 'routine/bin-full/git'), GOOD)
   return dir
 }
 const run = (dir, args = []) => spawnSync('bash', [join(dir, 'scripts/check-syntax.sh'), ...args], { encoding: 'utf8' })
@@ -27,7 +29,7 @@ test('good files give OK and exit 0', () => {
   const dir = makeRoot()
   const r = run(dir)
   assert.equal(r.status, 0, r.stdout)
-  assert.equal(r.stdout.trim(), 'OK 4 files')
+  assert.equal(r.stdout.trim(), 'OK 6 files')
   rmSync(dir, { recursive: true })
 })
 
@@ -39,6 +41,16 @@ test('a syntax error in routine/bin/gh gives SYNTAX and exit 1', () => {
   assert.equal(r.status, 1)
   assert.match(r.stdout, /^SYNTAX routine\/bin\/gh$/m)
   assert.doesNotMatch(r.stdout, /^OK/m)
+  rmSync(dir, { recursive: true })
+})
+
+test('a syntax error in routine/bin-full/git gives SYNTAX and exit 1', () => {
+  const dir = makeRoot()
+  writeFileSync(join(dir, 'routine/bin-full/git'), BAD)
+  assert.notEqual(bashN(join(dir, 'routine/bin-full/git')), 0)
+  const r = run(dir)
+  assert.equal(r.status, 1)
+  assert.match(r.stdout, /^SYNTAX routine\/bin-full\/git$/m)
   rmSync(dir, { recursive: true })
 })
 
