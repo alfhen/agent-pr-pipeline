@@ -1,4 +1,4 @@
-# Run with -f on a routine.json (0.7.0 form) or on a whole .github/pipeline.json (has "gates"): prints the file or the routine
+# Run with -f on a routine.json (0.7.0 form), or with --arg form pipeline on a whole .github/pipeline.json: prints the file or the routine
 # object with defaults filled in, or fails with one line. Run with -n and no file: prints the defaults of both forms and the fixed labels.
 def defaults: {openPRs: 3, wavesPerDay: 2, buildIssues: 3, maxRunMinutes: 240};
 def cloudLimits: {openPRs: 3, wavesPerDay: 2, buildAttempts: 2, buildHours: 6, triagePerRun: 5, triagePerDay: 20, feedbackItems: 3, feedbackPerDay: 6};
@@ -57,7 +57,8 @@ def routineCheck:
      typeLabels: (routineDefaults.typeLabels + $tl), feedbackRepo: $fr, collectFrom: $cf, waveArgs: $w, limits: (cloudLimits + $l)};
 
 if input_filename == null and . == null then {limits: defaults, routine: routineDefaults, labels: fixedLabels}
-elif type == "object" and has("gates") then
+elif $ARGS.named.form == "pipeline" then
+  (if type == "object" then . else badp("must be a JSON object") end) |
   if (.routine // null) == null then {routine: null} else {routine: (.routine | routineCheck)} end
 else
   (if type == "object" then . else bad("must be a JSON object") end)

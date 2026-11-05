@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs'
 const root = new URL('../', import.meta.url).pathname
 const good = JSON.parse(readFileSync(new URL('./fixtures/settings/good.json', import.meta.url), 'utf8'))
 const minimal = { pipelineVersion: 'v0.8.0', maintainer: 'alfhen', waveArgs: { goals: 'g', checks: [] } }
-const run = (input, ...args) => spawnSync('jq', ['-c', ...args, '-f', `${root}routine/config.jq`], { input: JSON.stringify(input), encoding: 'utf8' })
+const run = (input, ...args) => spawnSync('jq', ['-c', '--arg', 'form', 'pipeline', ...args, '-f', `${root}routine/config.jq`], { input: JSON.stringify(input), encoding: 'utf8' })
 const withRoutine = routine => ({ gates: [], routine })
 const check = (name, routine, re) => {
   test(`refuses ${name} with one line`, () => {
@@ -105,7 +105,13 @@ test('-n prints the defaults of both forms and the fixed labels', () => {
 })
 
 test('the 0.7.0 form still works beside the new one', () => {
-  const r = run({ waveArgs: { goals: 'g', checks: [] } })
+  const r = spawnSync('jq', ['-c', '-f', `${root}routine/config.jq`], { input: JSON.stringify({ waveArgs: { goals: 'g', checks: [] } }), encoding: 'utf8' })
   assert.equal(r.status, 0, r.stderr)
   assert.deepEqual(JSON.parse(r.stdout).limits, { openPRs: 3, wavesPerDay: 2, buildIssues: 3, maxRunMinutes: 240 })
+})
+
+test('without --arg form pipeline, a routine.json holding gates is refused as before', () => {
+  const r = spawnSync('jq', ['-c', '-f', `${root}routine/config.jq`], { input: JSON.stringify({ gates: [], waveArgs: { goals: 'g', checks: [] } }), encoding: 'utf8' })
+  assert.notEqual(r.status, 0)
+  assert.match(r.stderr, /routine\.json: unknown key gates/)
 })
