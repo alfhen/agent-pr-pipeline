@@ -161,7 +161,7 @@ deny_hit() { # item-json -> prints the first denylist string the item holds, or 
 # Every field the body prints must be a string: deny_hit reads strings only, and jq prints any other type
 # (an object prints its keys) into the issue.
 text_fields_ok() { # item-json
-  jq -e 'type == "object" and (.title | type == "string") and all(.detail, .evidence, .suggestedChange, .severity; . == null or type == "string")' <<<"$1" >/dev/null 2>&1
+  jq -e 'type == "object" and (.title == null or (.title | type == "string")) and all(.detail, .evidence, .suggestedChange, .severity; . == null or type == "string")' <<<"$1" >/dev/null 2>&1
 }
 
 # Sets J_KIND to ok, drop or refused, and J_MSG. The quality bar and the marker check are for --auto only.
