@@ -411,7 +411,7 @@ const RUN = n => `20261105T0${n}0000Z-${n}${n}`
 const bmark = (type, n) => `<!-- pipeline:routine ${type} ${n} -->`
 const started = (n, o = {}, user = 'bot') => ({
   user: { login: user }, created_at: iso(o.age ?? 1),
-  body: `${bmark('build-started', n)}\n${o.raw ?? JSON.stringify({ run: o.run ?? RUN(1), branch: o.branch ?? `routine/issue-${n}` })}`,
+  body: `${bmark('build-started', n)}\n${o.raw ?? JSON.stringify({ run: o.run ?? RUN(1), branch: o.branch ?? `claude/issue-${n}` })}`,
 })
 const blockedRec = (n, o = {}, user = 'bot') => ({
   user: { login: user }, created_at: iso(1),
@@ -431,8 +431,8 @@ function fullSetup(world = {}, mode = 'full', extra = {}) {
   s.put('repos/o/r/pulls', extra.pulls ?? [])
   for (const i of world.issues ?? []) {
     // The slash in the branch makes the fake-gh query fixture a file in a folder.
-    mkdirSync(join(s.fx, `${fname('repos/o/r/pulls')}@state=all&head=o:routine`), { recursive: true })
-    writeFileSync(join(s.fx, `${fname('repos/o/r/pulls')}@state=all&head=o:routine/issue-${i.number}.json`), JSON.stringify(extra.branchPrs?.[i.number] ?? []))
+    mkdirSync(join(s.fx, `${fname('repos/o/r/pulls')}@state=all&head=o:claude`), { recursive: true })
+    writeFileSync(join(s.fx, `${fname('repos/o/r/pulls')}@state=all&head=o:claude/issue-${i.number}.json`), JSON.stringify(extra.branchPrs?.[i.number] ?? []))
   }
   return s
 }
@@ -466,13 +466,13 @@ test('block: a build-started record with no PR gives a block step with no sessio
   const r = nextFull(s)
   assert.equal(r.status, 0, r.stderr)
   assert.deepEqual(step(r), { step: 'block', session: false, issue: 4, run: RUN(2), reason: 'build ended with no PR', held: [], config: 'defaults' })
-  assert.ok(r.calls.some(c => c.includes('head=o:routine/issue-4')))
+  assert.ok(r.calls.some(c => c.includes('head=o:claude/issue-4')))
 })
 
 for (const [name, prs] of [
-  ['open', [pr('routine/issue-4')]],
-  ['merged', [pr('routine/issue-4', { state: 'closed', merged: '2026-11-05T00:00:00Z' })]],
-  ['closed unmerged', [pr('routine/issue-4', { state: 'closed' })]],
+  ['open', [pr('claude/issue-4')]],
+  ['merged', [pr('claude/issue-4', { state: 'closed', merged: '2026-11-05T00:00:00Z' })]],
+  ['closed unmerged', [pr('claude/issue-4', { state: 'closed' })]],
 ]) {
   test(`no block when the PR from the branch is ${name}`, () => {
     const s = fullSetup({ issues: [buildIssue(4)], records: [record(4), started(4)] }, 'full', { branchPrs: { 4: prs } })
@@ -481,7 +481,7 @@ for (const [name, prs] of [
 }
 
 test('a PR by another account from the branch does not end the block', () => {
-  const s = fullSetup({ issues: [buildIssue(4)], records: [record(4), started(4)] }, 'full', { branchPrs: { 4: [pr('routine/issue-4', { user: 'mallory' })] } })
+  const s = fullSetup({ issues: [buildIssue(4)], records: [record(4), started(4)] }, 'full', { branchPrs: { 4: [pr('claude/issue-4', { user: 'mallory' })] } })
   assert.equal(step(nextFull(s)).step, 'block')
 })
 
@@ -533,7 +533,7 @@ test('build: four pending issues with buildIssues 3 gives three, oldest first, e
   const out = step(r)
   assert.equal(out.step, 'build'); assert.equal(out.session, true)
   assert.equal(out.config, 'defaults')
-  assert.deepEqual(out.issues, [14, 12, 13].map(n => ({ issue: n, branch: `routine/issue-${n}` })))
+  assert.deepEqual(out.issues, [14, 12, 13].map(n => ({ issue: n, branch: `claude/issue-${n}` })))
 })
 
 test('build uses the limits of routine.json', () => {
@@ -558,7 +558,7 @@ test('a pending issue needs a trusted triaged record with decision build', () =>
 })
 
 test('no build at three open routine PRs, and a PR from fix/x does not count', () => {
-  const routinePrs = [1, 2, 3].map(n => pr(`routine/issue-${n + 50}`, { number: 800 + n }))
+  const routinePrs = [1, 2, 3].map(n => pr(`claude/issue-${n + 50}`, { number: 800 + n }))
   const w = { issues: [buildIssue(1)], records: [record(1)] }
   const held = step(nextFull(fullSetup(w, 'full', { pulls: routinePrs })))
   assert.equal(held.step, 'wait'); assert.equal(held.heldBy, 'limits')
@@ -567,7 +567,7 @@ test('no build at three open routine PRs, and a PR from fix/x does not count', (
 })
 
 test('an open routine PR by another account does not count for the limit', () => {
-  const pulls = [1, 2, 3].map(n => pr(`routine/issue-${n + 50}`, { user: 'mallory' }))
+  const pulls = [1, 2, 3].map(n => pr(`claude/issue-${n + 50}`, { user: 'mallory' }))
   assert.equal(step(nextFull(fullSetup({ issues: [buildIssue(1)], records: [record(1)] }, 'full', { pulls }))).step, 'build')
 })
 
@@ -595,7 +595,7 @@ test('a limit of 0 never builds', () => {
 })
 
 test('an issue with a build-started record is never built again', () => {
-  const s = fullSetup({ issues: [buildIssue(1)], records: [record(1), started(1, { age: 30 })] }, 'full', { branchPrs: { 1: [pr('routine/issue-1')] } })
+  const s = fullSetup({ issues: [buildIssue(1)], records: [record(1), started(1, { age: 30 })] }, 'full', { branchPrs: { 1: [pr('claude/issue-1')] } })
   assert.notEqual(step(nextFull(s)).step, 'build')
 })
 
@@ -628,7 +628,7 @@ test('two trusted records for one key and a bad triaged record are held, not a f
 })
 
 test('wait when a routine PR is open and nothing else applies, idle otherwise', () => {
-  assert.equal(step(nextFull(fullSetup({}, 'full', { pulls: [pr('routine/issue-9')] }))).step, 'wait')
+  assert.equal(step(nextFull(fullSetup({}, 'full', { pulls: [pr('claude/issue-9')] }))).step, 'wait')
   assert.equal(step(nextFull(fullSetup())).step, 'idle')
 })
 
@@ -641,7 +641,7 @@ test('session is true only for the steps in the one SESSION_STEPS line', () => {
     [{ issues: [buildIssue(4)], records: [record(4), started(4)] }, {}, false],
     [{ issues: [buildIssue(4)], records: [record(4)] }, {}, true],
     [{ issues: [issue(4)] }, {}, true],
-    [{}, { pulls: [pr('routine/issue-9')] }, false],
+    [{}, { pulls: [pr('claude/issue-9')] }, false],
     [{}, {}, false],
   ]) assert.equal(step(nextFull(fullSetup(w, 'full', extra))).session, want)
 })
@@ -655,7 +655,7 @@ test('next --mode full fails on two tracking issues and on a failed GitHub call'
 
 test('next --mode full exits 3 with no output when only the head= PR call fails', () => {
   const s = fullSetup({ issues: [buildIssue(4)], records: [record(4), started(4)] })
-  writeFileSync(join(s.fx, `${fname('repos/o/r/pulls')}@state=all&head=o:routine/issue-4.json`), '{}')
+  writeFileSync(join(s.fx, `${fname('repos/o/r/pulls')}@state=all&head=o:claude/issue-4.json`), '{}')
   const r = nextFull(s)
   assert.equal(r.status, 3); assert.equal(r.stdout, '')
 })
@@ -674,7 +674,7 @@ test('next --mode full exits 3 when routine/branch-prefix is missing', () => {
 })
 
 const run_ = (s, ...a) => run(s, 'o/r', ...a)
-const putStarted = (s, n = '4', runId = RUN(1), branch = `routine/issue-${n}`) => run_(s, 'put', 'build-started', n, runId, branch)
+const putStarted = (s, n = '4', runId = RUN(1), branch = `claude/issue-${n}`) => run_(s, 'put', 'build-started', n, runId, branch)
 const putBlocked = (s, n = '4', runId = RUN(1)) => run_(s, 'put', 'blocked', n, runId)
 const stored = r => r.writes.filter(l => l.includes(`/issues/${TRACKING}/comments`))
 const ready = (o = {}) => fullSetup({ issues: [buildIssue(4)], records: [record(4), ...(o.records ?? [])] }, 'mode' in o ? o.mode : 'full')
@@ -683,9 +683,9 @@ test('put build-started writes one record in full mode, and also with CLAUDECODE
   const r = putStarted(ready())
   assert.equal(r.status, 0, r.stderr)
   assert.equal(stored(r).length, 1)
-  assert.ok(stored(r)[0].includes(`${bmark('build-started', 4)}\\n{"run":"${RUN(1)}","branch":"routine/issue-4"}`))
+  assert.ok(stored(r)[0].includes(`${bmark('build-started', 4)}\\n{"run":"${RUN(1)}","branch":"claude/issue-4"}`))
   const s = ready()
-  const withEnv = spawnSync('bash', [s.script, 'o/r', 'put', 'build-started', '4', RUN(1), 'routine/issue-4'], {
+  const withEnv = spawnSync('bash', [s.script, 'o/r', 'put', 'build-started', '4', RUN(1), 'claude/issue-4'], {
     encoding: 'utf8',
     env: { ...process.env, CLAUDECODE: '1', PATH: `${s.bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log },
   })
@@ -710,7 +710,7 @@ test('put build-started is refused for no label, a closed issue, or no trusted b
 })
 
 test('put build-started refuses a branch that breaks the rule and a bad run with exit 64 and no call', () => {
-  for (const args of [['4', RUN(1), 'routine/issue-5'], ['4', RUN(1), 'fix/issue-4'], ['4', RUN(1), 'routine/issue-4x'], ['4', 'run-1', 'routine/issue-4'], ['4x', RUN(1), 'routine/issue-4']]) {
+  for (const args of [['4', RUN(1), 'claude/issue-5'], ['4', RUN(1), 'fix/issue-4'], ['4', RUN(1), 'claude/issue-4x'], ['4', 'run-1', 'claude/issue-4'], ['4x', RUN(1), 'claude/issue-4']]) {
     const r = putStarted(ready(), ...args)
     assert.equal(r.status, 64, args.join(' ')); assert.deepEqual(r.calls, [])
   }
@@ -837,4 +837,911 @@ test('trusted-comment.jq: two matches without all is an error, with all it is a 
   assert.deepEqual(JSON.parse(all.stdout), ['<!-- m -->\na', '<!-- m -->\nb'])
   assert.deepEqual(JSON.parse(jq('scripts/trusted-comment.jq', JSON.stringify([comment('bot', '<!-- m -->\na')]), ...a).stdout), '<!-- m -->\na')
   assert.equal(jq('scripts/trusted-comment.jq', '[]', ...a).stdout.trim(), 'null')
+})
+
+
+// ---- Cloud routines (0.8.0) ----
+// A small world model: c_apply() copies the writes of a command (records, labels) into the world, so a test can run
+// a step, its put and then next again.
+import { createHash } from 'node:crypto'
+const c_BASE = Date.now() - 5 * 3600e3
+const c_T = m => new Date(c_BASE + m * 60e3).toISOString().replace(/\.\d+Z$/, 'Z')
+const c_OLD = new Date(Date.now() - 30 * 3600e3).toISOString().replace(/\.\d+Z$/, 'Z')
+let c_nextId = 1000
+const c_sha = (title, body) => createHash('sha256').update(`${title}\n${body}`).digest('hex')
+const c_ROUTINE = { stage: 1, pipelineVersion: 'v0.8.0', maintainer: 'alfhen', waveArgs: { goals: 'docs/goals.md', checks: ['node test/sim-pipeline.mjs'] } }
+const c_CRUN = n => `20261105T1200${String(n).padStart(2, '0')}Z-0a1b2c3${n % 10}`
+
+const c_ci = (number, o = {}) => ({
+  number, state: 'open', title: `issue ${number}`, body: o.body ?? `body ${number}`, user: { login: o.user ?? 'alfhen' },
+  labels: (o.labels ?? []).map(name => ({ name })), created_at: o.created ?? c_T(0),
+  ...(o.pr ? { pull_request: {} } : {}),
+})
+const c_cc = (user, at, body = 'hi', updated) => ({ id: ++c_nextId, user: { login: user }, created_at: at, updated_at: updated ?? at, body })
+const c_cr = (kind, key, rec, o = {}) => ({
+  id: o.id ?? ++c_nextId, user: { login: o.user ?? 'alfhen' }, created_at: o.at ?? c_T(10),
+  body: `<!-- pipeline:routine ${kind} ${key} -->\n${o.raw ?? JSON.stringify(rec)}`,
+})
+const c_lab = (label, actor, at, app = null) => ({ event: 'labeled', label: { name: label }, actor: { login: actor }, created_at: at, performed_via_github_app: app })
+const c_approved = at => [c_lab('maintainer-approved', 'alfhen', at)]
+const c_triagedRec = (n, o = {}) => c_cr('triaged', `${n}:${o.epoch ?? 0}`, { decision: 'build', size: 'S', risk: 'low', type: 'bug', why: 'ok', ...o.rec }, { at: o.at ?? c_T(20), id: o.id })
+const c_startedRec = (n, a, o = {}) => c_cr('build-started', `${n}:${a}`, { run: o.run ?? c_CRUN(a), branch: `claude/issue-${n}`, attempt: a }, { at: o.at ?? c_T(30) })
+const c_blockedRec = (n, a, o = {}) => c_cr('blocked', `${n}:${a}`, { run: o.run ?? c_CRUN(a), reasonCode: 'other', attempt: a }, { at: o.at ?? c_T(40) })
+const c_cpr = (ref, o = {}) => ({ number: o.number ?? 900, state: o.state ?? 'open', user: { login: o.user ?? 'alfhen' }, head: { ref }, merged_at: null })
+
+// w: { issues, comments: {n: []}, events: {n: []}, records, pulls, trackingLabels, settings, noTracking }
+function csetup(w = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'routine-cloud-test-'))
+  const bin = join(dir, 'bin'); mkdirSync(bin)
+  copyFileSync(join(root, 'test/fake-gh'), join(bin, 'gh')); chmodSync(join(bin, 'gh'), 0o755)
+  const fx = join(dir, 'fx')
+  cpSync(join(root, 'test/fixtures/routine/base'), fx, { recursive: true })
+  const plugin = join(dir, 'g', 'plugin')
+  mkdirSync(join(plugin, 'scripts'), { recursive: true }); mkdirSync(join(plugin, 'routine'), { recursive: true })
+  for (const f of ['routine-state.sh', 'trusted-comment.jq', 'approval.jq']) copyFileSync(join(root, 'scripts', f), join(plugin, 'scripts', f))
+  copyFileSync(join(root, 'routine/config.jq'), join(plugin, 'routine/config.jq'))
+  copyFileSync(join(root, 'routine/branch-prefix'), join(plugin, 'routine/branch-prefix'))
+  const s = {
+    dir, fx, bin, log: join(dir, 'log'), script: join(plugin, 'scripts/routine-state.sh'),
+    w: { issues: [], comments: {}, events: {}, records: [], pulls: [], trackingLabels: [], settings: { gates: [], routine: c_ROUTINE }, ...w },
+  }
+  s.sync = () => {
+    const put = (path, v) => writeFileSync(join(fx, `${fname(path)}.json`), JSON.stringify(v))
+    const x = s.w
+    put('user', { login: 'alfhen' })
+    put('repos/o/r/contents/.github/pipeline.json', x.settings)
+    const tracking = x.noTracking ? [] : [{ ...c_ci(100, { labels: ['pipeline-routine', ...x.trackingLabels] }) }]
+    put('repos/o/r/issues', [...tracking, ...x.issues])
+    for (const i of x.issues) {
+      put(`repos/o/r/issues/${i.number}`, i)
+      put(`repos/o/r/issues/${i.number}/comments`, x.comments[i.number] ?? [])
+      put(`repos/o/r/issues/${i.number}/events`, x.events[i.number] ?? [])
+    }
+    put('repos/o/r/issues/100/comments', x.records)
+    put('repos/o/r/pulls', x.pulls)
+    writeFileSync(join(fx, `${fname('repos/o/r/issues/100/comments')}.POST.json`), JSON.stringify({ id: 5000 }))
+  }
+  s.sync()
+    return s
+}
+
+const c_issueOf = (s, n) => s.w.issues.find(i => i.number === n)
+function c_apply(s, r) {
+  for (const c of r.calls) {
+    let m
+    if ((m = c.match(/^POST \/repos\/o\/r\/issues\/(\d+)\/comments body=(.*)$/s))) {
+      const body = m[2].replaceAll('\\n', '\n')
+      if (m[1] === '100') s.w.records.push({ id: ++c_nextId, user: { login: 'alfhen' }, created_at: new Date().toISOString().replace(/\.\d+Z$/, 'Z'), body })
+      else (s.w.comments[m[1]] ??= []).push(c_cc('alfhen', new Date().toISOString(), body))
+    } else if ((m = c.match(/^POST \/repos\/o\/r\/issues\/(\d+)\/labels (.*)$/))) {
+      const i = c_issueOf(s, Number(m[1]))
+      for (const l of m[2].split(' ')) { const name = l.replace('labels[]=', ''); if (!i.labels.some(x => x.name === name)) { i.labels.push({ name }); (s.w.events[i.number] ??= []).push(c_lab(name, 'alfhen', new Date().toISOString().replace(/\.\d+Z$/, 'Z'), 'claude')) } }
+    } else if ((m = c.match(/^DELETE \/repos\/o\/r\/issues\/(\d+)\/labels\/(.+)$/))) {
+      const i = c_issueOf(s, Number(m[1])); i.labels = i.labels.filter(x => x.name !== m[2])
+    }
+  }
+  s.sync()
+}
+const c_labelsOf = (s, n) => c_issueOf(s, n).labels.map(l => l.name).sort()
+const c_startFile = (s, o = {}) => {
+  const f = join(s.dir, 'start.json')
+  writeFileSync(f, JSON.stringify({ version: 'v0.8.0', pluginRoot: '/opt/agent-pr-pipeline/v0.8.0', agentPrefix: 'apl-v0-8-0-', defaultSha: 'abc', ...o }))
+  return f
+}
+const c_cnext = (s, mode = 'cloud-triage', startOpts) => mode === 'cloud-build'
+  ? run(s, 'o/r', 'next', '--mode', 'cloud-build', '--start', c_startFile(s, startOpts))
+  : run(s, 'o/r', 'next', '--mode', 'cloud-triage')
+const c_lines = r => r.stdout.trim().split('\n').filter(Boolean).map(l => JSON.parse(l))
+const c_one = r => { assert.equal(r.status, 0, r.stderr); const l = c_lines(r); assert.equal(l.length, 1, r.stdout); return l[0] }
+const c_ok = r => { assert.equal(r.status, 0, r.stderr); const l = c_lines(r); assert.ok(l.length > 0, 'next printed no line'); return l }
+const c_onlyReads = r => assert.deepEqual(r.writes, [], r.writes.join('\n'))
+const c_cput = (s, ...a) => run(s, 'o/r', 'put', ...a)
+// Runs the put, applies its writes and returns the result.
+const c_doPut = (s, ...a) => { const r = c_cput(s, ...a); assert.equal(r.status, 0, r.stderr); c_apply(s, r); return r }
+// A trusted, triaged-as-build issue by the maintainer.
+const c_readyIssue = (n, o = {}) => ({
+  issue: c_ci(n, { labels: ['ready-to-build'], ...o.issue }),
+  events: [c_lab('ready-to-build', 'alfhen', c_T(25), 'claude')],
+  records: [c_triagedRec(n, o.tri)],
+})
+const c_withIssues = (...parts) => ({
+  issues: parts.map(p => p.issue),
+  events: Object.fromEntries(parts.map(p => [p.issue.number, p.events ?? []])),
+  comments: Object.fromEntries(parts.map(p => [p.issue.number, p.comments ?? []])),
+  records: parts.flatMap(p => p.records ?? []),
+})
+const c_bare = (n, o = {}) => ({ issue: c_ci(n, o), events: o.events, comments: o.comments, records: o.records })
+
+test('gate prints each answer and next agrees', () => {
+  const g = (w) => { const s = csetup(w); return [run(s, 'o/r', 'gate').stdout.trim(), c_one(c_cnext(s)).step] }
+  assert.deepEqual(g({}), ['stage 1', 'idle'])
+  assert.deepEqual(g({ noTracking: true }), ['init needed', 'init needed'])
+  assert.deepEqual(g({ trackingLabels: ['routine-paused'] }), ['paused', 'paused'])
+  assert.deepEqual(g({ settings: { gates: [] } }), ['paused', 'paused'])
+  assert.deepEqual(g({ settings: { routine: { ...c_ROUTINE, stage: 0 } } }), ['stage 0', 'idle'])
+})
+
+test('a paused tracking issue does not stay paused after anyone removes the label', () => {
+  const s = csetup({ trackingLabels: ['routine-paused'], ...c_withIssues(c_bare(5)) })
+  assert.equal(c_one(c_cnext(s)).step, 'paused')
+  s.w.trackingLabels = []; s.sync()
+  assert.deepEqual(c_one(c_cnext(s)), { step: 'triage', issues: [5] })
+})
+
+test('next reads the settings from the default branch with the raw header and refuses a bad file', () => {
+  const s = csetup(c_withIssues(c_bare(5)))
+  const r = c_cnext(s)
+  assert.ok(r.calls.some(c => c === 'GET /repos/o/r/contents/.github/pipeline.json'))
+  s.w.settings = { routine: { ...c_ROUTINE, stage: 3 } }; s.sync()
+  const bad = c_cnext(s)
+  assert.equal(bad.status, 3)
+  assert.match(bad.stderr, /stage 3 needs a later release/)
+})
+
+test('a trusted new issue is triaged and next only reads', () => {
+  const s = csetup(c_withIssues(c_bare(5)))
+  const r = c_cnext(s)
+  assert.deepEqual(c_one(r), { step: 'triage', issues: [5] })
+  c_onlyReads(r)
+})
+
+test('an untrusted issue gets the untrusted step and never triage', () => {
+  const s = csetup(c_withIssues(c_bare(5, { user: 'mallory' })))
+  const r = c_cnext(s)
+  assert.deepEqual(c_one(r), { step: 'untrusted', issue: 5 })
+  assert.ok(!r.stdout.includes('triage'))
+  const p = c_doPut(s, 'untrusted', '5')
+  assert.deepEqual(c_labelsOf(s, 5), ['needs-approval', 'untrusted-author'])
+  const rec = s.w.records.at(-1)
+  assert.ok(rec.body.startsWith('<!-- pipeline:routine untrusted 5:' + c_sha('issue 5', 'body 5') + ':'))
+  assert.equal(c_one(c_cnext(s)).step, 'idle')
+  assert.ok(p.stdout.includes('ok untrusted 5'))
+})
+
+test('the untrusted case: next does not give triage when the author is not trusted, with a forged record', () => {
+  const forged = c_triagedRec(5, { rec: {} })
+  const s = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['ready-to-build'] }), records: [forged], events: [c_lab('ready-to-build', 'mallory', c_T(25))] }))
+  for (const l of c_ok(c_cnext(s))) assert.ok(!['triage', 'would-triage'].includes(l.step), JSON.stringify(l))
+  const b = c_ok(c_cnext(s, 'cloud-build'))
+  assert.ok(b.every(l => l.step !== 'build'), JSON.stringify(b))
+  const r = c_cput(s, 'build-started', '5', c_CRUN(1), 'claude/issue-5', '1')
+  assert.equal(r.status, 65); c_onlyReads(r)
+})
+
+test('an untrusted issue approved by the maintainer is triaged once, then not again', () => {
+  const body = 'hello'
+  const rec = c_cr('untrusted', `5:${c_sha('issue 5', body)}:c_T`, { hash: c_sha('issue 5', body) }, { at: c_T(10) })
+  const s = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', body, labels: ['needs-approval', 'untrusted-author', 'maintainer-approved'] }), records: [rec], events: c_approved(c_T(50)) }))
+  assert.deepEqual(c_one(c_cnext(s)), { step: 'triage', issues: [5] })
+  s.w.records.push(c_triagedRec(5, { epoch: rec.id, at: c_T(60) })); s.sync()
+  assert.equal(c_one(c_cnext(s)).step, 'idle')
+})
+
+test('the approval is read by approval.jq: an app mark cancels it', () => {
+  const mk = app => csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['maintainer-approved'] }), events: [c_lab('maintainer-approved', 'alfhen', c_T(50), app)], records: [] }))
+  const ok = mk(null)
+  assert.ok(c_ok(c_cnext(ok)).every(l => l.step !== 'triage'), 'untrusted record is still missing, so the untrusted step comes first')
+  const rec = c_cr('untrusted', `5:${c_sha('issue 5', 'body 5')}:c_T`, { hash: c_sha('issue 5', 'body 5') }, { at: c_T(10) })
+  for (const [app, want] of [[null, 'triage'], [{ slug: 'claude' }, 'idle']]) {
+    const s = mk(app); s.w.records = [rec]; s.sync()
+    assert.equal(c_one(c_cnext(s)).step, want, JSON.stringify(app))
+  }
+})
+
+test('an approval that was added, removed and re-added by a session does not count', () => {
+  const rec = c_cr('untrusted', `5:${c_sha('issue 5', 'body 5')}:c_T`, { hash: c_sha('issue 5', 'body 5') }, { at: c_T(10) })
+  const events = [c_lab('maintainer-approved', 'alfhen', c_T(50)), { event: 'unlabeled', label: { name: 'maintainer-approved' }, actor: { login: 'alfhen' }, created_at: c_T(55), performed_via_github_app: null }, c_lab('maintainer-approved', 'alfhen', c_T(60), { slug: 'claude' })]
+  const noTriage = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['maintainer-approved'] }), events, records: [rec] }))
+  assert.equal(c_one(c_cnext(noTriage)).step, 'idle')
+  const s = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['maintainer-approved', 'ready-to-build'] }), events, records: [rec, c_triagedRec(5, { epoch: rec.id })] }))
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'idle')
+})
+
+test('an approval that was removed has no force', () => {
+  const rec = c_cr('untrusted', `5:${c_sha('issue 5', 'body 5')}:c_T`, { hash: c_sha('issue 5', 'body 5') }, { at: c_T(10) })
+  const s = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['needs-approval'] }), events: c_approved(c_T(50)), records: [rec] }))
+  assert.equal(c_one(c_cnext(s)).step, 'idle')
+})
+
+test('a body changed after approval is revoked with the hash cause, and put revoke writes the new hash', () => {
+  const old = c_sha('issue 5', 'old body')
+  const rec = c_cr('untrusted', `5:${old}:c_T`, { hash: old }, { at: c_T(10) })
+  const s = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', body: 'new body', labels: ['maintainer-approved', 'ready-to-build'] }), events: c_approved(c_T(50)), records: [rec, c_triagedRec(5, { epoch: rec.id })] }))
+  assert.deepEqual(c_one(c_cnext(s)), { step: 'revoke', issue: 5, cause: 'hash' })
+  assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'))
+  const rb = c_cput(s, 'build-started', '5', c_CRUN(1), 'claude/issue-5', '1')
+  assert.equal(rb.status, 65); c_onlyReads(rb)
+  const s0 = csetup({ ...c_withIssues({ issue: c_ci(5, { user: 'mallory', body: 'new body', labels: ['maintainer-approved', 'ready-to-build'] }), events: c_approved(c_T(50)), records: [rec, c_triagedRec(5, { epoch: rec.id })] }), settings: { routine: { ...c_ROUTINE, stage: 0 } } })
+  assert.ok(c_ok(c_cnext(s0, 'cloud-build')).every(l => l.step !== 'would-build'))
+  c_doPut(s, 'revoke', '5', 'hash')
+  const last = s.w.records.at(-1).body
+  assert.ok(last.startsWith('<!-- pipeline:routine revoked 5:hash:'))
+  assert.equal(JSON.parse(last.split('\n')[1]).hash, c_sha('issue 5', 'new body'))
+  assert.deepEqual(c_labelsOf(s, 5), ['needs-approval'])
+  assert.equal(c_one(c_cnext(s)).step, 'idle')
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'idle')
+})
+
+test('a body that goes H1, H2, H1, H2 is revoked each time and compared with the newest record only', () => {
+  const s = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', body: 'H1', labels: ['needs-approval'] }), records: [] }))
+  const approve = at => { s.w.events[5] = [...(s.w.events[5] ?? []), c_lab('maintainer-approved', 'alfhen', at)]; const i = c_issueOf(s, 5); i.labels.push({ name: 'maintainer-approved' }); s.sync() }
+  c_doPut(s, 'untrusted', '5')
+  let t = 900
+  for (const body of ['H2', 'H1', 'H2', 'H1']) {
+    approve(c_T(t++)); c_issueOf(s, 5).body = body; s.sync()
+    assert.deepEqual(c_one(c_cnext(s)), { step: 'revoke', issue: 5, cause: 'hash' }, body)
+    c_doPut(s, 'revoke', '5', 'hash')
+    assert.equal(c_one(c_cnext(s)).step, 'idle')
+  }
+})
+
+test('an outsider comment newer than the approval is revoked with the comment cause', () => {
+  const rec = c_cr('untrusted', `5:${c_sha('issue 5', 'body 5')}:c_T`, { hash: c_sha('issue 5', 'body 5') }, { at: c_T(10) })
+  const s = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['maintainer-approved'] }), events: c_approved(c_T(50)), comments: [c_cc('eve', c_T(60))], records: [rec] }))
+  assert.deepEqual(c_one(c_cnext(s)), { step: 'revoke', issue: 5, cause: 'comment' })
+  c_doPut(s, 'revoke', '5', 'comment')
+  assert.deepEqual(c_labelsOf(s, 5), ['needs-approval'])
+  assert.equal(c_one(c_cnext(s)).step, 'idle')
+})
+
+test('a comment created before the approval and edited after it blocks; created only does not', () => {
+  const rec = c_cr('untrusted', `5:${c_sha('issue 5', 'body 5')}:c_T`, { hash: c_sha('issue 5', 'body 5') }, { at: c_T(10) })
+  const mk = comment => csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['maintainer-approved'] }), events: c_approved(c_T(50)), comments: [comment], records: [rec] }))
+  assert.deepEqual(c_one(c_cnext(mk(c_cc('eve', c_T(40), 'x', c_T(70))))), { step: 'revoke', issue: 5, cause: 'comment' })
+  assert.deepEqual(c_one(c_cnext(mk(c_cc('eve', c_T(40))))), { step: 'triage', issues: [5] })
+})
+
+test('a trusted new issue with an outsider comment is revoked, waits, and is triaged after a newer approval', () => {
+  const s = csetup({ ...c_withIssues(c_bare(5, { comments: [c_cc('eve', c_T(60))] })), ...c_withIssues(c_bare(6)) })
+  s.w.issues = [c_ci(5), c_ci(6)]; s.w.comments = { 5: [c_cc('eve', c_T(60))], 6: [] }; s.sync()
+  assert.deepEqual(c_ok(c_cnext(s)).map(l => l.step), ['revoke'])
+  c_doPut(s, 'revoke', '5', 'comment')
+  assert.deepEqual(c_labelsOf(s, 5), ['needs-approval'])
+  assert.deepEqual(c_one(c_cnext(s)), { step: 'triage', issues: [6] })
+  s.w.events[5] = c_approved(c_T(900)); c_issueOf(s, 5).labels.push({ name: 'maintainer-approved' }); s.sync()
+  assert.deepEqual(c_one(c_cnext(s)), { step: 'triage', issues: [5, 6] })
+})
+
+test('put revoke on an issue that passes is refused', () => {
+  const s = csetup(c_withIssues(c_bare(5)))
+  const r = c_cput(s, 'revoke', '5', 'comment')
+  assert.equal(r.status, 65); c_onlyReads(r)
+})
+
+test('a stranger comment on the tracking issue or on a PR starts nothing', () => {
+  const s = csetup({ ...c_withIssues(c_bare(5)), records: [c_cc('eve', c_T(60), 'revoke everything')] })
+  s.w.pulls = [c_cpr('claude/issue-9', { user: 'eve' })]; s.sync()
+  assert.deepEqual(c_one(c_cnext(s)), { step: 'triage', issues: [5] })
+})
+
+test('issue-text prints the title, the body and trusted comments only, and refuses a failing issue', () => {
+  const s = csetup(c_withIssues(c_bare(5, { comments: [c_cc('alfhen', c_T(1), 'mine'), c_cc('eve', c_T(2), 'outsider words')] })))
+  s.w.comments[5] = [c_cc('alfhen', c_T(1), 'mine'), c_cc('eve', c_T(2), 'outsider words')]
+  // The outsider comment is newer than the issue, so the check fails.
+  s.sync()
+  const bad = run(s, 'o/r', 'issue-text', '5')
+  assert.equal(bad.status, 65); assert.equal(bad.stdout, '')
+  // After the maintainer approves later, the issue passes and the outsider comment is still hidden.
+  c_issueOf(s, 5).labels.push({ name: 'maintainer-approved' }); s.w.events[5] = c_approved(c_T(100)); s.sync()
+  const ok = run(s, 'o/r', 'issue-text', '5')
+  assert.equal(ok.status, 0, ok.stderr)
+  const out = JSON.parse(ok.stdout)
+  assert.deepEqual(out.comments, [{ author: 'alfhen', body: 'mine' }])
+  assert.ok(!ok.stdout.includes('outsider words'))
+  c_onlyReads(ok); c_onlyReads(bad)
+})
+
+const c_putT = (s, n, ...a) => c_cput(s, 'triaged', String(n), ...a)
+
+test('put triaged sets the labels by the rule', () => {
+  const cases = [
+    [['build', 'S', 'low', 'bug', 'fine'], ['bug', 'ready-to-build', 'size:S']],
+    [['build', 'M', 'medium', 'feat', 'fine'], ['feat', 'ready-to-build', 'size:M']],
+    [['build', 'L', 'low', 'bug', 'big'], ['bug', 'needs-approval', 'size:L']],
+    [['build', 'S', 'high', 'docs', 'risky'], ['docs', 'needs-approval', 'size:S']],
+    [['plan', 'M', 'low', 'chore', 'plan it'], ['chore', 'needs-approval', 'size:M']],
+    [['decline', 'S', 'low', 'test', 'not valid'], ['declined', 'size:S', 'test']],
+  ]
+  for (const [args, want] of cases) {
+    const s = csetup(c_withIssues(c_bare(5, { labels: ['needs-approval'] })))
+    const r = c_putT(s, 5, ...args)
+    assert.equal(r.status, 0, r.stderr)
+    c_apply(s, r)
+    const expected = want.includes('needs-approval') ? want : want
+    assert.deepEqual(c_labelsOf(s, 5), expected.sort(), args.join(' '))
+    const rec = JSON.parse(s.w.records.at(-1).body.split('\n')[1])
+    assert.equal(rec.type, args[3])
+    if (args[0] === 'decline') assert.ok(r.writes.some(w => w.includes('/issues/5/comments') && w.includes('Declined by the triage routine: not valid')))
+    assert.ok(!r.writes.some(w => /state=closed/.test(w)))
+  }
+})
+
+test('put triaged keeps the plan rule for size L and refuses a second record in one epoch', () => {
+  const s = csetup(c_withIssues(c_bare(5)))
+  const r = c_putT(s, 5, 'build', 'L', 'low', 'bug', 'big')
+  c_apply(s, r)
+  assert.equal(JSON.parse(s.w.records.at(-1).body.split('\n')[1]).decision, 'plan')
+  const again = c_putT(s, 5, 'build', 'S', 'low', 'bug', 'x')
+  assert.equal(again.status, 65); c_onlyReads(again)
+})
+
+test('put triaged: a revoke, a new approval and a second triage write a record with a new epoch, then never triage', () => {
+  const s = csetup({ ...c_withIssues(c_bare(5, { comments: [c_cc('eve', c_T(60))] })), records: [c_triagedRec(5, { epoch: 0, at: c_T(20) })] })
+  c_doPut(s, 'revoke', '5', 'comment')
+  const epoch = s.w.records.at(-1).id
+  c_issueOf(s, 5).labels.push({ name: 'maintainer-approved' }); s.w.events[5] = c_approved(c_T(900)); s.sync()
+  const t = c_putT(s, 5, 'build', 'S', 'low', 'bug', 'ok')
+  assert.equal(t.status, 0, t.stderr); c_apply(s, t)
+  assert.ok(s.w.records.at(-1).body.startsWith(`<!-- pipeline:routine triaged 5:${epoch} -->`))
+  assert.equal(s.w.records.filter(r => r.body.includes('pipeline:routine triaged 5:')).length, 2)
+  assert.ok(c_ok(c_cnext(s)).every(l => l.step !== 'triage'))
+  const b = c_one(c_cnext(s, 'cloud-build'))
+  assert.equal(b.step, 'build')
+})
+
+test('put triaged refuses a bad type with exit 64 and no call', () => {
+  const r = c_putT(csetup(c_withIssues(c_bare(5))), 5, 'build', 'S', 'low', 'fix', 'x')
+  assert.equal(r.status, 64); assert.deepEqual(r.calls, [])
+})
+
+test('two triaged records with different keys are no error', () => {
+  const s = csetup({ ...c_withIssues(c_bare(5)), records: [c_triagedRec(5, { epoch: 0, at: c_T(20) }), c_triagedRec(5, { epoch: 3, at: c_T(21) })] })
+  assert.equal(c_one(c_cnext(s)).step, 'idle')
+})
+
+test('an issue with an open PR and a cloud triaged record is idle, with no adopt', () => {
+  const s = csetup({ ...c_withIssues({ issue: c_ci(5, { labels: ['ready-to-build'] }), records: [c_triagedRec(5)] }) })
+  s.w.pulls = [c_cpr('claude/issue-5')]; s.sync()
+  assert.equal(c_one(c_cnext(s)).step, 'idle')
+})
+
+test('adopt: a 0.7.0 record with no cloud label is adopted; a PR from routine/ or a label stops it', () => {
+  const legacy = c_cr('triaged', '5', { decision: 'build', size: 'S', risk: 'low', why: 'ok' }, { at: c_T(5) })
+  const s = csetup(c_withIssues({ issue: c_ci(5), records: [legacy] }))
+  assert.deepEqual(c_one(c_cnext(s)), { step: 'adopt', issue: 5, labels: ['ready-to-build', 'size:S'] })
+  s.w.pulls = [c_cpr('routine/issue-5')]; s.sync()
+  assert.equal(c_one(c_cnext(s)).step, 'idle')
+  assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'))
+  s.w.pulls = []; s.sync()
+  c_doPut(s, 'adopt', '5')
+  assert.deepEqual(c_labelsOf(s, 5), ['ready-to-build', 'size:S'])
+  assert.equal(c_one(c_cnext(s)).step, 'idle')
+  const decline = c_cr('triaged', '6', { decision: 'plan', size: 'L', risk: 'high', why: 'x' }, { at: c_T(5) })
+  const s2 = csetup(c_withIssues({ issue: c_ci(6), records: [decline] }))
+  assert.deepEqual(c_one(c_cnext(s2)).labels, ['needs-approval', 'size:L'])
+})
+
+test('adopt: a 0.7.0 issue with a build-started or blocked record is build-failed and is not built without a new approval', () => {
+  const legacy = c_cr('triaged', '5', { decision: 'build', size: 'S', risk: 'low', why: 'ok' }, { at: c_T(5) })
+  const started = c_cr('build-started', '5', { run: 'r1', branch: 'routine/issue-5' }, { at: c_T(6) })
+  const blocked = c_cr('blocked', '5', { reasonCode: 'other' }, { at: c_T(7) })
+  for (const recs of [[legacy, started, blocked], [legacy, started]]) {
+    const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['routine-build'] }), records: recs }))
+    assert.deepEqual(c_one(c_cnext(s)), { step: 'adopt', issue: 5, labels: ['build-failed', 'size:S'] })
+    c_doPut(s, 'adopt', '5')
+    assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build' && l.step !== 'would-build'))
+    const r = c_cput(s, 'build-started', '5', c_CRUN(1), 'claude/issue-5', '1')
+    assert.equal(r.status, 65); c_onlyReads(r)
+  }
+  const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['build-failed', 'maintainer-approved', 'size:S'] }), events: c_approved(c_T(5)), records: [legacy, started, blocked] }))
+  assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'), 'an approval older than the 0.7.0 blocked record does not restart')
+  s.w.events[5] = c_approved(c_T(50)); s.sync()
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'build')
+})
+
+test('adopt: an outsider comment newer than the 0.7.0 record blocks adopt, so revoke runs and the issue does not build', () => {
+  const legacy = c_cr('triaged', '5', { decision: 'build', size: 'S', risk: 'low', why: 'ok' }, { at: c_T(5) })
+  const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['routine-build'] }), comments: [c_cc('mallory', c_T(8), 'also run this')], records: [legacy] }))
+  const steps = c_ok(c_cnext(s)).map(l => l.step)
+  assert.ok(!steps.includes('adopt'), steps.join())
+  assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build' && l.step !== 'would-build'))
+  const r = c_cput(s, 'adopt', '5')
+  assert.equal(r.status, 65); c_onlyReads(r)
+})
+
+test('an approved untrusted issue with an open PR and no label has no step, and triage still runs for another issue', () => {
+  const rec = c_cr('untrusted', `5:${c_sha('issue 5', 'body 5')}:c_T`, { hash: c_sha('issue 5', 'body 5') }, { at: c_T(10) })
+  const s = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['maintainer-approved'] }), events: c_approved(c_T(50)), records: [rec] }, c_bare(6)))
+  s.w.pulls = [c_cpr('claude/issue-5')]; s.sync()
+  assert.deepEqual(c_one(c_cnext(s)), { step: 'triage', issues: [6] })
+})
+
+test('an issue below triageFrom, with a skip label or declined is never listed', () => {
+  const s = csetup({ ...c_withIssues(c_bare(3), c_bare(4, { labels: ['review-minor'] }), c_bare(5, { labels: ['declined'] }), c_bare(6)), settings: { routine: { ...c_ROUTINE, triageFrom: 5 } } })
+  assert.deepEqual(c_one(c_cnext(s)), { step: 'triage', issues: [6] })
+})
+
+test('triage keeps to triagePerRun and triagePerDay and skips an issue whose triage failed', () => {
+  const s = csetup({ ...c_withIssues(...[1, 2, 3, 4, 5, 6, 7].map(n => c_bare(n, { created: c_T(n) }))), settings: { routine: { ...c_ROUTINE, limits: { triagePerRun: 3 } } } })
+  assert.deepEqual(c_one(c_cnext(s)), { step: 'triage', issues: [1, 2, 3] })
+  s.w.settings = { routine: { ...c_ROUTINE, limits: { triagePerRun: 5, triagePerDay: 2 } } }
+  s.w.records = [c_triagedRec(1, { at: c_T(300) }), c_cr('triage-failed', '2:0', { reason: 'x' }, { at: c_T(301) })]
+  s.sync()
+  assert.ok(c_ok(c_cnext(s)).every(l => l.step !== 'triage'))
+  s.w.settings = { routine: c_ROUTINE }; s.w.records = [c_cr('triage-failed', '1:0', { reason: 'x' }, { at: c_OLD })]; s.sync()
+  assert.deepEqual(c_one(c_cnext(s)), { step: 'triage', issues: [2, 3, 4, 5, 6] })
+})
+
+test('put triage-failed labels needs-maintainer with one notice, once per epoch', () => {
+  const s = csetup(c_withIssues(c_bare(5)))
+  const r = c_doPut(s, 'triage-failed', '5')
+  assert.ok(r.stdout.includes('NOTICE triage-failed o/r 5'))
+  assert.deepEqual(c_labelsOf(s, 5), ['needs-maintainer'])
+  assert.equal(c_cput(s, 'triage-failed', '5').status, 65)
+  assert.equal(c_one(c_cnext(s)).step, 'idle')
+})
+
+test('every triage-side step ends: the step, its put and next again', () => {
+  const legacy = c_cr('triaged', '3', { decision: 'build', size: 'S', risk: 'low', why: 'ok' }, { at: c_T(5) })
+  const s = csetup(c_withIssues(
+    c_bare(3, { records: [legacy] }), c_bare(4, { user: 'mallory' }),
+    c_bare(5, { comments: [c_cc('eve', c_T(60))] }), c_bare(6), c_bare(7, { created: c_T(1) }),
+  ))
+  s.w.records = [legacy]; s.sync()
+  const seen = []
+  for (let guard = 0; guard < 12; guard++) {
+    const l = c_one(c_cnext(s))
+    seen.push(l.step)
+    if (l.step === 'adopt') c_doPut(s, 'adopt', String(l.issue))
+    else if (l.step === 'untrusted') c_doPut(s, 'untrusted', String(l.issue))
+    else if (l.step === 'revoke') c_doPut(s, 'revoke', String(l.issue), l.cause)
+    else if (l.step === 'triage') { for (const n of l.issues) c_doPut(s, 'triaged', String(n), 'build', 'S', 'low', 'bug', 'ok') }
+    else break
+  }
+  assert.deepEqual(seen, ['adopt', 'untrusted', 'revoke', 'triage', 'idle'])
+})
+
+test('stage 0 prints every step once, writes nothing and every put prints WOULD', () => {
+  const legacy = c_cr('triaged', '3', { decision: 'build', size: 'S', risk: 'low', why: 'ok' }, { at: c_T(5) })
+  const s = csetup({ ...c_withIssues(c_bare(3), c_bare(4, { user: 'mallory' }), c_bare(6)), records: [legacy], settings: { routine: { ...c_ROUTINE, stage: 0 } } })
+  const r = c_cnext(s)
+  assert.deepEqual(c_lines(r), [{ step: 'adopt', issue: 3, labels: ['ready-to-build', 'size:S'] }, { step: 'untrusted', issue: 4 }, { step: 'would-triage', issues: [6] }])
+  c_onlyReads(r)
+  for (const a of [['adopt', '3'], ['untrusted', '4'], ['triaged', '6', 'build', 'S', 'low', 'bug', 'ok'], ['triage-failed', '6']]) {
+    const p = c_cput(s, ...a)
+    assert.equal(p.status, 0, p.stderr)
+    assert.match(p.stdout, /^WOULD /); assert.ok(!p.stdout.includes('NOTICE'))
+    c_onlyReads(p)
+  }
+})
+
+// ---- build side ----
+const c_builtIssue = (n, o = {}) => c_readyIssue(n, o)
+const c_buildStep = r => { const l = c_lines(r); return l[0] }
+
+test('build: ready-to-build gives the build step with the run-wave arguments', () => {
+  const s = csetup(c_withIssues(c_builtIssue(5)))
+  const r = c_cnext(s, 'cloud-build')
+  const b = c_one(r)
+  c_onlyReads(r)
+  assert.equal(b.step, 'build'); assert.equal(b.issue, 5); assert.equal(b.attempt, 1); assert.equal(b.branch, 'claude/issue-5')
+  assert.match(b.run, /^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$/)
+  assert.deepEqual(b.args, {
+    goals: 'docs/goals.md', checks: ['node test/sim-pipeline.mjs'], repo: 'o/r', tmp: `/tmp/apl-${b.run}`,
+    pluginRoot: '/opt/agent-pr-pipeline/v0.8.0', agentPrefix: 'apl-v0-8-0-', feedback: true, feedbackRepo: 'alfhen/agent-pr-pipeline',
+    prs: [{ quick: { issue: 5 }, branch: 'claude/issue-5' }],
+  })
+})
+
+test('build: an approval of an untrusted issue gives build, and a size L record never does', () => {
+  const rec = c_cr('untrusted', `5:${c_sha('issue 5', 'body 5')}:c_T`, { hash: c_sha('issue 5', 'body 5') }, { at: c_T(10) })
+  const s = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['maintainer-approved'] }), events: c_approved(c_T(50)), records: [rec, c_triagedRec(5, { epoch: rec.id, at: c_T(60) })] }))
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'build')
+  const big = csetup(c_withIssues(c_builtIssue(5, { tri: { rec: { size: 'L' } } })))
+  assert.ok(c_ok(c_cnext(big, 'cloud-build')).every(l => l.step !== 'build'))
+  const high = csetup(c_withIssues(c_builtIssue(5, { tri: { rec: { risk: 'high' } } })))
+  assert.ok(c_ok(c_cnext(high, 'cloud-build')).every(l => l.step !== 'build'))
+  const plan = csetup(c_withIssues(c_builtIssue(5, { tri: { rec: { decision: 'plan' } } })))
+  assert.ok(c_ok(c_cnext(plan, 'cloud-build')).every(l => l.step !== 'build'))
+})
+
+test('build: a ready-to-build label on a build-failed issue does not restart it without a newer approval', () => {
+  const s = csetup(c_withIssues({ ...c_builtIssue(5), records: [c_triagedRec(5), c_startedRec(5, 1), c_blockedRec(5, 1, { at: c_T(40) })] }))
+  s.w.issues[0].labels.push({ name: 'build-failed' }); s.sync()
+  assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'))
+  s.w.events[5] = [...s.w.events[5], c_lab('maintainer-approved', 'alfhen', c_T(90))]; c_issueOf(s, 5).labels.push({ name: 'maintainer-approved' }); s.sync()
+  const b = c_one(c_cnext(s, 'cloud-build'))
+  assert.equal(b.step, 'build'); assert.equal(b.attempt, 2)
+})
+
+test('build: an approved issue with an older approval than its blocked record does not build', () => {
+  const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['maintainer-approved', 'build-failed'] }), events: c_approved(c_T(30)), records: [c_triagedRec(5), c_startedRec(5, 1), c_blockedRec(5, 1, { at: c_T(40) })] }))
+  assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'))
+})
+
+test('build: an attempt in flight, a building label, or a PR from the branch blocks a second build', () => {
+  const inflight = csetup(c_withIssues({ ...c_builtIssue(5), records: [c_triagedRec(5), c_startedRec(5, 1)] }))
+  assert.ok(c_ok(c_cnext(inflight, 'cloud-build')).every(l => l.step !== 'build'))
+  const r = c_cput(inflight, 'build-started', '5', c_CRUN(2), 'claude/issue-5', '2')
+  assert.equal(r.status, 65)
+  const label = csetup(c_withIssues({ issue: c_ci(5, { labels: ['maintainer-approved', 'building'] }), events: c_approved(c_T(90)), records: [c_triagedRec(5), c_startedRec(5, 1), c_blockedRec(5, 1)] }))
+  assert.equal(c_one(c_cnext(csetup(c_withIssues({ issue: c_ci(5, { labels: ['maintainer-approved'] }), events: c_approved(c_T(90)), records: [c_triagedRec(5), c_startedRec(5, 1), c_blockedRec(5, 1)] })), 'cloud-build')).step, 'build', 'the same issue without the label builds')
+  assert.ok(c_ok(c_cnext(label, 'cloud-build')).every(l => l.step !== 'build'))
+  const rl = c_cput(label, 'build-started', '5', c_CRUN(2), 'claude/issue-5', '2')
+  assert.equal(rl.status, 65); c_onlyReads(rl)
+  const label0 = csetup({ ...c_withIssues({ issue: c_ci(5, { labels: ['maintainer-approved', 'building'] }), events: c_approved(c_T(90)), records: [c_triagedRec(5), c_startedRec(5, 1), c_blockedRec(5, 1)] }), settings: { routine: { ...c_ROUTINE, stage: 0 } } })
+  assert.ok(c_ok(c_cnext(label0, 'cloud-build')).every(l => l.step !== 'would-build'))
+  const pr = csetup(c_withIssues(c_builtIssue(5)))
+  pr.w.pulls = [c_cpr('claude/issue-5', { state: 'closed' })]; pr.sync()
+  assert.ok(c_ok(c_cnext(pr, 'cloud-build')).every(l => l.step !== 'build'))
+})
+
+test('build: limits hold at 3 open claude PRs and at 2 runs in 24 hours, with heldBy', () => {
+  const s = csetup(c_withIssues(c_builtIssue(5)))
+  s.w.pulls = [1, 2, 3].map(n => c_cpr(`claude/issue-${n + 50}`, { number: 800 + n })); s.sync()
+  assert.deepEqual(c_one(c_cnext(s, 'cloud-build')), { step: 'wait', heldBy: 'limits' })
+  s.w.pulls = [c_cpr('fix/x'), c_cpr('claude/issue-60', { user: 'mallory' })]; s.sync()
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'build')
+  s.w.pulls = []; s.w.records = [c_triagedRec(5), c_startedRec(61, 1, { run: c_CRUN(8), at: c_T(50) }), c_startedRec(62, 1, { run: c_CRUN(9), at: c_T(51) })]; s.sync()
+  assert.deepEqual(c_one(c_cnext(s, 'cloud-build')), { step: 'wait', heldBy: 'limits' })
+  s.w.records = [c_triagedRec(5), c_startedRec(61, 1, { run: c_CRUN(8), at: c_T(50) }), c_startedRec(62, 1, { run: c_CRUN(8), at: c_T(51) })]; s.sync()
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'build')
+  s.w.records = [c_triagedRec(5), c_startedRec(61, 1, { run: c_CRUN(8), at: c_OLD }), c_startedRec(62, 1, { run: c_CRUN(9), at: c_OLD })]; s.sync()
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'build')
+})
+
+test('build: buildAttempts 0 never builds', () => {
+  const s = csetup({ ...c_withIssues(c_builtIssue(5)), settings: { routine: { ...c_ROUTINE, limits: { buildAttempts: 0 } } } })
+  assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'))
+})
+
+test('build: a --start file with another version or a root that does not end in the version is refused', () => {
+  const s = csetup(c_withIssues(c_builtIssue(5)))
+  for (const o of [{ version: 'v0.7.0' }, { pluginRoot: '/opt/agent-pr-pipeline/v0.7.0' }]) {
+    const r = c_cnext(s, 'cloud-build', o)
+    assert.equal(r.status, 65, r.stderr); assert.equal(r.stdout, '')
+  }
+  assert.equal(run(s, 'o/r', 'next', '--mode', 'cloud-build').status, 64)
+})
+
+test('build: a forged build-started record by another account changes nothing', () => {
+  const s = csetup(c_withIssues({ ...c_builtIssue(5), records: [c_triagedRec(5), { ...c_startedRec(5, 1), user: { login: 'mallory' } }] }))
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).attempt, 1)
+})
+
+test('block: a built record, or an old record, ends the attempt; a fresh record does not', () => {
+  const mk = recs => csetup(c_withIssues({ issue: c_ci(5, { labels: ['building'] }), records: [c_triagedRec(5), ...recs] }))
+  const built = c_cr('built', '5:1', { run: c_CRUN(1), pr: 'none', ready: false, reasonCode: 'needs-human' }, { at: c_T(35) })
+  assert.deepEqual(c_one(c_cnext(mk([c_startedRec(5, 1), built]), 'cloud-build')), { step: 'block', issue: 5, run: c_CRUN(1), attempt: 1, reasonCode: 'needs-human' })
+  assert.deepEqual(c_one(c_cnext(mk([c_startedRec(5, 1, { at: c_OLD })]), 'cloud-build')).step, 'block')
+  assert.equal(c_one(c_cnext(mk([c_startedRec(5, 1)]), 'cloud-build')).step, 'idle')
+  const withPr = mk([c_startedRec(5, 1, { at: c_OLD })]); withPr.w.pulls = [c_cpr('claude/issue-5')]; withPr.sync()
+  assert.equal(c_one(c_cnext(withPr, 'cloud-build')).step, 'pr-seen')
+})
+
+test('every build-side step ends: pr-seen, block, exhausted, needs-plan and build', () => {
+  const approvedFailed = (n, a) => ({
+    issue: c_ci(n, { labels: ['maintainer-approved', 'build-failed'] }), events: c_approved(c_T(90)),
+    records: [c_triagedRec(n), ...[...Array(a).keys()].flatMap(k => [c_startedRec(n, k + 1, { at: c_T(30 + k) }), c_blockedRec(n, k + 1, { at: c_T(40 + k) })])],
+  })
+  const s = csetup({ settings: { routine: { ...c_ROUTINE, limits: { wavesPerDay: 9 } } }, ...c_withIssues(
+    { issue: c_ci(10, { labels: ['building'] }), records: [c_triagedRec(10), c_startedRec(10, 1)] },
+    { issue: c_ci(11, { labels: ['building'] }), records: [c_triagedRec(11), c_startedRec(11, 1, { at: c_OLD })] },
+    approvedFailed(12, 2),
+    { issue: c_ci(13, { labels: ['maintainer-approved'] }), events: c_approved(c_T(90)), records: [c_triagedRec(13, { rec: { size: 'L', decision: 'plan' } })] },
+    c_builtIssue(14), c_builtIssue(15),
+  ) })
+  s.w.pulls = [c_cpr('claude/issue-10')]; s.sync()
+  const seen = []
+  for (let g = 0; g < 14; g++) {
+    const l = c_one(c_cnext(s, 'cloud-build'))
+    seen.push(`${l.step}${l.issue ?? ''}`)
+    if (l.step === 'pr-seen') c_doPut(s, 'pr-seen', String(l.issue))
+    else if (l.step === 'block') c_doPut(s, 'blocked', String(l.issue), l.run, l.reasonCode)
+    else if (l.step === 'exhausted') c_doPut(s, 'exhausted', String(l.issue))
+    else if (l.step === 'needs-plan') c_doPut(s, 'needs-plan', String(l.issue))
+    else if (l.step === 'build') { c_doPut(s, 'build-started', String(l.issue), l.run, l.branch, String(l.attempt)); s.w.pulls.push(c_cpr(l.branch, { number: 700 + l.issue })); s.sync() }
+    else break
+  }
+  assert.deepEqual(seen, ['pr-seen10', 'block11', 'exhausted12', 'needs-plan13', 'build14', 'pr-seen14', 'build15', 'pr-seen15', 'idle'])
+})
+
+test('exhausted needs the attempts used; below the limit put exits 65', () => {
+  const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['maintainer-approved', 'build-failed'] }), events: c_approved(c_T(90)), records: [c_triagedRec(5), c_startedRec(5, 1), c_blockedRec(5, 1)] }))
+  assert.equal(c_cput(s, 'exhausted', '5').status, 65)
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'build')
+})
+
+test('exhausted at attempt 2 prints one notice and labels needs-maintainer', () => {
+  const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['maintainer-approved', 'build-failed'] }), events: c_approved(c_T(90)), records: [c_triagedRec(5), c_startedRec(5, 1), c_blockedRec(5, 1), c_startedRec(5, 2, { at: c_T(50) }), c_blockedRec(5, 2, { at: c_T(60) })] }))
+  assert.deepEqual(c_one(c_cnext(s, 'cloud-build')), { step: 'exhausted', issue: 5 })
+  const r = c_doPut(s, 'exhausted', '5')
+  assert.equal(r.stdout.trim(), 'NOTICE exhausted o/r 5')
+  assert.ok(c_labelsOf(s, 5).includes('needs-maintainer'))
+})
+
+test('pr-seen with no PR exits 65', () => {
+  const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['building'] }), records: [c_triagedRec(5), c_startedRec(5, 1)] }))
+  assert.equal(c_cput(s, 'pr-seen', '5').status, 65)
+})
+
+test('needs-plan once per approval: the label removed by the maintainer is not set again, a newer approval gives a second record', () => {
+  const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['maintainer-approved', 'needs-approval'] }), events: c_approved(c_T(90)), records: [c_triagedRec(5, { rec: { decision: 'plan', size: 'L' } })] }))
+  assert.deepEqual(c_one(c_cnext(s, 'cloud-build')), { step: 'needs-plan', issue: 5 })
+  const r = c_doPut(s, 'needs-plan', '5')
+  assert.ok(r.stdout.includes('NOTICE needs-plan o/r 5'))
+  assert.deepEqual(c_labelsOf(s, 5), ['maintainer-approved', 'needs-plan'])
+  c_issueOf(s, 5).labels = c_issueOf(s, 5).labels.filter(l => l.name !== 'needs-plan'); s.sync()
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'idle')
+  s.w.events[5] = [c_lab('maintainer-approved', 'alfhen', c_T(95))]; s.sync()
+  assert.deepEqual(c_one(c_cnext(s, 'cloud-build')), { step: 'needs-plan', issue: 5 })
+  c_doPut(s, 'needs-plan', '5')
+  assert.equal(s.w.records.filter(x => x.body.includes('needs-plan 5:')).length, 2)
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'idle')
+})
+
+test('put build-started removes ready-to-build, adds building and writes the record; put blocked removes the labels and adds build-failed', () => {
+  const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['ready-to-build', 'maintainer-approved'] }), events: [c_lab('ready-to-build', 'alfhen', c_T(25)), ...c_approved(c_T(26))], records: [c_triagedRec(5)] }))
+  const r = c_doPut(s, 'build-started', '5', c_CRUN(1), 'claude/issue-5', '1')
+  assert.deepEqual(c_labelsOf(s, 5), ['building', 'maintainer-approved'])
+  assert.ok(s.w.records.at(-1).body.startsWith('<!-- pipeline:routine build-started 5:1 -->'))
+  assert.equal(JSON.parse(r.stdout).run, c_CRUN(1))
+  const b = c_doPut(s, 'blocked', '5', c_CRUN(1), 'rounds-exhausted')
+  assert.deepEqual(c_labelsOf(s, 5), ['build-failed'])
+  assert.ok(b.stdout.includes('NOTICE blocked o/r 5'))
+  assert.equal(c_cput(s, 'blocked', '5', c_CRUN(1), 'other').status, 65)
+  assert.equal(c_cput(s, 'build-started', '5', c_CRUN(3), 'claude/issue-5', '2').status, 65)
+})
+
+test('put blocked with triage-plan also writes a needs-plan record and labels needs-plan', () => {
+  const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['building', 'needs-approval'] }), records: [c_triagedRec(5), c_startedRec(5, 1)] }))
+  const r = c_doPut(s, 'blocked', '5', c_CRUN(1), 'triage-plan')
+  assert.ok(s.w.records.some(x => x.body.startsWith('<!-- pipeline:routine needs-plan 5:5000 -->')))
+  assert.deepEqual(c_labelsOf(s, 5), ['build-failed', 'needs-plan'])
+  assert.equal(r.stdout.split('\n').filter(l => l.startsWith('NOTICE')).length, 1)
+})
+
+test('put built stores a log record with fixed fields and refuses a second one', () => {
+  const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['building'] }), records: [c_triagedRec(5), c_startedRec(5, 1)] }))
+  c_doPut(s, 'built', '5', c_CRUN(1), '42', 'true', 'opened')
+  const rec = JSON.parse(s.w.records.at(-1).body.split('\n')[1])
+  assert.deepEqual(rec, { run: c_CRUN(1), pr: 42, ready: true, reasonCode: 'opened' })
+  assert.equal(c_cput(s, 'built', '5', c_CRUN(1), '42', 'true', 'opened').status, 65)
+  assert.equal(c_cput(s, 'built', '5', c_CRUN(1), '42', 'maybe', 'opened').status, 64)
+  assert.equal(c_cput(s, 'built', '5', c_CRUN(1), '42', 'true', 'because').status, 64)
+})
+
+test('the race: a second record of one attempt from another run gets exit 66', () => {
+  const s = csetup(c_withIssues(c_builtIssue(5)))
+  const older = c_startedRec(5, 1, { run: c_CRUN(7), at: c_T(31) })
+  const mine = { ...c_startedRec(5, 1, { run: c_CRUN(1) }), id: older.id + 1 }
+  // After our POST the tracking comments hold the other run's record first.
+  writeFileSync(join(s.fx, `${fname('repos/o/r/issues/100/comments')}.race.json`), JSON.stringify([...s.w.records, older, mine]))
+  writeFileSync(join(s.fx, `${fname('repos/o/r/issues/100/comments')}.POST.then`), `${fname('repos/o/r/issues/100/comments')}.race.json ${fname('repos/o/r/issues/100/comments')}.json\n`)
+  const r = c_cput(s, 'build-started', '5', c_CRUN(1), 'claude/issue-5', '1')
+  assert.equal(r.status, 66, r.stderr)
+  assert.ok(!r.writes.some(w => w.includes('/labels')))
+})
+
+test('a lost-race build-started record is ignored: block names the winner', () => {
+  const winner = c_startedRec(5, 1, { run: c_CRUN(7), at: c_OLD })
+  const loser = { ...c_startedRec(5, 1, { run: c_CRUN(1), at: c_OLD }), id: winner.id + 1 }
+  const s = csetup({ ...c_withIssues({ issue: c_ci(5, { labels: ['building'] }), records: [c_triagedRec(5), winner, loser] }), settings: { routine: { ...c_ROUTINE, stage: 1 } } })
+  const blocks = c_lines(c_cnext(s, 'cloud-build')).filter(l => l.step === 'block')
+  assert.equal(blocks.length, 1)
+  assert.equal(blocks[0].run, c_CRUN(7))
+})
+
+test('the winner of the race goes on', () => {
+  const s = csetup(c_withIssues(c_builtIssue(5)))
+  const mine = c_startedRec(5, 1, { run: c_CRUN(1), at: c_T(31) })
+  const later = { ...c_startedRec(5, 1, { run: c_CRUN(7) }), id: mine.id + 1 }
+  writeFileSync(join(s.fx, `${fname('repos/o/r/issues/100/comments')}.race.json`), JSON.stringify([...s.w.records, mine, later]))
+  writeFileSync(join(s.fx, `${fname('repos/o/r/issues/100/comments')}.POST.then`), `${fname('repos/o/r/issues/100/comments')}.race.json ${fname('repos/o/r/issues/100/comments')}.json\n`)
+  const r = c_cput(s, 'build-started', '5', c_CRUN(1), 'claude/issue-5', '1')
+  assert.equal(r.status, 0, r.stderr)
+})
+
+test('stage 0 for the build side prints would-build and WOULD, and writes nothing', () => {
+  const s = csetup({ ...c_withIssues(c_builtIssue(5), { issue: c_ci(6, { labels: ['building'] }), records: [c_triagedRec(6), c_startedRec(6, 1, { at: c_OLD })] }), settings: { routine: { ...c_ROUTINE, stage: 0 } } })
+  const r = c_cnext(s, 'cloud-build')
+  c_onlyReads(r)
+  assert.deepEqual(c_lines(r).map(l => l.step), ['block', 'would-build'])
+  assert.equal(c_lines(r)[1].issue, 5)
+  for (const a of [['build-started', '5', c_CRUN(1), 'claude/issue-5', '1'], ['built', '6', c_CRUN(1), 'none', 'false', 'other']]) {
+    const p = c_cput(s, ...a)
+    assert.equal(p.status, 0, p.stderr); assert.match(p.stdout, /^WOULD /); c_onlyReads(p)
+  }
+  const blocked = c_cput(s, 'blocked', '6', c_CRUN(1), 'other')
+  assert.equal(blocked.status, 0, blocked.stderr)
+  assert.match(blocked.stdout, /^WOULD blocked/); c_onlyReads(blocked)
+})
+
+test('stage 0 also holds for revoke, pr-seen, exhausted, needs-plan, env and outbox puts', () => {
+  const rec = c_cr('untrusted', `5:${c_sha('issue 5', 'old')}:c_T`, { hash: c_sha('issue 5', 'old') }, { at: c_T(10) })
+  const s = csetup({
+    ...c_withIssues(
+      { issue: c_ci(5, { user: 'mallory', body: 'new', labels: ['maintainer-approved'] }), events: c_approved(c_T(50)), records: [rec] },
+      { issue: c_ci(6, { labels: ['building'] }), records: [c_triagedRec(6), c_startedRec(6, 1)] },
+      { issue: c_ci(7, { labels: ['maintainer-approved', 'build-failed'] }), events: c_approved(c_T(90)), records: [c_triagedRec(7), c_startedRec(7, 1), c_blockedRec(7, 1), c_startedRec(7, 2, { at: c_T(50) }), c_blockedRec(7, 2, { at: c_T(60) })] },
+      { issue: c_ci(8, { labels: ['maintainer-approved'] }), events: c_approved(c_T(90)), records: [c_triagedRec(8, { rec: { size: 'L', decision: 'plan' } })] },
+    ),
+    settings: { routine: { ...c_ROUTINE, stage: 0 } },
+  })
+  s.w.pulls = [c_cpr('claude/issue-6')]; s.sync()
+  const file = join(s.dir, 'outbox.json'); writeFileSync(file, JSON.stringify({ source: 'o/r', feedbackRepo: 'o/r', items: [], denylist: [], dropped: 0 }))
+  for (const a of [['revoke', '5', 'hash'], ['pr-seen', '6'], ['exhausted', '7'], ['needs-plan', '8'], ['env-stale', 'v0.8.0'], ['env-ok', 'v0.8.0'], ['feedback-outbox', c_CRUN(1), file]]) {
+    const p = c_cput(s, ...a)
+    assert.equal(p.status, 0, `${a.join(' ')}: ${p.stderr}`)
+    assert.match(p.stdout, /^WOULD /); assert.ok(!p.stdout.includes('NOTICE')); c_onlyReads(p)
+  }
+})
+
+test('put env-stale writes once with one notice, then known; env-ok writes only after a stale', () => {
+  const s = csetup({})
+  const a = c_doPut(s, 'env-stale', 'v0.8.0')
+  assert.equal(a.stdout.trim(), 'NOTICE env-stale o/r v0.8.0')
+  assert.equal(s.w.records.length, 1)
+  const b = c_cput(s, 'env-stale', 'v0.8.0')
+  assert.equal(b.stdout.trim(), 'known'); c_onlyReads(b)
+  const c = c_doPut(s, 'env-ok', 'v0.8.0')
+  assert.equal(c.stdout.trim(), '')
+  assert.equal(s.w.records.length, 2)
+  const d = c_cput(s, 'env-ok', 'v0.8.0')
+  assert.deepEqual(d.writes, [])
+  const e = c_doPut(s, 'env-stale', 'v0.8.0')
+  assert.ok(e.stdout.includes('NOTICE'))
+})
+
+test('put env-stale on a paused repo prints paused and writes nothing; it reads only the stage', () => {
+  const s = csetup({ trackingLabels: ['routine-paused'] })
+  const p = c_cput(s, 'env-stale', 'v0.8.0')
+  assert.equal(p.stdout.trim(), 'paused'); c_onlyReads(p)
+  const t = csetup({ settings: { routine: { ...c_ROUTINE, someFutureKey: 1, stage: 1 } } })
+  const q = c_cput(t, 'env-stale', 'v0.8.0')
+  assert.equal(q.status, 0, q.stderr)
+  assert.ok(q.stdout.includes('NOTICE'))
+})
+
+test('a forged env record by another account does not stop the notice', () => {
+  const s = csetup({ records: [{ ...c_cr('env-stale', 'v0.8.0:T', { pin: 'v0.8.0' }), user: { login: 'mallory' } }] })
+  assert.ok(c_cput(s, 'env-stale', 'v0.8.0').stdout.includes('NOTICE'))
+})
+
+test('outbox: put, list, get, filed; a forged or unknown run is refused', () => {
+  const s = csetup({})
+  const file = join(s.dir, 'outbox.json')
+  const box = { source: 'o/r', feedbackRepo: 'o/r', items: [{ title: 'x' }], denylist: ['w'], dropped: 0 }
+  writeFileSync(file, JSON.stringify(box))
+  c_doPut(s, 'feedback-outbox', c_CRUN(1), file)
+  assert.equal(c_cput(s, 'feedback-outbox', c_CRUN(1), file).status, 65)
+  const list = run(s, 'o/r', 'list', 'outboxes')
+  assert.equal(list.status, 0, list.stderr)
+  const l = c_lines(list); assert.equal(l.length, 1); assert.equal(l[0].run, c_CRUN(1)); assert.ok(l[0].ageSeconds >= 0)
+  assert.deepEqual(JSON.parse(run(s, 'o/r', 'get', 'outbox', c_CRUN(1)).stdout), box)
+  assert.equal(run(s, 'o/r', 'get', 'outbox', c_CRUN(2)).status, 65)
+  c_doPut(s, 'feedback-filed', c_CRUN(1), '{"filed":1,"seenAgain":0,"refused":0}')
+  assert.equal(run(s, 'o/r', 'list', 'outboxes').stdout, '')
+  assert.equal(run(s, 'o/r', 'get', 'outbox', c_CRUN(1)).status, 65)
+  const forged = csetup({ records: [{ ...c_cr('feedback-outbox', c_CRUN(3), box), user: { login: 'mallory' } }] })
+  assert.equal(run(forged, 'o/r', 'get', 'outbox', c_CRUN(3)).status, 65)
+  assert.equal(run(forged, 'o/r', 'list', 'outboxes').stdout, '')
+})
+
+test('outbox put refuses fields outside the fixed set and a bad run with exit 64', () => {
+  const s = csetup({})
+  const file = join(s.dir, 'outbox.json')
+  writeFileSync(file, JSON.stringify({ source: 'o/r', feedbackRepo: 'o/r', items: [], denylist: [], dropped: 0, extra: 1 }))
+  const a = c_cput(s, 'feedback-outbox', c_CRUN(1), file)
+  assert.equal(a.status, 64); assert.deepEqual(a.calls, [])
+  assert.equal(c_cput(s, 'feedback-dropped', 'run-1').status, 64)
+  assert.equal(c_cput(s, 'feedback-dropped', c_CRUN(1)).status, 65)
+  assert.equal(c_cput(s, 'feedback-filed', c_CRUN(1), '{"filed":-1}').status, 64)
+})
+
+test('feedback-dropped closes an outbox', () => {
+  const s = csetup({ records: [c_cr('feedback-outbox', c_CRUN(1), { source: 'o/r', feedbackRepo: 'o/r', items: [], denylist: [], dropped: 0 })] })
+  assert.equal(c_lines(run(s, 'o/r', 'list', 'outboxes')).length, 1)
+  c_doPut(s, 'feedback-dropped', c_CRUN(1))
+  assert.equal(run(s, 'o/r', 'list', 'outboxes').stdout, '')
+})
+
+test('next --mode full still prints the 0.7.0 line with the claude/ prefix', () => {
+  const s = fullSetup({ issues: [buildIssue(4)], records: [record(4)] }, 'full', {})
+  const out = step(nextFull(s))
+  assert.deepEqual(out.issues, [{ issue: 4, branch: 'claude/issue-4' }])
+})
+
+test('the cloud commands refuse a bad argument with exit 64 and no call', () => {
+  const s = csetup({})
+  for (const a of [['issue-text', 'x'], ['list', 'x'], ['get', 'outbox', 'x'], ['put', 'revoke', '5', 'because'], ['put', 'env-stale', '0.8'], ['put', 'build-started', '5', c_CRUN(1), 'routine/issue-5', '1'], ['put', 'nothing', '1'], ['next', '--mode', 'cloud-build']]) {
+    const r = run(s, 'o/r', ...a)
+    assert.equal(r.status, 64, a.join(' ')); assert.deepEqual(r.calls, [])
+  }
+})
+
+test('build: an outsider comment older than the ready-to-build label does not block the build', () => {
+  const part = c_readyIssue(5)
+  part.comments = [c_cc('eve', c_T(20))]
+  const s = csetup(c_withIssues(part))
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'build')
+  s.w.comments[5] = [c_cc('eve', c_T(30))]; s.sync()
+  assert.deepEqual(c_one(c_cnext(s, 'cloud-build')), { step: 'revoke', issue: 5, cause: 'comment' })
+  const r = c_cput(s, 'build-started', '5', c_CRUN(1), 'claude/issue-5', '1')
+  assert.equal(r.status, 65); c_onlyReads(r)
+  const part0 = c_readyIssue(5); part0.comments = [c_cc('eve', c_T(30))]
+  const s0 = csetup({ ...c_withIssues(part0), settings: { routine: { ...c_ROUTINE, stage: 0 } } })
+  assert.ok(c_ok(c_cnext(s0, 'cloud-build')).every(l => l.step !== 'would-build'))
+})
+
+test('an untrusted issue with an early approval and no untrusted record passes nothing', () => {
+  const s = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['maintainer-approved'] }), events: c_approved(c_T(50)) }))
+  assert.deepEqual(c_one(c_cnext(s)), { step: 'untrusted', issue: 5 })
+  const t = run(s, 'o/r', 'issue-text', '5')
+  assert.equal(t.status, 65); assert.equal(t.stdout, '')
+  const p = c_putT(s, 5, 'build', 'S', 'low', 'bug', 'ok')
+  assert.equal(p.status, 65); c_onlyReads(p)
+  assert.equal(c_cput(s, 'triage-failed', '5').status, 65)
+  const s0 = csetup({ ...c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['maintainer-approved'] }), events: c_approved(c_T(50)) }), settings: { routine: { ...c_ROUTINE, stage: 0 } } })
+  assert.ok(c_ok(c_cnext(s0)).every(l => l.step !== 'would-triage'))
+})
+
+test('a 0.7.0 build-started record does not break cloud-build or count as an attempt', () => {
+  const legacy = (at) => c_cr('build-started', '5', { run: '20260101T000000Z-1', branch: 'routine/issue-5' }, { at })
+  for (const [at, labels, want] of [[c_OLD, ['building'], [{ step: 'pr-seen', issue: 5 }]], [c_T(30), ['building'], []]]) {
+    const s = csetup({ ...c_withIssues({ issue: c_ci(5, { labels }), records: [legacy(at)] }, c_builtIssue(6)), settings: { routine: { ...c_ROUTINE, stage: 0 } } })
+    const lines = c_ok(c_cnext(s, 'cloud-build'))
+    assert.deepEqual(lines.filter(l => l.issue === 5), want)
+    assert.ok(lines.some(l => l.step === 'would-build' && l.issue === 6), JSON.stringify(lines))
+  }
+  const s = csetup(c_withIssues({ ...c_builtIssue(5), records: [c_triagedRec(5), legacy(c_OLD)] }))
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).attempt, 1)
+})
+
+test('a stale building label with no open attempt is removed by pr-seen, with build-failed after a blocked attempt', () => {
+  const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['building', 'maintainer-approved'] }), events: c_approved(c_T(90)), records: [c_triagedRec(5), c_startedRec(5, 1), c_blockedRec(5, 1)] }))
+  assert.deepEqual(c_ok(c_cnext(s, 'cloud-build')), [{ step: 'pr-seen', issue: 5 }])
+  c_doPut(s, 'pr-seen', '5')
+  assert.deepEqual(c_labelsOf(s, 5), ['build-failed', 'maintainer-approved'])
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'build')
+  const bare = csetup(c_withIssues({ issue: c_ci(7, { labels: ['building'] }) }))
+  assert.deepEqual(c_ok(c_cnext(bare, 'cloud-build')), [{ step: 'pr-seen', issue: 7 }])
+  c_doPut(bare, 'pr-seen', '7')
+  assert.deepEqual(c_labelsOf(bare, 7), [])
+  const live = csetup(c_withIssues({ issue: c_ci(5, { labels: ['building'] }), records: [c_triagedRec(5), c_startedRec(5, 1)] }))
+  assert.equal(c_one(c_cnext(live, 'cloud-build')).step, 'idle')
+})
+
+test('put triaged adds the labels before it writes the record, and an issue with labels but no record is triaged again', () => {
+  const s = csetup(c_withIssues(c_bare(5)))
+  const r = c_putT(s, 5, 'build', 'S', 'low', 'bug', 'ok')
+  assert.equal(r.status, 0, r.stderr)
+  const at = re => r.calls.findIndex(c => re.test(c))
+  assert.ok(at(/issues\/5\/labels/) >= 0 && at(/issues\/5\/labels/) < at(/^POST .*issues\/100\/comments/), r.calls.join('\n'))
+  const half = csetup(c_withIssues(c_bare(5, { labels: ['ready-to-build'] })))
+  assert.deepEqual(c_one(c_cnext(half)), { step: 'triage', issues: [5] })
+})
+
+test('build: a ready-to-build label alone does not build when the maintainer removed maintainer-approved', () => {
+  const rec = c_cr('untrusted', `5:${c_sha('issue 5', 'body 5')}:c_T`, { hash: c_sha('issue 5', 'body 5') }, { at: c_T(10) })
+  const mk = labels => csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels }), events: [...c_approved(c_T(50)), c_lab('ready-to-build', 'alfhen', c_T(70), 'claude')], records: [rec, c_triagedRec(5, { epoch: rec.id, at: c_T(60) })] }))
+  const removed = mk(['ready-to-build'])
+  assert.equal(c_one(c_cnext(removed, 'cloud-build')).step, 'idle')
+  const r = c_cput(removed, 'build-started', '5', c_CRUN(1), 'claude/issue-5', '1')
+  assert.equal(r.status, 65); c_onlyReads(r)
+  assert.equal(c_one(c_cnext(mk(['ready-to-build', 'maintainer-approved']), 'cloud-build')).step, 'build')
+})
+
+// A jq that refuses any argument over 100000 bytes, like Linux (128 KB per argument) with some margin.
+function c_capJq(s) {
+  const real = spawnSync('bash', ['-c', 'command -v jq'], { encoding: 'utf8' }).stdout.trim()
+  const f = join(s.bin, 'jq')
+  writeFileSync(f, `#!/bin/bash\nfor a in "$@"; do if [ "\${#a}" -gt 100000 ]; then echo "jq: Argument list too long" >&2; exit 126; fi; done\nexec ${real} "$@"\n`)
+  chmodSync(f, 0o755)
+}
+
+test('cloud next works when the collected JSON is far above one argument cap', () => {
+  const pad = n => 'x'.repeat(n)
+  const issues = Array.from({ length: 60 }, (_, k) => c_ci(200 + k, { body: pad(4000), created: c_T(k) }))
+  const records = Array.from({ length: 4 }, (_, k) => c_cr('feedback-outbox', `${900 + k}:${c_CRUN(k)}`, { pad: pad(60000) }, { at: c_T(10 + k) }))
+  const pulls = Array.from({ length: 10 }, (_, k) => ({ ...c_cpr(`claude/issue-${300 + k}`, { number: 400 + k }), body: pad(20000) }))
+  const comments = Object.fromEntries(issues.map(i => [i.number, [c_cc('alfhen', c_T(1), pad(3000))]]))
+  const s = csetup({ issues, records, pulls, comments })
+  c_capJq(s)
+  const t = c_cnext(s)
+  assert.equal(t.status, 0, t.stderr); c_ok(t)
+  const sb = csetup({ issues: issues.map(i => ({ ...i, labels: [{ name: 'ready-to-build' }] })), records, pulls, comments })
+  c_capJq(sb)
+  const b = c_cnext(sb, 'cloud-build')
+  assert.equal(b.status, 0, b.stderr)
 })
