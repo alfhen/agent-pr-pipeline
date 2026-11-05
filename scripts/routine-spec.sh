@@ -2,7 +2,7 @@
 # usage: routine-spec.sh <owner/repo> [--tags <tag>...] [--k2 <file>]
 # Prints one JSON object {repo, routines, setupScript} for the cloud routines of a repo, from its
 # .github/pipeline.json on the default branch, the repo name, the --tags and the K2 file. It reads nothing else
-# and creates nothing. Each routine carries allowedTools: the tools its prompts call. A repo with no routine key gets an empty list and a note.
+# and creates nothing. Each routine carries allowedTools: the tools its prompts and the agents they start use. A repo with no routine key gets an empty list and a note.
 # Exit: 0 done, 1 bad K2 file or setup script, 2 usage, 3 settings unreadable or invalid.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -49,7 +49,7 @@ sums=$(for kind in triage build collect; do echo "$kind $(printf '%s' "apl-$base
 
 jq -nc --arg repo "$repo" --argjson cfg "$cfg" --argjson k2 "$k2_json" --arg base "$base" --arg sums "$sums" \
   --rawfile prompt "$here/../routine/cloud/prompt.md" --rawfile setup <(printf "%s" "$setup") '
-  ["Bash", "Read", "PushNotification", "Agent", "Workflow", "ToolSearch"] as $tools
+  ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "PushNotification", "Agent", "Workflow", "ToolSearch"] as $tools
   | ($sums | split("\n") | map(split(" ") | {key: .[0], value: (.[1] | tonumber)}) | from_entries) as $sum
   | def promptFor($kind): $prompt | split("<repo>") | join($repo) | split("<kind>") | join($kind);
     def cron($kind): "\($sum[$kind] % 60) \(($sum[$kind] / 60 | floor) % 24) * * *";

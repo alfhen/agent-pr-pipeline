@@ -184,7 +184,7 @@ test('the skill says the maintainer pastes the setup script and deletes in the w
 test('every routine carries the tools the prompts call, and the skill passes them on', () => {
   const r = spec('alfhen/agent-pr-pipeline', settings({}), ['--k2', k2File(BOTH)])
   for (const x of r.json.routines) {
-    for (const t of ['Bash', 'Read', 'PushNotification', 'Agent', 'Workflow']) assert.ok(x.allowedTools.includes(t), `${x.name} lacks ${t}`)
+    for (const t of ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'PushNotification', 'Agent', 'Workflow', 'ToolSearch']) assert.ok(x.allowedTools.includes(t), `${x.name} lacks ${t}`)
   }
   assert.match(readFileSync(join(root, 'skills/cloud-routines/SKILL.md'), 'utf8'), /`allowedTools`/)
 })
