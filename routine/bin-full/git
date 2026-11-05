@@ -90,7 +90,34 @@ fi
 
 # ---- push ----
 [ "$only_c" = 1 ] || refuse
-[ -z "${GIT_CONFIG_PARAMETERS:-}${GIT_CONFIG_COUNT:-}${GIT_DIR:-}" ] || refuse
+[ -z "${GIT_DIR:-}" ] || refuse
+# Claude Code's sandbox sets a few config keys through the environment. Any other key could carry a pushurl or a
+# remote.*.push mapping, so only these pass.
+env_key_ok() {
+  case "$1" in
+    safe.directory|http.proxyauthmethod) return 0 ;;
+    credential.http://127.0.0.1:*.helper) [[ $1 =~ ^credential\.http://127\.0\.0\.1:[0-9]+\.helper$ ]] ;;
+    *) return 1 ;;
+  esac
+}
+params=${GIT_CONFIG_PARAMETERS:-}
+if [ -n "$params" ]; then
+  [[ $params != *\\* ]] || refuse
+  re="^[[:space:]]*'([^'=]*)('=|=|')'?[^']*'?(.*)\$"
+  while [[ $params =~ $re ]]; do
+    env_key_ok "$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:upper:]' '[:lower:]')" || refuse
+    params=${BASH_REMATCH[3]:-}
+  done
+  [[ $params =~ ^[[:space:]]*$ ]] || refuse
+fi
+if [ -n "${GIT_CONFIG_COUNT:-}" ]; then
+  [[ $GIT_CONFIG_COUNT =~ ^[0-9]{1,2}$ ]] || refuse
+  for ((n = 0; n < 10#$GIT_CONFIG_COUNT; n++)); do
+    kvar=GIT_CONFIG_KEY_$n
+    [ -n "${!kvar:-}" ] || refuse
+    env_key_ok "$(printf '%s' "${!kvar}" | tr '[:upper:]' '[:lower:]')" || refuse
+  done
+fi
 
 opts=(); pos=()
 j=0
@@ -154,6 +181,9 @@ is_branch() {
   fi
 }
 
+# Each refspec is rebuilt with an explicit, qualified destination: git remaps a refspec with no colon through
+# remote.<name>.push or push.default=upstream, which can send it to main. An explicit colon is never remapped.
+final=()
 for r in "${refspecs[@]}"; do
   [[ $r != +* && $r != *'*'* ]] || refuse
   if [[ $r == *:* ]]; then src=${r%%:*}; dst=${r#*:}; else src=$r; dst=$r; fi
@@ -165,7 +195,8 @@ for r in "${refspecs[@]}"; do
   [[ $name =~ ^[A-Za-z0-9._/-]+$ ]] && [[ $name != *..* ]] || refuse
   # Without refs/heads/, git picks the kind of ref from the source, so a tag source would push a tag.
   [ "$qualified" = 1 ] || is_branch "$src" || refuse
+  final+=("$src:refs/heads/$prefix$name")
 done
 
 passed
-exec "$real" ${globals[@]+"${globals[@]}"} push --no-follow-tags --no-recurse-submodules "${rest[@]}"
+exec "$real" ${globals[@]+"${globals[@]}"} push --no-follow-tags --no-recurse-submodules ${opts[@]+"${opts[@]}"} "$remote" "${final[@]}"

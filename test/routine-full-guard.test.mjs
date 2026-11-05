@@ -359,6 +359,53 @@ test('git refuses a push to a local path while a url rewrite exists, a mirror re
   stubSetup(S)
 })
 
+test('git sends every GitHub refspec in explicit form, so remote.*.push and push.default cannot remap it', () => {
+  stubSetup(S)
+  for (const args of [['push', '-u', 'origin', 'routine/issue-7'], HEAD7, ['push', 'origin', 'HEAD:refs/heads/routine/x'], ['push', 'origin', 'routine/issue-7']]) {
+    const r = passedGit(S, args)
+    assert.match(r.pushes[0], / origin \S+:refs\/heads\/routine\/\S+$/, args.join(' '))
+  }
+  const sandboxEnv = {
+    GIT_CONFIG_PARAMETERS: "'http.proxyAuthMethod=basic' 'credential.http://127.0.0.1:5555.helper='",
+    GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'safe.directory', GIT_CONFIG_VALUE_0: '/x', GIT_CONFIG_KEY_1: 'safe.directory', GIT_CONFIG_VALUE_1: '/y',
+  }
+  passedGit(S, HEAD7, { extra: sandboxEnv })
+  passedGit(S, HEAD7, { extra: { GIT_CONFIG_PARAMETERS: "'http.proxyauthmethod'='basic'" } })
+  refusedGit(S, HEAD7, { extra: { GIT_CONFIG_PARAMETERS: "'http.proxyAuthMethod=basic' 'remote.origin.push=+HEAD:main'" } })
+  refusedGit(S, HEAD7, { extra: { GIT_CONFIG_PARAMETERS: "'remote.origin.pushurl'='https://github.com/o/other.git'" } })
+  refusedGit(S, HEAD7, { extra: { ...sandboxEnv, GIT_CONFIG_KEY_1: 'remote.origin.push' } })
+  refusedGit(S, HEAD7, { extra: { GIT_CONFIG_COUNT: '1' } })
+})
+
+test('git never pushes to main through remote.origin.push or push.default=upstream (real git behind the wrapper)', () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'routine-full-remap-test-')))
+  const t = setup()
+  const shim = join(dir, 'shim'); mkdirSync(shim)
+  const realGit = spawnSync('bash', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim()
+  writeFileSync(join(shim, 'git'), `#!/bin/bash
+for a in "$@"; do [ "$a" = push ] && { echo "$*" >> "${dir}/exec.log"; exit 0; }; done
+exec ${realGit} "$@"
+`)
+  chmodSync(join(shim, 'git'), 0o755)
+  const repo = join(dir, 'repo')
+  const g = (...a) => spawnSync(realGit, ['-C', repo, ...a], { encoding: 'utf8', env: cleanEnv() })
+  mkdirSync(repo)
+  g('init', '-q', '-b', 'main')
+  g('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'x')
+  g('branch', 'routine/issue-7')
+  g('remote', 'add', 'origin', 'https://github.com/o/r.git')
+  g('config', 'remote.origin.push', '+refs/heads/routine/issue-7:refs/heads/main')
+  g('config', 'push.default', 'upstream')
+  g('config', 'branch.routine/issue-7.remote', 'origin')
+  g('config', 'branch.routine/issue-7.merge', 'refs/heads/main')
+  const env = { ...cleanEnv(), PATH: `${t.full}:${shim}:${process.env.PATH}` }
+  const r = spawnSync(join(t.full, 'git'), ['-C', repo, 'push', '-u', 'origin', 'routine/issue-7'], { env, encoding: 'utf8' })
+  assert.equal(r.status, 0, r.stderr)
+  const logged = readFileSync(join(dir, 'exec.log'), 'utf8').trim()
+  assert.match(logged, / origin routine\/issue-7:refs\/heads\/routine\/issue-7$/)
+  assert.doesNotMatch(logged, /\+|:refs\/heads\/main/)
+})
+
 test('git refuses every push to GitHub when the prefix file is missing, a local push still passes, and a bad repo file refuses all', () => {
   const t = setup()
   passedGit(t, HEAD7)
