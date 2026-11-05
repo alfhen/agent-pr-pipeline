@@ -146,7 +146,7 @@ In 0.8.0, `config.jq` refuses a stage above 1 with `stage <n> needs a later rele
 Each decision keeps the options that were weighed, for the record. The entries follow the choice.
 
 **D1. Identity and trust.** The routine acts as the maintainer's account, so a session can add any label and write any comment as `alfhen`.
-- Chosen: (a) event attribution. `maintainer-approved` and the removal of `routine-paused` count only when the issue event has the maintainer as actor and `performed_via_github_app` null. Every write of a cloud session goes through the proxy with the Claude GitHub App's user token and shows `performed_via_github_app.slug` `claude` (seen on a comment and a PR). The token never enters the VM, so a cloud session cannot make a write without that mark. K1 is a stop rule: if a cloud session's `labeled` event has no app mark, the plan stops and asks again. Known limit: a local tool that uses the maintainer's `gh` token (the local routine, a local Claude Code session) also writes with no app mark, so it can forge an approval.
+- Chosen: (a) event attribution. `maintainer-approved` counts only when a `labeled` issue event has the maintainer as actor and `performed_via_github_app` null. An `unlabeled` event never counts (K1: a session's removal has no app mark), so the removal of `routine-paused` is not a signal. Every write of a cloud session goes through the proxy with the Claude GitHub App's user token and shows `performed_via_github_app.slug` `claude` (seen on a comment and a PR). The token never enters the VM, so a cloud session cannot make a write without that mark. K1 is a stop rule: if a cloud session's `labeled` event has no app mark, the plan stops and asks again. Known limit: a local tool that uses the maintainer's `gh` token (the local routine, a local Claude Code session) also writes with no app mark, so it can forge an approval.
 - Rejected: (b) a machine user with `GH_TOKEN` in the environment (the model can read and leak the token; a network secret cannot carry it, because the agent proxy never attaches a secret to GitHub); (c) a self-hosted environment with a GitHub App installation token (the maintainer runs a runner, close to the non-goal "A hosted service"); (d) a signed approval comment (no approval from the phone; a new tool).
 
 **D2. How the pipeline gets into a cloud session.**
@@ -223,7 +223,7 @@ How each problem of the brief is answered:
 
 | Problem | Answer |
 | --- | --- |
-| 1 Identity and trust | D1 (a), C05, K1. Records stay advisory (one account); approval and pause are real for cloud sessions. On public repos, rulesets hold `main` (D11, M3). |
+| 1 Identity and trust | D1 (a), C05, K1. Records stay advisory (one account); approval is real for cloud sessions; pause is advisory, as its removal cannot be attributed. On public repos, rulesets hold `main` (D11, M3). |
 | 2 Install path | D2 (b), D3 (b), C04, K9. The repo pins a release; the setup script installs it; `apl-start` checks it each session. |
 | 3 GraphQL to REST | C01. Scripts already use REST. |
 | 4 Per-repo settings | C02, the `routine` block of `.github/pipeline.json`. |
@@ -267,7 +267,7 @@ Each label below is set by code (`routine-state.sh`), never by an agent's own ca
 | outbox open | `feedback-outbox.sh` posts `feedback-outbox <run>` | the collect routine posts `feedback-filed <run>` (all items filed, noted as seen again, or refused by the denylist); an outbox older than 7 days is closed with `feedback-dropped <run>` and its items are not filed |
 | outbox held by the cap | the issues filed in the last 24 hours reach `feedbackPerDay` | 24 hours pass; the oldest outbox goes first; the 7-day rule above ends it |
 | env stale | `apl-start` stops: the pin is not installed, or a file does not match | the maintainer updates the environment's setup script (C09 prints it) or the pin. One `env-stale <pin>` record and one notice; later runs stop with no notice while the record exists, and the next good start posts `env-ok <pin>` |
-| paused | `routine-paused` on the tracking issue, or a last `unlabeled` event of it that is not a maintainer signal | the maintainer removes the label |
+| paused | `routine-paused` on the tracking issue | the maintainer removes the label |
 | lost race | two runs post `build-started` for the same issue and attempt | the run whose record is newer stops at once; the older one builds |
 
 ## Order and waves
@@ -292,7 +292,7 @@ Wave 1 entries touch different files. C06 needs C02's settings form, C05's rule 
 - New e2e tests go in new files. Named exceptions: C03 extends `test/gate.test.mjs`; C04 extends `test/release.test.mjs` and `test/plugin-version.test.mjs`; C06 extends `test/routine-state.test.mjs` (the `routine/` branch cases change to `claude/`, nothing else in the old cases changes); C07 extends `test/feedback.test.mjs`.
 - Compute each shared value in one place:
   - the settings rules, the limit defaults and the fixed label names: `routine/config.jq` (C02);
-  - the maintainer signal (approval, pause): `scripts/approval.jq` (C05);
+  - the maintainer signal (approval): `scripts/approval.jq` (C05);
   - the record trust rule: `scripts/trusted-comment.jq` (unchanged);
   - the floor paths: `scripts/gate-files.sh` (C03);
   - the branch prefix: `routine/branch-prefix` (C06);
@@ -300,8 +300,8 @@ Wave 1 entries touch different files. C06 needs C02's settings form, C05's rule 
   - the `run-wave` arguments of a routine build: `routine-state.sh next --mode cloud-build` (C06). The prompt copies them;
   - the feedback quality bar, the caps and the auto-file marker: `scripts/file-feedback.sh` (C07).
 - New scripts use `gh api` REST only, except the two documented fetch paths to `raw.githubusercontent.com` (C04). C01's test keeps the repo free of GraphQL.
-- Issue text, PR text, comments and anything a session wrote are untrusted input. A record counts only when `trusted-comment.jq` accepts it. An approval or a pause counts only when `approval.jq` accepts it.
-- One account, so records are advisory. A session can write a record that looks like the routine's. The guards that hold are: the approval and pause rule (D1, for cloud sessions), the proxy's tag and deletion limits, the rulesets on public repos, the floor (C03), and the maintainer's merge in stage 1.
+- Issue text, PR text, comments and anything a session wrote are untrusted input. A record counts only when `trusted-comment.jq` accepts it. An approval counts only when `approval.jq` accepts it. A pause is the label alone; a paused routine stops at its first step, so only a session already running could remove it, and no prompt does.
+- One account, so records are advisory. A session can write a record that looks like the routine's. The guards that hold are: the approval rule (D1, for cloud sessions), the proxy's tag and deletion limits, the rulesets on public repos, the floor (C03), and the maintainer's merge in stage 1.
 - Tests and QA: GitHub calls go only to this repo (reads), `alfhen/pipeline-dogfood` (scratch work) and `raw.githubusercontent.com` (reads). Nothing writes to `alfhen/tagreeve`. No test creates a real routine or environment; QA creates them only for `alfhen/pipeline-dogfood` and deletes them at the end. QA files feedback into this repo only as a scratch issue that it closes.
 - Gated paths. Every entry touches a gated path, so the maintainer merges every PR of this plan. This plan PR is `docs/plan-*.md`.
 - Docs: Simplified Technical English, no em dashes, Mermaid with a one-line summary under each. Code comments only for why or hidden constraints.
@@ -355,16 +355,16 @@ Acceptance: `node --test test/cloud-setup.test.mjs test/release.test.mjs test/pl
 QA: before M2, the K9 stand-in only (the printed script with `--repo alfhen/tagreeve` cannot install, because Tagreeve has no manifest: check that it fails with exit 1 and the session does not start). After M2: a scratch environment on dogfood with `cloud-setup.sh --print` for this branch's manifest at a scratch tag made by the maintainer (or the next release), a one-off routine that runs `apl-start alfhen/pipeline-dogfood` and starts the agent `apl-<v>-goals-preflight` through the Agent tool and through a Workflow script. Report the outputs, then remove the scratch environment.
 
 **C05 Maintainer signal rule.** Issues: problem 1, D1 (a). Touches: `scripts/approval.jq` (new), `test/approval.test.mjs` (new), `test/fixtures/approval/` (new).
-- Input: the issue's events (`GET repos/<repo>/issues/<n>/events`, paginated and joined). Named args: `maintainer`, `label`, `after` (an ISO time, may be empty), `kind` (`labeled` or `unlabeled`). Output: the `created_at` of the newest event of that kind for that label whose `actor.login` equals `maintainer` and whose `performed_via_github_app` is missing or null, and that is newer than `after`; else null.
+- Input: the issue's events (`GET repos/<repo>/issues/<n>/events`, paginated and joined). Named args: `maintainer`, `label`, `after` (an ISO time, may be empty). Output: the `created_at` of the newest `labeled` event for that label whose `actor.login` equals `maintainer` and whose `performed_via_github_app` is missing or null, and that is newer than `after`; else null.
 - A malformed element is skipped. An event with a `performed_via_github_app` object (any app, including `claude`) never counts.
-Invariants: an event made through any GitHub App never counts; an event by another login never counts; an event at or before `after` never counts.
-Regression test: fixtures built from the real shapes seen on dogfood #12 (the maintainer's `labeled` with app null; a `claude` app object put on a `labeled` event): maintainer and null (counts), maintainer and `claude` (null), another login (null), older than `after` (null), two good events (the newest), an `unlabeled` with `kind: unlabeled` (counts), a string in the list (skipped).
+Invariants: an `unlabeled` event never counts; an event made through any GitHub App never counts; an event by another login never counts; an event at or before `after` never counts.
+Regression test: fixtures built from the real shapes seen on dogfood #12 (the maintainer's `labeled` with app null; a `claude` app object put on a `labeled` event): maintainer and null (counts), maintainer and `claude` (null), another login (null), older than `after` (null), two good events (the newest), an `unlabeled` event by the maintainer with app null (null), a string in the list (skipped).
 Acceptance: `node --test test/approval.test.mjs` passes; the `claude` case fails when the rule checks only the actor.
 
 ### Wave 2
 
 **C06 Cloud state: labels, records, limits.** Issues: problems 1, 6, 7, 9; D4, D8, D11. Touches: `scripts/routine-state.sh`, `routine/branch-prefix` (`claude/`), `test/routine-state.test.mjs`, `test/fixtures/routine/` (new fixtures).
-- The settings come from `.github/pipeline.json` on the default branch, read with `gh api` and checked with `config.jq` (C02). A missing `routine` key, a `routine-paused` label on the tracking issue, or a last `unlabeled` of `routine-paused` that `approval.jq` does not accept, gives the step `paused`. Stage 0 makes every `put` print `WOULD <action>` and write nothing.
+- The settings come from `.github/pipeline.json` on the default branch, read with `gh api` and checked with `config.jq` (C02). A missing `routine` key or a `routine-paused` label on the tracking issue gives the step `paused`. Stage 0 makes every `put` print `WOULD <action>` and write nothing.
 - `next --mode cloud-triage` prints one JSON line, the first that applies: `paused`; `init needed`; `adopt` (issues with a trusted `triaged` record from the local routine and no cloud state label: data the labels to add, computed from the record; `put adopt <n>` adds them, no agent); `untrusted` (issues at or above `triageFrom` with no state label whose author is not trusted: `put untrusted <n>` adds `needs-approval` and `untrusted-author`, no agent); `triage` (at most `triagePerRun` issues, oldest first, while the `triaged` records of the last 24 hours are fewer than `triagePerDay`: trusted authors, or untrusted with a maintainer approval newer than the `untrusted-author` label event); `idle`.
 - `issue-text <n>` prints JSON with the title, the body and the comments by trusted authors only, for a trusted issue or one with a maintainer approval. Else exit 65 and nothing.
 - `put triaged <n> <decision> <size> <risk> <type> <why>` (cloud form, chosen by the 7th argument) checks each argument in code as in 0.7.0, stores the record with `type`, and sets labels by the rule: `decline` gives `declined` and one comment (`Declined by the triage routine: <why>`), no close; `build` with size S or M and risk below high gives `ready-to-build`; anything else gives `needs-approval`. It always adds the type label (from `typeLabels`) and `size:<s>`. The 0.7.0 form (6 arguments, the guard folder) does not change.
@@ -430,7 +430,7 @@ QA: after the release only, by the main session: C08's QA on dogfood with the re
 
 ## Flagged concerns
 
-- **Records are advisory.** Every routine and every build session acts as the maintainer's account. A session that follows injected text can write a record or a label that looks like the routine's. The approval and pause rule, the proxy limits, the rulesets, the floor and the maintainer's merge are what hold. A forged `ready-to-build` on a trusted issue can start a build of a small issue, which the maintainer still merges.
+- **Records are advisory.** Every routine and every build session acts as the maintainer's account. A session that follows injected text can write a record or a label that looks like the routine's. The approval rule, the proxy limits, the rulesets, the floor and the maintainer's merge are what hold. A forged `ready-to-build` on a trusted issue can start a build of a small issue, which the maintainer still merges.
 - **Local tools can forge an approval.** D1 (a) trusts events with no app mark. The local `gh` token makes such events. Only the maintainer's machines hold it.
 - **D1 (a) depends on a GitHub field.** This plan saw `performed_via_github_app` on a comment and a PR by a cloud session, not on a `labeled` event. K1 decides.
 - **D2 (b) depends on agents from the setup script loading.** The docs do not say it. K9 decides. The fallbacks there change C04 and C08.
