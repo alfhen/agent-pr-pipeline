@@ -143,6 +143,8 @@ def mx: if length == 0 then null else max end;
 def inl($a): . as $x | any($a[]; . == $x);
 def ctime: [.created_at, (.updated_at // .created_at)] | map(select(. != null)) | mx;
 def within($s): (try (.at | fromdateiso8601) catch 0) > (now - $s);
+# A lost race leaves a second record of the key; only the first counts.
+def firstPerKey: reduce .[] as $x ([]; if any(.[]; .key == $x.key) then . else . + [$x] end);
 def byAge: sort_by([.i.created_at, .i.number]);
 def hasl($l): .L | index($l) != null;
 
@@ -169,7 +171,7 @@ def hasl($l): .L | index($l) != null;
        elif ($off | length) > 0 then "comment"
        else null end) as $reason
     | ($r | map(select(.kind == "triaged")) | last) as $tr
-    | ($r | map(select(.kind == "build-started" and (.key | contains(":"))))) as $bs
+    | ($r | map(select(.kind == "build-started" and (.key | contains(":")))) | firstPerKey) as $bs
     | ($r | map(select(.kind == "blocked" and (.key | contains(":"))))) as $bl
     | ($r | map(select(.kind == "built" and (.key | contains(":"))))) as $bt
     | ($r | any(.kind == "build-started" and (.key | contains(":") | not) and within($lim.buildHours * 3600))) as $legacyLive
@@ -217,7 +219,7 @@ def hasl($l): .L | index($l) != null;
   | ([$F[] | select(.authorPart and .reason == null and (.excluded | not) and (hasl("building") | not) and (.inflight | not)
         and .att < $lim.buildAttempts and .trNew and .tr.rec.decision == "build" and .tr.rec.size != "L" and .tr.rec.risk != "high" and pathOk)] | byAge) as $buildable
   | ([$pulls[] | select(.user.login == $user and (.head.ref | strings | startswith($prefix)))] | length) as $openPrs
-  | ([$recs[] | select(.kind == "build-started" and within(86400)) | .rec.run | strings] | unique | length) as $runs
+  | ([$recs | map(select(.kind == "build-started")) | firstPerKey | .[] | select(within(86400)) | .rec.run | strings] | unique | length) as $runs
   | (($openPrs >= $lim.openPRs) or ($runs >= $lim.wavesPerDay)) as $limitsHold
   | (if $mode == "build" then
       ($prseen | map({step: "pr-seen", issue: .n}))
@@ -619,7 +621,7 @@ put_build_started() {
   rec=$(jq -nc --arg r "$run_id" --arg b "$branch" --argjson a "$attempt" '{run: $r, branch: $b, attempt: $a}')
   write_record build-started "$key" "$rec"
   # Two runs can pass the checks together. The oldest record of the key wins; the other run stops.
-  # The losing record stays: the account may not be allowed to delete comments, and readers take the first record of a key.
+  # The losing record stays: the account may not be allowed to delete comments, and the planner reads only the first record of a key.
   load_records
   first=$(jq -r --arg k "$key" '[.[] | select(.kind == "build-started" and .key == $k)] | .[0].rec.run // ""' <<<"$recs")
   if [ -n "$first" ] && [ "$first" != "$run_id" ]; then die 66 "lost the race for attempt $attempt of issue $issue"; fi

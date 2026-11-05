@@ -1513,6 +1513,15 @@ test('the race: a second record of one attempt from another run gets exit 66', (
   assert.ok(!r.writes.some(w => w.includes('/labels')))
 })
 
+test('a lost-race build-started record is ignored: block names the winner', () => {
+  const winner = c_startedRec(5, 1, { run: c_CRUN(7), at: c_OLD })
+  const loser = { ...c_startedRec(5, 1, { run: c_CRUN(1), at: c_OLD }), id: winner.id + 1 }
+  const s = csetup({ ...c_withIssues({ issue: c_ci(5, { labels: ['building'] }), records: [c_triagedRec(5), winner, loser] }), settings: { routine: { ...c_ROUTINE, stage: 1 } } })
+  const blocks = c_lines(c_cnext(s, 'cloud-build')).filter(l => l.step === 'block')
+  assert.equal(blocks.length, 1)
+  assert.equal(blocks[0].run, c_CRUN(7))
+})
+
 test('the winner of the race goes on', () => {
   const s = csetup(c_withIssues(c_builtIssue(5)))
   const mine = c_startedRec(5, 1, { run: c_CRUN(1), at: c_T(31) })
