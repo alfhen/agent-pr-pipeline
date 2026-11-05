@@ -4,7 +4,7 @@
 # .github/pipeline.json on the default branch, a workflow has a release or tag trigger, the default
 # branch is green, a tag exists, every commit since the last tag came from a merged PR with a trusted
 # merge-cleared comment for that PR's head (see trusted-comment.jq), and each manifest at the checked sha
-# has the release version. The main session runs this after the last wave landed. It never publishes a package.
+# has the release version. In the plugin's own repo, .claude-plugin/files.txt must match the tree (manifest.sh). The main session runs this after the last wave landed. It never publishes a package.
 # --dry-run prints each check and the release it would make, and calls no write endpoint.
 dry=0
 [ "$1" = "--dry-run" ] && { dry=1; shift; }
@@ -103,6 +103,18 @@ for file in .claude-plugin/plugin.json package.json composer.json; do
   if [ "${v#v}" = "$version" ]; then ok "$file has version $version"; else miss "$file has version '$v', not $version"; fi
 done
 [ "$found" -gt 0 ] || miss "no manifest with a version at ${sha:0:7}"
+
+if [ "$(tr '[:upper:]' '[:lower:]' <<<"$R")" = "$(bash "$here/plugin-repo.sh" 2>/dev/null)" ]; then
+  ftxt=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.claude-plugin/files.txt?ref=$sha" 2>&1)
+  if [ $? -ne 0 ]; then
+    is404 "$ftxt" && stop ".claude-plugin/files.txt is missing at ${sha:0:7}" || stop "cannot read .claude-plugin/files.txt ($ftxt)"
+  fi
+  tree=$(gh api "repos/$R/git/trees/$sha?recursive=1" 2>&1) || stop "cannot read the tree of ${sha:0:7} ($tree)"
+  [ "$(jq -r '.truncated // false' <<<"$tree" 2>/dev/null)" = false ] || stop "the tree of ${sha:0:7} is cut, so the manifest cannot be checked"
+  diffs=$(jq -r '.tree[] | select(.type == "blob") | "\(.sha) \(.path)"' <<<"$tree" | bash "$here/manifest.sh" --compare <(printf '%s\n' "$ftxt")) \
+    || stop ".claude-plugin/files.txt does not match the tree of ${sha:0:7}: $(tr '\n' ';' <<<"$diffs")"
+  ok "files.txt matches the tree at ${sha:0:7}"
+fi
 
 if [ ${#missing[@]} -gt 0 ]; then echo "release.sh: NOT released: ${#missing[@]} check(s) missing"; exit 1; fi
 echo "release: v$version on $R, target ${sha}"
