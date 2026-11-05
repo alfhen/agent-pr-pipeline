@@ -27,6 +27,7 @@ while :; do
 done
 last=\${args[\${#args[@]}-1]:-}
 case "\${args[0]:-}" in
+  --list-cmds=builtins,main) printf '%s\\n' push status log fetch subtree commit worktree branch tag remote add diff checkout merge rebase reset rev-parse show-ref symbolic-ref config pull clone init switch stash; exit 0 ;;
   --list-cmds=alias) cat "$S/aliases" 2>/dev/null; exit 0 ;;
   remote) [ "\${args[1]:-}" = get-url ] || exit 0
           if [ -f "$S/url.$last" ]; then cat "$S/url.$last"; exit 0; fi
@@ -308,7 +309,13 @@ test('git refuses an alias from config, from -c or from the real git, and passes
   refusedGit(S, ['q'])
   passedGit(S, ['status'])
   stubSetup(S)
-  passedGit(S, ['p', 'origin', 'x'])
+  refusedGit(S, ['p', 'origin', 'x'])
+  refusedGit(S, ['puhs', 'origin', 'HEAD:main'])
+  refusedGit(S, ['-c', 'help.autocorrect=immediate', 'psuh', 'origin', 'HEAD:main'])
+  refusedGit(S, ['Status'])
+  stubSetup(S, { aliases: 'p\n' })
+  refusedGit(S, ['P', 'origin', 'HEAD:main'])
+  stubSetup(S)
   refusedGit(S, ['-c', 'alias.p=push', 'p', 'origin', 'HEAD:main'])
   refusedGit(S, ['-c', 'Alias.P=push', 'p'])
 
@@ -317,6 +324,7 @@ test('git refuses an alias from config, from -c or from the real git, and passes
   assert.equal(real(['config', 'alias.p', 'push --force']).code, 0)
   assert.equal(spawnSync('git', ['config', '--get', 'alias.p'], { cwd: repo.work, encoding: 'utf8', env: cleanEnv() }).stdout.trim(), 'push --force')
   expectRefused('git', ['p'], real(['p']))
+  expectRefused('git', ['P'], real(['P']))
   assert.equal(real(['status']).code, 0)
 })
 
@@ -357,7 +365,7 @@ test('git refuses every push to GitHub when the prefix file is missing, a local 
 })
 
 test('git refuses an unlisted global option, a command that sends by another route, and passes the listed globals', () => {
-  for (const args of [['--exec-path=/x', 'status'], ['-p', 'status'], ['--namespace=x', 'status'], ['-c'], ['-C'], [], ['send-email'], ['remote-https'], ['svn', 'dcommit'], ['http-push'], ['send-pack'], ['imap-send'], ['p4', 'submit'], ['cvsexportcommit'], ['-Cx', 'status']]) refusedGit(S, args)
+  for (const args of [['--exec-path=/x', 'status'], ['-p', 'status'], ['--namespace=x', 'status'], ['-c'], ['-C'], [], ['send-email'], ['remote-https'], ['svn', 'dcommit'], ['http-push'], ['send-pack'], ['subtree', 'push', '--prefix=x', 'origin', 'main'], ['imap-send'], ['p4', 'submit'], ['cvsexportcommit'], ['-Cx', 'status']]) refusedGit(S, args)
   for (const args of [['-C', 'x', '--no-pager', 'log'], ['--literal-pathspecs', '--no-replace-objects', 'status'], ['-c', 'user.name=t', 'commit', '-m', 'x'], ['--git-dir=/x/.git', 'worktree', 'list'], ['--git-dir', '/x/.git', 'branch', '-D', 'b'], ['tag', 'v1'], ['remote', 'add', 'o', 'x'], ['--version']]) passedGit(S, args)
 })
 

@@ -71,14 +71,17 @@ qgit() {
 }
 
 case "$sub" in
-  send-pack|http-push|svn|p4|cvsexportcommit|imap-send|send-email|remote-*) refuse ;;
+  send-pack|http-push|svn|p4|cvsexportcommit|imap-send|send-email|subtree|remote-*) refuse ;;
 esac
 lsub=$(printf '%s' "$sub" | tr '[:upper:]' '[:lower:]')
 for kv in ${csets[@]+"${csets[@]}"}; do
   key=$(printf '%s' "${kv%%=*}" | tr '[:upper:]' '[:lower:]')
   [ "$key" = "alias.$lsub" ] && refuse
 done
-if "$real" ${globals[@]+"${globals[@]}"} --list-cmds=alias 2>/dev/null | grep -qxF -- "$sub"; then refuse; fi
+if "$real" ${globals[@]+"${globals[@]}"} --list-cmds=alias 2>/dev/null | tr '[:upper:]' '[:lower:]' | grep -xF -- "$lsub" >/dev/null; then refuse; fi
+# Only an exact builtin or main command passes: git lowercases alias names, and
+# help.autocorrect turns a misspelling into push, so neither reaches the push checks.
+"$real" ${globals[@]+"${globals[@]}"} --list-cmds=builtins,main 2>/dev/null | grep -xF -- "$sub" >/dev/null || refuse
 
 if [ "$sub" != push ]; then
   passed
