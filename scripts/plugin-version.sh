@@ -11,9 +11,9 @@ failed() { echo "CHECK FAILED $*"; exit 3; }
 
 manifest="$here/../.claude-plugin/plugin.json"
 root=$(jq -r '.version // ""' "$manifest" 2>/dev/null) || failed "cannot read $manifest"
-repo=$(jq -r '.repository // ""' "$manifest" 2>/dev/null | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#(\.git)?/?$##')
+repo=$(bash "$here/plugin-repo.sh" 2>/dev/null) || repo=""
 [[ "$root" =~ $semver ]] || failed "$manifest has version '$root'"
-[[ "$repo" =~ ^[^/]+/[^/]+$ ]] || failed "$manifest has no usable repository"
+[ -n "$repo" ] || failed "$manifest has no usable repository"
 tag=$(gh api "repos/$repo/releases/latest" --jq .tag_name 2>&1) || failed "cannot read the latest release of $repo ($tag)"
 latest=${tag#v}
 [[ "$latest" =~ $semver ]] || failed "the latest release tag '$tag' is not a version"

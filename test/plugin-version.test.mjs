@@ -20,7 +20,7 @@ const setup = ({ pluginVersion, latest }) => {
     writeFileSync(join(bin, name), `#!/bin/bash\necho "${name} $*" >> "${installs}"\n`)
     chmodSync(join(bin, name), 0o755)
   }
-  for (const f of ['plugin-version.sh', 'semver.sh']) copyFileSync(join(root, 'scripts', f), join(plugin, 'scripts', f))
+  for (const f of ['plugin-version.sh', 'plugin-repo.sh', 'semver.sh']) copyFileSync(join(root, 'scripts', f), join(plugin, 'scripts', f))
   writeFileSync(join(plugin, '.claude-plugin/plugin.json'), JSON.stringify({ name: 'agent-pr-pipeline', version: pluginVersion, repository: 'https://github.com/alfhen/agent-pr-pipeline' }))
   if (latest) writeFileSync(join(fx, `${RELEASE}.json`), JSON.stringify({ tag_name: latest }))
   else writeFileSync(join(fx, `${RELEASE}.GET.error`), 'gh: Not Found (HTTP 404)')

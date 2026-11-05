@@ -461,3 +461,8 @@ test('plugin-repo: no usable repository exits 1', () => {
   assert.equal(pluginRepo(undefined).code, 1)
   assert.equal(pluginRepo('not-a-repo').code, 1)
 })
+
+test('plugin-repo: no other script parses the manifest repository', () => {
+  const r = spawnSync('grep', ['-rlE', '\\.repository', join(root, 'scripts'), join(root, 'routine')], { encoding: 'utf8' })
+  assert.deepEqual(r.stdout.split('\n').filter(Boolean).map((f) => f.slice(f.indexOf('scripts/'))), ['scripts/plugin-repo.sh'])
+})
