@@ -191,5 +191,6 @@ test('collect and build check a record-derived run id and quote it', () => {
 
 test('triage uses decision, size, risk and type only when exactly a listed word', () => {
   assert.match(prompts.triage, /only when the decision is exactly `build`, `plan` or `decline`, the size is exactly `S`, `M` or `L`, the risk is exactly `low`, `medium` or `high`, and the type is exactly `bug`, `feat`, `docs`, `chore` or `test`/)
-  assert.match(prompts.triage, /treat the triager as failed/)
+  assert.match(prompts.triage, /treat the triager as failed, skip sub-step 4 and do sub-step 5 for this issue/)
+  assert.doesNotMatch(prompts.triage, /go to step 5/)
 })
