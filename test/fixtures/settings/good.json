@@ -1,0 +1,18 @@
+{
+  "gates": ["docs/goals.md", ".github/**"],
+  "knownFlakes": [],
+  "autoRelease": true,
+  "routine": {
+    "stage": 1,
+    "pipelineVersion": "v0.8.0",
+    "maintainer": "alfhen",
+    "trustedAuthors": ["helper"],
+    "triageFrom": 40,
+    "skipLabels": ["wontfix"],
+    "typeLabels": { "bug": "type:bug" },
+    "feedbackRepo": "alfhen/agent-pr-pipeline",
+    "collectFrom": ["alfhen/tagreeve"],
+    "waveArgs": { "goals": "docs/goals.md", "checks": ["npm test"], "maxRounds": 3 },
+    "limits": { "openPRs": 5, "buildHours": 12 }
+  }
+}
