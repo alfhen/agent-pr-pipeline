@@ -85,6 +85,10 @@ if "$real" ${globals[@]+"${globals[@]}"} --list-cmds=alias 2>/dev/null | tr '[:u
 
 if [ "$sub" != push ]; then
   passed
+  # The sandbox keeps .git/config read-only (Claude Code 2.1.318 ignores allowGitConfig from --settings), so a new branch must not write tracking config.
+  case "$sub" in
+    checkout|switch|branch|worktree) exec "$real" -c branch.autoSetupMerge=false "${all[@]}" ;;
+  esac
   exec "$real" "${all[@]}"
 fi
 
@@ -168,6 +172,12 @@ fi
 for o in ${opts[@]+"${opts[@]}"}; do
   case "$o" in -u|--set-upstream|-q|--quiet|-v|--porcelain|--no-verify) ;; *) refuse ;; esac
 done
+# Setting an upstream writes .git/config, which the sandbox refuses, so the flag is dropped.
+kept=()
+for o in ${opts[@]+"${opts[@]}"}; do
+  case "$o" in -u|--set-upstream) ;; *) kept+=("$o") ;; esac
+done
+opts=(${kept[@]+"${kept[@]}"})
 if [ "$configured" = 1 ]; then
   [ "$(qgit config --bool --get "remote.$remote.mirror" 2>/dev/null || true)" != true ] || refuse
 fi

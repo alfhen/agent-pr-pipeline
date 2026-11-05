@@ -707,3 +707,19 @@ test('each deny rule that names gh, a push or a script has its shape refused by 
   refusedGit(S, ['push', 'origin', 'v1'])
   refusedGit(S, ['push', 'origin', 'refs/tags/v1'])
 })
+
+test('git drops the upstream flag from a GitHub push and turns off tracking setup for branch commands', () => {
+  stubSetup(S)
+  for (const flag of ['-u', '--set-upstream']) {
+    const r = passedGit(S, ['push', flag, 'origin', 'routine/issue-7'])
+    assert.equal(r.pushes.length, 1)
+    assert.doesNotMatch(r.pushes[0], /-u|--set-upstream/)
+  }
+  const calls = () => readFileSync(join(S.stub, 'calls.log'), 'utf8').trim().split('\n')
+  for (const args of [['checkout', '-B', 'x', 'origin/HEAD'], ['switch', '-c', 'x'], ['branch', 'x'], ['worktree', 'add', '/w/x']]) {
+    passedGit(S, args)
+    assert.equal(calls().at(-1), `-c branch.autoSetupMerge=false ${args.join(' ')}`)
+  }
+  passedGit(S, ['status'])
+  assert.equal(calls().at(-1), 'status')
+})
