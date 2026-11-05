@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, existsSync, copyFileSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -247,4 +247,74 @@ test('bot-status: reviews and comments over 128 KiB still work', () => {
   const thread = (id) => ({ id, pull_request_review_id: 1, in_reply_to_id: null, user: { login: BOT }, body: 'x'.repeat(40000) })
   const s = statusSetup([rv('COMMENTED', 'old'.padEnd(40, '0'), '1')], Array.from({ length: 30 }, (_, i) => thread(i + 1)))
   assert.deepEqual(status(s), { head: HEAD, approvedBy: [], seenHead: [], openThreads: 30 })
+})
+
+// The plugin's own repo: the fixtures of setup() moved to its name, plus a files.txt and a tree.
+const PP = 'repos__alfhen__agent-pr-pipeline'
+const S1 = '1'.repeat(40); const S2 = '2'.repeat(40); const S3 = '3'.repeat(40); const S4 = '4'.repeat(40)
+const shippedTree = [['.claude-plugin/plugin.json', S1], ['agents/tester.md', S2], ['scripts/x.sh', S3]]
+const pluginSetup = ({ files = shippedTree, tree = shippedTree } = {}) => {
+  const s = setup()
+  for (const f of readdirSync(s.fx)) if (f.startsWith(`${P}`)) renameSync(join(s.fx, f), join(s.fx, f.replace(P, PP)))
+  if (files) put(s.fx, `${PP}__contents__.claude-plugin__files.txt.json`, files.map(([p, sha]) => `${sha} ${p}`).join('\n') + '\n')
+  put(s.fx, `${PP}__git__trees__${HEAD}.json`, {
+    truncated: false,
+    tree: [...tree, ['README.md', S4], ['.claude-plugin/files.txt', S4], ['docs/plan.md', S4]].map(([path, sha]) => ({ type: 'blob', path, sha })),
+  })
+  return s
+}
+const releasePlugin = (s, ...flags) => run(s, 'release.sh', [...flags, 'alfhen/agent-pr-pipeline', '0.3.0'])
+
+test('release: the plugin repo with a manifest that matches its tree releases', () => {
+  const r = releasePlugin(pluginSetup())
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /ok: files\.txt matches the tree/)
+  assert.equal(writes(r).length, 1)
+  assert.match(writes(r)[0], /^POST \/repos\/alfhen\/agent-pr-pipeline\/releases /)
+})
+
+test('release: the plugin repo with a changed, added or missing shipped file stops and makes no release', () => {
+  const cases = [
+    [[['.claude-plugin/plugin.json', S1], ['agents/tester.md', S4], ['scripts/x.sh', S3]], /MANIFEST changed agents\/tester\.md/],
+    [[...shippedTree, ['scripts/new.sh', S4]], /MANIFEST added scripts\/new\.sh/],
+    [shippedTree.slice(0, 2), /MANIFEST missing scripts\/x\.sh/],
+  ]
+  for (const [tree, text] of cases) {
+    const s = pluginSetup({ tree })
+    const r = releasePlugin(s)
+    assert.equal(r.code, 1, r.out)
+    assert.match(r.out, /files\.txt does not match the tree/)
+    assert.match(r.out, text)
+    assert.deepEqual(writes(r), [])
+  }
+  const s = pluginSetup({ files: [...shippedTree, ['scripts/gone.sh', S4]] })
+  const r = releasePlugin(s)
+  assert.match(r.out, /MANIFEST missing scripts\/gone\.sh/)
+  assert.deepEqual(writes(r), [])
+})
+
+test('release: the plugin repo without a files.txt stops and makes no release', () => {
+  const s = pluginSetup({ files: null })
+  const r = releasePlugin(s)
+  assert.equal(r.code, 1, r.out)
+  assert.match(r.out, /cannot go on: \.claude-plugin\/files\.txt is missing/)
+  assert.deepEqual(writes(r), [])
+})
+
+test('release: another repo with no files.txt releases as before and never reads one', () => {
+  const s = setup()
+  assert.equal(existsSync(join(s.fx, `${P}__contents__.claude-plugin__files.txt.json`)), false)
+  const r = release(s)
+  assert.equal(r.code, 0, r.out)
+  assert.equal(r.log.filter((l) => /files\.txt|git\/trees/.test(l)).length, 0)
+  assert.equal(writes(r).length, 1)
+})
+
+test('release: a cut tree in the plugin repo stops', () => {
+  const s = pluginSetup()
+  put(s.fx, `${PP}__git__trees__${HEAD}.json`, { truncated: true, tree: [] })
+  const r = releasePlugin(s)
+  assert.equal(r.code, 1, r.out)
+  assert.match(r.out, /is cut/)
+  assert.deepEqual(writes(r), [])
 })

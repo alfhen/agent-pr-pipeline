@@ -107,3 +107,41 @@ test('semver.sh run by itself prints nothing and exits 0', () => {
   assert.equal(r.status, 0)
   assert.equal(r.stdout, 'pipeline-io: begin\npipeline-io: exit 0\n')
 })
+
+// The proxy refuses the release read; a stub curl answers the raw read of plugin.json on main.
+const proxy = (pluginVersion, error, mainVersion) => {
+  const s = setup({ pluginVersion, latest: null })
+  writeFileSync(join(s.fx, `${RELEASE}.GET.error`), error)
+  const answer = mainVersion ? `echo '${JSON.stringify({ version: mainVersion })}'` : 'exit 22'
+  writeFileSync(join(s.bin, 'curl'), `#!/bin/bash\necho "$*" >> "${s.dir}/curl.log"\n${answer}\n`)
+  chmodSync(join(s.bin, 'curl'), 0o755)
+  return s
+}
+const PROXY_403 = 'gh: Resource not accessible: releases is not enabled for this session (HTTP 403)'
+
+test('the proxy 403 reads the version on main and warns with latest version on main', () => {
+  const s = proxy('0.7.0', PROXY_403, '0.8.0')
+  const r = run(s, '0.7.0')
+  assert.equal(r.code, 0)
+  assert.equal(r.lines.length, 2)
+  assert.match(r.lines[0], /^WARN plugin 0\.7\.0 \(running\) is older than the latest version on main 0\.8\.0: run /)
+  assert.match(readFileSync(join(s.dir, 'curl.log'), 'utf8'), /https:\/\/raw\.githubusercontent\.com\/alfhen\/agent-pr-pipeline\/main\/\.claude-plugin\/plugin\.json/)
+})
+
+test('the proxy 403 with the same version on main gives OK', () => {
+  assert.deepEqual(run(proxy('0.8.0', PROXY_403, '0.8.0'), '0.8.0').lines, ['OK'])
+})
+
+test('another 403 stays CHECK FAILED and curl is never called', () => {
+  const s = proxy('0.7.0', 'gh: Forbidden (HTTP 403)', '0.8.0')
+  const r = run(s, '0.7.0')
+  assert.equal(r.code, 3)
+  assert.match(r.lines[0], /^CHECK FAILED cannot read the latest release of alfhen\/agent-pr-pipeline/)
+  assert.equal(existsSync(join(s.dir, 'curl.log')), false)
+})
+
+test('the proxy 403 with a failed raw read is CHECK FAILED', () => {
+  const r = run(proxy('0.7.0', PROXY_403, null), '0.7.0')
+  assert.equal(r.code, 3)
+  assert.match(r.lines[0], /^CHECK FAILED cannot read the version on main/)
+})
