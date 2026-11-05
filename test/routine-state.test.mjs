@@ -640,6 +640,20 @@ test('next --mode full fails on two tracking issues and on a failed GitHub call'
   assert.equal(nextFull(s).status, 3)
 })
 
+test('next --mode full exits 3 with no output when only the head= PR call fails', () => {
+  const s = fullSetup({ issues: [buildIssue(4)], records: [record(4), started(4)] })
+  writeFileSync(join(s.fx, `${fname('repos/o/r/pulls')}@state=all&head=o:routine/issue-4.json`), '{}')
+  const r = nextFull(s)
+  assert.equal(r.status, 3); assert.equal(r.stdout, '')
+})
+
+test('next --mode full exits 3 with no output when the events call fails for a decline record', () => {
+  const s = fullSetup({ issues: [issue(3)], records: [record(3, { decision: 'decline' })] })
+  rmSync(join(s.fx, 'repos__o__r__issues__3__events.json'))
+  const r = nextFull(s)
+  assert.equal(r.status, 3); assert.equal(r.stdout, '')
+})
+
 test('next --mode full exits 3 when routine/branch-prefix is missing', () => {
   const r = nextFull(fullSetup({}, 'full', { prefix: false }))
   assert.equal(r.status, 3)
@@ -781,6 +795,10 @@ for (const [name, input, re] of [
   ['maxRunMinutes 1441', { ...goodConfig, limits: { maxRunMinutes: 1441 } }, /maxRunMinutes/],
   ['an unknown top-level key', { ...goodConfig, extra: 1 }, /unknown key extra/],
   ['an unknown limit', { ...goodConfig, limits: { nope: 1 } }, /unknown limit nope/],
+  ['openPRs null', { ...goodConfig, limits: { openPRs: null } }, /openPRs/],
+  ['maxRunMinutes null', { ...goodConfig, limits: { maxRunMinutes: null } }, /maxRunMinutes/],
+  ['wavesPerDay null', { ...goodConfig, limits: { wavesPerDay: null } }, /wavesPerDay/],
+  ['buildIssues null', { ...goodConfig, limits: { buildIssues: null } }, /buildIssues/],
   ['a list', [], /JSON object/],
 ]) {
   test(`config.jq refuses ${name} with one line`, () => {

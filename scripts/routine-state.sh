@@ -136,8 +136,10 @@ record_of() { # comments-json issue -> record JSON line, or nothing
   local body
   body=$(trusted "$1" "<!-- pipeline:routine triaged $2 -->") || exit $?
   [ "$body" = null ] && return 0
-  printf '%s\n' "$body" | tail -n +2 | jq -ce 'select(type == "object" and (.decision | IN("build", "plan", "decline")))' || die 2 "the record for issue $2 is not valid"
+  printf '%s\n' "$body" | tail -n +2 | jq -ce "$TRIAGED_DEF select(triaged_valid)" || die 2 "the record for issue $2 is not valid"
 }
+
+TRIAGED_DEF='def triaged_valid: type == "object" and (.decision | IN("build", "plan", "decline"));'
 
 closed_by_account() { # issue -> true or false
   pages "repos/$repo/issues/$1/events" | jq -r --arg user "$user" 'any(.[]; .event == "closed" and .actor.login == $user)'
@@ -152,15 +154,40 @@ trusted_all() { # comments-json prefix -> JSON list of every trusted body that s
 record_state() {
   local list
   list=$(trusted_all "$1" "<!-- pipeline:routine $2 $3 -->") || exit $?
-  jq -c --arg t "$2" '
-    def valid: type == "object" and (
-      if $t == "triaged" then (.decision | IN("build", "plan", "decline"))
-      elif $t == "build-started" then ((.run | type) == "string" and (.run | test("^[0-9]{8}T[0-9]{6}Z-[0-9]+$")) and (.branch | type) == "string")
-      else (.reason | type) == "string" and (.run | type) == "string" end);
+  jq -c --arg t "$2" "$TRIAGED_DEF"'
+    def valid:
+      if $t == "triaged" then triaged_valid
+      elif $t == "build-started" then (type == "object" and (.run | type) == "string" and (.run | test("^[0-9]{8}T[0-9]{6}Z-[0-9]+$")) and (.branch | type) == "string")
+      else (type == "object" and (.reason | type) == "string" and (.run | type) == "string") end;
     if length == 0 then {state: "absent"}
     elif length > 1 then {state: "bad"}
     else (.[0] | split("\n") | (.[1] // "") | try fromjson catch null) as $r
       | if $r | valid then {state: "ok", rec: $r} else {state: "bad"} end end' <<<"$list"
+}
+
+triage_todo() { # comments-json on-bad (die|hold) -> fills todo; hold adds bad records to held
+  local feedback candidates i rec st dc
+  feedback=$(pages "repos/$repo/issues?state=open&labels=pipeline-feedback&per_page=100") || exit $?
+  candidates=$(jq -r --arg user "$user" '[.[] | select((has("pull_request") | not) and .state == "open" and .user.login == $user and any(.labels[]?; .name == "pipeline-feedback"))]
+    | sort_by(.created_at, .number) | .[].number' <<<"$feedback") || exit 3
+  for i in $candidates; do
+    if [ "$2" = die ]; then
+      rec=$(record_of "$1" "$i") || exit $?
+      if [ -z "$rec" ]; then st=absent; else st=ok; rec=$(jq -c '{rec: .}' <<<"$rec"); fi
+    else
+      rec=$(record_state "$1" triaged "$i") || exit $?
+      st=$(jq -r .state <<<"$rec")
+    fi
+    case "$st" in
+      absent) todo+=("$i") ;;
+      bad) add_held "$i" "bad triaged record" ;;
+      ok)
+        if [ "$(jq -r .rec.decision <<<"$rec")" = decline ]; then
+          dc=$(closed_by_account "$i") || exit $?
+          [ "$dc" = false ] && todo+=("$i")
+        fi ;;
+    esac
+  done
 }
 
 next_full() {
@@ -181,7 +208,7 @@ next_full() {
   owner=${repo%%/*}
   comments=$(pages "repos/$repo/issues/$n/comments") || exit $?
 
-  local routine_issues numbers i bs bl tr block_issue="" block_run="" pending=() st
+  local routine_issues numbers i bs bl tr block_issue="" block_run="" pending=() st hp
   routine_issues=$(pages "repos/$repo/issues?state=open&labels=routine-build&per_page=100") || exit $?
   numbers=$(jq -r '[.[] | select((has("pull_request") | not) and .state == "open" and any(.labels[]?; .name == "routine-build"))]
     | sort_by(.created_at, .number) | .[].number' <<<"$routine_issues") || exit 3
@@ -192,8 +219,9 @@ next_full() {
     if [ "$st" = bad ]; then add_held "$i" "bad build-started record"; continue; fi
     if [ "$st" = ok ]; then
       if [ "$(jq -r .state <<<"$bl")" != absent ]; then add_held "$i" "blocked"; continue; fi
-      if [ -z "$block_issue" ] && [ "$(has_pr "$prefix" "$owner" "$i")" = false ]; then
-        block_issue=$i; block_run=$(jq -r .rec.run <<<"$bs")
+      if [ -z "$block_issue" ]; then
+        hp=$(has_pr "$prefix" "$owner" "$i") || exit $?
+        if [ "$hp" = false ]; then block_issue=$i; block_run=$(jq -r .rec.run <<<"$bs"); fi
       fi
       continue
     fi
@@ -229,19 +257,8 @@ next_full() {
     heldby=limits
   fi
 
-  local feedback candidates todo=() rec
-  feedback=$(pages "repos/$repo/issues?state=open&labels=pipeline-feedback&per_page=100") || exit $?
-  candidates=$(jq -r --arg user "$user" '[.[] | select((has("pull_request") | not) and .state == "open" and .user.login == $user and any(.labels[]?; .name == "pipeline-feedback"))]
-    | sort_by(.created_at, .number) | .[].number' <<<"$feedback") || exit 3
-  for i in $candidates; do
-    rec=$(record_state "$comments" triaged "$i") || exit $?
-    case "$(jq -r .state <<<"$rec")" in
-      absent) todo+=("$i") ;;
-      bad) add_held "$i" "bad triaged record" ;;
-      ok)
-        if [ "$(jq -r .rec.decision <<<"$rec")" = decline ] && [ "$(closed_by_account "$i")" = false ]; then todo+=("$i"); fi ;;
-    esac
-  done
+  todo=()
+  triage_todo "$comments" hold
   if [ ${#todo[@]} -gt 0 ]; then
     emit_step triage "$(printf '%s\n' "${todo[@]:0:5}" | jq -cs '{issues: .}')"
   elif [ "$heldby" = limits ] || [ "$open_prs" -gt 0 ]; then
@@ -307,18 +324,8 @@ case "$cmd" in
     n=$(tracking_number) || exit $?
     if [ -z "$n" ]; then echo '{"step":"init needed"}'; exit 0; fi
     comments=$(pages "repos/$repo/issues/$n/comments") || exit $?
-    issues=$(pages "repos/$repo/issues?state=open&labels=pipeline-feedback&per_page=100") || exit $?
-    candidates=$(jq -r --arg user "$user" '[.[] | select((has("pull_request") | not) and .state == "open" and .user.login == $user and any(.labels[]?; .name == "pipeline-feedback"))]
-      | sort_by(.created_at, .number) | .[].number' <<<"$issues") || exit 3
     todo=()
-    for i in $candidates; do
-      rec=$(record_of "$comments" "$i") || exit $?
-      if [ -z "$rec" ]; then todo+=("$i"); continue; fi
-      if [ "$(jq -r .decision <<<"$rec")" = decline ]; then
-        done_close=$(closed_by_account "$i") || exit $?
-        [ "$done_close" = false ] && todo+=("$i")
-      fi
-    done
+    triage_todo "$comments" die
     if [ ${#todo[@]} -eq 0 ]; then echo '{"step":"idle"}'; exit 0; fi
     printf '%s\n' "${todo[@]:0:5}" | jq -cs '{step: "triage", issues: .}' ;;
 

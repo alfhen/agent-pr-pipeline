@@ -17,7 +17,7 @@ else
   | (.limits // {}) as $l
   | if ($l | type) != "object" then bad("limits must be an object") else . end
   | if (($l | keys) - ["openPRs", "wavesPerDay", "buildIssues", "maxRunMinutes"] | length) > 0 then bad("unknown limit " + (($l | keys) - ["openPRs", "wavesPerDay", "buildIssues", "maxRunMinutes"])[0]) else . end
-  | (["openPRs", "wavesPerDay", "buildIssues"][] as $k | select($l[$k] != null and ($l[$k] | int(0; 20) | not)) | bad($k + " must be an integer from 0 to 20")) // .
-  | if $l.maxRunMinutes != null and ($l.maxRunMinutes | int(10; 1440) | not) then bad("maxRunMinutes must be an integer from 10 to 1440") else . end
+  | (["openPRs", "wavesPerDay", "buildIssues"][] as $k | select($l | has($k)) | select($l[$k] | int(0; 20) | not) | bad($k + " must be an integer from 0 to 20")) // .
+  | if ($l | has("maxRunMinutes")) and ($l.maxRunMinutes | int(10; 1440) | not) then bad("maxRunMinutes must be an integer from 10 to 1440") else . end
   | .limits = (defaults + $l)
 end
