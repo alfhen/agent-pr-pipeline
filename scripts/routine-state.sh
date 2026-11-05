@@ -157,7 +157,7 @@ record_state() {
   jq -c --arg t "$2" "$TRIAGED_DEF"'
     def valid:
       if $t == "triaged" then triaged_valid
-      elif $t == "build-started" then (type == "object" and (.run | type) == "string" and (.run | test("^[0-9]{8}T[0-9]{6}Z-[0-9]+$")) and (.branch | type) == "string")
+      elif $t == "build-started" then (type == "object" and (.run | type) == "string" and (.run | test("^[0-9]{8}T[0-9]{6}Z-[0-9]+\\z")) and (.branch | type) == "string")
       else (type == "object" and (.reason | type) == "string" and (.run | type) == "string") end;
     if length == 0 then {state: "absent"}
     elif length > 1 then {state: "bad"}
@@ -237,7 +237,7 @@ next_full() {
     '[.[] | select(.user.login == $user and (.head.ref | strings | startswith($p)))] | length') || exit $?
   recent=$(jq -c '[.[] | objects | select((try (.created_at | fromdateiso8601) catch 0) > now - 86400)]' <<<"$comments") || exit 3
   recent_runs=$(trusted_all "$recent" "<!-- pipeline:routine build-started " \
-    | jq -r '[.[] | split("\n") | (.[1] // "") | (try fromjson catch null) | objects | .run | strings | select(test("^[0-9]{8}T[0-9]{6}Z-[0-9]+$"))] | unique | length') || exit $?
+    | jq -r '[.[] | split("\n") | (.[1] // "") | (try fromjson catch null) | objects | .run | strings | select(test("^[0-9]{8}T[0-9]{6}Z-[0-9]+\\z"))] | unique | length') || exit $?
 
   if [ -n "$block_issue" ]; then
     emit_step block "$(jq -nc --argjson i "$block_issue" --arg r "$block_run" '{issue: $i, run: $r, reason: "build ended with no PR"}')"

@@ -8,8 +8,8 @@ def routineDefaults: {stage: 0, triageFrom: 1, skipLabels: ["review-minor"], typ
 def bad($m): error("routine.json: " + $m);
 def badp($m): error("pipeline.json: routine." + $m);
 def int($lo; $hi): type == "number" and . == floor and . >= $lo and . <= $hi;
-def login: type == "string" and test("^[A-Za-z0-9][A-Za-z0-9-]*(\\[bot\\])?$");
-def repo: type == "string" and test("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$");
+def login: type == "string" and test("^[A-Za-z0-9][A-Za-z0-9-]*(\\[bot\\])?\\z");
+def repo: type == "string" and test("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\\z");
 def refusedWave: ["repo", "tmp", "pluginRoot", "agentPrefix", "prs", "plan", "feedback", "feedbackRepo", "resumeFromRunId", "cleanup"];
 def allowedWave: ["goals", "checks", "e2ePattern", "e2eCommand", "docs", "docsBuild", "bots", "botWaitMinutes", "architecture", "spec", "context", "skills", "steps", "qa", "maxRounds"];
 def uniq: reduce .[] as $x ([]; if index([$x]) == null then . + [$x] else . end);
@@ -21,7 +21,7 @@ def routineCheck:
   | (.stage // 0) as $stage
   | if ($stage | int(0; 4) | not) then badp("stage must be an integer from 0 to 4")
     elif $stage > 1 then badp("stage " + ($stage | tostring) + " needs a later release") else . end
-  | if (.pipelineVersion | type == "string" and test("^v[0-9]+\\.[0-9]+\\.[0-9]+$") | not) then badp("pipelineVersion must be a tag like v0.8.0") else . end
+  | if (.pipelineVersion | type == "string" and test("^v[0-9]+\\.[0-9]+\\.[0-9]+\\z") | not) then badp("pipelineVersion must be a tag like v0.8.0") else . end
   | if (.maintainer | login | not) or (.maintainer | endswith("[bot]")) then badp("maintainer must be a login") else . end
   | .maintainer as $m
   | (.trustedAuthors // [$m]) as $ta
