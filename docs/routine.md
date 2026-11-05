@@ -25,6 +25,17 @@ The routine allows no Bash command that lists or reads files, such as `ls`, `fin
 
 In `triage` mode the session passes the `why` to `routine-state.sh put` inside double quotes. It keeps the triager's words and changes only four characters: `"` becomes `'`, `$` becomes `S`, a backtick becomes `'` and `\` becomes `/`. It replaces line breaks with spaces. `put` refuses an empty `why` and a `why` with a control character. It does not refuse a long `why`. When the `why` is longer than 500 characters, `put` cuts it at the last sentence end (`.`, `!` or `?` followed by a space or the end) within the first 500 characters, or at 500 characters when there is none, and stores `whyCut: true`. The cut counts characters, not bytes. A `why` of 500 characters or fewer is stored as given.
 
+## Records for a later full mode (0.7.0)
+
+0.7.0 adds state and groundwork for a full mode. No mode uses it yet.
+
+- `routine-state.sh <repo> put build-started <issue> <run> <branch>` stores a `build-started` record for an issue that has a trusted `triaged` record with decision `build`. `put blocked <issue> <run>` stores a `blocked` record (reason: the build ended with no PR). Each type has one record per issue. Both need the mode `full` in a guard folder.
+- `routine-state.sh <repo> next --mode full` prints one JSON line with a `step` (`init needed`, `block`, `build`, `triage`, `wait` or `idle`), a `session` flag, the step data, `held` and `heldBy`. It reads outcomes from GitHub: a build has a PR when GitHub lists one from its branch. Without `--mode`, `next` works as before.
+- `routine/config.jq` checks a `routine.json` and fills in the limits: `openPRs` 3, `wavesPerDay` 2, `buildIssues` 3 and `maxRunMinutes` 240.
+- `routine/branch-prefix` holds the branch prefix of routine PRs.
+
+The mode word `full` still acts as `observe`: `run.sh` does not know it. Local full mode is shelved. The strict sandbox could not run a wave on Claude Code 2.1.318. The routine will move to scheduled cloud agents in a later release.
+
 ## One run
 
 ```mermaid
