@@ -53,6 +53,14 @@ test('a claude re-add and a removal, then the maintainer labels again, gives the
   assert.equal(approval('claude-readd-then-maintainer-again'), '2026-11-05T11:00:00Z')
 })
 
+test('a newer labeled event by another login cancels an older maintainer approval', () => {
+  assert.equal(approval('readded-by-other-login'), null)
+})
+
+test('the maintainer with an app mark other than claude does not count', () => {
+  assert.equal(approval('maintainer-other-app'), null)
+})
+
 test('a labeled event of another label is ignored', () => {
   assert.equal(approval('other-label'), null)
   assert.equal(approval('other-label-after'), '2026-11-05T10:00:00Z')
