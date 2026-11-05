@@ -209,12 +209,13 @@ titles=$(jq -c '[add // [] | .[] | select(has("pull_request") | not) | .title | 
 status=0
 seen='[]'
 
+# The manual path stays as on main for every input, non-string fields included: the string check is for the
+# unattended paths only.
 if [ "$auto" = 0 ]; then
   for ((i = 0; i < count; i++)); do
     item=$(jq -c ".[$i]" "$file")
-    title=$(item_title "$item")
+    title=$(jq -r '.title // ""' <<<"$item")
     [ -n "$title" ] || { echo "REFUSED item $i: no title"; [ "$status" = 0 ] && status=2; continue; }
-    text_fields_ok "$item" || { echo "REFUSED item $i: a field is not a string"; [ "$status" = 0 ] && status=2; continue; }
     hit=$(deny_hit "$item") || { echo "REFUSED $title: denylist check failed"; [ "$status" = 0 ] && status=2; continue; }
     if [ -n "$hit" ]; then
       echo "REFUSED $title: contains \"$hit\""

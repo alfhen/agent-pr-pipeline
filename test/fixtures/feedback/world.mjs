@@ -58,7 +58,7 @@ export function world(o = {}) {
   writeFileSync(join(fx, `${fname(`repos/${fb}/issues`)}.POST.json`), JSON.stringify({ html_url: `https://github.com/${fb}/issues/99` }))
   const log = join(dir, 'log')
   const sh = (script, args) => {
-    const r = spawnSync('bash', [join(root, 'scripts', script), ...args], {
+    const r = spawnSync('bash', [script.startsWith('/') ? script : join(root, 'scripts', script), ...args], {
       encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: fx, FAKE_GH_LOG: log },
     })
     const calls = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : []

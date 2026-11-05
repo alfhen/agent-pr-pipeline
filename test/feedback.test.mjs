@@ -473,13 +473,37 @@ for (const [what, extra] of nonStrings) {
     assert.equal(r.issuePosts.length, 0, r.stdout)
     assert.match(r.stdout, /a field is not a string/)
   })
+}
 
-  test(`the manual form refuses ${what} and posts nothing`, () => {
-    const w = W.world()
-    const r = w.sh('file-feedback.sh', [w.file('m.json', [item('Bad field', extra)]), '--denylist', w.file('md.json', ['acme', 'widgets', '4512']), '--repo', W.FB, '--source', W.SRC])
-    assert.equal(r.status, 2, r.stdout)
-    assert.equal(r.issuePosts.length, 0)
-  })
+// The manual form is frozen at main: a copy of main's script is the oracle, so output and writes must match.
+const MAIN_SCRIPT = join(root, 'test/fixtures/feedback/main-file-feedback.sh')
+const manualCases = [
+  ['all strings', item('Tester reports a stale sha')],
+  ['a number title', { title: 4512, detail: 'd' }],
+  ['a true title', { title: true, detail: 'd' }],
+  ['an empty object title', { title: {}, detail: 'd' }],
+  ['an array title', { title: ['x'], detail: 'd' }],
+  ['an object detail', item('Bad field', { detail: { 'Seen in acme/widgets': 1 } })],
+  ['a number severity', item('Bad field', { severity: 3 })],
+  ['a number evidence', item('Bad field', { evidence: 4512 })],
+  ['a denylisted title', item('Seen in acme/widgets')],
+  ['a null item', null],
+  ['a string item', 'text'],
+  ['no title', { detail: 'd' }],
+]
+for (const [what, bad] of manualCases) {
+  for (const flags of [[], ['--dry-run']]) {
+    test(`the manual form gives main's output for ${what} ${flags.join(' ')}`, () => {
+      const run = script => {
+        const w = W.world()
+        return w.sh(script, [w.file('m.json', [bad, item('Second item')]), '--denylist', w.file('md.json', ['acme', 'widgets', '4512']), '--repo', W.FB, '--source', W.SRC, ...flags])
+      }
+      const branch = run('file-feedback.sh'); const main = run(MAIN_SCRIPT)
+      assert.equal(branch.stdout, main.stdout)
+      assert.equal(branch.status, main.status)
+      assert.deepEqual(branch.writes, main.writes)
+    })
+  }
 }
 
 test('an item with no title key is refused as no title in every form', () => {
