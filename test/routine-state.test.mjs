@@ -933,6 +933,7 @@ const c_cnext = (s, mode = 'cloud-triage', startOpts) => mode === 'cloud-build'
   : run(s, 'o/r', 'next', '--mode', 'cloud-triage')
 const c_lines = r => r.stdout.trim().split('\n').filter(Boolean).map(l => JSON.parse(l))
 const c_one = r => { assert.equal(r.status, 0, r.stderr); const l = c_lines(r); assert.equal(l.length, 1, r.stdout); return l[0] }
+const c_ok = r => { assert.equal(r.status, 0, r.stderr); const l = c_lines(r); assert.ok(l.length > 0, 'next printed no line'); return l }
 const c_onlyReads = r => assert.deepEqual(r.writes, [], r.writes.join('\n'))
 const c_cput = (s, ...a) => run(s, 'o/r', 'put', ...a)
 // Runs the put, applies its writes and returns the result.
@@ -1000,8 +1001,8 @@ test('an untrusted issue gets the untrusted step and never triage', () => {
 test('the untrusted case: next does not give triage when the author is not trusted, with a forged record', () => {
   const forged = c_triagedRec(5, { rec: {} })
   const s = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['ready-to-build'] }), records: [forged], events: [c_lab('ready-to-build', 'mallory', c_T(25))] }))
-  for (const l of c_lines(c_cnext(s))) assert.ok(!['triage', 'would-triage'].includes(l.step), JSON.stringify(l))
-  const b = c_lines(c_cnext(s, 'cloud-build'))
+  for (const l of c_ok(c_cnext(s))) assert.ok(!['triage', 'would-triage'].includes(l.step), JSON.stringify(l))
+  const b = c_ok(c_cnext(s, 'cloud-build'))
   assert.ok(b.every(l => l.step !== 'build'), JSON.stringify(b))
   const r = c_cput(s, 'build-started', '5', c_CRUN(1), 'claude/issue-5', '1')
   assert.equal(r.status, 65); c_onlyReads(r)
@@ -1019,7 +1020,7 @@ test('an untrusted issue approved by the maintainer is triaged once, then not ag
 test('the approval is read by approval.jq: an app mark cancels it', () => {
   const mk = app => csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['maintainer-approved'] }), events: [c_lab('maintainer-approved', 'alfhen', c_T(50), app)], records: [] }))
   const ok = mk(null)
-  assert.ok(c_lines(c_cnext(ok)).every(l => l.step !== 'triage'), 'untrusted record is still missing, so the untrusted step comes first')
+  assert.ok(c_ok(c_cnext(ok)).every(l => l.step !== 'triage'), 'untrusted record is still missing, so the untrusted step comes first')
   const rec = c_cr('untrusted', `5:${c_sha('issue 5', 'body 5')}:c_T`, { hash: c_sha('issue 5', 'body 5') }, { at: c_T(10) })
   for (const [app, want] of [[null, 'triage'], [{ slug: 'claude' }, 'idle']]) {
     const s = mk(app); s.w.records = [rec]; s.sync()
@@ -1030,9 +1031,10 @@ test('the approval is read by approval.jq: an app mark cancels it', () => {
 test('an approval that was added, removed and re-added by a session does not count', () => {
   const rec = c_cr('untrusted', `5:${c_sha('issue 5', 'body 5')}:c_T`, { hash: c_sha('issue 5', 'body 5') }, { at: c_T(10) })
   const events = [c_lab('maintainer-approved', 'alfhen', c_T(50)), { event: 'unlabeled', label: { name: 'maintainer-approved' }, actor: { login: 'alfhen' }, created_at: c_T(55), performed_via_github_app: null }, c_lab('maintainer-approved', 'alfhen', c_T(60), { slug: 'claude' })]
+  const noTriage = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['maintainer-approved'] }), events, records: [rec] }))
+  assert.equal(c_one(c_cnext(noTriage)).step, 'idle')
   const s = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['maintainer-approved', 'ready-to-build'] }), events, records: [rec, c_triagedRec(5, { epoch: rec.id })] }))
-  assert.equal(c_one(c_cnext(s)).step, 'idle')
-  assert.ok(c_lines(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'))
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'idle')
 })
 
 test('an approval that was removed has no force', () => {
@@ -1046,7 +1048,7 @@ test('a body changed after approval is revoked with the hash cause, and put revo
   const rec = c_cr('untrusted', `5:${old}:c_T`, { hash: old }, { at: c_T(10) })
   const s = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', body: 'new body', labels: ['maintainer-approved', 'ready-to-build'] }), events: c_approved(c_T(50)), records: [rec, c_triagedRec(5, { epoch: rec.id })] }))
   assert.deepEqual(c_one(c_cnext(s)), { step: 'revoke', issue: 5, cause: 'hash' })
-  assert.ok(c_lines(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'))
+  assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'))
   c_doPut(s, 'revoke', '5', 'hash')
   const last = s.w.records.at(-1).body
   assert.ok(last.startsWith('<!-- pipeline:routine revoked 5:hash:'))
@@ -1088,7 +1090,7 @@ test('a comment created before the approval and edited after it blocks; created 
 test('a trusted new issue with an outsider comment is revoked, waits, and is triaged after a newer approval', () => {
   const s = csetup({ ...c_withIssues(c_bare(5, { comments: [c_cc('eve', c_T(60))] })), ...c_withIssues(c_bare(6)) })
   s.w.issues = [c_ci(5), c_ci(6)]; s.w.comments = { 5: [c_cc('eve', c_T(60))], 6: [] }; s.sync()
-  assert.deepEqual(c_lines(c_cnext(s)).map(l => l.step), ['revoke'])
+  assert.deepEqual(c_ok(c_cnext(s)).map(l => l.step), ['revoke'])
   c_doPut(s, 'revoke', '5', 'comment')
   assert.deepEqual(c_labelsOf(s, 5), ['needs-approval'])
   assert.deepEqual(c_one(c_cnext(s)), { step: 'triage', issues: [6] })
@@ -1160,14 +1162,15 @@ test('put triaged keeps the plan rule for size L and refuses a second record in 
 })
 
 test('put triaged: a revoke, a new approval and a second triage write a record with a new epoch, then never triage', () => {
-  const s = csetup({ ...c_withIssues(c_bare(5, { comments: [c_cc('eve', c_T(60))] })) })
+  const s = csetup({ ...c_withIssues(c_bare(5, { comments: [c_cc('eve', c_T(60))] })), records: [c_triagedRec(5, { epoch: 0, at: c_T(20) })] })
   c_doPut(s, 'revoke', '5', 'comment')
   const epoch = s.w.records.at(-1).id
   c_issueOf(s, 5).labels.push({ name: 'maintainer-approved' }); s.w.events[5] = c_approved(c_T(900)); s.sync()
   const t = c_putT(s, 5, 'build', 'S', 'low', 'bug', 'ok')
   assert.equal(t.status, 0, t.stderr); c_apply(s, t)
   assert.ok(s.w.records.at(-1).body.startsWith(`<!-- pipeline:routine triaged 5:${epoch} -->`))
-  assert.ok(c_lines(c_cnext(s)).every(l => l.step !== 'triage'))
+  assert.equal(s.w.records.filter(r => r.body.includes('pipeline:routine triaged 5:')).length, 2)
+  assert.ok(c_ok(c_cnext(s)).every(l => l.step !== 'triage'))
   const b = c_one(c_cnext(s, 'cloud-build'))
   assert.equal(b.step, 'build')
 })
@@ -1194,7 +1197,7 @@ test('adopt: a 0.7.0 record with no cloud label is adopted; a PR from routine/ o
   assert.deepEqual(c_one(c_cnext(s)), { step: 'adopt', issue: 5, labels: ['ready-to-build', 'size:S'] })
   s.w.pulls = [c_cpr('routine/issue-5')]; s.sync()
   assert.equal(c_one(c_cnext(s)).step, 'idle')
-  assert.ok(c_lines(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'))
+  assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'))
   s.w.pulls = []; s.sync()
   c_doPut(s, 'adopt', '5')
   assert.deepEqual(c_labelsOf(s, 5), ['ready-to-build', 'size:S'])
@@ -1222,7 +1225,7 @@ test('triage keeps to triagePerRun and triagePerDay and skips an issue whose tri
   s.w.settings = { routine: { ...c_ROUTINE, limits: { triagePerRun: 5, triagePerDay: 2 } } }
   s.w.records = [c_triagedRec(1, { at: c_T(300) }), c_cr('triage-failed', '2:0', { reason: 'x' }, { at: c_T(301) })]
   s.sync()
-  assert.ok(c_lines(c_cnext(s)).every(l => l.step !== 'triage'))
+  assert.ok(c_ok(c_cnext(s)).every(l => l.step !== 'triage'))
   s.w.settings = { routine: c_ROUTINE }; s.w.records = [c_cr('triage-failed', '1:0', { reason: 'x' }, { at: c_OLD })]; s.sync()
   assert.deepEqual(c_one(c_cnext(s)), { step: 'triage', issues: [2, 3, 4, 5, 6] })
 })
@@ -1293,17 +1296,17 @@ test('build: an approval of an untrusted issue gives build, and a size L record 
   const s = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['maintainer-approved'] }), events: c_approved(c_T(50)), records: [rec, c_triagedRec(5, { epoch: rec.id, at: c_T(60) })] }))
   assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'build')
   const big = csetup(c_withIssues(c_builtIssue(5, { tri: { rec: { size: 'L' } } })))
-  assert.ok(c_lines(c_cnext(big, 'cloud-build')).every(l => l.step !== 'build'))
+  assert.ok(c_ok(c_cnext(big, 'cloud-build')).every(l => l.step !== 'build'))
   const high = csetup(c_withIssues(c_builtIssue(5, { tri: { rec: { risk: 'high' } } })))
-  assert.ok(c_lines(c_cnext(high, 'cloud-build')).every(l => l.step !== 'build'))
+  assert.ok(c_ok(c_cnext(high, 'cloud-build')).every(l => l.step !== 'build'))
   const plan = csetup(c_withIssues(c_builtIssue(5, { tri: { rec: { decision: 'plan' } } })))
-  assert.ok(c_lines(c_cnext(plan, 'cloud-build')).every(l => l.step !== 'build'))
+  assert.ok(c_ok(c_cnext(plan, 'cloud-build')).every(l => l.step !== 'build'))
 })
 
 test('build: a ready-to-build label on a build-failed issue does not restart it without a newer approval', () => {
   const s = csetup(c_withIssues({ ...c_builtIssue(5), records: [c_triagedRec(5), c_startedRec(5, 1), c_blockedRec(5, 1, { at: c_T(40) })] }))
   s.w.issues[0].labels.push({ name: 'build-failed' }); s.sync()
-  assert.ok(c_lines(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'))
+  assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'))
   s.w.events[5] = [...s.w.events[5], c_lab('maintainer-approved', 'alfhen', c_T(90))]; c_issueOf(s, 5).labels.push({ name: 'maintainer-approved' }); s.sync()
   const b = c_one(c_cnext(s, 'cloud-build'))
   assert.equal(b.step, 'build'); assert.equal(b.attempt, 2)
@@ -1311,20 +1314,20 @@ test('build: a ready-to-build label on a build-failed issue does not restart it 
 
 test('build: an approved issue with an older approval than its blocked record does not build', () => {
   const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['maintainer-approved', 'build-failed'] }), events: c_approved(c_T(30)), records: [c_triagedRec(5), c_startedRec(5, 1), c_blockedRec(5, 1, { at: c_T(40) })] }))
-  assert.ok(c_lines(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'))
+  assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'))
 })
 
 test('build: an attempt in flight, a building label, or a PR from the branch blocks a second build', () => {
   const inflight = csetup(c_withIssues({ ...c_builtIssue(5), records: [c_triagedRec(5), c_startedRec(5, 1)] }))
-  assert.ok(c_lines(c_cnext(inflight, 'cloud-build')).every(l => l.step !== 'build'))
+  assert.ok(c_ok(c_cnext(inflight, 'cloud-build')).every(l => l.step !== 'build'))
   const r = c_cput(inflight, 'build-started', '5', c_CRUN(2), 'claude/issue-5', '2')
   assert.equal(r.status, 65)
   const label = csetup(c_withIssues({ issue: c_ci(5, { labels: ['maintainer-approved', 'building'] }), events: c_approved(c_T(90)), records: [c_triagedRec(5), c_startedRec(5, 1), c_blockedRec(5, 1)] }))
   assert.equal(c_one(c_cnext(csetup(c_withIssues({ issue: c_ci(5, { labels: ['maintainer-approved'] }), events: c_approved(c_T(90)), records: [c_triagedRec(5), c_startedRec(5, 1), c_blockedRec(5, 1)] })), 'cloud-build')).step, 'build', 'the same issue without the label builds')
-  assert.ok(c_lines(c_cnext(label, 'cloud-build')).every(l => l.step !== 'build'))
+  assert.ok(c_ok(c_cnext(label, 'cloud-build')).every(l => l.step !== 'build'))
   const pr = csetup(c_withIssues(c_builtIssue(5)))
   pr.w.pulls = [c_cpr('claude/issue-5', { state: 'closed' })]; pr.sync()
-  assert.ok(c_lines(c_cnext(pr, 'cloud-build')).every(l => l.step !== 'build'))
+  assert.ok(c_ok(c_cnext(pr, 'cloud-build')).every(l => l.step !== 'build'))
 })
 
 test('build: limits hold at 3 open claude PRs and at 2 runs in 24 hours, with heldBy', () => {
@@ -1343,7 +1346,7 @@ test('build: limits hold at 3 open claude PRs and at 2 runs in 24 hours, with he
 
 test('build: buildAttempts 0 never builds', () => {
   const s = csetup({ ...c_withIssues(c_builtIssue(5)), settings: { routine: { ...c_ROUTINE, limits: { buildAttempts: 0 } } } })
-  assert.ok(c_lines(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'))
+  assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'))
 })
 
 test('build: a --start file with another version or a root that does not end in the version is refused', () => {
@@ -1609,4 +1612,62 @@ test('build: an outsider comment older than the ready-to-build label does not bl
   assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'build')
   s.w.comments[5] = [c_cc('eve', c_T(30))]; s.sync()
   assert.deepEqual(c_one(c_cnext(s, 'cloud-build')), { step: 'revoke', issue: 5, cause: 'comment' })
+})
+
+test('an untrusted issue with an early approval and no untrusted record passes nothing', () => {
+  const s = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['maintainer-approved'] }), events: c_approved(c_T(50)) }))
+  assert.deepEqual(c_one(c_cnext(s)), { step: 'untrusted', issue: 5 })
+  const t = run(s, 'o/r', 'issue-text', '5')
+  assert.equal(t.status, 65); assert.equal(t.stdout, '')
+  const p = c_putT(s, 5, 'build', 'S', 'low', 'bug', 'ok')
+  assert.equal(p.status, 65); c_onlyReads(p)
+  assert.equal(c_cput(s, 'triage-failed', '5').status, 65)
+  const s0 = csetup({ ...c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['maintainer-approved'] }), events: c_approved(c_T(50)) }), settings: { routine: { ...c_ROUTINE, stage: 0 } } })
+  assert.ok(c_ok(c_cnext(s0)).every(l => l.step !== 'would-triage'))
+})
+
+test('a 0.7.0 build-started record does not break cloud-build or count as an attempt', () => {
+  const legacy = (at) => c_cr('build-started', '5', { run: '20260101T000000Z-1', branch: 'routine/issue-5' }, { at })
+  for (const [at, labels, want] of [[c_OLD, ['building'], [{ step: 'pr-seen', issue: 5 }]], [c_T(30), ['building'], []]]) {
+    const s = csetup({ ...c_withIssues({ issue: c_ci(5, { labels }), records: [legacy(at)] }, c_builtIssue(6)), settings: { routine: { ...c_ROUTINE, stage: 0 } } })
+    const lines = c_ok(c_cnext(s, 'cloud-build'))
+    assert.deepEqual(lines.filter(l => l.issue === 5), want)
+    assert.ok(lines.some(l => l.step === 'would-build' && l.issue === 6), JSON.stringify(lines))
+  }
+  const s = csetup(c_withIssues({ ...c_builtIssue(5), records: [c_triagedRec(5), legacy(c_OLD)] }))
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).attempt, 1)
+})
+
+test('a stale building label with no open attempt is removed by pr-seen, with build-failed after a blocked attempt', () => {
+  const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['building', 'maintainer-approved'] }), events: c_approved(c_T(90)), records: [c_triagedRec(5), c_startedRec(5, 1), c_blockedRec(5, 1)] }))
+  assert.deepEqual(c_ok(c_cnext(s, 'cloud-build')), [{ step: 'pr-seen', issue: 5 }])
+  c_doPut(s, 'pr-seen', '5')
+  assert.deepEqual(c_labelsOf(s, 5), ['build-failed', 'maintainer-approved'])
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'build')
+  const bare = csetup(c_withIssues({ issue: c_ci(7, { labels: ['building'] }) }))
+  assert.deepEqual(c_ok(c_cnext(bare, 'cloud-build')), [{ step: 'pr-seen', issue: 7 }])
+  c_doPut(bare, 'pr-seen', '7')
+  assert.deepEqual(c_labelsOf(bare, 7), [])
+  const live = csetup(c_withIssues({ issue: c_ci(5, { labels: ['building'] }), records: [c_triagedRec(5), c_startedRec(5, 1)] }))
+  assert.equal(c_one(c_cnext(live, 'cloud-build')).step, 'idle')
+})
+
+test('put triaged adds the labels before it writes the record, and an issue with labels but no record is triaged again', () => {
+  const s = csetup(c_withIssues(c_bare(5)))
+  const r = c_putT(s, 5, 'build', 'S', 'low', 'bug', 'ok')
+  assert.equal(r.status, 0, r.stderr)
+  const at = re => r.calls.findIndex(c => re.test(c))
+  assert.ok(at(/issues\/5\/labels/) >= 0 && at(/issues\/5\/labels/) < at(/^POST .*issues\/100\/comments/), r.calls.join('\n'))
+  const half = csetup(c_withIssues(c_bare(5, { labels: ['ready-to-build'] })))
+  assert.deepEqual(c_one(c_cnext(half)), { step: 'triage', issues: [5] })
+})
+
+test('build: a ready-to-build label alone does not build when the maintainer removed maintainer-approved', () => {
+  const rec = c_cr('untrusted', `5:${c_sha('issue 5', 'body 5')}:c_T`, { hash: c_sha('issue 5', 'body 5') }, { at: c_T(10) })
+  const mk = labels => csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels }), events: [...c_approved(c_T(50)), c_lab('ready-to-build', 'alfhen', c_T(70), 'claude')], records: [rec, c_triagedRec(5, { epoch: rec.id, at: c_T(60) })] }))
+  const removed = mk(['ready-to-build'])
+  assert.equal(c_one(c_cnext(removed, 'cloud-build')).step, 'idle')
+  const r = c_cput(removed, 'build-started', '5', c_CRUN(1), 'claude/issue-5', '1')
+  assert.equal(r.status, 65); c_onlyReads(r)
+  assert.equal(c_one(c_cnext(mk(['ready-to-build', 'maintainer-approved']), 'cloud-build')).step, 'build')
 })

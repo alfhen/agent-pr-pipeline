@@ -160,7 +160,7 @@ def hasl($l): .L | index($l) != null;
     | ($lu.at // "") as $urAt
     | (($i.user.login | lc) | inl($ta)) as $trusted
     | (if ($L | index("maintainer-approved")) != null and $c.approval != null and ($urAt == "" or $c.approval > $urAt) then $c.approval else null end) as $A
-    | (if $hasUR then $A != null else ($trusted or $A != null) end) as $authorPart
+    | (if $hasUR then $A != null else $trusted end) as $authorPart
     | ([$A, (if $hasUR or ($L | index("ready-to-build")) == null then null else $c.rtb end)] | map(select(. != null)) | mx) as $ref0
     | ($ref0 // $i.created_at) as $R
     | ([$c.comments[]? | objects | select((.user.login | lc | inl($ta)) | not) | ctime | select(. > $R)]) as $off
@@ -169,16 +169,19 @@ def hasl($l): .L | index($l) != null;
        elif ($off | length) > 0 then "comment"
        else null end) as $reason
     | ($r | map(select(.kind == "triaged")) | last) as $tr
-    | ($r | map(select(.kind == "build-started"))) as $bs
-    | ($r | map(select(.kind == "blocked"))) as $bl
-    | ($r | map(select(.kind == "built"))) as $bt
+    | ($r | map(select(.kind == "build-started" and (.key | contains(":"))))) as $bs
+    | ($r | map(select(.kind == "blocked" and (.key | contains(":"))))) as $bl
+    | ($r | map(select(.kind == "built" and (.key | contains(":"))))) as $bt
+    | ($r | any(.kind == "build-started" and (.key | contains(":") | not) and within($lim.buildHours * 3600))) as $legacyLive
     | ($bs | last) as $ls
     | {n: $n, i: $i, comments: $c.comments, L: $L, r: $r, lu: $lu, hasUR: $hasUR, epoch: $epoch, trusted: $trusted,
        A: $A, authorPart: $authorPart, reason: $reason, newestOff: ($off | mx), hasPr: $c.hasPr,
+       skipped: (($L | any(inl($cfg.skipLabels))) or ($L | index("declined")) != null),
        excluded: (($L | any(inl($cfg.skipLabels))) or ($L | index("declined")) != null or $c.hasPr),
        tr: $tr, trNew: ($tr != null and $tr.id > $epoch),
        att: ($bs | map(.key) | unique | length), ls: $ls, lb: ($bl | last),
        inflight: ($bs | any(.key as $k | ($bl | any(.key == $k)) | not)),
+       legacyLive: $legacyLive,
        ended: ($ls != null and ($bl | any(.key == $ls.key))),
        built: ($ls != null and ($bt | any(.key == $ls.key))),
        builtCode: ($ls as $s | $bt | map(select(.key == $s.key)) | last | .rec.reasonCode)}
@@ -194,14 +197,14 @@ def hasl($l): .L | index($l) != null;
   | ([$F[] | select(.tr != null and (.tr.key | contains(":") | not) and ((.tr.rec | type) == "object") and .tr.rec.type == null
         and (.tr.rec.decision | IN("build", "plan", "decline"))
         and (.L | any(inl($stateLabels)) | not) and (.excluded | not))] | byAge) as $adopt
-  | ([$F[] | select((.trusted | not) and ge and (.excluded | not) and (.r | any(.kind == "untrusted") | not) and (.r | any(.kind == "triaged") | not))] | byAge) as $untrusted
+  | ([$F[] | select((.trusted | not) and ge and (.skipped | not) and (.r | any(.kind == "untrusted") | not) and (.r | any(.kind == "triaged") | not))] | byAge) as $untrusted
   | ([$F[] | select(.authorPart and (.reason == "hash" or .reason == "comment") and (.excluded | not))] | byAge) as $revoke
   | ([$F[] | . as $f | select($f.authorPart and $f.reason == null and ($f | ge) and ($f.excluded | not) and ($f.trNew | not)
         and ($f.r | any(.kind == "triage-failed" and .key == "\($f.n):\($f.epoch)") | not))] | byAge) as $eligible
   | ([$recs[] | select((.kind == "triaged" or .kind == "triage-failed") and within(86400))] | length) as $used
   | ([$lim.triagePerRun, ($lim.triagePerDay - $used)] | min | if . < 0 then 0 else . end) as $slots
   | ($eligible[:$slots] | map(.n)) as $triage
-  | ([$F[] | select(hasl("building") and .hasPr)] | byAge) as $prseen
+  | ([$F[] | select(hasl("building") and (.hasPr or ((.inflight | not) and (.legacyLive | not))))] | byAge) as $prseen
   | ([$F[] | select(.ls != null and (.ended | not) and (.hasPr | not)
         and (.built or ((try (.ls.at | fromdateiso8601) catch 0) < now - ($lim.buildHours * 3600))))] | byAge) as $block
   | ([$F[] | select(hasl("build-failed") and (hasl("needs-maintainer") | not) and .A != null and .lb != null and .A > .lb.at
@@ -242,6 +245,7 @@ def hasl($l): .L | index($l) != null;
      revoke: ($revoke | map({issue: .n, cause: .reason})),
      eligible: ($eligible | map(.n)),
      prseen: ($prseen | map(.n)),
+     prseenFailed: ($prseen | map(select(.hasPr | not) | select(.ended)) | map(.n)),
      block: ($block | map({issue: .n})),
      exhausted: ($exhausted | map(.n)),
      needsPlan: ($needsPlan | map({issue: .n, key: "\(.n):\(.A)"})),
@@ -512,9 +516,9 @@ started_key() { # issue run -> the key of its build-started record, or nothing
 
 do_needs_plan() { # issue key
   refuse_dup needs-plan "$2"
-  write_record needs-plan "$2" "$(jq -nc --argjson i "$1" '{issue: $i}')"
   add_labels "$1" needs-plan
   remove_labels "$1" needs-approval
+  write_record needs-plan "$2" "$(jq -nc --argjson i "$1" '{issue: $i}')"
   echo "NOTICE needs-plan $repo $1"
 }
 
@@ -535,8 +539,8 @@ put_untrusted() {
   in_plan 'any(.untrusted[]; . == $n)' || die 65 "issue $issue is not waiting for the untrusted step"
   h=$(text_hash "$issue_live")
   would untrusted "$issue"
-  write_record untrusted "$issue:$h:$(utc_stamp)" "$(jq -nc --arg h "$h" '{hash: $h}')"
   add_labels "$issue" needs-approval untrusted-author
+  write_record untrusted "$issue:$h:$(utc_stamp)" "$(jq -nc --arg h "$h" '{hash: $h}')"
   echo "ok untrusted $issue"
 }
 
@@ -566,19 +570,23 @@ put_triaged() {
     | if ($w | length) > 500 then . + {whyCut: true} else . end
     | if .decision == "build" and (.size == "L" or .risk == "high") then . + {decision: "plan", triagerDecision: "build"} else . end')
   final=$(jq -r .decision <<<"$rec")
+  # The labels go first: a failure after them leaves an issue that triage lists again, never one that no step reads.
   would triaged "$issue" "$final"
-  write_record triaged "$key" "$rec"
   tlabel=$(jq -r --arg t "$itype" '.typeLabels[$t]' <<<"$routine_cfg")
   case "$final" in
     decline)
-      mark="Declined by the triage routine: $(jq -r .why <<<"$rec")"
-      gh api --method POST "repos/$repo/issues/$issue/comments" -f body="$mark" >/dev/null || die 3 "could not post the decline reason"
       add_labels "$issue" declined "$tlabel" "size:$size"
-      remove_labels "$issue" needs-approval ;;
+      remove_labels "$issue" needs-approval
+      write_record triaged "$key" "$rec"
+      mark="Declined by the triage routine: $(jq -r .why <<<"$rec")"
+      gh api --method POST "repos/$repo/issues/$issue/comments" -f body="$mark" >/dev/null || die 3 "could not post the decline reason" ;;
     build)
       add_labels "$issue" ready-to-build "$tlabel" "size:$size"
-      remove_labels "$issue" needs-approval ;;
-    *) add_labels "$issue" needs-approval "$tlabel" "size:$size" ;;
+      remove_labels "$issue" needs-approval
+      write_record triaged "$key" "$rec" ;;
+    *)
+      add_labels "$issue" needs-approval "$tlabel" "size:$size"
+      write_record triaged "$key" "$rec" ;;
   esac
   echo "$rec"
 }
@@ -590,8 +598,8 @@ put_triage_failed() {
   key="$issue:$(jq -r .f.epoch <<<"$plan_json")"
   refuse_dup triage-failed "$key"
   would triage-failed "$issue"
-  write_record triage-failed "$key" '{"reason":"triage failed"}'
   add_labels "$issue" needs-maintainer
+  write_record triage-failed "$key" '{"reason":"triage failed"}'
   echo "NOTICE triage-failed $repo $issue"
 }
 
@@ -655,6 +663,7 @@ put_pr_seen() {
   issue_prelude build
   in_plan 'any(.prseen[]; . == $n)' || die 65 "issue $issue has no building label or no PR from its branch"
   would pr-seen "$issue"
+  if jq -e --argjson n "$issue" 'any(.prseenFailed[]; . == $n)' <<<"$plan_json" >/dev/null; then add_labels "$issue" build-failed; fi
   remove_labels "$issue" building
   echo "ok pr-seen $issue"
 }
