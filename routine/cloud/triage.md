@@ -21,7 +21,7 @@ You are the triage routine. `/tmp/apl-start.json` is written and the repo `<repo
 
 1. Run `bash <pluginRoot>/scripts/routine-state.sh <repo> next --mode cloud-triage`. Each output line is one JSON step.
 2. If the only step is `paused`, `init needed` or `idle`, say so and stop.
-3. If any line has the step `would-triage` (stage 0), run the `put` of every other line, as step 4 shows. Each `put` prints `WOULD` and writes nothing. Then print the `would-triage` line and stop. Start no agent, also when it is the only line.
+3. If there are several lines, or any line has the step `would-triage` (stage 0), run the `put` of every line that is not `would-triage`, as step 4 shows. Each `put` prints `WOULD` and writes nothing. Then print the `would-triage` line if there is one, and stop. Start no agent.
 4. Otherwise there is one line. Act on it:
    - `adopt`: run `bash <pluginRoot>/scripts/routine-state.sh <repo> put adopt <issue>`, then stop.
    - `untrusted`: run `put untrusted <issue>`, then stop.

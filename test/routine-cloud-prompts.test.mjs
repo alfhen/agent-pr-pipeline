@@ -112,10 +112,10 @@ test('the shared paragraph names the notice, the root and env-stale', () => {
 })
 
 test('triage and build stop on the would- step, whatever the line count', () => {
-  assert.match(prompts.triage, /If any line has the step `would-triage` \(stage 0\)[^\n]*print the `would-triage` line and stop\. Start no agent, also when it is the only line/)
-  assert.match(prompts.build, /If any line has the step `would-build` \(stage 0\)[^\n]*print the `would-build` line and stop\. Run no `put build-started` and no Workflow call, also when it is the only line/)
+  assert.match(prompts.triage, /If there are several lines, or any line has the step `would-triage` \(stage 0\), run the `put` of every line that is not `would-triage`[^\n]*print the `would-triage` line if there is one, and stop\. Start no agent/)
+  assert.match(prompts.build, /If there are several lines, or any line has the step `would-build` \(stage 0\), run the `put` of every line that is not `would-build`[^\n]*print the `would-build` line if there is one, and stop\. Run no `put build-started` and no Workflow call/)
   for (const t of [prompts.triage, prompts.build]) {
-    assert.doesNotMatch(t, /several lines|one line \(stage 1/)
+    assert.doesNotMatch(t, /one line \(stage 1/)
     assert.match(t, /\n4\. Otherwise there is one line\./)
   }
   assert.ok(prompts.triage.indexOf('would-triage') < prompts.triage.indexOf('<agentPrefix>triager'))

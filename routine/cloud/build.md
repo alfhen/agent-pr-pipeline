@@ -23,7 +23,7 @@ You are the build routine. `/tmp/apl-start.json` is written and the repo `<repo>
 
 1. Run `bash <pluginRoot>/scripts/routine-state.sh <repo> next --mode cloud-build --start /tmp/apl-start.json`. Each output line is one JSON step.
 2. If the only step is `paused`, `init needed`, `idle` or `wait`, say so and stop.
-3. If any line has the step `would-build` (stage 0), run the `put` of every other line, as step 4 shows. Each `put` prints `WOULD` and writes nothing. Then print the `would-build` line and stop. Run no `put build-started` and no Workflow call, also when it is the only line.
+3. If there are several lines, or any line has the step `would-build` (stage 0), run the `put` of every line that is not `would-build`, as step 4 shows. Each `put` prints `WOULD` and writes nothing. Then print the `would-build` line if there is one, and stop. Run no `put build-started` and no Workflow call.
 4. Otherwise there is one line. Act on it:
    - `pr-seen`: run `bash <pluginRoot>/scripts/routine-state.sh <repo> put pr-seen <issue>`, then stop.
    - `revoke`: run `put revoke <issue> <cause>`, then stop.
