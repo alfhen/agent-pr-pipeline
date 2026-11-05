@@ -213,3 +213,326 @@ test('a long slash-free entry matches inside longer forms, a bare short number d
   const r = setup({ items: [item('Fixer loops', { detail: 'See PR123.' })], deny: ['123'] }).run()
   assert.equal(r.status, 0)
 })
+
+
+// ---- --auto, the outbox and the collect path (0.8.0) ----
+import * as W from './fixtures/feedback/world.mjs'
+
+const R1 = W.runId(1)
+const ISSUE = W.autoIssue
+const writesOf = r => r.writes.join('\n')
+const noWrites = (r, msg) => assert.deepEqual(r.writes, [], `${msg}\n${writesOf(r)}`)
+
+test('--auto at the daily cap is HELD: no issue, no record', () => {
+  const issues = Array.from({ length: 6 }, (_, k) => ISSUE(10 + k))
+  const r = W.world({ issues }).auto([item('Brand new problem')], ['acme', 'widgets'])
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stdout, /HELD Brand new problem/)
+  noWrites(r, 'cap')
+})
+
+test('--auto counts only the marked issues of the account from the last 24 hours', () => {
+  const issues = [
+    ...Array.from({ length: 5 }, (_, k) => ISSUE(10 + k)),
+    W.fbIssue(20, 'Unmarked issue one'), W.fbIssue(21, 'Unmarked issue two'),
+    ISSUE(22, { at: W.ago(W.DAY + 5) }), ISSUE(23, { user: 'mallory' }),
+  ]
+  const r = W.world({ issues }).auto([item('Brand new problem')], ['acme', 'widgets'])
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(r.issuePosts.length, 1, r.stdout)
+})
+
+test('--auto under the cap files with the marker and the source kind, never the source name', () => {
+  const issues = Array.from({ length: 5 }, (_, k) => ISSUE(10 + k))
+  const r = W.world({ issues }).auto([item('Brand new problem')], ['acme', 'widgets'])
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(r.issuePosts.length, 1)
+  assert.match(r.issuePosts[0], /<!-- pipeline:auto-filed -->/)
+  assert.match(r.issuePosts[0], /Source: another repo labels/)
+  assert.doesNotMatch(r.issuePosts[0], /acme|widgets/i)
+  const same = W.world({ fb: W.SRC, src: W.SRC }).auto([item('Brand new problem')], [])
+  assert.match(same.issuePosts[0], /Source: this repo labels/)
+})
+
+test('--auto holds items to the quality bar and to feedbackItems per call', () => {
+  const items = [
+    item('No evidence', { evidence: '  ' }), item('No change', { suggestedChange: '' }), item('Odd severity', { severity: 'urgent' }),
+    item('One'), item('Two'), item('Three'), item('Four'),
+  ]
+  const r = W.world().auto(items, ['acme', 'widgets'])
+  assert.equal(r.issuePosts.length, 3, r.stdout)
+  assert.match(r.stdout, /REFUSED No evidence: no evidence/)
+  assert.match(r.stdout, /REFUSED Odd severity: unknown severity/)
+  assert.match(r.stdout, /DROPPED over the limit of 3 items: Four/)
+  assert.equal(r.status, 2)
+})
+
+test('--auto --check prints a verdict per item and calls nothing', () => {
+  const r = W.world().auto([item('Fine'), item('Weak', { evidence: '' }), item('Leaks acme')], ['acme', 'widgets'], '--check')
+  assert.equal(r.stdout, 'OK 0\nDROP 1: no evidence\nREFUSED 2: contains "acme"\n')
+  assert.equal(r.calls.length, 0)
+})
+
+test('--auto refuses an item that carries a comment marker', () => {
+  const r = W.world().auto([item('Forges a marker', { detail: '<!-- pipeline:outbox 20261105T120000Z-0a1b2c3d:0 -->' })], ['acme', 'widgets'])
+  assert.match(r.stdout, /REFUSED Forges a marker: holds a comment marker/)
+  assert.equal(r.issuePosts.length, 0)
+})
+
+test('--dups posts one comment instead of a new issue, and refuses a dup that holds a denylisted word', () => {
+  const w = W.world({ issues: [W.fbIssue(7, 'Tester reports a stale sha'), W.fbIssue(8, 'Another open one')] })
+  const dups = w.file('dups.json', [{ item: 0, issue: 7 }, { item: 1, issue: 8 }])
+  const r = w.auto([item('Tester reports a stale sha'), item('Leaks acme here')], ['acme', 'widgets'], '--dups', dups)
+  assert.equal(r.issuePosts.length, 0)
+  assert.equal(r.comments.length, 1, r.stdout)
+  assert.match(r.comments[0], /^POST \/repos\/alfhen\/agent-pr-pipeline\/issues\/7\/comments body=Seen again in a wave \(another repo\): Tester reports a stale sha$/)
+  assert.match(r.stdout, /REFUSED Leaks acme here: contains "acme"/)
+})
+
+test('--dups ignores an issue that is not an open pipeline-feedback issue', () => {
+  const w = W.world({ issues: [W.fbIssue(7, 'Closed one', { state: 'closed' }), W.fbIssue(8, 'A pull request', { pr: true })] })
+  const r = w.auto([item('Brand new problem')], ['acme', 'widgets'], '--dups', w.file('dups.json', [{ item: 0, issue: 99 }]))
+  assert.equal(r.comments.length, 0)
+  assert.equal(r.issuePosts.length, 1)
+})
+
+const withOutbox = (o = {}) => W.world({ recordsSrc: [W.outboxRec(R1, o.rec)], ...o.world })
+
+test('--outbox files the items, then writes one feedback-filed record; a second run is refused', () => {
+  const rec = { items: [item('First problem'), item('Second problem')] }
+  const r = withOutbox({ rec }).outbox(R1)
+  assert.equal(r.status, 0, r.stderr + r.stdout)
+  assert.equal(r.issuePosts.length, 2)
+  assert.match(r.issuePosts[0], new RegExp(`<!-- pipeline:outbox ${R1}:0 -->`))
+  assert.match(r.issuePosts[1], new RegExp(`<!-- pipeline:outbox ${R1}:1 -->`))
+  assert.equal(r.records.length, 1)
+  assert.match(r.records[0], /^POST \/repos\/acme\/widgets\/issues\/100\/comments body=<!-- pipeline:routine feedback-filed /)
+  assert.deepEqual(W.recordOf(r.records[0]), { filed: 2, seenAgain: 0, refused: 0 })
+  const again = W.world({ recordsSrc: [W.outboxRec(R1, rec), W.filedRec(R1)] }).outbox(R1)
+  assert.equal(again.status, 65)
+  noWrites(again, 'second run')
+})
+
+test('--outbox holds the whole outbox when the new issues would pass the cap, then files all when there is room', () => {
+  const rec = { items: [item('Problem A'), item('Problem B'), item('Problem C')] }
+  const four = Array.from({ length: 4 }, (_, k) => ISSUE(10 + k))
+  const held = W.world({ issues: four, recordsSrc: [W.outboxRec(R1, rec)] }).outbox(R1)
+  assert.equal(held.status, 0, held.stderr)
+  assert.match(held.stdout, /HELD outbox/)
+  noWrites(held, 'held')
+  const three = Array.from({ length: 3 }, (_, k) => ISSUE(10 + k))
+  const room = W.world({ issues: three, recordsSrc: [W.outboxRec(R1, rec)] }).outbox(R1)
+  assert.equal(room.issuePosts.length, 3)
+  assert.equal(room.records.length, 1)
+})
+
+test('--outbox after a half-done run skips the item that has its marker and records once', () => {
+  const rec = { items: [item('Problem A'), item('Problem B'), item('Problem C')] }
+  const half = W.autoIssue(30, { title: 'Problem A', state: 'closed', extra: `<!-- pipeline:outbox ${R1}:0 -->` })
+  const r = W.world({ issues: [half], recordsSrc: [W.outboxRec(R1, rec)] }).outbox(R1)
+  assert.equal(r.status, 0, r.stderr + r.stdout)
+  assert.match(r.stdout, /SKIP already filed: Problem A/)
+  assert.equal(r.issuePosts.length, 2)
+  assert.equal(r.records.length, 1)
+  assert.deepEqual(W.recordOf(r.records[0]), { filed: 3, seenAgain: 0, refused: 0 })
+})
+
+test('--outbox does not record when a post fails, so the outbox stays open', () => {
+  const w = withOutbox({ rec: { items: [item('Problem A')] } })
+  writeFileSync(join(w.dir, 'fx', 'repos__alfhen__agent-pr-pipeline__issues.POST.error'), 'HTTP 500')
+  const r = w.outbox(R1)
+  assert.equal(r.status, 1)
+  assert.equal(r.records.length, 0)
+})
+
+test('--outbox with --dups comments once and counts it as seen again', () => {
+  const w = withOutbox({ rec: { items: [item('Problem A'), item('Problem B')] }, world: { issues: [W.fbIssue(7, 'Problem A')] } })
+  const r = w.outbox(R1, '--dups', w.file('dups.json', [{ item: 0, issue: 7 }]))
+  assert.equal(r.status, 0, r.stderr + r.stdout)
+  assert.equal(r.comments.length, 1)
+  assert.match(r.comments[0], new RegExp(`<!-- pipeline:outbox ${R1}:0 -->`))
+  assert.equal(r.issuePosts.length, 1)
+  assert.deepEqual(W.recordOf(r.records[0]), { filed: 1, seenAgain: 1, refused: 0 })
+})
+
+test('--outbox from another repo with an empty denylist at filing time files nothing (65)', () => {
+  const r = withOutbox({ rec: { denylist: [] } }).outbox(R1)
+  assert.equal(r.status, 65)
+  noWrites(r, 'empty denylist')
+})
+
+test('--outbox denylist without the source name still refuses the source owner and name', () => {
+  const rec = { denylist: ['unrelated'], items: [item('Leaks the owner', { detail: 'Seen in acme builds.' }), item('Leaks the name', { detail: 'The Widgets suite.' }), item('Clean one')] }
+  const r = withOutbox({ rec }).outbox(R1)
+  assert.equal(r.issuePosts.length, 1)
+  assert.match(r.issuePosts[0], /title=Clean one/)
+  assert.deepEqual(W.recordOf(r.records[0]), { filed: 1, seenAgain: 0, refused: 2 })
+})
+
+test('--outbox ignores a forged outbox by another account and an unknown run', () => {
+  const forged = W.world({ recordsSrc: [W.outboxRec(R1, {}, { user: 'mallory' })] }).outbox(R1)
+  assert.equal(forged.status, 65)
+  noWrites(forged, 'forged')
+  assert.equal(withOutbox().outbox(W.runId(2)).status, 65)
+})
+
+test('--outbox refuses a record whose source or feedback repo differs from its arguments', () => {
+  assert.equal(withOutbox({ rec: { source: 'acme/other' } }).outbox(R1).status, 65)
+  assert.equal(withOutbox({ rec: { feedbackRepo: 'acme/elsewhere' } }).outbox(R1).status, 65)
+})
+
+test('--drop-old drops an outbox older than 7 days and keeps a younger one', () => {
+  const old = W.outboxRec(R1, {}, { at: W.ago(8 * W.DAY) }); const young = W.outboxRec(W.runId(2), {}, { at: W.ago(6 * W.DAY) })
+  const r = W.world({ settingsFb: { collectFrom: [W.SRC] }, recordsSrc: [old, young] }).dropOld()
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(r.records.length, 1, r.stdout)
+  assert.match(r.records[0], new RegExp(`feedback-dropped ${R1} -->`))
+  assert.match(r.stdout, new RegExp(`DROPPED ${R1}`))
+})
+
+test('--drop-old skips the outboxes of a paused source repo', () => {
+  const rec = W.outboxRec(R1, {}, { at: W.ago(8 * W.DAY) })
+  const paused = W.world({ settingsFb: { collectFrom: [W.SRC] }, pausedSrc: true, recordsSrc: [rec] }).dropOld()
+  assert.match(paused.stdout, /paused acme\/widgets/)
+  noWrites(paused, 'paused source')
+})
+
+test('stage 0 of the feedback repo: --outbox, --dups and --drop-old print WOULD and write nothing', () => {
+  const rec = { items: [item('Problem A'), item('Problem B')] }
+  const w = W.world({ settingsFb: { stage: 0, collectFrom: [W.SRC] }, issues: [W.fbIssue(7, 'Problem B')], recordsSrc: [W.outboxRec(R1, rec), W.outboxRec(W.runId(2), rec, { at: W.ago(9 * W.DAY) })] })
+  const o = w.outbox(R1, '--dups', w.file('dups.json', [{ item: 1, issue: 7 }]))
+  assert.equal(o.status, 0, o.stderr)
+  assert.match(o.stdout, /WOULD file Problem A/)
+  assert.match(o.stdout, /WOULD comment 7/)
+  noWrites(o, 'outbox')
+  assert.match(w.list(), new RegExp(R1))
+  const d = w.auto([item('Problem B')], ['acme', 'widgets'], '--dups', w.file('d2.json', [{ item: 0, issue: 7 }]))
+  assert.match(d.stdout, /WOULD comment 7/)
+  noWrites(d, 'dups')
+  const drop = w.dropOld()
+  assert.match(drop.stdout, new RegExp(`WOULD drop ${W.runId(2)}`))
+  noWrites(drop, 'drop-old')
+  assert.match(w.list(), new RegExp(W.runId(2)))
+})
+
+test('stage 0 of the source repo: --outbox prints WOULD and writes nothing', () => {
+  const r = W.world({ settingsSrc: { stage: 0 }, recordsSrc: [W.outboxRec(R1)] }).outbox(R1)
+  assert.match(r.stdout, /WOULD file Tester reports a stale sha/)
+  assert.match(r.stdout, /WOULD put feedback-filed/)
+  noWrites(r, 'outbox')
+})
+
+test('a paused feedback repo, or one with no routine key, gets no write from the collect path', () => {
+  for (const flag of [{ pausedFb: true }, { noRoutineFb: true }]) {
+    const w = W.world({ ...flag, settingsFb: { collectFrom: [W.SRC] }, recordsSrc: [W.outboxRec(R1, {}, { at: W.ago(9 * W.DAY) })] })
+    for (const r of [w.outbox(R1), w.dropOld(), w.auto([item('X')], ['acme'], '--dups', w.file('d.json', []))]) {
+      assert.equal(r.status, 0, r.stderr)
+      assert.equal(r.stdout, 'paused alfhen/agent-pr-pipeline\n')
+      noWrites(r, 'paused')
+    }
+  }
+})
+
+test('--outbox for a paused source repo prints paused <source> and leaves the outbox open', () => {
+  for (const flag of [{ pausedSrc: true }, { noRoutineSrc: true }]) {
+    const w = W.world({ ...flag, recordsSrc: [W.outboxRec(R1)] })
+    const r = w.outbox(R1)
+    assert.equal(r.status, 0, r.stderr)
+    assert.equal(r.stdout, 'paused acme/widgets\n')
+    noWrites(r, 'paused source')
+  }
+})
+
+test('the manual form does not use the quality bar, the cap or the markers', () => {
+  const w = W.world({ issues: Array.from({ length: 6 }, (_, k) => ISSUE(10 + k)) })
+  const r = w.sh('file-feedback.sh', [w.file('m.json', [item('Manual one', { evidence: '' })]), '--denylist', w.file('md.json', ['acme', 'widgets']), '--repo', W.FB, '--source', W.SRC])
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(r.issuePosts.length, 1)
+  assert.doesNotMatch(r.issuePosts[0], /auto-filed/)
+})
+
+const nonStrings = [
+  ['an object detail', { detail: { 'Seen in acme/widgets at https://github.com/acme/widgets': 1 } }],
+  ['a number detail', { detail: 4512 }],
+  ['an object detail with a marker key', { detail: { '<!-- pipeline:outbox 20261105T120000Z-0a1b2c3d:0 -->': 1 } }],
+  ['a number title', { title: 4512 }],
+]
+
+for (const [what, extra] of nonStrings) {
+  test(`--auto refuses ${what} and posts nothing`, () => {
+    const r = W.world().auto([item('Bad field', extra)], ['acme', 'widgets', '4512'])
+    assert.match(r.stdout, /REFUSED .*: a field is not a string/)
+    assert.equal(r.issuePosts.length, 0)
+    assert.equal(r.comments.length, 0)
+    const c = W.world().auto([item('Bad field', extra)], ['acme', 'widgets', '4512'], '--check')
+    assert.match(c.stdout, /^REFUSED 0: a field is not a string/)
+  })
+
+  test(`--outbox refuses ${what} and posts no issue`, () => {
+    const r = withOutbox({ rec: { items: [item('Bad field', extra)] } }).outbox(R1)
+    assert.equal(r.issuePosts.length, 0, r.stdout)
+    assert.match(r.stdout, /a field is not a string/)
+  })
+}
+
+// The manual form is frozen at main: a copy of main's script is the oracle, so output and writes must match.
+const MAIN_SCRIPT = join(root, 'test/fixtures/feedback/main-file-feedback.sh')
+const manualCases = [
+  ['all strings', item('Tester reports a stale sha')],
+  ['a number title', { title: 4512, detail: 'd' }],
+  ['a true title', { title: true, detail: 'd' }],
+  ['an empty object title', { title: {}, detail: 'd' }],
+  ['an array title', { title: ['x'], detail: 'd' }],
+  ['an object detail', item('Bad field', { detail: { 'Seen in acme/widgets': 1 } })],
+  ['a number severity', item('Bad field', { severity: 3 })],
+  ['a number evidence', item('Bad field', { evidence: 4512 })],
+  ['a denylisted title', item('Seen in acme/widgets')],
+  ['a null item', null],
+  ['a string item', 'text'],
+  ['no title', { detail: 'd' }],
+]
+for (const [what, bad] of manualCases) {
+  for (const flags of [[], ['--dry-run']]) {
+    test(`the manual form gives main's output for ${what} ${flags.join(' ')}`, () => {
+      const run = script => {
+        const w = W.world()
+        return w.sh(script, [w.file('m.json', [bad, item('Second item')]), '--denylist', w.file('md.json', ['acme', 'widgets', '4512']), '--repo', W.FB, '--source', W.SRC, ...flags])
+      }
+      const branch = run('file-feedback.sh'); const main = run(MAIN_SCRIPT)
+      assert.equal(branch.stdout, main.stdout)
+      assert.equal(branch.status, main.status)
+      assert.deepEqual(branch.writes, main.writes)
+    })
+  }
+}
+
+test('an item with no title key is refused as no title in every form', () => {
+  const noTitle = { detail: 'd', evidence: 'e', suggestedChange: 's', severity: 'minor' }
+  const w = W.world()
+  const r = w.sh('file-feedback.sh', [w.file('nt.json', [noTitle]), '--denylist', w.file('ntd.json', ['acme', 'widgets', '4512']), '--repo', W.FB, '--source', W.SRC])
+  assert.equal(r.status, 2, r.stdout)
+  assert.match(r.stdout, /^REFUSED item 0: no title$/m)
+  assert.equal(r.issuePosts.length, 0)
+  const c = W.world().auto([noTitle], ['acme', 'widgets', '4512'], '--check')
+  assert.match(c.stdout, /^REFUSED 0: no title/)
+})
+
+for (const [what, bad] of [
+  ['a null item', null],
+  ['a string item', 'text'],
+  ['a number item', 7],
+  ['an array item', ['x']],
+  ['a title of false', { title: false, detail: 'd' }],
+  ['an empty title with a non-string field', { title: '', detail: 4512 }],
+  ['no title with a non-string field', { detail: { a: 1 } }],
+]) {
+  test(`${what} is refused as no title in every form`, () => {
+    const w = W.world()
+    const r = w.sh('file-feedback.sh', [w.file('nt.json', [bad]), '--denylist', w.file('ntd.json', ['acme', 'widgets', '4512']), '--repo', W.FB, '--source', W.SRC])
+    assert.equal(r.status, 2, r.stdout)
+    assert.match(r.stdout, /^REFUSED item 0: no title$/m)
+    assert.equal(r.issuePosts.length, 0)
+    const c = W.world().auto([bad], ['acme', 'widgets', '4512'], '--check')
+    assert.match(c.stdout, /^REFUSED 0: no title/)
+  })
+}
