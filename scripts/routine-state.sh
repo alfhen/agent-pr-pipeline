@@ -173,13 +173,14 @@ def hasl($l): .L | index($l) != null;
     | ($r | map(select(.kind == "blocked" and (.key | contains(":"))))) as $bl
     | ($r | map(select(.kind == "built" and (.key | contains(":"))))) as $bt
     | ($r | any(.kind == "build-started" and (.key | contains(":") | not) and within($lim.buildHours * 3600))) as $legacyLive
+    | ($r | any((.kind == "build-started" or .kind == "blocked") and (.key | contains(":") | not))) as $legacyBuilt
     | ($bs | last) as $ls
     | {n: $n, i: $i, comments: $c.comments, L: $L, r: $r, lu: $lu, hasUR: $hasUR, epoch: $epoch, trusted: $trusted,
        A: $A, authorPart: $authorPart, reason: $reason, newestOff: ($off | mx), hasPr: $c.hasPr,
        skipped: (($L | any(inl($cfg.skipLabels))) or ($L | index("declined")) != null),
        excluded: (($L | any(inl($cfg.skipLabels))) or ($L | index("declined")) != null or $c.hasPr),
        tr: $tr, trNew: ($tr != null and $tr.id > $epoch),
-       att: ($bs | map(.key) | unique | length), ls: $ls, lb: ($bl | last),
+       att: ($bs | map(.key) | unique | length), ls: $ls, lb: ($r | map(select(.kind == "blocked")) | last), legacyBuilt: $legacyBuilt,
        inflight: ($bs | any(.key as $k | ($bl | any(.key == $k)) | not)),
        legacyLive: $legacyLive,
        ended: ($ls != null and ($bl | any(.key == $ls.key))),
@@ -190,6 +191,7 @@ def hasl($l): .L | index($l) != null;
   def pathOk: (.lb == null and (hasl("ready-to-build") or .A != null)) or (.lb != null and .A != null and .A > .lb.at);
   def adoptLabels: .tr.rec as $x
     | [(if $x.decision == "decline" then "declined"
+        elif .legacyBuilt then "build-failed"
         elif $x.decision == "build" and $x.size != "L" and $x.risk != "high" then "ready-to-build"
         else "needs-approval" end)]
       + (if ($x.size | IN("S", "M", "L")) then ["size:" + $x.size] else [] end);

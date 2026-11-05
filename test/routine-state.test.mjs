@@ -1049,6 +1049,10 @@ test('a body changed after approval is revoked with the hash cause, and put revo
   const s = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', body: 'new body', labels: ['maintainer-approved', 'ready-to-build'] }), events: c_approved(c_T(50)), records: [rec, c_triagedRec(5, { epoch: rec.id })] }))
   assert.deepEqual(c_one(c_cnext(s)), { step: 'revoke', issue: 5, cause: 'hash' })
   assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'))
+  const rb = c_cput(s, 'build-started', '5', c_CRUN(1), 'claude/issue-5', '1')
+  assert.equal(rb.status, 65); c_onlyReads(rb)
+  const s0 = csetup({ ...c_withIssues({ issue: c_ci(5, { user: 'mallory', body: 'new body', labels: ['maintainer-approved', 'ready-to-build'] }), events: c_approved(c_T(50)), records: [rec, c_triagedRec(5, { epoch: rec.id })] }), settings: { routine: { ...c_ROUTINE, stage: 0 } } })
+  assert.ok(c_ok(c_cnext(s0, 'cloud-build')).every(l => l.step !== 'would-build'))
   c_doPut(s, 'revoke', '5', 'hash')
   const last = s.w.records.at(-1).body
   assert.ok(last.startsWith('<!-- pipeline:routine revoked 5:hash:'))
@@ -1207,6 +1211,24 @@ test('adopt: a 0.7.0 record with no cloud label is adopted; a PR from routine/ o
   assert.deepEqual(c_one(c_cnext(s2)).labels, ['needs-approval', 'size:L'])
 })
 
+test('adopt: a 0.7.0 issue with a build-started or blocked record is build-failed and is not built without a new approval', () => {
+  const legacy = c_cr('triaged', '5', { decision: 'build', size: 'S', risk: 'low', why: 'ok' }, { at: c_T(5) })
+  const started = c_cr('build-started', '5', { run: 'r1', branch: 'routine/issue-5' }, { at: c_T(6) })
+  const blocked = c_cr('blocked', '5', { reasonCode: 'other' }, { at: c_T(7) })
+  for (const recs of [[legacy, started, blocked], [legacy, started]]) {
+    const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['routine-build'] }), records: recs }))
+    assert.deepEqual(c_one(c_cnext(s)), { step: 'adopt', issue: 5, labels: ['build-failed', 'size:S'] })
+    c_doPut(s, 'adopt', '5')
+    assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build' && l.step !== 'would-build'))
+    const r = c_cput(s, 'build-started', '5', c_CRUN(1), 'claude/issue-5', '1')
+    assert.equal(r.status, 65); c_onlyReads(r)
+  }
+  const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['build-failed', 'maintainer-approved', 'size:S'] }), events: c_approved(c_T(5)), records: [legacy, started, blocked] }))
+  assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'build'), 'an approval older than the 0.7.0 blocked record does not restart')
+  s.w.events[5] = c_approved(c_T(50)); s.sync()
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'build')
+})
+
 test('an approved untrusted issue with an open PR and no label has no step, and triage still runs for another issue', () => {
   const rec = c_cr('untrusted', `5:${c_sha('issue 5', 'body 5')}:c_T`, { hash: c_sha('issue 5', 'body 5') }, { at: c_T(10) })
   const s = csetup(c_withIssues({ issue: c_ci(5, { user: 'mallory', labels: ['maintainer-approved'] }), events: c_approved(c_T(50)), records: [rec] }, c_bare(6)))
@@ -1325,6 +1347,10 @@ test('build: an attempt in flight, a building label, or a PR from the branch blo
   const label = csetup(c_withIssues({ issue: c_ci(5, { labels: ['maintainer-approved', 'building'] }), events: c_approved(c_T(90)), records: [c_triagedRec(5), c_startedRec(5, 1), c_blockedRec(5, 1)] }))
   assert.equal(c_one(c_cnext(csetup(c_withIssues({ issue: c_ci(5, { labels: ['maintainer-approved'] }), events: c_approved(c_T(90)), records: [c_triagedRec(5), c_startedRec(5, 1), c_blockedRec(5, 1)] })), 'cloud-build')).step, 'build', 'the same issue without the label builds')
   assert.ok(c_ok(c_cnext(label, 'cloud-build')).every(l => l.step !== 'build'))
+  const rl = c_cput(label, 'build-started', '5', c_CRUN(2), 'claude/issue-5', '2')
+  assert.equal(rl.status, 65); c_onlyReads(rl)
+  const label0 = csetup({ ...c_withIssues({ issue: c_ci(5, { labels: ['maintainer-approved', 'building'] }), events: c_approved(c_T(90)), records: [c_triagedRec(5), c_startedRec(5, 1), c_blockedRec(5, 1)] }), settings: { routine: { ...c_ROUTINE, stage: 0 } } })
+  assert.ok(c_ok(c_cnext(label0, 'cloud-build')).every(l => l.step !== 'would-build'))
   const pr = csetup(c_withIssues(c_builtIssue(5)))
   pr.w.pulls = [c_cpr('claude/issue-5', { state: 'closed' })]; pr.sync()
   assert.ok(c_ok(c_cnext(pr, 'cloud-build')).every(l => l.step !== 'build'))
@@ -1612,6 +1638,11 @@ test('build: an outsider comment older than the ready-to-build label does not bl
   assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'build')
   s.w.comments[5] = [c_cc('eve', c_T(30))]; s.sync()
   assert.deepEqual(c_one(c_cnext(s, 'cloud-build')), { step: 'revoke', issue: 5, cause: 'comment' })
+  const r = c_cput(s, 'build-started', '5', c_CRUN(1), 'claude/issue-5', '1')
+  assert.equal(r.status, 65); c_onlyReads(r)
+  const part0 = c_readyIssue(5); part0.comments = [c_cc('eve', c_T(30))]
+  const s0 = csetup({ ...c_withIssues(part0), settings: { routine: { ...c_ROUTINE, stage: 0 } } })
+  assert.ok(c_ok(c_cnext(s0, 'cloud-build')).every(l => l.step !== 'would-build'))
 })
 
 test('an untrusted issue with an early approval and no untrusted record passes nothing', () => {
