@@ -13,6 +13,7 @@
   - **K5 not proven.** The stale checkout (S1) did not have the new `.gitignore` line, so the Stop hook still asked to commit `.claude/worktrees/`. Run again after S1 is handled.
   - **K2, K3, K7 and K8 not run yet.** K3 runs after M3. The `git push` to dogfood `main` in K3 is dropped by the maintainer (2026-11-05); the docs already say the proxy does not limit which branches a push can update.
 - **M1 done (2026-11-05): safe to publish.** gitleaks over every branch, tag and pull ref found nothing. A read of every issue, PR, comment and review found no private details; all `pipeline-feedback` issues are redacted. Optional: the private repo name `pipeline-dogfood` appears in some issues and plans, and one comment on #158 holds a local path.
+- **M2 and M3 done (2026-11-05).** The maintainer made `alfhen/agent-pr-pipeline` public. Rulesets with an empty bypass list are active: "main protection" (id 26613221: deletion, non_fast_forward, pull_request with 0 approvals, required status check `ci`) and "release tags" (id 26613225, `refs/tags/v*`: update, deletion). "Automatically delete head branches" is on. K3 can now run.
 - **M4 opened (2026-11-05):** PR #290 changes goal 1 and the Users line in `docs/goals.md`, for the maintainer to merge.
 - Maintainer steps M1 to M4 (Before and between waves) come before the waves that need them: the checks before going public (M1), the switch to public (M2), the rulesets (M3) and the goals PR (M4).
 
