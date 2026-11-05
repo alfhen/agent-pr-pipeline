@@ -115,11 +115,12 @@ EOF
 read -r -d '' SETUP_BODY <<'EOF' || true
 
 RAW=https://raw.githubusercontent.com/$REPO
+# refs/tags/ is explicit: a bare name is ambiguous with a branch of the same name.
 fetch_one() {
   local sha=$1 path=$2
   [[ "$sha" =~ ^[0-9a-f]{40}$ && "$path" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ && "$path" != *..* ]] || { echo "bad manifest line: $sha $path" >&2; exit 1; }
   mkdir -p "$STAGE/$(dirname "$path")"
-  curl -fsSL --retry 3 -o "$STAGE/$path" "$RAW/$TAG/$path" || { echo "fetch failed: $path" >&2; exit 1; }
+  curl -fsSL --retry 3 -o "$STAGE/$path" "$RAW/refs/tags/$TAG/$path" || { echo "fetch failed: $path" >&2; exit 1; }
   [ "$(git hash-object "$STAGE/$path")" = "$sha" ] || { echo "hash mismatch: $path" >&2; exit 1; }
 }
 export -f fetch_one
@@ -132,7 +133,7 @@ install_tag() {
   STAGE=$(mktemp -d "$ROOT/.stage-$TAG.XXXXXX")
   export RAW TAG STAGE
   mkdir -p "$STAGE/.claude-plugin"
-  curl -fsSL --retry 3 -o "$STAGE/.claude-plugin/files.txt" "$RAW/$TAG/.claude-plugin/files.txt" || { echo "fetch failed: files.txt of $TAG" >&2; exit 1; }
+  curl -fsSL --retry 3 -o "$STAGE/.claude-plugin/files.txt" "$RAW/refs/tags/$TAG/.claude-plugin/files.txt" || { echo "fetch failed: files.txt of $TAG" >&2; exit 1; }
   [ -s "$STAGE/.claude-plugin/files.txt" ] || { echo "files.txt of $TAG is empty" >&2; exit 1; }
   ! grep -qvE '^[0-9a-f]{40} [A-Za-z0-9._/-]+$' "$STAGE/.claude-plugin/files.txt" || { echo "files.txt of $TAG has a bad line" >&2; exit 1; }
   xargs -P 8 -n 2 bash -c 'fetch_one "$0" "$1"' < "$STAGE/.claude-plugin/files.txt" || { echo "fetch or check failed for $TAG" >&2; exit 1; }

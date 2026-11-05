@@ -27,11 +27,13 @@ assert.ok(files.some(([, p]) => p === 'agents/tester.md') && files.some(([, p]) 
 const stubBin = join(tmp, 'stubbin'); mkdirSync(stubBin)
 copyFileSync(join(root, 'test/fake-gh'), join(stubBin, 'gh')); chmodSync(join(stubBin, 'gh'), 0o755)
 writeFileSync(join(stubBin, 'curl'), `#!/bin/bash
-# Serves https://raw.githubusercontent.com/<owner>/<repo>/<tag>/<path> from $SERVE/<tag>/<path>.
+# Serves https://raw.githubusercontent.com/<owner>/<repo>/refs/tags/<tag>/<path> from $SERVE/<tag>/<path>.
+# A bare <tag> ref is ambiguous with a branch, so it gets a 404.
 out=""; url=""
 while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2 ;; --retry) shift 2 ;; -*) shift ;; *) url=$1; shift ;; esac; done
 echo "$url" >> "$CURL_LOG"
 rest=\${url#https://raw.githubusercontent.com/*/*/}
+case "$rest" in refs/tags/*) rest=\${rest#refs/tags/} ;; *) echo "curl: (22) 404 $url" >&2; exit 22 ;; esac
 src="$SERVE/$rest"
 [ -f "$src" ] || { echo "curl: (22) 404 $url" >&2; exit 22; }
 if [ -n "$out" ]; then cp "$src" "$out"; else cat "$src"; fi
@@ -95,6 +97,14 @@ test('a good install: files, prefixed agents, .complete and a launcher that prin
   assert.deepEqual(JSON.parse(s.lines[0]), { version: 'v9.9.9', pluginRoot: join(w.opt, 'v9.9.9'), agentPrefix: 'apl-v9-9-9-', defaultSha: git(work, 'rev-parse', 'origin/main') })
   assert.equal(s.lines.length, 1)
   assert.deepEqual(readOnly(w), [])
+})
+
+test('every fetch uses an explicit refs/tags/<tag> URL', () => {
+  const w = world(); setupRepo(w)
+  assert.equal(install(w).status, 0)
+  const urls = readFileSync(w.curlLog, 'utf8').split('\n').filter(Boolean)
+  assert.ok(urls.length > files.length)
+  for (const u of urls) assert.match(u, /^https:\/\/raw\.githubusercontent\.com\/o\/r\/refs\/tags\/v9\.9\.9\//)
 })
 
 test('the setup script checks each file with git hash-object: a changed file in the served copy fails the install', () => {
