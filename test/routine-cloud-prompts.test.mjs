@@ -150,7 +150,10 @@ test('collect names get outbox and paused, and stops on paused <repo>', () => {
 test('build passes args through the file and reads it back', () => {
   const b = prompts.build
   assert.match(b, /Write the `args` object of the step, as it is, to `\/tmp\/apl-<run>\/args\.json`\. Read it back with the Read tool/)
-  assert.match(b, /Call Workflow with `scriptPath` `<pluginRoot>\/workflows\/run-wave\.js` and exactly the object you read/)
+  assert.match(b, /Call Workflow with `scriptPath` the absolute path `<clone>\/\.git\/apl\/run-wave\.js` and exactly the object you read/)
+  assert.doesNotMatch(b, /scriptPath` `?<pluginRoot>/)
+  assert.match(b, /`mkdir -p \.git\/apl && cp <pluginRoot>\/workflows\/run-wave\.js \.git\/apl\/run-wave\.js`/)
+  assert.ok(b.indexOf('cp <pluginRoot>/workflows/run-wave.js') < b.indexOf('Call Workflow'))
   assert.ok(b.includes('select:Workflow'))
   assert.ok(b.indexOf('args.json') < b.indexOf('scriptPath'))
   assert.match(b, /result\.json/)
@@ -193,4 +196,48 @@ test('triage uses decision, size, risk and type only when exactly a listed word'
   assert.match(prompts.triage, /only when the decision is exactly `build`, `plan` or `decline`, the size is exactly `S`, `M` or `L`, the risk is exactly `low`, `medium` or `high`, and the type is exactly `bug`, `feat`, `docs`, `chore` or `test`/)
   assert.match(prompts.triage, /treat the triager as failed, skip sub-step 4 and do sub-step 5 for this issue/)
   assert.doesNotMatch(prompts.triage, /go to step 5/)
+})
+
+const LOOP_KINDS = ['triage', 'build']
+
+test('triage and build loop on next, up to 20 passes', () => {
+  for (const k of LOOP_KINDS) {
+    const t = prompts[k]
+    assert.match(t, /go back to step 1 for a new `next`/, k)
+    assert.match(t, /Make at most 20 passes/, k)
+    assert.match(t, /Stop instead when the `put` exits non-zero \(65 included\), or when its output starts with `WOULD`/, k)
+  }
+})
+
+test('mutated prompts fail the loop and script checks', () => {
+  const loopOk = (t) => /go back to step 1 for a new `next`/.test(t) && /at most 20 passes/.test(t) &&
+    /exits non-zero \(65 included\)/.test(t) && /its output starts with `WOULD`/.test(t)
+  for (const k of LOOP_KINDS) {
+    const t = prompts[k]
+    assert.ok(loopOk(t), k)
+    assert.ok(!loopOk(t.replace('at most 20 passes', 'any number of passes')), `${k}: limit`)
+    assert.ok(!loopOk(t.replace('exits non-zero (65 included)', 'exits 65')), `${k}: non-zero`)
+    assert.ok(!loopOk(t.replace("its output starts with `WOULD`", "its output is empty")), `${k}: WOULD`)
+    assert.ok(!loopOk(t.replace('go back to step 1 for a new `next`', 'stop')), `${k}: loop`)
+  }
+  const copyOk = (t) => /scriptPath` the absolute path `<clone>\/\.git\/apl\/run-wave\.js`/.test(t) && !/scriptPath` `?<pluginRoot>/.test(t) &&
+    t.indexOf('cp <pluginRoot>/workflows/run-wave.js .git/apl/run-wave.js') >= 0 &&
+    t.indexOf('cp <pluginRoot>') < t.indexOf('Call Workflow')
+  const b = prompts.build
+  assert.ok(copyOk(b))
+  assert.ok(!copyOk(b.replace('`<clone>/.git/apl/run-wave.js`', '`<pluginRoot>/workflows/run-wave.js`')))
+  assert.ok(!copyOk(b.replace('cp <pluginRoot>/workflows/run-wave.js .git/apl/run-wave.js', 'true')))
+})
+
+test('short-step bullets do not stop, so the loop is reachable', () => {
+  const shortStop = (t) => /^ {3}- `(adopt|untrusted|revoke|pr-seen|exhausted|needs-plan)`.*then stop/m.test(t)
+  for (const k of LOOP_KINDS) {
+    assert.ok(!shortStop(prompts[k]), k)
+    assert.ok(shortStop(prompts[k].replace(/^( {3}- `(?:adopt|revoke)`.*)\.$/m, '$1, then stop.')), `${k}: mutated`)
+  }
+})
+
+test('the docs say one run handles every step up to the limit', () => {
+  assert.match(read('docs/cloud-routines.md'), /One run handles every step up to a limit of 20 passes/)
+  assert.match(read('docs/cloud-routines.md'), /copies `run-wave\.js` from `pluginRoot` to `\.git\/apl\/run-wave\.js`/)
 })
