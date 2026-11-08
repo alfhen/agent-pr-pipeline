@@ -23,9 +23,9 @@ You are the triage routine. `/tmp/apl-start.json` is written and the repo `<repo
 2. If the only step is `paused`, `init needed` or `idle`, say so and stop.
 3. If there are several lines, or any line has the step `would-triage` (stage 0), run the `put` of every line that is not `would-triage`, as step 4 shows. Each `put` prints `WOULD` and writes nothing. Then print the `would-triage` line if there is one, and stop. Start no agent.
 4. Otherwise there is one line. Act on it:
-   - `adopt`: run `bash <pluginRoot>/scripts/routine-state.sh <repo> put adopt <issue>`, then stop.
-   - `untrusted`: run `put untrusted <issue>`, then stop.
-   - `revoke`: run `put revoke <issue> <cause>`, then stop.
+   - `adopt`: run `bash <pluginRoot>/scripts/routine-state.sh <repo> put adopt <issue>`.
+   - `untrusted`: run `put untrusted <issue>`.
+   - `revoke`: run `put revoke <issue> <cause>`.
    - `triage`: do step 5, then stop.
 
    After a `put` of `adopt`, `untrusted` or `revoke`, send the notice if the `put` printed `NOTICE`, and go back to step 1 for a new `next`. Stop instead when the `put` exits non-zero (65 included), or when its output starts with `WOULD`. Make at most 20 passes through steps 1 to 4. After the 20th pass, stop.

@@ -229,6 +229,14 @@ test('mutated prompts fail the loop and script checks', () => {
   assert.ok(!copyOk(b.replace('cp <pluginRoot>/workflows/run-wave.js .git/apl/run-wave.js', 'true')))
 })
 
+test('short-step bullets do not stop, so the loop is reachable', () => {
+  const shortStop = (t) => /^ {3}- `(adopt|untrusted|revoke|pr-seen|exhausted|needs-plan)`.*then stop/m.test(t)
+  for (const k of LOOP_KINDS) {
+    assert.ok(!shortStop(prompts[k]), k)
+    assert.ok(shortStop(prompts[k].replace(/^( {3}- `(?:adopt|revoke)`.*)\.$/m, '$1, then stop.')), `${k}: mutated`)
+  }
+})
+
 test('the docs say one run handles every step up to the limit', () => {
   assert.match(read('docs/cloud-routines.md'), /One run handles every step up to a limit of 20 passes/)
   assert.match(read('docs/cloud-routines.md'), /copies `run-wave\.js` from `pluginRoot` to `\.git\/apl\/run-wave\.js`/)
