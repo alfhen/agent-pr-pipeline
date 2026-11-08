@@ -41,7 +41,7 @@ let evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'READM
 // Exit codes the put script gives, per PR id: the first call, then the #put2 retry. Default 0.
 const putPlan = {}
 // Merge safety: ids the gate holds, ids the agent calls person, and ids where an agent fails or answers badly.
-const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), gateOdd: new Set(), headMoved: new Set(), blocked: new Set(), landOutput: new Set(), landFail: new Set(), landBad: new Set(), landBadOnce: new Set(), landOther: new Set(), testMoved: new Set(), threads: new Set(), bodies: new Set(), answered: new Set(), waitOpen: new Set() }
+const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), pendingBot: new Set(), gateOdd: new Set(), headMoved: new Set(), blocked: new Set(), landOutput: new Set(), landFail: new Set(), landBad: new Set(), landBadOnce: new Set(), landOther: new Set(), testMoved: new Set(), threads: new Set(), bodies: new Set(), answered: new Set(), waitOpen: new Set() }
 const landHead = {}
 const wt = o => '/wt/' + o.label.replace(/[:#]/g, '-')
 let cleanupMode = 'ok'
@@ -84,7 +84,7 @@ const agentRaw = async (prompt, o) => {
     return { exitCode: 0, output: land.landOutput.has(id) ? 'merge abc\n+resolved line\n' : '' }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#botstatus')) {
-    return land.statusDown.has(id) ? { exitCode: 1, output: 'bot-status: cannot read the reviews' } : { exitCode: 0, output: JSON.stringify({ head: land.headMoved.has(id) ? 'moved' : lastHead[id], approvedBy: ['gitar-bot'], seenHead: ['gitar-bot'], openThreads: land.threads.has(id) || ['C2', 'L1', 'B1', 'W1'].includes(id) ? 1 : 0, pending: [], reviewBodies: land.bodies.has(id) && !land.answered.has(id) ? 1 : 0 }) }
+    return land.statusDown.has(id) ? { exitCode: 1, output: 'bot-status: cannot read the reviews' } : { exitCode: 0, output: JSON.stringify({ head: land.headMoved.has(id) ? 'moved' : lastHead[id], approvedBy: ['gitar-bot'], seenHead: ['gitar-bot'], openThreads: land.threads.has(id) || ['C2', 'L1', 'B1', 'W1'].includes(id) ? 1 : 0, pending: land.pendingBot.has(id) ? ['Gitar'] : [], reviewBodies: land.bodies.has(id) && !land.answered.has(id) ? 1 : 0 }) }
   }
   if (o.label.startsWith('io:')) {
     if (o.label.endsWith('#put') || o.label.endsWith('#put2')) {
@@ -1201,6 +1201,11 @@ await check('bot status: a review body with a finding runs the answer agent when
   assert.ok(calls.some(c => c.label === 'botanswer:C1'))
   const none = await landRun({}, only('C1'))
   assert.equal(none.C1.ready, true)
+  assert.ok(!calls.some(c => c.label === 'botanswer:C1'))
+})
+await check('bot status: a bot check still running stops the step instead of skipping the answer', async () => {
+  const x = await landRun({ pendingBot: ['C1'] }, only('C1'))
+  assert.notEqual(x.C1.ready, true)
   assert.ok(!calls.some(c => c.label === 'botanswer:C1'))
 })
 await check('bot status: a rerun on the same head does not run the answer agent again', async () => {

@@ -118,6 +118,10 @@ test('reviewBodies counts a CodeRabbit body with a Nitpick section', () => {
   assert.equal(status([rev('Actionable comments posted: 0\n<summary>Nitpick comments (2)</summary>')]), 1)
 })
 
+test('reviewBodies counts a CodeRabbit body with a Duplicate comments section', () => {
+  assert.equal(status([rev('Actionable comments posted: 0\n<summary>Duplicate comments (1)</summary>')]), 1)
+})
+
 test('reviewBodies skips "Actionable comments posted: 0" and Gitar approval text', () => {
   assert.equal(status([rev('**Actionable comments posted: 0**'), rev('Gitar has auto-approved this PR', HEAD, 'gitar-bot[bot]')]), 0)
 })

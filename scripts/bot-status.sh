@@ -41,7 +41,7 @@ answered=$(jq -c --arg prefix "<!-- pipeline-bot-answer head=$head -->" --arg us
 bodies=$(jq --arg bots "$bots" --arg head "$head" --argjson answered "$answered" '
   def clean: gsub("<!--(.|\n)*?-->"; "") | gsub("^\\s+|\\s+$"; "");
   def nofinding: test("has auto-approved this PR"; "i")
-    or (test("Actionable comments posted: 0") and (test("Outside diff range|Nitpick") | not));
+    or (test("Actionable comments posted: 0") and (test("Outside diff range|Nitpick|Duplicate comments|comments \\([1-9]"; "i") | not));
   if ($answered | length) > 0 then 0
     else [.reviews[] | select(.commit_id == $head and (.user.login | test($bots))) | (.body // "" | clean) as $b
       | select(($b | length) > 0 and ($b | nofinding | not))] | length end' <<<"$input") || fail "cannot count the review bodies"
