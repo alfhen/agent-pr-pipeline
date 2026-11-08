@@ -1206,7 +1206,14 @@ await check('bot status: a review body with a finding runs the answer agent when
 await check('bot status: a bot check still running stops the step instead of skipping the answer', async () => {
   const x = await landRun({ pendingBot: ['C1'] }, only('C1'))
   assert.notEqual(x.C1.ready, true)
+  assert.match(String(x.C1.reason || x.C1.notes || JSON.stringify(x.C1)), /bot checks still running/)
   assert.ok(!calls.some(c => c.label === 'botanswer:C1'))
+  for (const cfg of [{ pendingBot: ['C1'], bodies: ['C1'] }, { pendingBot: ['C1'], threads: ['C1'] }]) {
+    const y = await landRun(cfg, only('C1'))
+    assert.notEqual(y.C1.ready, true)
+    assert.match(JSON.stringify(y.C1), /bot checks still running/)
+    assert.ok(!calls.some(c => c.label === 'botanswer:C1'))
+  }
 })
 await check('bot status: a rerun on the same head does not run the answer agent again', async () => {
   const x = await landRun({ bodies: ['C1'] }, only('C1'))

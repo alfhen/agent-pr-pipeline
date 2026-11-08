@@ -1019,7 +1019,7 @@ async function bots(pr, n, headSha, issues, history, minors) {
   if (!status || !Array.isArray(status.approvedBy)) return { ok: false, reason: `bot status failed: ${st ? st.output.trim() : 'pipeline-io failed'}`, headSha, wait }
   if (status.head !== headSha) return { ok: false, reason: `bot status: head moved (${status.head} is not ${headSha})`, headSha, wait }
   wait.approvedBy = status.approvedBy
-  if (Array.isArray(status.pending) && status.pending.length > 0 && !(Math.max(status.openThreads || 0, status.reviewBodies || 0) > 0)) return { ok: false, reason: `bot checks still running: ${status.pending.join(', ')}`, headSha, wait }
+  if (Array.isArray(status.pending) && status.pending.length > 0) return { ok: false, reason: `bot checks still running: ${status.pending.join(', ')}`, headSha, wait }
   if (!(Math.max(status.openThreads || 0, status.reviewBodies || 0) > 0)) return { ok: true, headSha, wait }
   const answer = await call('botAnswer', pr, answerPrompt(pr, n, issues, headSha), `botanswer:${pr.id}`, { schema: ANSWER })
   if (!answer) return { ok: false, reason: 'bot answer failed', headSha, wait }
