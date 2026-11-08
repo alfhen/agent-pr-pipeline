@@ -1,26 +1,28 @@
 #!/bin/bash
-# usage: cloud-setup.sh --print <tag>... [--repo <owner/repo>]
+# usage: cloud-setup.sh --print [--latest] [<tag>...] [--repo <owner/repo>]
 # Prints the setup script for a Claude Code cloud environment. The printed script needs no file of this repo:
 # it fetches each named release from raw.githubusercontent.com, checks every file against the release's
 # files.txt, installs it under /opt/agent-pr-pipeline/<tag>/, writes the role agents with a version prefix to
 # ~/.claude/agents/, and installs the launcher apl-start. This file is the one place for the install folder,
-# the agent name rule and the launcher text.
+# the agent name rule and the launcher text. With --latest the printed script also installs each release listed
+# in .claude-plugin/releases.txt on the default branch, a protected file, so a new release needs no new paste.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
-usage() { echo "usage: cloud-setup.sh --print <tag>... [--repo <owner/repo>]" >&2; exit 2; }
+usage() { echo "usage: cloud-setup.sh --print [--latest] [<tag>...] [--repo <owner/repo>]" >&2; exit 2; }
 
 [ "${1:-}" = "--print" ] || usage
 shift
-tags=(); repo=""
+tags=(); repo=""; latest=0
 while [ $# -gt 0 ]; do
   case "$1" in
+    --latest) latest=1; shift ;;
     --repo) [ $# -ge 2 ] || usage; repo=$2; shift 2 ;;
     -*) usage ;;
     *) tags+=("$1"); shift ;;
   esac
 done
-[ ${#tags[@]} -gt 0 ] || usage
-for t in "${tags[@]}"; do
+[ ${#tags[@]} -gt 0 ] || [ "$latest" = 1 ] || usage
+for t in "${tags[@]+"${tags[@]}"}"; do
   [[ "$t" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "cloud-setup.sh: refused tag '$t': a tag is v<major>.<minor>.<patch>" >&2; exit 2; }
 done
 [ -n "$repo" ] || repo=$(bash "$here/plugin-repo.sh") || exit 1
@@ -125,15 +127,25 @@ fetch_one() {
 }
 export -f fetch_one
 
+COUNT=0
+# $2 is "listed" or "named". A listed tag whose files.txt gives 404 is a release not cut yet, so it is skipped.
+# Every other failure exits 1.
 install_tag() {
   TAG=$1
+  local mode=$2 code
   [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad tag: $TAG" >&2; exit 1; }
   local v=${TAG//./-} p name
   mkdir -p "$ROOT" "$AGENTS"
   STAGE=$(mktemp -d "$ROOT/.stage-$TAG.XXXXXX")
   export RAW TAG STAGE
   mkdir -p "$STAGE/.claude-plugin"
-  curl -fsSL --retry 3 -o "$STAGE/.claude-plugin/files.txt" "$RAW/refs/tags/$TAG/.claude-plugin/files.txt" || { echo "fetch failed: files.txt of $TAG" >&2; exit 1; }
+  code=$(curl -sSL --retry 3 -o "$STAGE/.claude-plugin/files.txt" -w '%{http_code}' "$RAW/refs/tags/$TAG/.claude-plugin/files.txt") || { echo "fetch failed: files.txt of $TAG" >&2; exit 1; }
+  if [ "$code" = 404 ] && [ "$mode" = listed ]; then
+    echo "skipped $TAG: files.txt gives 404, the release is not cut yet"
+    rm -rf "$STAGE"; STAGE=
+    return 0
+  fi
+  [ "$code" = 200 ] || { echo "fetch failed: files.txt of $TAG (HTTP $code)" >&2; exit 1; }
   [ -s "$STAGE/.claude-plugin/files.txt" ] || { echo "files.txt of $TAG is empty" >&2; exit 1; }
   ! grep -qvE '^[0-9a-f]{40} [A-Za-z0-9._/-]+$' "$STAGE/.claude-plugin/files.txt" || { echo "files.txt of $TAG has a bad line" >&2; exit 1; }
   xargs -P 8 -n 2 bash -c 'fetch_one "$0" "$1"' < "$STAGE/.claude-plugin/files.txt" || { echo "fetch or check failed for $TAG" >&2; exit 1; }
@@ -148,6 +160,20 @@ install_tag() {
     mv "$AGENTS/apl-$v-$name.md.new" "$AGENTS/apl-$v-$name.md"
   done
   : > "$ROOT/$TAG/.complete"
+  COUNT=$((COUNT + 1))
+}
+EOF
+
+read -r -d '' LATEST_FN <<'EOF' || true
+
+# One tag per line, newest first, at most 3, from the protected default branch.
+fetch_list() {
+  local text
+  text=$(curl -fsSL --retry 3 "$RAW/refs/heads/main/.claude-plugin/releases.txt") || { echo "cannot read releases.txt" >&2; exit 1; }
+  [ -n "$text" ] || { echo "releases.txt is empty" >&2; exit 1; }
+  [ "$(printf '%s\n' "$text" | wc -l)" -le 3 ] || { echo "releases.txt has more than 3 lines" >&2; exit 1; }
+  ! printf '%s\n' "$text" | grep -qvE '^v[0-9]+\.[0-9]+\.[0-9]+$' || { echo "releases.txt has a bad line" >&2; exit 1; }
+  printf '%s\n' "$text"
 }
 EOF
 
@@ -161,7 +187,20 @@ printf '%s\n' "$SETUP_HEAD"
 printf 'REPO=%s\n' "$repo"
 printf '%s\n' "$AGENT_FN"
 printf '%s\n' "$SETUP_BODY"
-printf 'for tag in %s; do install_tag "$tag"; done\n' "${tags[*]}"
+named=()
+for t in "${tags[@]+"${tags[@]}"}"; do
+  case " ${named[*]+"${named[*]}"} " in *" $t "*) ;; *) named+=("$t") ;; esac
+done
+if [ "$latest" = 1 ]; then
+  printf '%s\n' "$LATEST_FN"
+  printf 'NAMED="%s"\n' "${named[*]+"${named[*]}"}"
+  printf '%s\n' 'LISTED=$(fetch_list) || exit 1' \
+    'for tag in $LISTED; do case " $NAMED " in *" $tag "*) ;; *) install_tag "$tag" listed ;; esac; done' \
+    'for tag in $NAMED; do install_tag "$tag" named; done' \
+    '[ "$COUNT" -gt 0 ] || { echo "no release installed" >&2; exit 1; }'
+else
+  printf 'for tag in %s; do install_tag "$tag" named; done\n' "${named[*]}"
+fi
 printf '%s\n' "$SETUP_TAIL"
 printf '%s\n' "$LAUNCHER" | FN="$AGENT_FN" awk '$0 == "AGENT_FN_HERE" { print ENVIRON["FN"]; next } { print }'
 printf '%s\n' "APL_START_EOF"

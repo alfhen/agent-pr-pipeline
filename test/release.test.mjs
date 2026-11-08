@@ -253,10 +253,11 @@ test('bot-status: reviews and comments over 128 KiB still work', () => {
 const PP = 'repos__alfhen__agent-pr-pipeline'
 const S1 = '1'.repeat(40); const S2 = '2'.repeat(40); const S3 = '3'.repeat(40); const S4 = '4'.repeat(40)
 const shippedTree = [['.claude-plugin/plugin.json', S1], ['agents/tester.md', S2], ['scripts/x.sh', S3]]
-const pluginSetup = ({ files = shippedTree, tree = shippedTree } = {}) => {
+const pluginSetup = ({ files = shippedTree, tree = shippedTree, releases = 'v0.3.0\nv0.2.0\n' } = {}) => {
   const s = setup()
   for (const f of readdirSync(s.fx)) if (f.startsWith(`${P}`)) renameSync(join(s.fx, f), join(s.fx, f.replace(P, PP)))
   if (files) put(s.fx, `${PP}__contents__.claude-plugin__files.txt.json`, files.map(([p, sha]) => `${sha} ${p}`).join('\n') + '\n')
+  if (releases !== null) put(s.fx, `${PP}__contents__.claude-plugin__releases.txt.json`, releases)
   put(s.fx, `${PP}__git__trees__${HEAD}.json`, {
     truncated: false,
     tree: [...tree, ['README.md', S4], ['.claude-plugin/files.txt', S4], ['docs/plan.md', S4]].map(([path, sha]) => ({ type: 'blob', path, sha })),
@@ -317,4 +318,26 @@ test('release: a cut tree in the plugin repo stops', () => {
   assert.equal(r.code, 1, r.out)
   assert.match(r.out, /is cut/)
   assert.deepEqual(writes(r), [])
+})
+
+test('release: the plugin repo with releases.txt starting with the version releases', () => {
+  const r = releasePlugin(pluginSetup())
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /ok: releases\.txt lists v0\.3\.0 first/)
+  assert.equal(writes(r).length, 1)
+})
+
+test('release: the plugin repo with another first line, a missing list or an empty list stops and makes no release', () => {
+  for (const releases of ['v0.2.0\nv0.3.0\n', 'v0.3.1\n', null, '']) {
+    const r = releasePlugin(pluginSetup({ releases }))
+    assert.equal(r.code, 1, r.out)
+    assert.match(r.out, /MISSING: \.claude-plugin\/releases\.txt does not start with v0\.3\.0/)
+    assert.deepEqual(writes(r), [])
+  }
+})
+
+test('release: another repo never reads releases.txt', () => {
+  const r = release(setup())
+  assert.equal(r.code, 0, r.out)
+  assert.equal(r.log.filter((l) => /releases\.txt/.test(l)).length, 0)
 })

@@ -114,6 +114,12 @@ if [ "$(tr '[:upper:]' '[:lower:]' <<<"$R")" = "$(bash "$here/plugin-repo.sh" 2>
   diffs=$(jq -r '.tree[] | select(.type == "blob") | "\(.sha) \(.path)"' <<<"$tree" | bash "$here/manifest.sh" --compare <(printf '%s\n' "$ftxt")) \
     || stop ".claude-plugin/files.txt does not match the tree of ${sha:0:7}: $(tr '\n' ';' <<<"$diffs")"
   ok "files.txt matches the tree at ${sha:0:7}"
+  rel=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.claude-plugin/releases.txt?ref=$sha" 2>&1)
+  if [ $? -ne 0 ]; then
+    is404 "$rel" && rel="" || stop "cannot read .claude-plugin/releases.txt ($rel)"
+  fi
+  if [ "$(head -n 1 <<<"$rel")" = "v$version" ]; then ok "releases.txt lists v$version first"
+  else miss ".claude-plugin/releases.txt does not start with v$version at ${sha:0:7}"; fi
 fi
 
 if [ ${#missing[@]} -gt 0 ]; then echo "release.sh: NOT released: ${#missing[@]} check(s) missing"; exit 1; fi

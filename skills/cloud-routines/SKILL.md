@@ -28,13 +28,13 @@ ROOT="${CLAUDE_PLUGIN_ROOT}"
 bash "$ROOT/scripts/routine-spec.sh" <owner/repo> [--tags <tag>...] > "${TMPDIR:-/tmp}/spec.json"
 ```
 
-The settings come from `.github/pipeline.json` on the default branch of the repo. `--tags` lists the other releases that the environment must hold, because one environment can serve several repos with different pins. A repo with no `routine` key prints an empty list and a note: make nothing, and tell the maintainer to add the block first. Never pass the JSON as a command-line argument; read it from the file.
+The settings come from `.github/pipeline.json` on the default branch of the repo. The printed setup script installs the pin, each `--tags` release, and each release listed in `.claude-plugin/releases.txt` on the default branch of the plugin repo (at most 3). `--tags` is for a release that the list does not hold, because one environment can serve several repos with different pins. A repo with no `routine` key prints an empty list and a note: make nothing, and tell the maintainer to add the block first. Never pass the JSON as a command-line argument; read it from the file.
 
 Show the maintainer, for each routine: the name, the schedule, the sources, the webhooks and the prompt. Do not print the whole setup script unless asked. The spec holds no secret and you add none.
 
 ## 2. The environment
 
-No RemoteTrigger action reads or changes an environment or its setup script (K8). So the maintainer pastes the `setupScript` field in the web UI: write it to a file, show the path, and wait for a yes that it is saved. The environment's own part (for example the package manager of the repo) follows the printed part and is the maintainer's. Do not go on until the maintainer says it is saved.
+No RemoteTrigger action reads or changes an environment or its setup script (K8). So the maintainer pastes the `setupScript` field in the web UI: write it to a file, show the path, and wait for a yes that it is saved. The script reads the list when a session starts, so a new release that the list holds needs no new paste. The environment's own part (for example the package manager of the repo) follows the printed part and is the maintainer's. Do not go on until the maintainer says it is saved.
 
 ## 3. The tracking issue
 
@@ -63,4 +63,4 @@ The fast pause is the label `routine-paused` on the tracking issue of the repo. 
 
 ## After a release
 
-For each repo that should move, open the one-line PR that sets `routine.pipelineVersion` to the new tag in `.github/pipeline.json` (a gated path, so the maintainer merges it). Then regenerate the setup script with every tag still in use, one `--tags` value per tag, and ask the maintainer to paste it again. A repo whose pin is not installed makes `apl-start` stop, and its routine sends one notice.
+For each repo that should move, open the one-line PR that sets `routine.pipelineVersion` to the new tag in `.github/pipeline.json` (a gated path, so the maintainer merges it). A release that `releases.txt` holds is installed by the environment already pasted. Regenerate the setup script, with one `--tags` value per tag still in use that the list no longer holds, and ask the maintainer to paste it again only when the tags changed. A repo whose pin is not installed makes `apl-start` stop, and its routine sends one notice.

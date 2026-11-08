@@ -143,6 +143,13 @@ test('the setup script holds the pin, and --tags adds a second tag after it', ()
   assert.ok(s.indexOf('v0.8.0') >= 0 && s.indexOf('v0.8.1') > s.indexOf('v0.8.0'))
 })
 
+test('the setup script fetches the release list from main and still holds the pin', () => {
+  const r = spec('alfhen/pipeline-dogfood', settings({ pipelineVersion: 'v0.8.2' }), ['--tags', 'v0.8.1'])
+  const s = r.json.setupScript
+  assert.match(s, /refs\/heads\/main\/\.claude-plugin\/releases\.txt/)
+  assert.match(s, /^NAMED="v0\.8\.2 v0\.8\.1"$/m)
+})
+
 test('the pin is not repeated when --tags names it', () => {
   const a = spec('alfhen/pipeline-dogfood', settings({}))
   const b = spec('alfhen/pipeline-dogfood', settings({}), ['--tags', 'v0.8.0'])
