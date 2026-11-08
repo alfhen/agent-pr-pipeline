@@ -1571,6 +1571,26 @@ test('a triage-plan block that is approved again still ends', () => {
   assert.equal(seen.at(-1), 'idle', seen.join(','))
 })
 
+test('a triage-plan block on the last attempt, approved again, ends: exhausted, needs-maintainer, idle', () => {
+  const planBlock = a => c_cr('blocked', `5:${a}`, { run: c_CRUN(a), reasonCode: 'triage-plan', attempt: a }, { at: c_T(40 + a) })
+  const s = csetup(c_withIssues({
+    issue: c_ci(5, { labels: ['maintainer-approved'] }), events: c_approved(c_T(90)),
+    records: [c_triagedRec(5), c_startedRec(5, 1, { at: c_T(30) }), planBlock(1), c_startedRec(5, 2, { at: c_T(35) }), planBlock(2)],
+  }))
+  assert.deepEqual(c_one(c_cnext(s, 'cloud-build')), { step: 'exhausted', issue: 5 })
+  c_doPut(s, 'exhausted', '5')
+  assert.ok(c_labelsOf(s, 5).includes('needs-maintainer'))
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'idle')
+})
+
+test('put built makes an @name in the why inert in the record', () => {
+  const s = c_builtSetup()
+  c_doPut(s, 'built', '5', c_CRUN(1), 'none', 'false', 'other', c_resultFile(s, { prs: [{ ready: false, reason: 'ask @octocat' }] }))
+  const posts = s.w.records.at(-1).body
+  assert.doesNotMatch(posts, /@[A-Za-z0-9]/)
+  assert.match(posts, /octocat/)
+})
+
 const c_resultFile = (s, res) => { const f = join(s.dir, 'result.json'); writeFileSync(f, JSON.stringify(res)); return f }
 const c_builtRecOf = s => JSON.parse(s.w.records.at(-1).body.split('\n')[1])
 const c_builtSetup = () => csetup(c_withIssues({ issue: c_ci(5, { labels: ['building'] }), records: [c_triagedRec(5), c_startedRec(5, 1)] }))

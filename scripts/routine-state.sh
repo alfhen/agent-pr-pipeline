@@ -212,7 +212,7 @@ def hasl($l): .L | index($l) != null;
   | ([$F[] | select(hasl("building") and (.hasPr or ((.inflight | not) and (.legacyLive | not))))] | byAge) as $prseen
   | ([$F[] | select(.ls != null and (.ended | not) and (.hasPr | not)
         and (.built or ((try (.ls.at | fromdateiso8601) catch 0) < now - ($lim.buildHours * 3600))))] | byAge) as $block
-  | ([$F[] | select(hasl("build-failed") and (hasl("needs-maintainer") | not) and .A != null and .lb != null and .A > .lb.at
+  | ([$F[] | select((hasl("build-failed") or .lb.rec.reasonCode == "triage-plan") and (hasl("needs-maintainer") | not) and .A != null and .lb != null and .A > .lb.at
         and .att >= $lim.buildAttempts and .authorPart)] | byAge) as $exhausted
   | ([$F[] | . as $f | select($f.A != null and $f.reason == null and ($f.excluded | not) and $f.trNew
         and ($f.tr.rec.size == "L" or $f.tr.rec.risk == "high" or $f.tr.rec.decision == "plan")
@@ -648,7 +648,7 @@ put_built() {
     ($w | gsub("\\p{Cc}"; " ") | gsub("\\s+"; " ") | sub("^ "; "") | sub(" $"; "")) as $w
     | ([$w | match("[.!?](?= |\\z)"; "g") | select(.offset < 500) | .offset + 1] | last // 500) as $end
     | {run: $r, pr: (if $p == "none" then "none" else ($p | tonumber) end), ready: ($d == "true"), reasonCode: $c}
-    | if $w != "" then . + {why: (if ($w | length) > 500 then $w[:$end] else $w end)} else . end
+    | if $w != "" then . + {why: ((if ($w | length) > 500 then $w[:$end] else $w end) | gsub("@(?!​)"; "@​"))} else . end
     | if ($w | length) > 500 then . + {whyCut: true} else . end')
   write_record built "$key" "$rec"
   echo "ok built $issue"
@@ -664,7 +664,7 @@ blocked_comment() { # issue reasonCode why -> prints the comment body
     *) first="The build routine stopped and opened no PR." ;;
   esac
   # A zero-width space after each @ keeps the text from notifying anybody.
-  jq -rn --arg f "$first" --arg w "$3" '$f + (if $w == "" then "" else "\n" + ($w | gsub("@"; "@​")) end)'
+  jq -rn --arg f "$first" --arg w "$3" '$f + (if $w == "" then "" else "\n" + ($w | gsub("@(?!​)"; "@​")) end)'
 }
 
 put_blocked() {
@@ -677,7 +677,7 @@ put_blocked() {
   would blocked "$issue"
   write_record blocked "$key" "$(jq -nc --arg r "$run_id" --arg c "$reason" --argjson a "${key#*:}" '{run: $r, reasonCode: $c, attempt: $a}')"
   bid=$REC_ID
-  # triage-plan is not a failed build: needs-plan is its label, so the issue is not counted toward exhausted.
+  # triage-plan gets needs-plan, not build-failed; $exhausted reads the reason code of this record instead.
   [ "$reason" = triage-plan ] || add_labels "$issue" build-failed
   remove_labels "$issue" building ready-to-build maintainer-approved
   if [ "$reason" = triage-plan ]; then do_needs_plan "$issue" "$issue:$bid"; else echo "NOTICE blocked $repo $issue $run_id $reason"; fi
