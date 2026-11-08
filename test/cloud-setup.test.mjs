@@ -27,32 +27,39 @@ assert.ok(files.some(([, p]) => p === 'agents/tester.md') && files.some(([, p]) 
 const stubBin = join(tmp, 'stubbin'); mkdirSync(stubBin)
 copyFileSync(join(root, 'test/fake-gh'), join(stubBin, 'gh')); chmodSync(join(stubBin, 'gh'), 0o755)
 writeFileSync(join(stubBin, 'curl'), `#!/bin/bash
-# Serves https://raw.githubusercontent.com/<owner>/<repo>/refs/tags/<tag>/<path> from $SERVE/<tag>/<path>.
-# A bare <tag> ref is ambiguous with a branch, so it gets a 404.
-out=""; url=""
-while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2 ;; --retry) shift 2 ;; -*) shift ;; *) url=$1; shift ;; esac; done
+# Serves https://raw.githubusercontent.com/<owner>/<repo>/refs/tags/<tag>/<path> from $SERVE/<tag>/<path>, and
+# refs/heads/main/<path> from $SERVE/main/<path>. A bare <tag> ref is ambiguous with a branch, so it gets a 404.
+# With -w it prints the HTTP code and exits 0 on a 404, as curl does without -f.
+out=""; url=""; code=""
+while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2 ;; -w) code=1; shift 2 ;; --retry) shift 2 ;; -*) shift ;; *) url=$1; shift ;; esac; done
 echo "$url" >> "$CURL_LOG"
 rest=\${url#https://raw.githubusercontent.com/*/*/}
-case "$rest" in refs/tags/*) rest=\${rest#refs/tags/} ;; *) echo "curl: (22) 404 $url" >&2; exit 22 ;; esac
+case "$rest" in refs/tags/*) rest=\${rest#refs/tags/} ;; refs/heads/main/*) rest=main/\${rest#refs/heads/main/} ;; *) rest=none ;; esac
 src="$SERVE/$rest"
-[ -f "$src" ] || { echo "curl: (22) 404 $url" >&2; exit 22; }
+if [ ! -f "$src" ]; then
+  [ -n "$code" ] && { printf 404; exit 0; }
+  echo "curl: (22) 404 $url" >&2; exit 22
+fi
 if [ -n "$out" ]; then cp "$src" "$out"; else cat "$src"; fi
+[ -n "$code" ] && printf 200
+exit 0
 `)
 chmodSync(join(stubBin, 'curl'), 0o755)
 
 let n = 0
 // A fresh world: a serve folder with the given tags, and empty HOME, install root and launcher folder.
-const world = (tags = ['v9.9.9']) => {
+const world = (tags = ['v9.9.9'], list = null) => {
   const dir = join(tmp, `w${n++}`)
   const w = { dir, serve: join(dir, 'serve'), home: join(dir, 'home'), opt: join(dir, 'opt'), bin: join(dir, 'bin'), fx: join(dir, 'fx'), log: join(dir, 'gh.log'), curlLog: join(dir, 'curl.log') }
   for (const d of [w.serve, w.home, w.opt, w.bin, w.fx]) mkdirSync(d, { recursive: true })
   for (const t of tags) cpSync(plugin, join(w.serve, t), { recursive: true, filter: (s) => !s.endsWith('/.git') && !s.includes('/.git/') })
+  if (list !== null) { mkdirSync(join(w.serve, 'main/.claude-plugin'), { recursive: true }); writeFileSync(join(w.serve, 'main/.claude-plugin/releases.txt'), list) }
   return w
 }
 const env = (w) => ({ PATH: `${stubBin}:${process.env.PATH}`, HOME: w.home, APL_ROOT: w.opt, APL_BIN: w.bin, SERVE: w.serve, CURL_LOG: w.curlLog, FAKE_GH_FIXTURES: w.fx, FAKE_GH_LOG: w.log })
 const print = (...args) => sh('bash', [join(root, 'scripts/cloud-setup.sh'), '--print', ...args])
-const install = (w, tags = ['v9.9.9'], transform = (s) => s) => {
-  const p = print(...tags, '--repo', 'o/r')
+const install = (w, tags = ['v9.9.9'], transform = (s) => s, flags = []) => {
+  const p = print(...flags, ...tags, '--repo', 'o/r')
   assert.equal(p.status, 0, p.stderr)
   const script = join(w.dir, 'setup.sh'); writeFileSync(script, transform(p.stdout))
   return sh('bash', [script], { cwd: w.dir, env: env(w) })
@@ -268,6 +275,90 @@ test('apl-start stops when .complete is missing', () => {
   assert.equal(install(w).status, 0)
   rmSync(join(w.opt, 'v9.9.9/.complete'))
   stopped(aplStart(w, work), 'release v9\\.9\\.9 is not installed', 'v9.9.9', 'ROOT none')
+})
+
+// --latest: the releases listed on main
+const latest = (w, tags = []) => install(w, tags, (s) => s, ['--latest'])
+
+test('--latest installs each listed release', () => {
+  const w = world(['v9.9.9', 'v9.9.8'], 'v9.9.9\nv9.9.8\n')
+  const r = latest(w)
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.ok(complete(w, 'v9.9.9') && complete(w, 'v9.9.8'))
+  assert.ok(existsSync(join(w.bin, 'apl-start')))
+})
+
+test('--latest installs a listed tag once when it is also named', () => {
+  const w = world(['v9.9.9', 'v9.9.8'], 'v9.9.9\nv9.9.8\n')
+  assert.equal(latest(w, ['v9.9.9', 'v9.9.9']).status, 0)
+  const hits = readFileSync(w.curlLog, 'utf8').split('\n').filter((u) => u.endsWith('refs/tags/v9.9.9/.claude-plugin/files.txt'))
+  assert.equal(hits.length, 1)
+})
+
+test('--latest installs a named tag that the list does not hold', () => {
+  const w = world(['v9.9.9', 'v9.9.7'], 'v9.9.9\n')
+  assert.equal(latest(w, ['v9.9.7']).status, 0)
+  assert.ok(complete(w, 'v9.9.9') && complete(w, 'v9.9.7'))
+})
+
+test('--latest skips a listed tag whose files.txt is 404 and installs the rest', () => {
+  const w = world(['v9.9.8'], 'v9.9.9\nv9.9.8\n')
+  const r = latest(w)
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.match(r.stdout, /skipped v9\.9\.9/)
+  assert.equal(existsSync(join(w.opt, 'v9.9.9')), false)
+  assert.ok(complete(w, 'v9.9.8'))
+  assert.ok(existsSync(join(w.bin, 'apl-start')))
+  assert.equal(readdirSync(w.opt).filter((f) => f.startsWith('.stage')).length, 0)
+})
+
+test('--latest exits 1 for a named tag with a 404 files.txt, and when no release installs', () => {
+  const w = world(['v9.9.9'], 'v9.9.9\n')
+  const r = latest(w, ['v9.9.7'])
+  assert.equal(r.status, 1, r.stdout + r.stderr)
+  assert.match(r.stderr, /fetch failed: files\.txt of v9\.9\.7 \(HTTP 404\)/)
+  const w2 = world([], 'v9.9.9\n')
+  const r2 = latest(w2)
+  assert.equal(r2.status, 1)
+  assert.match(r2.stderr, /no release installed/)
+  assert.equal(existsSync(join(w2.bin, 'apl-start')), false)
+})
+
+test('--latest exits 1 for a listed tag with a changed file, with no .complete for it', () => {
+  const w = world(['v9.9.9', 'v9.9.8'], 'v9.9.9\nv9.9.8\n')
+  writeFileSync(join(w.serve, 'v9.9.8/scripts/semver.sh'), 'changed')
+  const r = latest(w)
+  assert.equal(r.status, 1, r.stdout + r.stderr)
+  assert.match(r.stderr, /hash mismatch: scripts\/semver\.sh/)
+  assert.equal(complete(w, 'v9.9.8'), false)
+})
+
+test('--latest exits 1 for a missing list, an empty list, a bad line and a list of 4 lines', () => {
+  const cases = [[null, /cannot read releases\.txt/], ['', /is empty/], ['v9.9.9\nmain\n', /bad line/], ['v9.9.9\n\nv9.9.8\n', /bad line/], ['v9.9.9\nv9.9.8\nv9.9.7\nv9.9.6\n', /more than 3 lines/]]
+  for (const [list, text] of cases) {
+    const w = world(['v9.9.9', 'v9.9.8', 'v9.9.7', 'v9.9.6'], list)
+    const r = latest(w)
+    assert.equal(r.status, 1, `${JSON.stringify(list)}: ${r.stdout}${r.stderr}`)
+    assert.match(r.stderr, text)
+    assert.equal(existsSync(join(w.opt, 'v9.9.9')), false)
+  }
+})
+
+test('--latest does not install a release that exists as a tag but is not listed, and never scans tags', () => {
+  const w = world(['v9.9.9', 'v9.9.8'], 'v9.9.9\n')
+  assert.equal(latest(w).status, 0)
+  assert.ok(complete(w, 'v9.9.9'))
+  assert.equal(existsSync(join(w.opt, 'v9.9.8')), false)
+  const p = print('--latest', '--repo', 'o/r').stdout
+  assert.doesNotMatch(p, /ls-remote|api\.github\.com|git\/refs|\/tags\?/)
+})
+
+test('--latest with no tag prints, and without --latest a tag is still required', () => {
+  const p = print('--latest', '--repo', 'o/r')
+  assert.equal(p.status, 0, p.stderr)
+  assert.match(p.stdout, /refs\/heads\/main\/\.claude-plugin\/releases\.txt/)
+  assert.equal(sh('bash', ['-n'], { input: p.stdout }).status, 0)
+  assert.equal(print('--repo', 'o/r').status, 2)
 })
 
 // manifest.sh

@@ -137,10 +137,10 @@ flowchart TD
   S -- ok --> W[pluginRoot and agentPrefix]
 ```
 
-Summary: the setup script installs each named release and checks every file against `files.txt`; `apl-start` checks the pin and the files again before any work.
+Summary: the setup script installs each release in the list and each named release, and checks every file against `files.txt`; `apl-start` checks the pin and the files again before any work.
 
 - The pin is `routine.pipelineVersion`. A release tag cannot move, because the tag ruleset below forbids updates and deletions. That is why the setup script can trust a tag's files.
-- `bash scripts/cloud-setup.sh --print <tag>... [--repo <owner/repo>]` prints the setup script. The release manifest `.claude-plugin/files.txt` lists the shipped files as `<git blob sha> <path>`. `scripts/manifest.sh --write` writes it, and `manifest.sh --check` verifies it. `release.sh` refuses a release of this repo when the manifest does not match the tree.
+- `bash scripts/cloud-setup.sh --print [--latest] [<tag>...] [--repo <owner/repo>]` prints the setup script. With `--latest` the script also fetches `.claude-plugin/releases.txt` from the default branch of the plugin repo each time the environment runs the setup script (about every 7 days, or when the script or the allowed hosts change), and installs each listed release. The file holds one tag per line, newest first, at most 3. A change to it needs a merged PR. The version PR of each release adds the new tag on top and drops the oldest. A listed tag whose `files.txt` gives HTTP 404 is skipped, because the version PR merged and the release is not cut yet. A named tag with a 404, a failed fetch, an empty list, a bad line, a list of more than 3 lines, or no installed release exits 1. `routine-spec.sh` always prints `--latest`. `release.sh` refuses a release of this repo when the first line of `releases.txt` is not `v<version>`. The release manifest `.claude-plugin/files.txt` lists the shipped files as `<git blob sha> <path>`. `scripts/manifest.sh --write` writes it, and `manifest.sh --check` verifies it. `release.sh` refuses a release of this repo when the manifest does not match the tree.
 - The script writes each release to `/opt/agent-pr-pipeline/<tag>/`, each role agent to `~/.claude/agents/apl-<v>-<name>.md` (for `v0.8.0` the prefix is `apl-v0-8-0-`), and the launcher `/usr/local/bin/apl-start`. One environment can hold several releases, so two repos can pin different ones. Any failed fetch or check exits 1.
 - `apl-start <owner/repo>` reads the pin from the default branch, checks the install and the files, and prints one JSON line with `version`, `pluginRoot`, `agentPrefix` and `defaultSha`. On a failure it prints `APL STOP <reason>`, `PIN <tag>` and `ROOT <path or none>`, and exits 1. The prompt then runs `put env-stale` from that root, which writes one record and one notice. Later runs with the same record stop without a notice, and the next good start writes `env-ok`.
 - `pluginRoot` is outside the clone, so a PR cannot change the scripts that judge it. Workflow refuses a script outside the working folder, so the build routine copies `run-wave.js` from `pluginRoot` to `.git/apl/run-wave.js` in the clone, in the same session, just before the call. `.git` is never tracked, and a PR cannot change the copy.
@@ -150,7 +150,7 @@ Summary: the setup script installs each named release and checks every file agai
 
 No API changes an environment (K8). The maintainer does this part in the web UI:
 
-1. Run `bash scripts/cloud-setup.sh --print v0.8.0` for the repo's pin. Add one tag per release still in use.
+1. Run `bash scripts/routine-spec.sh <owner/repo>` and take the `setupScript` field, or run `bash scripts/cloud-setup.sh --print --latest <pin>`. Add one tag for each release still in use that `releases.txt` does not list.
 2. Paste the output in the environment's setup script. Add the repo's own tools after it (for example pnpm).
 3. Save, and note the environment id.
 
@@ -159,7 +159,11 @@ The setup script costs no model tokens. A saved environment is reused for about 
 ### Upgrade the pin
 
 1. After a release, open a one-line PR that sets `routine.pipelineVersion` to the new tag. It is a gated path, so the maintainer merges it.
-2. Print the setup script again with every tag still in use, and paste it in the web UI.
+2. Wait for the environment to run the setup script again. A new release that `releases.txt` holds can take up to a week to arrive.
+3. To get it sooner, save the setup script again with any small change. That forces a new run.
+4. Paste the script again only when the script text or the tags you need change. This is the case for a tag that the list no longer holds.
+
+A pin raised before the environment has the release makes `apl-start` stop with one env-stale notice.
 
 A repo whose pin is not installed makes `apl-start` stop, and the routine sends one notice.
 

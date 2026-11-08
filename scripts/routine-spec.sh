@@ -41,7 +41,7 @@ all=("$(jq -r .pipelineVersion <<<"$cfg")")
 for t in "${tags[@]+"${tags[@]}"}"; do
   case " ${all[*]} " in *" $t "*) ;; *) all+=("$t") ;; esac
 done
-setup=$(bash "$here/cloud-setup.sh" --print "${all[@]}") || exit 1
+setup=$(bash "$here/cloud-setup.sh" --print --latest "${all[@]}") || exit 1
 
 # The minute and hour come from the name, so the routines of different repos do not start together.
 base=$(printf '%s' "$repo" | tr '[:upper:]/' '[:lower:]-')
