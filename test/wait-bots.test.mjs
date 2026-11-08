@@ -93,3 +93,39 @@ test('fake-gh: a query is logged and its fixture wins over the plain one', () =>
   assert.match(log, /^GET \/y\?ref=main$/m)
   assert.match(log, /^GET \/y$/m)
 })
+
+const OLD = 'b'.repeat(40)
+const status = (reviews) => {
+  const s = setup([reviews])
+  const r = spawnSync('bash', [join(root, 'scripts/bot-status.sh'), 'o/r', '7'], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${join(s.dir, 'bin')}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log },
+  })
+  assert.equal(r.status, 0, r.stderr)
+  return JSON.parse(r.stdout).reviewBodies
+}
+const rev = (body, commit = HEAD, login = 'coderabbitai[bot]') => ({ user: { login }, state: 'COMMENTED', commit_id: commit, submitted_at: '2026-01-01T00:00:00Z', body })
+
+test('reviewBodies counts a CodeRabbit body with an Outside diff range section', () => {
+  assert.equal(status([rev('Actionable comments posted: 0\n\n<details><summary>Outside diff range comments (1)</summary>x</details>')]), 1)
+})
+
+test('reviewBodies counts a CodeRabbit body with a Nitpick section', () => {
+  assert.equal(status([rev('Actionable comments posted: 0\n<summary>Nitpick comments (2)</summary>')]), 1)
+})
+
+test('reviewBodies skips "Actionable comments posted: 0" and Gitar approval text', () => {
+  assert.equal(status([rev('**Actionable comments posted: 0**'), rev('Gitar has auto-approved this PR', HEAD, 'gitar-bot[bot]')]), 0)
+})
+
+test('reviewBodies skips empty bodies and bodies of only HTML comments', () => {
+  assert.equal(status([rev(''), rev(null), rev('  <!-- review_stack_entry -->\n ')]), 0)
+})
+
+test('reviewBodies skips a body on an older commit and a body from a person', () => {
+  assert.equal(status([rev('finding', OLD), rev('finding', HEAD, 'alice')]), 0)
+})
+
+test('reviewBodies counts an unknown text', () => {
+  assert.equal(status([rev('Something new we have never seen')]), 1)
+})

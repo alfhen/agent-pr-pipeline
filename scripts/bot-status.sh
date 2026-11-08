@@ -1,9 +1,10 @@
 #!/bin/bash
 # usage: bot-status.sh <owner/repo> <pr>
-# Prints one JSON line: {"head", "approvedBy", "seenHead", "openThreads"}. approvedBy is the output of bot-approval.jq,
+# Prints one JSON line: {"head", "approvedBy", "seenHead", "openThreads", "reviewBodies"}. approvedBy is the output of bot-approval.jq,
 # the rule merge-pr.sh uses. seenHead lists the approving bots that looked at the head: their latest review
 # is on the head, or their check run on the head has completed. openThreads counts
-# the inline threads a bot opened that have no reply. Exits 1 when a GitHub read fails.
+# the inline threads a bot opened that have no reply. reviewBodies counts the bot reviews on the head whose body can
+# hold a finding: not empty, and not a known no-finding text. Exits 1 when a GitHub read fails.
 R=$1; pr=$2
 [ -n "$pr" ] || { echo "usage: bot-status.sh <owner/repo> <pr>"; exit 2; }
 here=$(dirname "$0")
@@ -29,4 +30,11 @@ seen=$(jq -c --argjson approved "$approved" '. as $in
         or ([$in.checks[] | select((.name | ascii_downcase) as $check | .status == "completed" and (($login | ascii_downcase) | contains($check)))] | length) > 0)]' <<<"$input") || fail "cannot judge which bots saw the head"
 open=$(jq --arg bots "$bots" '[.comments[] | select(.in_reply_to_id != null) | .in_reply_to_id] as $answered
   | [.comments[] | select(.in_reply_to_id == null and (.user.login | test($bots)) and ([.id] | inside($answered) | not))] | length' <<<"$input") || fail "cannot count the threads"
-jq -n -c --arg head "$head" --argjson approved "$approved" --argjson seen "$seen" --argjson open "$open" '{head: $head, approvedBy: $approved, seenHead: $seen, openThreads: $open}'
+# The known no-finding texts live here. Any other text counts, so an unknown format never hides a finding.
+bodies=$(jq --arg bots "$bots" '
+  def clean: gsub("<!--(.|\n)*?-->"; "") | gsub("^\\s+|\\s+$"; "");
+  def nofinding: test("has auto-approved this PR"; "i")
+    or (test("Actionable comments posted: 0") and (test("Outside diff range|Nitpick") | not));
+  [.reviews[] | select(.commit_id == $in_head and (.user.login | test($bots))) | (.body // "" | clean) as $b
+    | select(($b | length) > 0 and ($b | nofinding | not))] | length' --arg in_head "$head" <<<"$input") || fail "cannot count the review bodies"
+jq -n -c --arg head "$head" --argjson approved "$approved" --argjson seen "$seen" --argjson open "$open" --argjson bodies "$bodies" '{head: $head, approvedBy: $approved, seenHead: $seen, openThreads: $open, reviewBodies: $bodies}'

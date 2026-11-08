@@ -41,7 +41,7 @@ let evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'READM
 // Exit codes the put script gives, per PR id: the first call, then the #put2 retry. Default 0.
 const putPlan = {}
 // Merge safety: ids the gate holds, ids the agent calls person, and ids where an agent fails or answers badly.
-const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), gateOdd: new Set(), headMoved: new Set(), blocked: new Set(), landOutput: new Set(), landFail: new Set(), landBad: new Set(), landBadOnce: new Set(), landOther: new Set(), testMoved: new Set(), threads: new Set() }
+const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), gateOdd: new Set(), headMoved: new Set(), blocked: new Set(), landOutput: new Set(), landFail: new Set(), landBad: new Set(), landBadOnce: new Set(), landOther: new Set(), testMoved: new Set(), threads: new Set(), bodies: new Set() }
 const landHead = {}
 const wt = o => '/wt/' + o.label.replace(/[:#]/g, '-')
 let cleanupMode = 'ok'
@@ -84,7 +84,7 @@ const agentRaw = async (prompt, o) => {
     return { exitCode: 0, output: land.landOutput.has(id) ? 'merge abc\n+resolved line\n' : '' }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#botstatus')) {
-    return land.statusDown.has(id) ? { exitCode: 1, output: 'bot-status: cannot read the reviews' } : { exitCode: 0, output: JSON.stringify({ head: land.headMoved.has(id) ? 'moved' : lastHead[id], approvedBy: ['gitar-bot'], seenHead: ['gitar-bot'], openThreads: land.threads.has(id) ? 1 : 0 }) }
+    return land.statusDown.has(id) ? { exitCode: 1, output: 'bot-status: cannot read the reviews' } : { exitCode: 0, output: JSON.stringify({ head: land.headMoved.has(id) ? 'moved' : lastHead[id], approvedBy: ['gitar-bot'], seenHead: ['gitar-bot'], openThreads: land.threads.has(id) ? 1 : 0, reviewBodies: land.bodies.has(id) ? 1 : 0 }) }
   }
   if (o.label.startsWith('io:')) {
     if (o.label.endsWith('#put') || o.label.endsWith('#put2')) {
@@ -1188,6 +1188,14 @@ await check('gate: only the latest review of each bot counts', () => {
 // Script and workflow minors.
 await check('bot status: an open thread in the status script runs the answer agent though the waiter says 0', async () => {
   const x = await landRun({ threads: ['C1'] }, only('C1'))
+  assert.equal(x.C1.ready, true)
+  assert.ok(calls.some(c => c.label === 'botanswer:C1'))
+  const none = await landRun({}, only('C1'))
+  assert.equal(none.C1.ready, true)
+  assert.ok(!calls.some(c => c.label === 'botanswer:C1'))
+})
+await check('bot status: a review body with a finding runs the answer agent when there are no threads', async () => {
+  const x = await landRun({ bodies: ['C1'] }, only('C1'))
   assert.equal(x.C1.ready, true)
   assert.ok(calls.some(c => c.label === 'botanswer:C1'))
   const none = await landRun({}, only('C1'))
