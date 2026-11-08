@@ -33,8 +33,7 @@ out=""; url=""
 while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2 ;; --retry) shift 2 ;; -*) shift ;; *) url=$1; shift ;; esac; done
 echo "$url" >> "$CURL_LOG"
 case "$url" in
-  https://api.github.com/repos/*/compare/*) t=\${url##*...}; f="$SERVE/compare-$t"; if [ -f "$f" ]; then cat "$f"; else echo '{"status":"behind"}'; fi; exit 0 ;;
-  https://api.github.com/repos/*) echo '{"default_branch":"main"}'; exit 0 ;;
+  https://api.github.com/*) echo "curl: (22) 403 $url" >&2; exit 22 ;;
 esac
 rest=\${url#https://raw.githubusercontent.com/*/*/}
 case "$rest" in refs/tags/*) rest=\${rest#refs/tags/} ;; HEAD/*) ;; *) echo "curl: (22) 404 $url" >&2; exit 22 ;; esac
@@ -313,7 +312,14 @@ test('manifest.sh --check without a files.txt fails', () => {
 
 const realGit = sh('bash', ['-c', 'command -v git']).stdout.trim()
 writeFileSync(join(stubBin, 'git'), `#!/bin/bash
-# Answers ls-remote from $LS_REMOTE (a file), or fails when $LS_FAIL is set; passes every other command to git.
+# Answers ls-remote from $LS_REMOTE (a file), or fails when $LS_FAIL is set. A fetch of https://github.com/o/r reads
+# the local repo $ORIGIN, or fails when $FETCH_FAIL is set. Every other command goes to git.
+if [[ " $* " == *" fetch "* ]]; then
+  echo "$@" >> "$CURL_LOG"
+  [ -z "\${FETCH_FAIL:-}" ] || { echo "fatal: unable to access" >&2; exit 128; }
+  args=(); for a in "$@"; do args+=("\${a/https:\\/\\/github.com\\/o\\/r/$ORIGIN}"); done
+  exec ${realGit} "\${args[@]}"
+fi
 if [ "$1" = ls-remote ]; then
   echo "$@" >> "$CURL_LOG"
   [ -z "\${LS_FAIL:-}" ] || { echo "fatal: unable to access" >&2; exit 128; }
@@ -324,13 +330,27 @@ exec ${realGit} "$@"
 chmodSync(join(stubBin, 'git'), 0o755)
 
 const SHA = 'a'.repeat(40)
-const latest = (w, remoteTags, args, extra = {}, cap = "1.0.0") => {
+// A real origin: each remote tag is on main, except the ones in offBranch, which are on a side commit. A branch with
+// the name of an off-branch tag is on main, so only the explicit refs/tags/ ref gives the right answer.
+const makeOrigin = (w, remoteTags, offBranch) => {
+  const o = join(w.dir, 'origin-latest'); mkdirSync(o)
+  git(o, 'init', '-q', '-b', 'main')
+  const commit = (m) => { writeFileSync(join(o, 'f'), m); git(o, 'add', 'f'); git(o, 'commit', '-q', '-m', m) }
+  commit('base')
+  for (const t of remoteTags.filter((t) => !offBranch.includes(t))) git(o, 'tag', t)
+  git(o, 'checkout', '-q', '-b', 'side'); commit('side')
+  for (const t of offBranch) { git(o, 'tag', t); git(o, 'branch', t, 'main') }
+  git(o, 'checkout', '-q', 'main'); commit('tip')
+  return o
+}
+const latest = (w, remoteTags, args, extra = {}, cap = "1.0.0", offBranch = []) => {
+  const origin = makeOrigin(w, remoteTags, offBranch)
   if (cap) { mkdirSync(join(w.serve, "HEAD/.claude-plugin"), { recursive: true }); writeFileSync(join(w.serve, "HEAD/.claude-plugin/plugin.json"), JSON.stringify({ version: cap })) }
   writeFileSync(join(w.dir, 'ls.txt'), remoteTags.map((t) => `${SHA}\trefs/tags/${t}`).join('\n') + (remoteTags.length ? '\n' : ''))
   const p = print('--latest', ...args, '--repo', 'o/r')
   assert.equal(p.status, 0, p.stderr)
   const script = join(w.dir, 'setup.sh'); writeFileSync(script, p.stdout)
-  return sh('bash', [script], { cwd: w.dir, env: { ...env(w), LS_REMOTE: join(w.dir, 'ls.txt'), ...extra } })
+  return sh('bash', [script], { cwd: w.dir, env: { ...env(w), LS_REMOTE: join(w.dir, 'ls.txt'), ORIGIN: origin, ...extra } })
 }
 const installed = (w) => readdirSync(w.opt).filter((f) => existsSync(join(w.opt, f, '.complete'))).sort()
 
@@ -430,8 +450,7 @@ test('a found tag whose files.txt lists .named does not become ROOT', () => {
 
 test('a found tag that is not on the default branch is skipped, with its agent files', () => {
   const w = world(['v0.8.0', 'v0.8.1'])
-  writeFileSync(join(w.serve, 'compare-v0.8.1'), JSON.stringify({ status: 'diverged' }))
-  const r = latest(w, ['v0.8.0', 'v0.8.1'], ['3', 'v0.8.0'])
+  const r = latest(w, ['v0.8.0', 'v0.8.1'], ['3', 'v0.8.0'], {}, '1.0.0', ['v0.8.1'])
   assert.equal(r.status, 0, r.stdout + r.stderr)
   assert.match(r.stderr, /skipped v0\.8\.1: not on the default branch/)
   assert.deepEqual(installed(w), ['v0.8.0'])
@@ -447,4 +466,23 @@ test('a found tag with no files.txt is skipped; the named tag and apl-start stil
   assert.deepEqual(installed(w), ['v0.8.0'])
   assert.equal(readdirSync(w.opt).filter((f) => f.startsWith('.stage')).length, 0)
   assert.ok(existsSync(join(w.bin, 'apl-start')))
+})
+
+test('a found tag on the default branch is installed, and the ancestry check never calls api.github.com', () => {
+  const w = world(['v0.8.0', 'v0.8.1'])
+  const r = latest(w, ['v0.8.0', 'v0.8.1'], ['3'])
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.deepEqual(installed(w), ['v0.8.0', 'v0.8.1'])
+  assert.doesNotMatch(readFileSync(w.curlLog, 'utf8'), /api\.github\.com/)
+  assert.match(readFileSync(w.curlLog, 'utf8'), /\+refs\/tags\/v0\.8\.1:refs\/tags\/v0\.8\.1/)
+  assert.equal(readdirSync(w.opt).filter((f) => f.startsWith('.verify')).length, 0)
+})
+
+test('--latest with a failed ancestry fetch exits 1 and installs nothing', () => {
+  const w = world(['v0.8.0', 'v0.8.1'])
+  const r = latest(w, ['v0.8.0', 'v0.8.1'], ['3', 'v0.8.0'], { FETCH_FAIL: '1' })
+  assert.equal(r.status, 1, r.stdout + r.stderr)
+  assert.match(r.stderr, /cannot fetch the history of o\/r/)
+  assert.doesNotMatch(r.stderr, /not on the default branch/)
+  assert.deepEqual(installed(w), [])
 })

@@ -122,7 +122,7 @@ ROOT=${APL_ROOT:-/opt/agent-pr-pipeline}
 BIN=${APL_BIN:-/usr/local/bin}
 AGENTS=$HOME/.claude/agents
 STAGE=
-trap '[ -z "$STAGE" ] || rm -rf "$STAGE"' EXIT
+trap '[ -z "$STAGE" ] || rm -rf "$STAGE"; [ -z "${VR:-}" ] || rm -rf "$VR"' EXIT
 EOF
 
 read -r -d '' SETUP_BODY <<'EOF' || true
@@ -190,14 +190,24 @@ resolve_tags() {
 EOF
 
 # A found tag is installed only when its commit is an ancestor of the default branch, because a tag can be made on
-# any commit. This also guards the agent files, which sessions load.
+# any commit. This also guards the agent files, which sessions load. The check runs over git, which works for a repo
+# that is not attached to the session; the compare API answers 403 there. A check that cannot run exits 1; only a
+# tag proven off the branch returns 1.
 read -r -d '' VERIFY <<'EOF' || true
 
+VR=
+verify_fetch() {
+  local t refs=()
+  for t in "$@"; do refs+=("+refs/tags/$t:refs/tags/$t"); done
+  VR=$(mktemp -d "$ROOT/.verify.XXXXXX") || { echo "cannot make a folder for the ancestry check" >&2; exit 1; }
+  git init -q --bare "$VR" && git -C "$VR" fetch -q --no-tags --filter=tree:0 "https://github.com/$REPO" '+HEAD:refs/heads/default' "${refs[@]}" \
+    || { echo "cannot fetch the history of $REPO for the ancestry check" >&2; exit 1; }
+}
 on_default_branch() {
-  local branch st
-  branch=$(curl -fsSL --retry 3 "https://api.github.com/repos/$REPO" | jq -r '.default_branch // ""') && [ -n "$branch" ] || return 1
-  st=$(curl -fsSL --retry 3 "https://api.github.com/repos/$REPO/compare/$branch...$1" | jq -r '.status // ""') || return 1
-  [ "$st" = behind ] || [ "$st" = identical ]
+  local rc=0
+  git -C "$VR" merge-base --is-ancestor "refs/tags/$1" refs/heads/default || rc=$?
+  [ "$rc" -le 1 ] || { echo "ancestry check failed for $1" >&2; exit 1; }
+  return "$rc"
 }
 EOF
 
@@ -216,6 +226,8 @@ if [ -n "$latest" ]; then
   printf '%s\n' "$RESOLVE" "$VERIFY"
   printf 'LATEST=%s\n' "$latest"
   printf '%s\n' 'found=$(resolve_tags)' \
+    'mkdir -p "$ROOT"' \
+    'verify_fetch $found' \
     'for tag in "${NAMED[@]+"${NAMED[@]}"}"; do install_tag "$tag"; done'
 else
   printf '%s\n' 'for tag in "${NAMED[@]}"; do install_tag "$tag"; done'
