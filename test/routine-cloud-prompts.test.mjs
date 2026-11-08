@@ -160,6 +160,20 @@ test('build passes args through the file and reads it back', () => {
   assert.ok(b.indexOf('put built') < b.indexOf('feedback-outbox.sh'))
 })
 
+test('build reads the build result with wave-result.sh and goes back to next after a build', () => {
+  const b = prompts.build
+  assert.match(b, /scripts\/wave-result\.sh <output-file> \/tmp\/apl-<run>\/result\.json/)
+  assert.ok(b.indexOf('Call Workflow') < b.indexOf('wave-result.sh') && b.indexOf('wave-result.sh') < b.indexOf('put built'))
+  assert.match(b, /put built <issue> '<run>' <pr> <ready> <reasonCode> \/tmp\/apl-<run>\/result\.json/)
+  assert.match(b, /script exits non-zero, stop and run no more command/)
+  assert.match(b, /Never type or edit a result by hand/)
+  assert.doesNotMatch(b, /Take `<pr>` from|Take `<reasonCode>` from/)
+  assert.match(b, /- `build`: do step 5\. Then run step 1 again\. If that `next` prints a `build` step, stop/)
+  assert.doesNotMatch(b, /do step 5, then stop/)
+  assert.match(usageOf('wave-result.sh'), /wave-result\.sh <workflow output file> <result file>/)
+  assert.match(rs, /put built <issue> <run> <pr> <ready> <reasonCode> \[<result file>\]/)
+})
+
 test('triage gives issue text to the triager only through issue-text', () => {
   const t = prompts.triage
   assert.match(t, /the output of `issue-text` as the whole issue/)

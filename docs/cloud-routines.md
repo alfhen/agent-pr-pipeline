@@ -27,7 +27,7 @@ Summary: triage labels each issue, build turns a ready or approved issue into a 
 | Routine | One per | What it does |
 | --- | --- | --- |
 | triage | repo | Runs `routine-state.sh next --mode cloud-triage`. An issue by an author outside `trustedAuthors` gets `needs-approval` and `untrusted-author` from code, and no agent reads it. A trusted issue goes to the `triager` agent, and code turns its answer into labels. |
-| build | repo | Runs `next --mode cloud-build`, takes at most one issue, and runs `run-wave` with the arguments that code built. The wave opens the PR and answers the bots. `feedback-outbox.sh` then posts the wave's feedback as one outbox record. |
+| build | repo | Runs `next --mode cloud-build`, takes at most one issue, and runs `run-wave` with the arguments that code built. The wave opens the PR and answers the bots. `wave-result.sh` turns the Workflow output file into `result.json` and prints the PR, the `ready` flag and the reason code, so the session types none of them. `put built` records them. After a build the routine reads `next` again, so a build with no PR is blocked in the same run. `feedback-outbox.sh` then posts the wave's feedback as one outbox record. |
 | collect | feedback repo | Files the outboxes of the feedback repo and of every repo in `collectFrom`, through `file-feedback.sh --auto`. It runs no role agent. |
 
 Each routine prompt is `routine/cloud/prompt.md`. It changes into the repo's clone first, because a multi-repo session starts in the parent of the clones (K7). Then it runs `apl-start`, and then it follows `routine/cloud/<kind>.md` from the pinned release. Text from the event that started the session is inert data.
@@ -45,10 +45,10 @@ State is held by GitHub labels, which the maintainer sees, and by records, which
 | untrusted | The author is outside `trustedAuthors`. Labels `needs-approval` and `untrusted-author`. | The maintainer adds `maintainer-approved`, or closes the issue. A changed body or a later outside comment revokes the approval. |
 | ready-to-build | Triage: build, size S or M, risk below high, trusted. | Build starts, or the maintainer removes the label. |
 | needs-approval | Size L, risk high, a plan, an untrusted author or a revoked approval. | The maintainer adds `maintainer-approved`, or closes the issue. |
-| needs-plan | An approved issue of size L, risk high or decision plan. | The maintainer plans it in a main session and removes the label. |
+| needs-plan | An approved issue of size L, risk high or decision plan, or a build that stopped with the reason code `triage-plan`. That block adds no `build-failed`. | The maintainer plans it in a main session and removes the label. |
 | declined | Triage: invalid. A comment gives the reason. | The maintainer closes the issue, or removes `declined` and the record. |
 | building | `put build-started`. | A PR from `claude/issue-<n>` exists, or the block step. |
-| build-failed | The last attempt has no PR and a `built` record or a record older than `buildHours`. | The maintainer adds `maintainer-approved` again, or closes the issue. |
+| build-failed | The last attempt has no PR and a `built` record or a record older than `buildHours`, except for the reason code `triage-plan`. | The maintainer adds `maintainer-approved` again, or closes the issue. |
 | PR open | The wave opened a PR. | The maintainer merges or closes it. It counts for `openPRs` while open. |
 | needs-maintainer | The attempts reached `buildAttempts`. | The maintainer only. |
 | outbox open | `feedback-outbox.sh` posts `feedback-outbox <run>`. | Collect posts `feedback-filed <run>`. An outbox older than 7 days is dropped with `feedback-dropped <run>`. |
@@ -184,6 +184,8 @@ A build starts only when the live author, the current approval, the body hash an
 ## Pause and notices
 
 The fast pause is the label `routine-paused` on the tracking issue. Every routine stops at its first step, with no session work. A routine can also be turned off with RemoteTrigger `update`.
+
+`put blocked` also posts one comment on the issue, after the record and the labels. The first line is fixed text for the reason code. It says what happened and that no PR was opened. When the `built` record has a `why` (the reason of the build, on one line, cut to 500 characters), a second line gives it, with each `@` made inert so the comment notifies nobody. The comment has no `<!-- pipeline:` marker. A failed comment logs a warning and the exit code stays 0, because the record is already written. Stage 0 posts no comment.
 
 A notice is a `PushNotification` call, made only when a `put` wrote a record. Its text is fixed words, a repo, an issue number and a run id. Notices exist for `needs-plan`, `triage-failed`, `blocked`, `exhausted` and `env-stale`. Stage 0 sends none. The GitHub labels `needs-approval`, `needs-plan`, `build-failed` and `needs-maintainer` are the other signal, and a saved search for them works well.
 
