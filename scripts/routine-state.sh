@@ -347,6 +347,7 @@ gate_state() {
 
 # comments-json -> the trusted records, oldest first: {kind, key, n, id, at, rec}
 # Trust is decided by trusted-comment.jq; the comment's id and time are joined back by body.
+# A record is the marker line and one JSON line; a cloud session's proxy adds a footer after it.
 records() {
   local t
   t=$(trusted_all "$1" "<!-- pipeline:routine ") || exit $?
@@ -356,7 +357,7 @@ records() {
        | ($lines[0] | capture("^<!-- pipeline:routine (?<kind>[a-z-]+) (?<key>[^ ]+) -->\\z")?) as $h
        | ([$c[] | objects | select(.user.login == $user and .body == $b)] | last) as $m
        | $h + {n: (try ($h.key | split(":")[0] | tonumber) catch null), id: ($m.id // 0), at: ($m.created_at // ""),
-               rec: (try ($lines[1:] | join("\n") | fromjson) catch null)}]' <<<"$1" || die 3 "cannot read the records"
+               rec: (try (($lines[1] // "") | fromjson) catch null)}]' <<<"$1" || die 3 "cannot read the records"
 }
 
 load_records() {

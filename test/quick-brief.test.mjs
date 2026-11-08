@@ -195,6 +195,31 @@ test('get exits 4 for an edited brief and reads a 0.4 marker and a sum marker', 
   }
 })
 
+test('a brief that ends with the cloud session footer is a pipeline brief for get and put', () => {
+  const g = run('footer')
+  assert.equal(g.status, 0, g.stderr)
+  assert.equal(g.stdout.trim(), ENTRY)
+  const same = run('footer', 'put')
+  assert.equal(same.status, 0, same.stderr)
+  assert.equal(same.stdout.trim(), ENTRY)
+  assert.equal(same.calls.filter(l => !l.startsWith('GET ')).length, 0)
+  const replaced = run('footer', 'put', [], undefined, undefined, NEW)
+  assert.equal(replaced.status, 0, replaced.stderr)
+  assert.equal(replaced.calls.filter(l => l.startsWith('PATCH /repos/o/r/issues/comments/2 ')).length, 1)
+  assert.equal(replaced.posts.length, 0)
+})
+
+test('a person line before the footer, or a footer with changed words, is an edit: exit 4', () => {
+  for (const fixture of ['footer-person-line', 'footer-changed']) {
+    const g = run(fixture)
+    assert.equal(g.status, 4, fixture)
+    assert.equal(g.stdout, '')
+    const p = run(fixture, 'put')
+    assert.equal(p.status, 4, fixture)
+    assert.equal(p.calls.filter(l => !l.startsWith('GET ')).length, 0, fixture)
+  }
+})
+
 test('the sum is the POSIX cksum of the text, the same as the workflow computes', () => {
   assert.equal(sumOf(ENTRY), '452653:48')
 })
