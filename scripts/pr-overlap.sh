@@ -15,9 +15,11 @@ tmp=$(mktemp -d) || fail "cannot make a temporary folder"
 trap 'rm -rf "$tmp"' EXIT
 
 me=$(gh api user --jq .login) || fail "cannot read the account"
-gh api --paginate "repos/$R/issues/$pr/comments?per_page=100" >"$tmp/comments" || fail "cannot read the comments"
-if jq -e -s --arg me "$me" --arg marker "$MARKER" \
-  'any(.[][]; .user.login == $me and ((.body // "") | split("\n")[0] | rtrimstr("\r") == $marker))' "$tmp/comments" >/dev/null; then
+here=$(cd "$(dirname "$0")" && pwd)
+gh api --paginate --slurp "repos/$R/issues/$pr/comments?per_page=100" >"$tmp/pages" || fail "cannot read the comments"
+jq 'add // []' "$tmp/pages" >"$tmp/comments" || fail "cannot read the comments"
+posted=$(jq --arg prefix "$MARKER" --arg user "$me" --arg all 1 -f "$here/trusted-comment.jq" "$tmp/comments") || fail "cannot read the comments"
+if [ "$(jq length <<<"$posted")" -gt 0 ]; then
   echo "already posted"
   exit 0
 fi
