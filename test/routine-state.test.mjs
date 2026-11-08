@@ -1554,9 +1554,13 @@ test('stage 0: put blocked posts no comment', () => {
 
 test('a triage-plan block that is approved again still ends', () => {
   const s = csetup(c_withIssues({
-    issue: c_ci(5, { labels: ['needs-plan', 'maintainer-approved'] }), events: c_approved(c_T(90)),
-    records: [c_triagedRec(5), c_startedRec(5, 1, { at: c_T(30) }), c_cr('blocked', '5:1', { run: c_CRUN(1), reasonCode: 'triage-plan', attempt: 1 }, { at: c_T(40) })],
+    issue: c_ci(5, { labels: ['building'] }),
+    records: [c_triagedRec(5), c_startedRec(5, 1, { at: c_T(30) }), c_builtRec(5, 1, { rec: { reasonCode: 'triage-plan' } })],
   }))
+  c_doPut(s, 'blocked', '5', c_CRUN(1), 'triage-plan')
+  assert.deepEqual(c_labelsOf(s, 5), ['needs-plan'])
+  s.w.events[5] = [...(s.w.events[5] ?? []), c_lab('maintainer-approved', 'alfhen', c_T(400))]
+  c_issueOf(s, 5).labels.push({ name: 'maintainer-approved' }); s.sync()
   const seen = []
   for (let g = 0; g < 8; g++) {
     const l = c_one(c_cnext(s, 'cloud-build'))
@@ -1579,7 +1583,10 @@ test('exhausted does not fire while the last attempt runs or after it opened a P
     }))
     assert.notEqual(c_one(c_cnext(mk(), 'cloud-build')).step, 'exhausted', labels.join())
     const withPr = mk(); withPr.w.pulls = [c_cpr('claude/issue-5')]; withPr.sync()
-    assert.notEqual(c_one(c_cnext(withPr, 'cloud-build')).step, 'exhausted', labels.join())
+    assert.equal(c_one(c_cnext(withPr, 'cloud-build')).step, 'pr-seen', labels.join())
+    c_doPut(withPr, 'pr-seen', '5')
+    assert.ok(!c_labelsOf(withPr, 5).includes('building'), labels.join())
+    assert.equal(c_one(c_cnext(withPr, 'cloud-build')).step, 'idle', labels.join())
   }
 })
 
