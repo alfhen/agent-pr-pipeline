@@ -213,7 +213,7 @@ def hasl($l): .L | index($l) != null;
   | ([$F[] | select(.ls != null and (.ended | not) and (.hasPr | not)
         and (.built or ((try (.ls.at | fromdateiso8601) catch 0) < now - ($lim.buildHours * 3600))))] | byAge) as $block
   | ([$F[] | select((hasl("build-failed") or .lb.rec.reasonCode == "triage-plan") and (hasl("needs-maintainer") | not) and .A != null and .lb != null and .A > .lb.at
-        and .att >= $lim.buildAttempts and .authorPart)] | byAge) as $exhausted
+        and .att >= $lim.buildAttempts and .ended and .authorPart)] | byAge) as $exhausted
   | ([$F[] | . as $f | select($f.A != null and $f.reason == null and ($f.excluded | not) and $f.trNew
         and ($f.tr.rec.size == "L" or $f.tr.rec.risk == "high" or $f.tr.rec.decision == "plan")
         and ($f.r | any(.kind == "needs-plan" and .key == "\($f.n):\($f.A)") | not))] | byAge) as $needsPlan

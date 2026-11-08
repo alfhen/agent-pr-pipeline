@@ -251,6 +251,14 @@ test('short-step bullets do not stop, so the loop is reachable', () => {
   }
 })
 
+test('the triager treats the block comment as a report, with the same first sentence as blocked_comment', () => {
+  const sentence = 'The build routine stopped and opened no PR.'
+  const firsts = read('scripts/routine-state.sh').split('\n').filter(l => /^\s+(triage-plan|triage-decline|rounds-exhausted|needs-human|\*)\) first=/.test(l))
+  assert.equal(firsts.length, 5)
+  assert.ok(firsts.every(l => l.includes(`first="${sentence}`)))
+  assert.ok(read('agents/triager.md').includes(`start with \`${sentence}\``))
+})
+
 test('the docs say one run handles every step up to the limit', () => {
   assert.match(read('docs/cloud-routines.md'), /One run handles every step up to a limit of 20 passes/)
   assert.match(read('docs/cloud-routines.md'), /copies `run-wave\.js` from `pluginRoot` to `\.git\/apl\/run-wave\.js`/)

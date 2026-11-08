@@ -1553,22 +1553,34 @@ test('stage 0: put blocked posts no comment', () => {
 })
 
 test('a triage-plan block that is approved again still ends', () => {
-  const s = c_blockSetup(['building', 'maintainer-approved'], [c_builtRec(5, 1, { rec: { reasonCode: 'triage-plan', why: 'quick fix: plan.' } })])
-  s.w.events[5] = c_approved(c_T(5)); s.sync()
-  c_doPut(s, 'blocked', '5', c_CRUN(1), 'triage-plan')
-  s.w.events[5] = [...s.w.events[5], c_lab('maintainer-approved', 'alfhen', c_T(95))]
-  c_issueOf(s, 5).labels = [{ name: 'maintainer-approved' }]; s.sync()
+  const s = csetup(c_withIssues({
+    issue: c_ci(5, { labels: ['needs-plan', 'maintainer-approved'] }), events: c_approved(c_T(90)),
+    records: [c_triagedRec(5), c_startedRec(5, 1, { at: c_T(30) }), c_cr('blocked', '5:1', { run: c_CRUN(1), reasonCode: 'triage-plan', attempt: 1 }, { at: c_T(40) })],
+  }))
   const seen = []
   for (let g = 0; g < 8; g++) {
     const l = c_one(c_cnext(s, 'cloud-build'))
     seen.push(l.step)
-    if (l.step === 'build') { c_doPut(s, 'build-started', '5', l.run, l.branch, String(l.attempt)); s.w.pulls.push(c_cpr(l.branch)); s.sync() }
+    if (l.step === 'build') { assert.equal(l.attempt, 2); c_doPut(s, 'build-started', '5', l.run, l.branch, String(l.attempt)); s.w.pulls.push(c_cpr(l.branch)); s.sync() }
     else if (l.step === 'pr-seen') c_doPut(s, 'pr-seen', '5')
-    else if (l.step === 'needs-plan') c_doPut(s, 'needs-plan', '5')
-    else if (l.step === 'exhausted') c_doPut(s, 'exhausted', '5')
     else break
   }
-  assert.equal(seen.at(-1), 'idle', seen.join(','))
+  assert.deepEqual(seen, ['build', 'pr-seen', 'idle'])
+  assert.ok(!c_labelsOf(s, 5).includes('needs-maintainer'))
+  assert.ok(!c_labelsOf(s, 5).includes('build-failed'))
+})
+
+test('exhausted does not fire while the last attempt runs or after it opened a PR', () => {
+  for (const labels of [['maintainer-approved', 'build-failed'], ['needs-plan', 'maintainer-approved']]) {
+    const lastBlocked = labels.includes('build-failed') ? c_blockedRec(5, 1, { at: c_T(40) }) : c_cr('blocked', '5:1', { run: c_CRUN(1), reasonCode: 'triage-plan', attempt: 1 }, { at: c_T(40) })
+    const mk = () => csetup(c_withIssues({
+      issue: c_ci(5, { labels: [...labels, 'building'] }), events: c_approved(c_T(90)),
+      records: [c_triagedRec(5), c_startedRec(5, 1, { at: c_T(30) }), lastBlocked, c_startedRec(5, 2, { at: c_T(95) })],
+    }))
+    assert.notEqual(c_one(c_cnext(mk(), 'cloud-build')).step, 'exhausted', labels.join())
+    const withPr = mk(); withPr.w.pulls = [c_cpr('claude/issue-5')]; withPr.sync()
+    assert.notEqual(c_one(c_cnext(withPr, 'cloud-build')).step, 'exhausted', labels.join())
+  }
 })
 
 test('a triage-plan block on the last attempt, approved again, ends: exhausted, needs-maintainer, idle', () => {
