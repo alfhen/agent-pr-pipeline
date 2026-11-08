@@ -34,7 +34,7 @@ Show the maintainer, for each routine: the name, the schedule, the sources, the 
 
 ## 2. The environment
 
-No RemoteTrigger action reads or changes an environment or its setup script (K8). So the maintainer pastes the `setupScript` field in the web UI: write it to a file, show the path, and wait for a yes that it is saved. The script reads the list when a session starts, so a new release that the list holds needs no new paste. The environment's own part (for example the package manager of the repo) follows the printed part and is the maintainer's. Do not go on until the maintainer says it is saved.
+No RemoteTrigger action reads or changes an environment or its setup script (K8). So the maintainer pastes the `setupScript` field in the web UI: write it to a file, show the path, and wait for a yes that it is saved. The script reads the list each time the environment runs the setup script, about every 7 days, so a new release that the list holds needs no new paste. The environment's own part (for example the package manager of the repo) follows the printed part and is the maintainer's. Do not go on until the maintainer says it is saved.
 
 ## 3. The tracking issue
 
@@ -63,4 +63,4 @@ The fast pause is the label `routine-paused` on the tracking issue of the repo. 
 
 ## After a release
 
-For each repo that should move, open the one-line PR that sets `routine.pipelineVersion` to the new tag in `.github/pipeline.json` (a gated path, so the maintainer merges it). A release that `releases.txt` holds is installed by the environment already pasted. Regenerate the setup script, with one `--tags` value per tag still in use that the list no longer holds, and ask the maintainer to paste it again only when the tags changed. A repo whose pin is not installed makes `apl-start` stop, and its routine sends one notice.
+For each repo that should move, open the one-line PR that sets `routine.pipelineVersion` to the new tag in `.github/pipeline.json` (a gated path, so the maintainer merges it). A release that `releases.txt` holds is installed by the environment already pasted, but it can take up to a week to arrive. A pin raised sooner makes `apl-start` stop with one env-stale notice. To force a run, tell the maintainer to save the setup script again with any small change. Regenerate the setup script, with one `--tags` value per tag still in use that the list no longer holds, and ask the maintainer to paste it again only when the tags changed. A repo whose pin is not installed makes `apl-start` stop, and its routine sends one notice.
