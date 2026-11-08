@@ -23,3 +23,7 @@ test('answer prompt tells the agent to read bot review bodies and reply with one
 test('the bot step runs the answer agent when reviewBodies is above 0', () => {
   assert.match(src, /status\.reviewBodies \|\| 0/)
 })
+
+test('the answer prompt names the marker the status script reads', () => {
+  assert.match(src, /<!-- pipeline-bot-answer head=\$\{headSha\} -->/)
+})

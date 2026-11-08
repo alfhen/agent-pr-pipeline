@@ -195,6 +195,7 @@ const statusSetup = (reviews, comments, checks = [{ name: 'Gitar', status: 'comp
   put(s.fx, `${P}__pulls__7.json`, { head: { sha: HEAD } })
   put(s.fx, `${P}__pulls__7__reviews.json`, reviews)
   put(s.fx, `${P}__pulls__7__comments.json`, comments)
+  put(s.fx, `${P}__issues__7__comments.json`, [])
   put(s.fx, `${P}__commits__${HEAD}__check-runs.json`, { check_runs: checks })
   return s
 }
@@ -203,12 +204,12 @@ const status = (s) => JSON.parse(run(s, 'bot-status.sh', ['o/r', '7']).out)
 
 test('bot-status: approvedBy is the land gate rule, so an approval of an older commit counts', () => {
   const r = status(statusSetup([rv('APPROVED', 'old'.padEnd(40, '0'), '1')], []))
-  assert.deepEqual(r, { head: HEAD, approvedBy: [`${BOT} (approved earlier)`], seenHead: [BOT], openThreads: 0, reviewBodies: 0 })
+  assert.deepEqual(r, { head: HEAD, approvedBy: [`${BOT} (approved earlier)`], seenHead: [BOT], pending: [], openThreads: 0, reviewBodies: 0 })
 })
 
 test('bot-status: an approval of an older commit with the bot check still running has not seen the head', () => {
   const r = status(statusSetup([rv('APPROVED', 'old'.padEnd(40, '0'), '1')], [], [{ name: 'Gitar', status: 'in_progress', conclusion: null }]))
-  assert.deepEqual(r, { head: HEAD, approvedBy: [], seenHead: [], openThreads: 0, reviewBodies: 0 })
+  assert.deepEqual(r, { head: HEAD, approvedBy: [], seenHead: [], pending: ['Gitar'], openThreads: 0, reviewBodies: 0 })
 })
 
 test('bot-status: an approval on the head has seen it', () => {
@@ -224,7 +225,7 @@ test('bot-status: a reply-only review after an approval does not take the approv
 test('bot-status: an unanswered bot thread is counted and nothing clears', () => {
   const thread = (id) => ({ id, pull_request_review_id: 1, in_reply_to_id: null, user: { login: BOT } })
   const s = statusSetup([rv('COMMENTED', 'old'.padEnd(40, '0'), '1')], [thread(4), thread(5), { id: 9, in_reply_to_id: 4, user: { login: 'alfhen' } }])
-  assert.deepEqual(status(s), { head: HEAD, approvedBy: [], seenHead: [], openThreads: 1, reviewBodies: 0 })
+  assert.deepEqual(status(s), { head: HEAD, approvedBy: [], seenHead: [], pending: [], openThreads: 1, reviewBodies: 0 })
 })
 
 test('bot-status: a failed GitHub read exits 1', () => {
@@ -246,7 +247,7 @@ test('release: a red branch with check runs over 128 KiB still refuses', () => {
 test('bot-status: reviews and comments over 128 KiB still work', () => {
   const thread = (id) => ({ id, pull_request_review_id: 1, in_reply_to_id: null, user: { login: BOT }, body: 'x'.repeat(40000) })
   const s = statusSetup([rv('COMMENTED', 'old'.padEnd(40, '0'), '1')], Array.from({ length: 30 }, (_, i) => thread(i + 1)))
-  assert.deepEqual(status(s), { head: HEAD, approvedBy: [], seenHead: [], openThreads: 30, reviewBodies: 0 })
+  assert.deepEqual(status(s), { head: HEAD, approvedBy: [], seenHead: [], pending: [], openThreads: 30, reviewBodies: 0 })
 })
 
 // The plugin's own repo: the fixtures of setup() moved to its name, plus a files.txt and a tree.

@@ -20,6 +20,7 @@ const setup = (reviews) => {
   put(fx, `${P}__pulls__7.json`, { head: { sha: HEAD } })
   put(fx, `${P}__commits__${HEAD}__check-runs.json`, { check_runs: [] })
   put(fx, `${P}__pulls__7__comments.json`, [])
+  put(fx, `${P}__issues__7__comments.json`, [])
   reviews.forEach((r, i) => put(fx, `${P}__pulls__7__reviews.call${i + 1}.json`, r))
   return { dir, fx, log: join(dir, 'log') }
 }
@@ -95,8 +96,9 @@ test('fake-gh: a query is logged and its fixture wins over the plain one', () =>
 })
 
 const OLD = 'b'.repeat(40)
-const status = (reviews) => {
+const status = (reviews, issueComments = []) => {
   const s = setup([reviews])
+  put(s.fx, `${P}__issues__7__comments.json`, issueComments)
   const r = spawnSync('bash', [join(root, 'scripts/bot-status.sh'), 'o/r', '7'], {
     encoding: 'utf8',
     env: { ...process.env, PATH: `${join(s.dir, 'bin')}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log },
@@ -128,4 +130,33 @@ test('reviewBodies skips a body on an older commit and a body from a person', ()
 
 test('reviewBodies counts an unknown text', () => {
   assert.equal(status([rev('Something new we have never seen')]), 1)
+})
+
+const marker = (head = HEAD) => `<!-- pipeline-bot-answer head=${head} -->\nAnswered.`
+const answer = (association, body = marker()) => ({ author_association: association, body })
+
+test('reviewBodies is 0 when a maintainer answer comment for the head is on the PR', () => {
+  assert.equal(status([rev('Something new')], [answer('OWNER')]), 0)
+  assert.equal(status([rev('Something new')], [answer('COLLABORATOR')]), 0)
+})
+
+test('reviewBodies ignores an answer comment from an outsider, for another head, or without the marker at the start', () => {
+  assert.equal(status([rev('Something new')], [answer('NONE'), answer('CONTRIBUTOR')]), 1)
+  assert.equal(status([rev('Something new')], [answer('OWNER', marker(OLD))]), 1)
+  assert.equal(status([rev('Something new')], [answer('OWNER', `quoted ${marker()}`)]), 1)
+})
+
+test('wait-bots keeps polling while a bot check run is still running, and the body then counts', () => {
+  const s = setup([[], [...approved], [...approved, rev('Outside diff range comments (1)')]])
+  const checks = (status_) => ({ check_runs: [{ name: 'CodeRabbit', status: status_, conclusion: null }] })
+  put(s.fx, `${P}__commits__${HEAD}__check-runs.call1.json`, checks('in_progress'))
+  put(s.fx, `${P}__commits__${HEAD}__check-runs.call2.json`, checks('in_progress'))
+  put(s.fx, `${P}__commits__${HEAD}__check-runs.call3.json`, checks('completed'))
+  const r = run(s, ['o/r', '7', '5'])
+  assert.equal(r.status, 0, r.stderr)
+  const out = JSON.parse(r.stdout)
+  assert.equal(out.timedOut, false)
+  assert.deepEqual(out.pending, [])
+  assert.equal(out.reviewBodies, 1)
+  assert.equal(reads(s), 3)
 })
