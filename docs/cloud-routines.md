@@ -140,7 +140,7 @@ flowchart TD
 Summary: the setup script installs each named release and checks every file against `files.txt`; `apl-start` checks the pin and the files again before any work.
 
 - The pin is `routine.pipelineVersion`. A release tag cannot move, because the tag ruleset below forbids updates and deletions. That is why the setup script can trust a tag's files.
-- `bash scripts/cloud-setup.sh --print <tag>... [--repo <owner/repo>]` prints the setup script. The release manifest `.claude-plugin/files.txt` lists the shipped files as `<git blob sha> <path>`. `scripts/manifest.sh --write` writes it, and `manifest.sh --check` verifies it. `release.sh` refuses a release of this repo when the manifest does not match the tree.
+- `bash scripts/cloud-setup.sh --print [--latest <n>] [<tag>...] [--repo <owner/repo>]` prints the setup script. With `--latest <n>`, the script reads the release tags of the repo when it runs (`git ls-remote --tags --refs`), keeps `v<major>.<minor>.<patch>` tags at or above `v0.8.0` (older tags have no `files.txt`), takes the newest `<n>` by version order, adds the named tags and removes repeats. A failed lookup, or no tag found, exits 1. `routine-spec.sh` prints the script with `--latest 3`, plus the pin and the `--tags` values. The release manifest `.claude-plugin/files.txt` lists the shipped files as `<git blob sha> <path>`. `scripts/manifest.sh --write` writes it, and `manifest.sh --check` verifies it. `release.sh` refuses a release of this repo when the manifest does not match the tree.
 - The script writes each release to `/opt/agent-pr-pipeline/<tag>/`, each role agent to `~/.claude/agents/apl-<v>-<name>.md` (for `v0.8.0` the prefix is `apl-v0-8-0-`), and the launcher `/usr/local/bin/apl-start`. One environment can hold several releases, so two repos can pin different ones. Any failed fetch or check exits 1.
 - `apl-start <owner/repo>` reads the pin from the default branch, checks the install and the files, and prints one JSON line with `version`, `pluginRoot`, `agentPrefix` and `defaultSha`. On a failure it prints `APL STOP <reason>`, `PIN <tag>` and `ROOT <path or none>`, and exits 1. The prompt then runs `put env-stale` from that root, which writes one record and one notice. Later runs with the same record stop without a notice, and the next good start writes `env-ok`.
 - `pluginRoot` is outside the clone, so a PR cannot change the scripts that judge it. Workflow refuses a script outside the working folder, so the build routine copies `run-wave.js` from `pluginRoot` to `.git/apl/run-wave.js` in the clone, in the same session, just before the call. `.git` is never tracked, and a PR cannot change the copy.
@@ -150,18 +150,18 @@ Summary: the setup script installs each named release and checks every file agai
 
 No API changes an environment (K8). The maintainer does this part in the web UI:
 
-1. Run `bash scripts/cloud-setup.sh --print v0.8.0` for the repo's pin. Add one tag per release still in use.
+1. Run `scripts/routine-spec.sh <owner/repo>` and take the `setupScript` field. It installs the pin and the newest 3 releases. To print it by hand, run `bash scripts/cloud-setup.sh --print --latest 3 v0.8.0`.
 2. Paste the output in the environment's setup script. Add the repo's own tools after it (for example pnpm).
 3. Save, and note the environment id.
 
-The setup script costs no model tokens. A saved environment is reused for about 7 days.
+The setup script costs no model tokens. A saved environment is reused for about 7 days, and the environment runs the script again about every 7 days.
 
 ### Upgrade the pin
 
 1. After a release, open a one-line PR that sets `routine.pipelineVersion` to the new tag. It is a gated path, so the maintainer merges it.
-2. Print the setup script again with every tag still in use, and paste it in the web UI.
+2. Paste nothing. The setup script finds the new release itself when the environment runs it again.
 
-A repo whose pin is not installed makes `apl-start` stop, and the routine sends one notice.
+The agents must exist before a session starts, so `apl-start` cannot install a release at session start. A new release can take up to a week to arrive. A pin raised before the environment runs the script again makes `apl-start` stop, and the routine sends one `env-stale` notice. To force it sooner, save the setup script in the web UI again with any small change. Paste is needed only when the text of the setup script changes.
 
 ## Approval and its limit
 

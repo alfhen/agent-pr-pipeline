@@ -306,3 +306,73 @@ test('manifest.sh --check without a files.txt fails', () => {
   assert.equal(r.code, 1)
   assert.equal(r.out, 'MANIFEST missing .claude-plugin/files.txt')
 })
+
+const realGit = sh('bash', ['-c', 'command -v git']).stdout.trim()
+writeFileSync(join(stubBin, 'git'), `#!/bin/bash
+# Answers ls-remote from $LS_REMOTE (a file), or fails when $LS_FAIL is set; passes every other command to git.
+if [ "$1" = ls-remote ]; then
+  echo "$@" >> "$CURL_LOG"
+  [ -z "\${LS_FAIL:-}" ] || { echo "fatal: unable to access" >&2; exit 128; }
+  cat "$LS_REMOTE"; exit 0
+fi
+exec ${realGit} "$@"
+`)
+chmodSync(join(stubBin, 'git'), 0o755)
+
+const SHA = 'a'.repeat(40)
+const latest = (w, remoteTags, args, extra = {}) => {
+  writeFileSync(join(w.dir, 'ls.txt'), remoteTags.map((t) => `${SHA}\trefs/tags/${t}`).join('\n') + (remoteTags.length ? '\n' : ''))
+  const p = print('--latest', ...args, '--repo', 'o/r')
+  assert.equal(p.status, 0, p.stderr)
+  const script = join(w.dir, 'setup.sh'); writeFileSync(script, p.stdout)
+  return sh('bash', [script], { cwd: w.dir, env: { ...env(w), LS_REMOTE: join(w.dir, 'ls.txt'), ...extra } })
+}
+const installed = (w) => readdirSync(w.opt).filter((f) => existsSync(join(w.opt, f, '.complete'))).sort()
+
+test('--latest 3 installs the newest three tags at or above v0.8.0, by version order', () => {
+  const w = world(['v0.8.0', 'v0.8.1', 'v0.9.0', 'v0.10.0'])
+  const r = latest(w, ['v0.7.0', 'v0.8.0', 'v1.0.0-rc1', 'v0.8.1', 'v0.10.0', 'v0.9.0'], ['3'])
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.deepEqual(installed(w), ['v0.10.0', 'v0.8.1', 'v0.9.0'])
+  assert.ok(existsSync(join(w.home, '.claude/agents/apl-v0-10-0-tester.md')))
+  assert.match(readFileSync(w.curlLog, 'utf8'), /ls-remote --tags --refs https:\/\/github\.com\/o\/r refs\/tags\/v\*/)
+})
+
+test('--latest ignores a tag below v0.8.0 and a pre-release tag', () => {
+  const w = world(['v0.8.0'])
+  const r = latest(w, ['v0.7.9', 'v1.0.0-rc1', 'v0.8.0'], ['3'])
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.deepEqual(installed(w), ['v0.8.0'])
+})
+
+test('--latest adds a named older tag once, even when it is also among the newest', () => {
+  const w = world(['v0.8.0', 'v0.8.1', 'v0.9.0'])
+  const r = latest(w, ['v0.8.0', 'v0.8.1', 'v0.9.0'], ['1', 'v0.8.0', 'v0.9.0'])
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.deepEqual(installed(w), ['v0.8.0', 'v0.9.0'])
+  const fetches = readFileSync(w.curlLog, 'utf8').split('\n').filter((u) => u.endsWith('/refs/tags/v0.9.0/.claude-plugin/files.txt'))
+  assert.equal(fetches.length, 1)
+})
+
+test('--latest with a failed ls-remote exits 1 and installs nothing', () => {
+  const w = world(['v0.8.0'])
+  const r = latest(w, ['v0.8.0'], ['3'], { LS_FAIL: '1' })
+  assert.equal(r.status, 1)
+  assert.match(r.stderr, /tag lookup failed/)
+  assert.deepEqual(installed(w), [])
+  assert.equal(existsSync(join(w.bin, 'apl-start')), false)
+})
+
+test('--latest with no tag found exits 1 and installs nothing', () => {
+  const w = world(['v0.8.0'])
+  const r = latest(w, ['v0.7.0', 'v1.0.0-rc1'], ['3', 'v0.8.0'])
+  assert.equal(r.status, 1)
+  assert.match(r.stderr, /no release tag found/)
+  assert.deepEqual(installed(w), [])
+})
+
+test('--latest needs a count of 1 or more; --print with no tag and no --latest is still a usage error', () => {
+  assert.equal(print('--latest', '0', '--repo', 'o/r').status, 2)
+  assert.equal(print('--latest', 'x', '--repo', 'o/r').status, 2)
+  assert.equal(print('--repo', 'o/r').status, 2)
+})

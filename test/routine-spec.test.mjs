@@ -188,3 +188,11 @@ test('every routine carries the tools the prompts call, and the skill passes the
   }
   assert.match(readFileSync(join(root, 'skills/cloud-routines/SKILL.md'), 'utf8'), /`allowedTools`/)
 })
+
+test('the setup script resolves the newest releases at run time and still holds the pin', () => {
+  const r = spec('alfhen/pipeline-dogfood', settings({ pipelineVersion: 'v0.8.2' }), ['--tags', 'v0.8.1'])
+  const s = r.json.setupScript
+  assert.match(s, /^LATEST=3$/m)
+  assert.match(s, /ls-remote --tags --refs/)
+  assert.match(s, /^NAMED=\(v0\.8\.2 v0\.8\.1\)$/m)
+})

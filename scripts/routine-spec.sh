@@ -36,12 +36,12 @@ if [ "$cfg" = null ]; then
   exit 0
 fi
 
-# The pin is always first, so the environment holds the release the repo's apl-start asks for.
+# The pin stays in the script so a repo on an older release still gets it; --latest 3 adds the newest releases at run time.
 all=("$(jq -r .pipelineVersion <<<"$cfg")")
 for t in "${tags[@]+"${tags[@]}"}"; do
   case " ${all[*]} " in *" $t "*) ;; *) all+=("$t") ;; esac
 done
-setup=$(bash "$here/cloud-setup.sh" --print "${all[@]}") || exit 1
+setup=$(bash "$here/cloud-setup.sh" --print --latest 3 "${all[@]}") || exit 1
 
 # The minute and hour come from the name, so the routines of different repos do not start together.
 base=$(printf '%s' "$repo" | tr '[:upper:]/' '[:lower:]-')

@@ -1,26 +1,33 @@
 #!/bin/bash
-# usage: cloud-setup.sh --print <tag>... [--repo <owner/repo>]
+# usage: cloud-setup.sh --print [--latest <n>] [<tag>...] [--repo <owner/repo>]
 # Prints the setup script for a Claude Code cloud environment. The printed script needs no file of this repo:
 # it fetches each named release from raw.githubusercontent.com, checks every file against the release's
 # files.txt, installs it under /opt/agent-pr-pipeline/<tag>/, writes the role agents with a version prefix to
 # ~/.claude/agents/, and installs the launcher apl-start. This file is the one place for the install folder,
 # the agent name rule and the launcher text.
+# With --latest <n>, the printed script reads the release tags of the repo when it runs and installs the newest n
+# (v0.8.0 and up, the first with a files.txt) plus the named tags.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
-usage() { echo "usage: cloud-setup.sh --print <tag>... [--repo <owner/repo>]" >&2; exit 2; }
+usage() { echo "usage: cloud-setup.sh --print [--latest <n>] [<tag>...] [--repo <owner/repo>]" >&2; exit 2; }
 
 [ "${1:-}" = "--print" ] || usage
 shift
-tags=(); repo=""
+tags=(); repo=""; latest=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --latest) [ $# -ge 2 ] || usage; latest=$2; shift 2 ;;
     --repo) [ $# -ge 2 ] || usage; repo=$2; shift 2 ;;
     -*) usage ;;
     *) tags+=("$1"); shift ;;
   esac
 done
-[ ${#tags[@]} -gt 0 ] || usage
-for t in "${tags[@]}"; do
+if [ -n "$latest" ]; then
+  [[ "$latest" =~ ^[1-9][0-9]{0,2}$ ]] || { echo "cloud-setup.sh: refused --latest '$latest': a count of 1 or more" >&2; exit 2; }
+else
+  [ ${#tags[@]} -gt 0 ] || usage
+fi
+for t in "${tags[@]+"${tags[@]}"}"; do
   [[ "$t" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "cloud-setup.sh: refused tag '$t': a tag is v<major>.<minor>.<patch>" >&2; exit 2; }
 done
 [ -n "$repo" ] || repo=$(bash "$here/plugin-repo.sh") || exit 1
@@ -151,6 +158,20 @@ install_tag() {
 }
 EOF
 
+# The floor is v0.8.0: older tags have no files.txt. sort -V, not a text sort, so v0.10.0 is above v0.9.0.
+read -r -d '' RESOLVE <<'EOF' || true
+
+resolve_tags() {
+  local out
+  out=$(git ls-remote --tags --refs "https://github.com/$REPO" 'refs/tags/v*') || { echo "tag lookup failed for $REPO" >&2; exit 1; }
+  out=$(printf '%s\n' "$out" | awk '{ sub("^refs/tags/", "", $2); print $2 }' \
+    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+    | awk -F'[v.]' '$2 > 0 || ($2 == 0 && $3 >= 8)' | sort -V | tail -n "$LATEST") || true
+  [ -n "$out" ] || { echo "no release tag found for $REPO" >&2; exit 1; }
+  printf '%s\n' "$out"
+}
+EOF
+
 read -r -d '' SETUP_TAIL <<'EOF' || true
 
 mkdir -p "$BIN"
@@ -161,7 +182,14 @@ printf '%s\n' "$SETUP_HEAD"
 printf 'REPO=%s\n' "$repo"
 printf '%s\n' "$AGENT_FN"
 printf '%s\n' "$SETUP_BODY"
-printf 'for tag in %s; do install_tag "$tag"; done\n' "${tags[*]}"
+if [ -n "$latest" ]; then
+  printf '%s\n' "$RESOLVE"
+  printf 'LATEST=%s\nNAMED=(%s)\n' "$latest" "${tags[*]-}"
+  printf '%s\n' 'found=$(resolve_tags) || exit 1' \
+    'for tag in $(printf "%s\n" $found "${NAMED[@]+"${NAMED[@]}"}" | awk '"'"'!seen[$0]++'"'"'); do install_tag "$tag"; done'
+else
+  printf 'for tag in %s; do install_tag "$tag"; done\n' "${tags[*]}"
+fi
 printf '%s\n' "$SETUP_TAIL"
 printf '%s\n' "$LAUNCHER" | FN="$AGENT_FN" awk '$0 == "AGENT_FN_HERE" { print ENVIRON["FN"]; next } { print }'
 printf '%s\n' "APL_START_EOF"
