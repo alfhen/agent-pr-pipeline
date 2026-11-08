@@ -7,7 +7,7 @@ You are the build routine. `/tmp/apl-start.json` is written and the repo `<repo>
 1. Run `git fetch origin`.
 2. Make the source worktree: `git worktree add --detach /tmp/apl-src-<defaultSha> <defaultSha>`. If that folder exists, use it.
 3. Read repo files (the goals document, `CLAUDE.md`, code) only under `/tmp/apl-src-<defaultSha>`. Never read them from the clone's `HEAD`. Change no file in the clone's working tree.
-4. Do other work only under `/tmp/apl-<run>`, where `<run>` is the run id that `next` printed for the build.
+4. Do other work only under `/tmp/apl-<run>`, where `<run>` is the run id that `next` printed for the build. The one exception is the copy of the workflow script in step 5.4.
 
 ## Rules
 
@@ -25,21 +25,22 @@ You are the build routine. `/tmp/apl-start.json` is written and the repo `<repo>
 2. If the only step is `paused`, `init needed`, `idle` or `wait`, say so and stop.
 3. If there are several lines, or any line has the step `would-build` (stage 0), run the `put` of every line that is not `would-build`, as step 4 shows. Each `put` prints `WOULD` and writes nothing. Then print the `would-build` line if there is one, and stop. Run no `put build-started` and no Workflow call.
 4. Otherwise there is one line. Act on it:
-   - `pr-seen`: run `bash <pluginRoot>/scripts/routine-state.sh <repo> put pr-seen <issue>`, then stop.
-   - `revoke`: run `put revoke <issue> <cause>`, then stop.
-   - `block`: run `put blocked <issue> <run> <reasonCode>`, then stop. The `run` comes from a record: use it only when it matches `^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$`, else log it and stop.
-   - `exhausted`: run `put exhausted <issue>`, then stop.
-   - `needs-plan`: run `put needs-plan <issue>`, then stop.
-   - `build`: do step 5.
+   - `pr-seen`: run `bash <pluginRoot>/scripts/routine-state.sh <repo> put pr-seen <issue>`.
+   - `revoke`: run `put revoke <issue> <cause>`.
+   - `block`: run `put blocked <issue> <run> <reasonCode>`. The `run` comes from a record: use it only when it matches `^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$`, else log it and stop.
+   - `exhausted`: run `put exhausted <issue>`.
+   - `needs-plan`: run `put needs-plan <issue>`.
+   - `build`: do step 5, then stop.
 
-   Send the notice when the `put` printed `NOTICE`. If such a `put` exits 65, the issue is no longer in that step: log it and stop.
+   After a `put` of the first five, send the notice if the `put` printed `NOTICE`, and go back to step 1 for a new `next`. Stop instead when the `put` exits non-zero (65 included), or when its output starts with `WOULD`. Make at most 20 passes through steps 1 to 4. After the 20th pass, stop.
 5. For `build`:
    1. Run `bash <pluginRoot>/scripts/routine-state.sh <repo> put build-started <issue> <run> <branch> <attempt>`. If it prints a line that starts with `WOULD`, stop. If it exits 66, stop: another run won. If it exits with any other non-zero code, stop.
    2. Run ToolSearch with `select:Workflow`.
    3. Write the `args` object of the step, as it is, to `/tmp/apl-<run>/args.json`. Read it back with the Read tool.
-   4. Call Workflow with `scriptPath` `<pluginRoot>/workflows/run-wave.js` and exactly the object you read. Change no field and add none.
-   5. Write the result of Workflow to `/tmp/apl-<run>/result.json`. If Workflow gave no result, stop and run no more command: a later run blocks the issue.
-   6. Run `bash <pluginRoot>/scripts/routine-state.sh <repo> put built <issue> <run> <pr> <ready> <reasonCode>`. Take `<pr>` from `prs[0].prNumber`, or `none`. Take `<ready>` from `prs[0].ready` (`true` or `false`). Take `<reasonCode>` from `prs[0].reason`: `opened` when `ready` is true; `triage-plan` for `quick fix: plan`; `triage-decline` for `quick fix: decline`; `rounds-exhausted` when the reason says the rounds ran out; `needs-human` when it starts with `needs human`; else `other`.
-   7. Run `bash <pluginRoot>/scripts/feedback-outbox.sh <repo> /tmp/apl-<run>/result.json --run <run>` and log its output.
+   4. From the clone, run `mkdir -p .git/apl && cp <pluginRoot>/workflows/run-wave.js .git/apl/run-wave.js`. The clone is the folder that `prompt.md` changed into, not `/tmp/apl-src-<defaultSha>`, where `.git` is a file. If the command fails, stop.
+   5. Call Workflow with `scriptPath` the absolute path `<clone>/.git/apl/run-wave.js` and exactly the object you read. Change no field and add none. Use no other `scriptPath`.
+   6. Write the result of Workflow to `/tmp/apl-<run>/result.json`. If Workflow gave no result, stop and run no more command: a later run blocks the issue.
+   7. Run `bash <pluginRoot>/scripts/routine-state.sh <repo> put built <issue> <run> <pr> <ready> <reasonCode>`. Take `<pr>` from `prs[0].prNumber`, or `none`. Take `<ready>` from `prs[0].ready` (`true` or `false`). Take `<reasonCode>` from `prs[0].reason`: `opened` when `ready` is true; `triage-plan` for `quick fix: plan`; `triage-decline` for `quick fix: decline`; `rounds-exhausted` when the reason says the rounds ran out; `needs-human` when it starts with `needs human`; else `other`.
+   8. Run `bash <pluginRoot>/scripts/feedback-outbox.sh <repo> /tmp/apl-<run>/result.json --run <run>` and log its output.
 
-When the step is done, stop.
+A run does the work of at most one `build` step.
