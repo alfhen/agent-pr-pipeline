@@ -21,6 +21,7 @@ const setup = (reviews) => {
   put(fx, `${P}__commits__${HEAD}__check-runs.json`, { check_runs: [] })
   put(fx, `${P}__pulls__7__comments.json`, [])
   put(fx, `${P}__issues__7__comments.json`, [])
+  put(fx, 'user.json', { login: 'pipeline-bot-account' })
   reviews.forEach((r, i) => put(fx, `${P}__pulls__7__reviews.call${i + 1}.json`, r))
   return { dir, fx, log: join(dir, 'log') }
 }
@@ -99,6 +100,7 @@ const OLD = 'b'.repeat(40)
 const status = (reviews, issueComments = []) => {
   const s = setup([reviews])
   put(s.fx, `${P}__issues__7__comments.json`, issueComments)
+  put(s.fx, 'user.json', { login: 'pipeline-bot-account' })
   const r = spawnSync('bash', [join(root, 'scripts/bot-status.sh'), 'o/r', '7'], {
     encoding: 'utf8',
     env: { ...process.env, PATH: `${join(s.dir, 'bin')}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log },
@@ -133,17 +135,22 @@ test('reviewBodies counts an unknown text', () => {
 })
 
 const marker = (head = HEAD) => `<!-- pipeline-bot-answer head=${head} -->\nAnswered.`
-const answer = (association, body = marker()) => ({ author_association: association, body })
+const answer = (login, body = marker(), association = 'NONE') => ({ user: { login }, author_association: association, body })
+const ME = 'pipeline-bot-account'
 
-test('reviewBodies is 0 when a maintainer answer comment for the head is on the PR', () => {
-  assert.equal(status([rev('Something new')], [answer('OWNER')]), 0)
-  assert.equal(status([rev('Something new')], [answer('COLLABORATOR')]), 0)
+test('reviewBodies is 0 when an answer comment for the head is by the running account', () => {
+  assert.equal(status([rev('Something new')], [answer(ME)]), 0)
+  assert.equal(status([rev('Something new')], [answer('someone', marker(), 'OWNER'), answer(ME)]), 0)
 })
 
-test('reviewBodies ignores an answer comment from an outsider, for another head, or without the marker at the start', () => {
-  assert.equal(status([rev('Something new')], [answer('NONE'), answer('CONTRIBUTOR')]), 1)
-  assert.equal(status([rev('Something new')], [answer('OWNER', marker(OLD))]), 1)
-  assert.equal(status([rev('Something new')], [answer('OWNER', `quoted ${marker()}`)]), 1)
+test('reviewBodies ignores an answer comment from another account, even an OWNER one, for another head, or without the marker at the start', () => {
+  assert.equal(status([rev('Something new')], [answer('someone', marker(), 'OWNER'), answer('other', marker(), 'COLLABORATOR')]), 1)
+  assert.equal(status([rev('Something new')], [answer(ME, marker(OLD))]), 1)
+  assert.equal(status([rev('Something new')], [answer(ME, `quoted ${marker()}`)]), 1)
+})
+
+test('reviewBodies is 0 when a rerun left two answer comments by the running account', () => {
+  assert.equal(status([rev('Something new')], [answer(ME), answer(ME)]), 0)
 })
 
 test('wait-bots keeps polling while a bot check run is still running, and the body then counts', () => {

@@ -26,4 +26,5 @@ test('the bot step runs the answer agent when reviewBodies is above 0', () => {
 
 test('the answer prompt names the marker the status script reads', () => {
   assert.match(src, /<!-- pipeline-bot-answer head=\$\{headSha\} -->/)
+  assert.match(src, /even when no body holds a finding of its own/)
 })
