@@ -41,7 +41,7 @@ let evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'READM
 // Exit codes the put script gives, per PR id: the first call, then the #put2 retry. Default 0.
 const putPlan = {}
 // Merge safety: ids the gate holds, ids the agent calls person, and ids where an agent fails or answers badly.
-const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), gateOdd: new Set(), headMoved: new Set(), blocked: new Set(), landOutput: new Set(), landFail: new Set(), landBad: new Set(), landBadOnce: new Set(), landOther: new Set(), testMoved: new Set(), threads: new Set(), bodies: new Set(), answered: new Set() }
+const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), gateOdd: new Set(), headMoved: new Set(), blocked: new Set(), landOutput: new Set(), landFail: new Set(), landBad: new Set(), landBadOnce: new Set(), landOther: new Set(), testMoved: new Set(), threads: new Set(), bodies: new Set(), answered: new Set(), waitOpen: new Set() }
 const landHead = {}
 const wt = o => '/wt/' + o.label.replace(/[:#]/g, '-')
 let cleanupMode = 'ok'
@@ -84,7 +84,7 @@ const agentRaw = async (prompt, o) => {
     return { exitCode: 0, output: land.landOutput.has(id) ? 'merge abc\n+resolved line\n' : '' }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#botstatus')) {
-    return land.statusDown.has(id) ? { exitCode: 1, output: 'bot-status: cannot read the reviews' } : { exitCode: 0, output: JSON.stringify({ head: land.headMoved.has(id) ? 'moved' : lastHead[id], approvedBy: ['gitar-bot'], seenHead: ['gitar-bot'], openThreads: land.threads.has(id) ? 1 : 0, pending: [], reviewBodies: land.bodies.has(id) && !land.answered.has(id) ? 1 : 0 }) }
+    return land.statusDown.has(id) ? { exitCode: 1, output: 'bot-status: cannot read the reviews' } : { exitCode: 0, output: JSON.stringify({ head: land.headMoved.has(id) ? 'moved' : lastHead[id], approvedBy: ['gitar-bot'], seenHead: ['gitar-bot'], openThreads: land.threads.has(id) || ['C2', 'L1', 'B1', 'W1'].includes(id) ? 1 : 0, pending: [], reviewBodies: land.bodies.has(id) && !land.answered.has(id) ? 1 : 0 }) }
   }
   if (o.label.startsWith('io:')) {
     if (o.label.endsWith('#put') || o.label.endsWith('#put2')) {
@@ -135,7 +135,7 @@ const agentRaw = async (prompt, o) => {
   if (o.label.endsWith('#body')) return { updated: true }
   if (o.label.startsWith('open') && land.blocked.has(id)) return { blocked: true, blockedReason: 'permission denied: gh pr create', commands: ['gh pr create -R o/r --head b1 --title "t"'] }
   if (o.label.startsWith('open')) return { prNumber: 100 + calls.length, prUrl: 'u', issuesCreated: id === 'C2' ? ['https://github.com/o/r/issues/21'] : [] }
-  if (o.label.startsWith('botwait')) return id === 'C1' && failWait ? null : { approvedBy: ['the-waiter-says-so'], openComments: ['C2', 'L1', 'B1', 'W1'].includes(id) ? 2 : 0 }
+  if (o.label.startsWith('botwait')) return id === 'C1' && failWait ? null : { approvedBy: ['the-waiter-says-so'], openComments: ['C2', 'L1', 'B1', 'W1'].includes(id) || land.waitOpen.has(id) ? 2 : 0 }
   if (o.label.startsWith('botanswer')) land.answered.add(id)
   if (o.label.startsWith('botanswer')) return { codeChanged: id !== 'W1', headSha: 'sha-answer-' + id, closesIssues: id === 'C2' ? [21] : [], notes: 'anchored the regex', worktree: wt(o) }
   if (o.label.startsWith('landfix')) return { readyToMerge: true, headSha: 'abc', notes: 'ok', worktree: wt(o) }
@@ -1210,6 +1210,9 @@ await check('bot status: a rerun on the same head does not run the answer agent 
   assert.match(calls.find(c => c.label === 'botanswer:C1').prompt, /<!-- pipeline-bot-answer head=\S+ -->/)
   const again = await landRun({ bodies: ['C1'], answered: ['C1'] }, only('C1'))
   assert.equal(again.C1.ready, true)
+  assert.ok(!calls.some(c => c.label === 'botanswer:C1'))
+  const counted = await landRun({ bodies: ['C1'], answered: ['C1'], waitOpen: ['C1'] }, only('C1'))
+  assert.equal(counted.C1.ready, true)
   assert.ok(!calls.some(c => c.label === 'botanswer:C1'))
 })
 await check('the wait schema has seenHead, which the waiter prompt asks for', async () => {
