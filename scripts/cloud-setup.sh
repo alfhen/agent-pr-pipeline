@@ -7,7 +7,8 @@
 # the agent name rule and the launcher text.
 # With --latest <n>, the printed script reads the release tags of the repo when it runs and installs the newest n
 # (v0.8.0 up to the version in plugin.json on the default branch) plus the named tags.
-# Only a named tag can become ROOT of apl-start.
+# Only a named tag can become ROOT of apl-start. A found tag is installed only when its commit is on the default
+# branch, and a found tag that fails to install is skipped.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 usage() { echo "usage: cloud-setup.sh --print [--latest <n>] [<tag>...] [--repo <owner/repo>]" >&2; exit 2; }
@@ -59,13 +60,15 @@ repo=${1:-}
 pin=none
 AGENT_FN_HERE
 
-# Only a release the maintainer named can become ROOT. A release found by --latest is installed, but anyone who can
-# create a tag could otherwise choose the scripts that run on a stop.
+# Only a release the maintainer named can become ROOT, or anyone who can create a tag could choose the scripts that
+# run on a stop. The list is $ROOT/.named-tags, written by the setup script. It must stay outside every release
+# folder: a release fills its own folder from its own manifest and could otherwise list itself.
 highest() {
-  local d
-  for d in "$ROOT"/v*; do
-    [ -f "$d/.complete" ] && [ -f "$d/.named" ] && [[ "${d##*/}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "${d##*/}"
-  done | sort -V | tail -1
+  local t
+  [ -f "$ROOT/.named-tags" ] || return 0
+  while read -r t; do
+    [ -f "$ROOT/$t/.complete" ] && [[ "$t" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$t"
+  done < "$ROOT/.named-tags" | sort -V | tail -1
 }
 stop() {
   local h
@@ -112,7 +115,7 @@ EOF
 
 read -r -d '' SETUP_HEAD <<'EOF' || true
 #!/bin/bash
-# Made by cloud-setup.sh of agent-pr-pipeline. Installs the named releases; any failure exits 1.
+# Made by cloud-setup.sh of agent-pr-pipeline. Installs the named releases; any failure exits 1, except a found release that fails, which is skipped.
 set -euo pipefail
 umask 022
 ROOT=${APL_ROOT:-/opt/agent-pr-pipeline}
@@ -163,8 +166,8 @@ EOF
 
 # The floor is v0.8.0: older tags have no files.txt. sort -V, not a text sort, so v0.10.0 is above v0.9.0.
 # The ceiling is the version in plugin.json on the default branch. Anyone with write access can create a tag on any
-# commit, but the default branch is protected, so a tag above the ceiling is not installed. On a failed lookup the
-# function returns 1 and the caller installs only the named tags.
+# commit, but the default branch is protected, so a tag above the ceiling is not installed. A failed lookup returns
+# 1, and the script exits 1.
 read -r -d '' RESOLVE <<'EOF' || true
 
 resolve_tags() {
@@ -186,6 +189,18 @@ resolve_tags() {
 }
 EOF
 
+# A found tag is installed only when its commit is an ancestor of the default branch, because a tag can be made on
+# any commit. This also guards the agent files, which sessions load.
+read -r -d '' VERIFY <<'EOF' || true
+
+on_default_branch() {
+  local branch st
+  branch=$(curl -fsSL --retry 3 "https://api.github.com/repos/$REPO" | jq -r '.default_branch // ""') && [ -n "$branch" ] || return 1
+  st=$(curl -fsSL --retry 3 "https://api.github.com/repos/$REPO/compare/$branch...$1" | jq -r '.status // ""') || return 1
+  [ "$st" = behind ] || [ "$st" = identical ]
+}
+EOF
+
 read -r -d '' SETUP_TAIL <<'EOF' || true
 
 mkdir -p "$BIN"
@@ -196,17 +211,26 @@ printf '%s\n' "$SETUP_HEAD"
 printf 'REPO=%s\n' "$repo"
 printf '%s\n' "$AGENT_FN"
 printf '%s\n' "$SETUP_BODY"
+printf 'NAMED=(%s)\n' "${tags[*]-}"
 if [ -n "$latest" ]; then
-  printf '%s\n' "$RESOLVE"
-  printf 'LATEST=%s\nNAMED=(%s)\n' "$latest" "${tags[*]-}"
-  printf '%s\n' 'found=$(resolve_tags) || found=' \
-    '[ -n "$found" ] || [ ${#NAMED[@]} -gt 0 ] || exit 1' \
-    'for tag in $(printf "%s\n" $found "${NAMED[@]+"${NAMED[@]}"}" | awk '"'"'!seen[$0]++'"'"'); do install_tag "$tag"; done'
+  printf '%s\n' "$RESOLVE" "$VERIFY"
+  printf 'LATEST=%s\n' "$latest"
+  printf '%s\n' 'found=$(resolve_tags)' \
+    'for tag in "${NAMED[@]+"${NAMED[@]}"}"; do install_tag "$tag"; done'
 else
-  printf 'NAMED=(%s)\n' "${tags[*]}"
   printf '%s\n' 'for tag in "${NAMED[@]}"; do install_tag "$tag"; done'
 fi
-printf '%s\n' 'for tag in "${NAMED[@]+"${NAMED[@]}"}"; do : > "$ROOT/$tag/.named"; done'
+printf '%s\n' 'mkdir -p "$ROOT"' \
+  'printf "%s\n" "${NAMED[@]+"${NAMED[@]}"}" > "$ROOT/.named-tags.new"' \
+  'mv "$ROOT/.named-tags.new" "$ROOT/.named-tags"'
+if [ -n "$latest" ]; then
+  printf '%s\n' 'for tag in $found; do' \
+    '  case " ${NAMED[*]-} " in *" $tag "*) continue ;; esac' \
+    '  if on_default_branch "$tag"; then' \
+    '    install_tag "$tag" & wait "$!" || { echo "skipped $tag: install failed" >&2; rm -rf "${ROOT:?}/.stage-$tag".*; }' \
+    '  else echo "skipped $tag: not on the default branch" >&2; fi' \
+    'done'
+fi
 printf '%s\n' "$SETUP_TAIL"
 printf '%s\n' "$LAUNCHER" | FN="$AGENT_FN" awk '$0 == "AGENT_FN_HERE" { print ENVIRON["FN"]; next } { print }'
 printf '%s\n' "APL_START_EOF"

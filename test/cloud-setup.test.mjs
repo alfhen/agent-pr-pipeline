@@ -32,6 +32,10 @@ writeFileSync(join(stubBin, 'curl'), `#!/bin/bash
 out=""; url=""
 while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2 ;; --retry) shift 2 ;; -*) shift ;; *) url=$1; shift ;; esac; done
 echo "$url" >> "$CURL_LOG"
+case "$url" in
+  https://api.github.com/repos/*/compare/*) t=\${url##*...}; f="$SERVE/compare-$t"; if [ -f "$f" ]; then cat "$f"; else echo '{"status":"behind"}'; fi; exit 0 ;;
+  https://api.github.com/repos/*) echo '{"default_branch":"main"}'; exit 0 ;;
+esac
 rest=\${url#https://raw.githubusercontent.com/*/*/}
 case "$rest" in refs/tags/*) rest=\${rest#refs/tags/} ;; HEAD/*) ;; *) echo "curl: (22) 404 $url" >&2; exit 22 ;; esac
 src="$SERVE/$rest"
@@ -364,12 +368,12 @@ test('--latest with a failed ls-remote and no named tag exits 1 and installs not
   assert.equal(existsSync(join(w.bin, 'apl-start')), false)
 })
 
-test('--latest with a failed ls-remote still installs the named tags', () => {
+test('--latest with a failed ls-remote and a named tag still exits 1 and writes no .complete', () => {
   const w = world(['v0.8.0'])
   const r = latest(w, ['v0.8.0'], ['3', 'v0.8.0'], { LS_FAIL: '1' })
-  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.equal(r.status, 1, r.stdout + r.stderr)
   assert.match(r.stderr, /tag lookup failed/)
-  assert.deepEqual(installed(w), ['v0.8.0'])
+  assert.deepEqual(installed(w), [])
 })
 
 test('--latest ignores a remote tag above the version of the default branch', () => {
@@ -380,12 +384,12 @@ test('--latest ignores a remote tag above the version of the default branch', ()
   assert.equal(readFileSync(w.curlLog, 'utf8').includes('v99.0.0'), false)
 })
 
-test('--latest with an unreadable default branch version installs only the named tags', () => {
+test('--latest with an unreadable default branch version exits 1 with a named tag and installs nothing', () => {
   const w = world(['v0.8.0', 'v0.8.1'])
   const r = latest(w, ['v0.8.0', 'v0.8.1'], ['3', 'v0.8.0'], {}, null)
-  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.equal(r.status, 1, r.stdout + r.stderr)
   assert.match(r.stderr, /cannot read the version/)
-  assert.deepEqual(installed(w), ['v0.8.0'])
+  assert.deepEqual(installed(w), [])
 })
 
 test('apl-start never names a release that --latest found but no one named as ROOT', () => {
@@ -394,7 +398,7 @@ test('apl-start never names a release that --latest found but no one named as RO
   assert.equal(r.status, 0, r.stdout + r.stderr)
   assert.deepEqual(installed(w), ['v9.10.0', 'v9.9.8'])
   stopped(aplStart(w, work), 'release v9\\.9\\.9 is not installed', 'v9.9.9', `ROOT ${join(w.opt, 'v9.9.8')}`)
-  rmSync(join(w.opt, 'v9.9.8', '.named'))
+  rmSync(join(w.opt, '.named-tags'))
   stopped(aplStart(w, work), 'release v9\\.9\\.9 is not installed', 'v9.9.9', 'ROOT none')
 })
 
@@ -410,4 +414,37 @@ test('--latest needs a count of 1 or more; --print with no tag and no --latest i
   assert.equal(print('--latest', '0', '--repo', 'o/r').status, 2)
   assert.equal(print('--latest', 'x', '--repo', 'o/r').status, 2)
   assert.equal(print('--repo', 'o/r').status, 2)
+})
+
+test('a found tag whose files.txt lists .named does not become ROOT', () => {
+  const w = world(['v9.9.8', 'v9.10.0']); const { work } = setupRepo(w, 'v9.9.9')
+  const dir = join(w.serve, 'v9.10.0')
+  writeFileSync(join(dir, '.named'), '')
+  const m = join(dir, '.claude-plugin/files.txt')
+  writeFileSync(m, readFileSync(m, 'utf8') + `${git(dir, 'hash-object', '.named')} .named\n`)
+  const r = latest(w, ['v9.9.8', 'v9.10.0'], ['3', 'v9.9.8'], {}, '99.0.0')
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.deepEqual(installed(w), ['v9.10.0', 'v9.9.8'])
+  stopped(aplStart(w, work), 'release v9\\.9\\.9 is not installed', 'v9.9.9', `ROOT ${join(w.opt, 'v9.9.8')}`)
+})
+
+test('a found tag that is not on the default branch is skipped, with its agent files', () => {
+  const w = world(['v0.8.0', 'v0.8.1'])
+  writeFileSync(join(w.serve, 'compare-v0.8.1'), JSON.stringify({ status: 'diverged' }))
+  const r = latest(w, ['v0.8.0', 'v0.8.1'], ['3', 'v0.8.0'])
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.match(r.stderr, /skipped v0\.8\.1: not on the default branch/)
+  assert.deepEqual(installed(w), ['v0.8.0'])
+  assert.equal(existsSync(join(w.home, '.claude/agents/apl-v0-8-1-tester.md')), false)
+})
+
+test('a found tag with no files.txt is skipped; the named tag and apl-start still install', () => {
+  const w = world(['v0.8.0', 'v0.8.1'])
+  rmSync(join(w.serve, 'v0.8.1/.claude-plugin/files.txt'))
+  const r = latest(w, ['v0.8.0', 'v0.8.1'], ['3', 'v0.8.0'])
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.match(r.stderr, /skipped v0\.8\.1: install failed/)
+  assert.deepEqual(installed(w), ['v0.8.0'])
+  assert.equal(readdirSync(w.opt).filter((f) => f.startsWith('.stage')).length, 0)
+  assert.ok(existsSync(join(w.bin, 'apl-start')))
 })
