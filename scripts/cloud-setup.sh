@@ -6,7 +6,8 @@
 # ~/.claude/agents/, and installs the launcher apl-start. This file is the one place for the install folder,
 # the agent name rule and the launcher text.
 # With --latest <n>, the printed script reads the release tags of the repo when it runs and installs the newest n
-# (v0.8.0 and up, the first with a files.txt) plus the named tags.
+# (v0.8.0 up to the version in plugin.json on the default branch) plus the named tags.
+# Only a named tag can become ROOT of apl-start.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 usage() { echo "usage: cloud-setup.sh --print [--latest <n>] [<tag>...] [--repo <owner/repo>]" >&2; exit 2; }
@@ -58,10 +59,12 @@ repo=${1:-}
 pin=none
 AGENT_FN_HERE
 
+# Only a release the maintainer named can become ROOT. A release found by --latest is installed, but anyone who can
+# create a tag could otherwise choose the scripts that run on a stop.
 highest() {
   local d
   for d in "$ROOT"/v*; do
-    [ -f "$d/.complete" ] && [[ "${d##*/}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "${d##*/}"
+    [ -f "$d/.complete" ] && [ -f "$d/.named" ] && [[ "${d##*/}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "${d##*/}"
   done | sort -V | tail -1
 }
 stop() {
@@ -159,15 +162,26 @@ install_tag() {
 EOF
 
 # The floor is v0.8.0: older tags have no files.txt. sort -V, not a text sort, so v0.10.0 is above v0.9.0.
+# The ceiling is the version in plugin.json on the default branch. Anyone with write access can create a tag on any
+# commit, but the default branch is protected, so a tag above the ceiling is not installed. On a failed lookup the
+# function returns 1 and the caller installs only the named tags.
 read -r -d '' RESOLVE <<'EOF' || true
 
 resolve_tags() {
-  local out
-  out=$(git ls-remote --tags --refs "https://github.com/$REPO" 'refs/tags/v*') || { echo "tag lookup failed for $REPO" >&2; exit 1; }
+  local out cap
+  out=$(git ls-remote --tags --refs "https://github.com/$REPO" 'refs/tags/v*') || { echo "tag lookup failed for $REPO" >&2; return 1; }
+  cap=$(curl -fsSL --retry 3 "$RAW/HEAD/.claude-plugin/plugin.json" | jq -r '.version // ""') || cap=
+  [[ "$cap" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "cannot read the version of the default branch of $REPO" >&2; return 1; }
   out=$(printf '%s\n' "$out" | awk '{ sub("^refs/tags/", "", $2); print $2 }' \
     | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-    | awk -F'[v.]' '$2 > 0 || ($2 == 0 && $3 >= 8)' | sort -V | tail -n "$LATEST") || true
-  [ -n "$out" ] || { echo "no release tag found for $REPO" >&2; exit 1; }
+    | awk -v c="$cap" 'BEGIN { split(c, a, ".") }
+        { split(substr($0, 2), b, ".")
+          if (b[1] + 0 == 0 && b[2] + 0 < 8) next
+          if (b[1] + 0 != a[1] + 0) { if (b[1] + 0 < a[1] + 0) print; next }
+          if (b[2] + 0 != a[2] + 0) { if (b[2] + 0 < a[2] + 0) print; next }
+          if (b[3] + 0 <= a[3] + 0) print }' \
+    | sort -V | tail -n "$LATEST") || true
+  [ -n "$out" ] || { echo "no release tag found for $REPO at or below $cap" >&2; return 1; }
   printf '%s\n' "$out"
 }
 EOF
@@ -185,11 +199,14 @@ printf '%s\n' "$SETUP_BODY"
 if [ -n "$latest" ]; then
   printf '%s\n' "$RESOLVE"
   printf 'LATEST=%s\nNAMED=(%s)\n' "$latest" "${tags[*]-}"
-  printf '%s\n' 'found=$(resolve_tags) || exit 1' \
+  printf '%s\n' 'found=$(resolve_tags) || found=' \
+    '[ -n "$found" ] || [ ${#NAMED[@]} -gt 0 ] || exit 1' \
     'for tag in $(printf "%s\n" $found "${NAMED[@]+"${NAMED[@]}"}" | awk '"'"'!seen[$0]++'"'"'); do install_tag "$tag"; done'
 else
-  printf 'for tag in %s; do install_tag "$tag"; done\n' "${tags[*]}"
+  printf 'NAMED=(%s)\n' "${tags[*]}"
+  printf '%s\n' 'for tag in "${NAMED[@]}"; do install_tag "$tag"; done'
 fi
+printf '%s\n' 'for tag in "${NAMED[@]+"${NAMED[@]}"}"; do : > "$ROOT/$tag/.named"; done'
 printf '%s\n' "$SETUP_TAIL"
 printf '%s\n' "$LAUNCHER" | FN="$AGENT_FN" awk '$0 == "AGENT_FN_HERE" { print ENVIRON["FN"]; next } { print }'
 printf '%s\n' "APL_START_EOF"

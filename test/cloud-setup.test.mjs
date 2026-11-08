@@ -28,12 +28,12 @@ const stubBin = join(tmp, 'stubbin'); mkdirSync(stubBin)
 copyFileSync(join(root, 'test/fake-gh'), join(stubBin, 'gh')); chmodSync(join(stubBin, 'gh'), 0o755)
 writeFileSync(join(stubBin, 'curl'), `#!/bin/bash
 # Serves https://raw.githubusercontent.com/<owner>/<repo>/refs/tags/<tag>/<path> from $SERVE/<tag>/<path>.
-# A bare <tag> ref is ambiguous with a branch, so it gets a 404.
+# A bare <tag> ref is ambiguous with a branch, so it gets a 404. HEAD/<path> is served from $SERVE/HEAD/<path>.
 out=""; url=""
 while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2 ;; --retry) shift 2 ;; -*) shift ;; *) url=$1; shift ;; esac; done
 echo "$url" >> "$CURL_LOG"
 rest=\${url#https://raw.githubusercontent.com/*/*/}
-case "$rest" in refs/tags/*) rest=\${rest#refs/tags/} ;; *) echo "curl: (22) 404 $url" >&2; exit 22 ;; esac
+case "$rest" in refs/tags/*) rest=\${rest#refs/tags/} ;; HEAD/*) ;; *) echo "curl: (22) 404 $url" >&2; exit 22 ;; esac
 src="$SERVE/$rest"
 [ -f "$src" ] || { echo "curl: (22) 404 $url" >&2; exit 22; }
 if [ -n "$out" ]; then cp "$src" "$out"; else cat "$src"; fi
@@ -152,7 +152,7 @@ test('a tag that is not v<major>.<minor>.<patch> is refused, when printing and i
     assert.equal(p.stdout, '')
   }
   const w = world()
-  const r = install(w, ['v9.9.9'], (s) => s.replace('for tag in v9.9.9;', 'for tag in v9.9;'))
+  const r = install(w, ['v9.9.9'], (s) => s.replace('NAMED=(v9.9.9)', 'NAMED=(v9.9)'))
   assert.equal(r.status, 1)
   assert.match(r.stderr, /bad tag: v9\.9/)
   assert.deepEqual(readdirSync(w.opt), [])
@@ -320,7 +320,8 @@ exec ${realGit} "$@"
 chmodSync(join(stubBin, 'git'), 0o755)
 
 const SHA = 'a'.repeat(40)
-const latest = (w, remoteTags, args, extra = {}) => {
+const latest = (w, remoteTags, args, extra = {}, cap = "1.0.0") => {
+  if (cap) { mkdirSync(join(w.serve, "HEAD/.claude-plugin"), { recursive: true }); writeFileSync(join(w.serve, "HEAD/.claude-plugin/plugin.json"), JSON.stringify({ version: cap })) }
   writeFileSync(join(w.dir, 'ls.txt'), remoteTags.map((t) => `${SHA}\trefs/tags/${t}`).join('\n') + (remoteTags.length ? '\n' : ''))
   const p = print('--latest', ...args, '--repo', 'o/r')
   assert.equal(p.status, 0, p.stderr)
@@ -354,7 +355,7 @@ test('--latest adds a named older tag once, even when it is also among the newes
   assert.equal(fetches.length, 1)
 })
 
-test('--latest with a failed ls-remote exits 1 and installs nothing', () => {
+test('--latest with a failed ls-remote and no named tag exits 1 and installs nothing', () => {
   const w = world(['v0.8.0'])
   const r = latest(w, ['v0.8.0'], ['3'], { LS_FAIL: '1' })
   assert.equal(r.status, 1)
@@ -363,9 +364,43 @@ test('--latest with a failed ls-remote exits 1 and installs nothing', () => {
   assert.equal(existsSync(join(w.bin, 'apl-start')), false)
 })
 
+test('--latest with a failed ls-remote still installs the named tags', () => {
+  const w = world(['v0.8.0'])
+  const r = latest(w, ['v0.8.0'], ['3', 'v0.8.0'], { LS_FAIL: '1' })
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.match(r.stderr, /tag lookup failed/)
+  assert.deepEqual(installed(w), ['v0.8.0'])
+})
+
+test('--latest ignores a remote tag above the version of the default branch', () => {
+  const w = world(['v0.8.0', 'v0.8.1', 'v99.0.0'])
+  const r = latest(w, ['v0.8.0', 'v0.8.1', 'v99.0.0', 'v0.9.0'], ['3'], {}, '0.8.1')
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.deepEqual(installed(w), ['v0.8.0', 'v0.8.1'])
+  assert.equal(readFileSync(w.curlLog, 'utf8').includes('v99.0.0'), false)
+})
+
+test('--latest with an unreadable default branch version installs only the named tags', () => {
+  const w = world(['v0.8.0', 'v0.8.1'])
+  const r = latest(w, ['v0.8.0', 'v0.8.1'], ['3', 'v0.8.0'], {}, null)
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.match(r.stderr, /cannot read the version/)
+  assert.deepEqual(installed(w), ['v0.8.0'])
+})
+
+test('apl-start never names a release that --latest found but no one named as ROOT', () => {
+  const w = world(['v9.9.8', 'v9.10.0']); const { work } = setupRepo(w, 'v9.9.9')
+  const r = latest(w, ['v9.9.8', 'v9.10.0'], ['3', 'v9.9.8'], {}, '99.0.0')
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.deepEqual(installed(w), ['v9.10.0', 'v9.9.8'])
+  stopped(aplStart(w, work), 'release v9\\.9\\.9 is not installed', 'v9.9.9', `ROOT ${join(w.opt, 'v9.9.8')}`)
+  rmSync(join(w.opt, 'v9.9.8', '.named'))
+  stopped(aplStart(w, work), 'release v9\\.9\\.9 is not installed', 'v9.9.9', 'ROOT none')
+})
+
 test('--latest with no tag found exits 1 and installs nothing', () => {
   const w = world(['v0.8.0'])
-  const r = latest(w, ['v0.7.0', 'v1.0.0-rc1'], ['3', 'v0.8.0'])
+  const r = latest(w, ['v0.7.0', 'v1.0.0-rc1'], ['3'])
   assert.equal(r.status, 1)
   assert.match(r.stderr, /no release tag found/)
   assert.deepEqual(installed(w), [])

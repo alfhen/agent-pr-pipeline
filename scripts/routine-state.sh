@@ -684,7 +684,7 @@ put_exhausted() {
 }
 
 # env-stale and env-ok read only the tracking issue, the pause label and the stage, so an older release
-# started from the highest installed root still works when the settings hold keys it does not know.
+# started from the highest named root still works when the settings hold keys it does not know.
 put_env() {
   local raw st tobj newest last_ok
   raw=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$repo/contents/.github/pipeline.json") || die 3 "cannot read .github/pipeline.json"
