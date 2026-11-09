@@ -42,7 +42,7 @@ let evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'READM
 // Exit codes the put script gives, per PR id: the first call, then the #put2 retry. Default 0.
 const putPlan = {}
 // Merge safety: ids the gate holds, ids the agent calls person, and ids where an agent fails or answers badly.
-const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), pendingBot: new Set(), gateOdd: new Set(), headMoved: new Set(), blocked: new Set(), landOutput: new Set(), landFail: new Set(), landBad: new Set(), landBadOnce: new Set(), landOther: new Set(), testMoved: new Set(), threads: new Set(), bodies: new Set(), answered: new Set(), waitOpen: new Set(), finalHead: new Set(), ciFail: new Set(), ciPending: new Set() }
+const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), pendingBot: new Set(), gateOdd: new Set(), headMoved: new Set(), blocked: new Set(), landOutput: new Set(), landFail: new Set(), landBad: new Set(), landBadOnce: new Set(), landOther: new Set(), testMoved: new Set(), threads: new Set(), bodies: new Set(), answered: new Set(), waitOpen: new Set(), ciFail: new Set(), ciPending: new Set() }
 const landHead = {}
 const wt = o => '/wt/' + o.label.replace(/[:#]/g, '-')
 const overlap = { fail: new Set(), down: new Set() }
@@ -105,10 +105,10 @@ const agentRaw = async (prompt, o) => {
     return land.statusDown.has(id) ? { exitCode: 1, output: 'bot-status: cannot read the reviews' } : { exitCode: 0, output: JSON.stringify({ head: land.headMoved.has(id) ? 'moved' : lastHead[id], approvedBy: ['gitar-bot'], seenHead: ['gitar-bot'], openThreads: land.threads.has(id) || ['C2', 'L1', 'B1', 'W1'].includes(id) ? 1 : 0, pending: land.pendingBot.has(id) ? ['Gitar'] : [], reviewBodies: land.bodies.has(id) && !land.answered.has(id) ? 1 : 0 }) }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#endstatus')) {
-    return { exitCode: 0, output: JSON.stringify({ head: endHead(id) + (land.finalHead.has(id) ? '-final' : ''), approvedBy: ['gitar-bot'], seenHead: [], openThreads: 0, pending: [], reviewBodies: 0 }) }
+    return { exitCode: 0, output: JSON.stringify({ head: endHead(id), approvedBy: ['gitar-bot'], seenHead: [], openThreads: 0, pending: [], reviewBodies: 0 }) }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#endci')) {
-    const head = endHead(id) + (land.finalHead.has(id) ? '-final' : '')
+    const head = endHead(id)
     return { exitCode: 0, output: JSON.stringify({ head, state: land.ciFail.has(id) ? 'failure' : land.ciPending.has(id) ? 'pending' : 'success', failed: land.ciFail.has(id) ? ['unit', 'lint'] : [], timedOut: false }) }
   }
   if (o.label.startsWith('io:')) {
@@ -953,9 +953,8 @@ const landRun = async (cfg, prs, extra = {}) => {
 }
 const ran = (re) => calls.filter(c => re.test(c.label)).map(c => c.label)
 const suffix = x => x.land.split(':').slice(2).join(':')
-await check('end facts: the result names the head GitHub holds after the bot-answer commits, and the bots from the script', async () => {
-  const x = await landRun({ finalHead: ['C2'] }, only('C2'))
-  assert.ok(x.C2.headSha.endsWith('-final'), x.C2.headSha)
+await check('end facts: the bots, the CI state and the call come from the script', async () => {
+  const x = await landRun({}, only('C2'))
   assert.ok(ran(/^botanswer:C2/).length > 0)
   assert.deepEqual(x.C2.approvedBy, ['gitar-bot'])
   assert.notDeepEqual(x.C2.approvedBy, ['the-waiter-says-so'])
@@ -970,6 +969,8 @@ await check('end facts: red CI on the head gives ready false with the failed che
   assert.match(x.C1.reason, /^CI failed on the head .*: unit, lint/)
   assert.deepEqual(x.C1.ci, { state: 'failure', failed: ['unit', 'lint'] })
   assert.deepEqual(ran(/^(safety:|io:.*#gate)/), [])
+  assert.equal(x.C1.land, `${x.C1.prNumber}:${x.C1.headSha}`)
+  assert.equal(x.C1.landMode, 'person')
 })
 await check('end facts: pending CI is reported as pending and the PR stays ready', async () => {
   const x = await landRun({ ciPending: ['C1'] }, only('C1'))
@@ -982,6 +983,8 @@ await check('end facts: a head that does not extend the checked head stops the P
   const x = await run({ ...base, prs: only('C1') }, odd, parallel, log)
   assert.equal(x.prs[0].ready, false)
   assert.match(x.prs[0].reason, /^final facts: head moved/)
+  assert.equal(x.prs[0].headSha, 'sha-other')
+  assert.equal(x.prs[0].land, undefined)
 })
 await check('reused PR: the open prompt keeps the body and the land fix path reads the final facts too', async () => {
   await simulate({ ...base, prs: [{ id: 'C1', title: 't', branch: 'b1', skipImpl: true }] })
@@ -2400,6 +2403,17 @@ await check('every land value carries a 40-character sha, and a short tested sha
   const z = await hooked(only1('C2'), short('f'.repeat(40)))
   assert.equal(z.C2.ready, false)
   assert.match(z.C2.reason, /is short/)
+})
+await check('end facts: a short head from the bot-answer tester is reported as the full head GitHub holds', async () => {
+  const FULL = 'e'.repeat(40)
+  const end = label => (p, o) => o.label === 'test:C2#1' ? { pass: true, headSha: (lastHead.C2 = 'd'.repeat(40)), checks: [chk('lint')] }
+    : o.label === 'test:C2#bots1' ? { pass: true, headSha: 'eeeeeee', checks: [chk('lint')] }
+    : o.label === 'io:C2#landfull' ? { exitCode: 0, output: `pipeline-io: begin\n${JSON.stringify({ head: FULL, approvedBy: [] })}\npipeline-io: exit 0` }
+    : o.label === 'io:C2#endstatus' ? ioWrap(o.label, { exitCode: 0, output: JSON.stringify({ head: FULL, approvedBy: ['gitar-bot'] }) })
+    : o.label === 'io:C2#endci' ? ioWrap(o.label, { exitCode: 0, output: JSON.stringify({ head: FULL, state: 'success', failed: [] }) }) : undefined
+  const x = await hooked(only1('C2'), end())
+  assert.equal(x.C2.ready, true)
+  assert.equal(x.C2.headSha, FULL)
 })
 await check('a plan conflict finding from the reviewer or the fixer stops the PR before another round', async () => {
   const a = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('blocker', 'plan conflict: E3 says the test passes unchanged', { detail: 'D2 changes the limit it hard-codes' })]) : undefined)
