@@ -444,7 +444,7 @@ await check('a redactor that returns nothing leaves no feedback, keeps the denyl
   assert.deepEqual(lastResult.feedback, [])
   assert.deepEqual(lastResult.denylist, MAIN_DENYLIST)
   assert.equal(lastResult.prs.length, PRS.length)
-  assert.equal(calls.filter(c => c.label.startsWith('redact')).length, 1)
+  assert.equal(calls.filter(c => c.label.startsWith('redact')).length, 2)
 })
 await check('a landFix-only run starts no evaluate or redact agent', async () => {
   await simulate({ ...base, prs: PRS.filter(p => p.landFix) })
@@ -1344,6 +1344,38 @@ await check('a PR whose run throws is null in the result, and the other PRs and 
   assert.equal(out.prs[1].id, 'C2')
   assert.ok(out.denylist.includes('b1'))
   assert.ok(calls.some(c => c.label === 'evaluate:wave'))
+})
+const flaky = (label, bad) => { const seen = []; return { seen, fn: async (p, o) => { if (o.label !== label) return agent(p, o); seen.push(1); const b = bad[seen.length - 1]; if (b === 'null') return null; if (b === 'throw') throw new Error('ENOTFOUND'); if (b === 'fail') return { pushed: false, branch: 'b1', summary: 's', acceptanceTestPassed: false }; return agent(p, o) } } }
+await check('an agent that returns null is retried once and the retry result is used', async () => {
+  calls = []; preflight = GOOD
+  const t = flaky('implement:C1', ['null'])
+  const out = await run({ ...base, prs: only('C1') }, t.fn, parallel, log)
+  assert.equal(t.seen.length, 2)
+  assert.equal(out.prs[0].id, 'C1')
+})
+await check('an agent that throws is retried once', async () => {
+  calls = []; preflight = GOOD
+  const t = flaky('implement:C1', ['throw'])
+  await run({ ...base, prs: only('C1') }, t.fn, parallel, log)
+  assert.equal(t.seen.length, 2)
+})
+await check('a second failure is not retried again and the step fails', async () => {
+  calls = []; preflight = GOOD
+  const t = flaky('implement:C1', ['null', 'null'])
+  const out = await run({ ...base, prs: only('C1') }, t.fn, parallel, log)
+  assert.equal(t.seen.length, 2)
+  assert.equal(out.prs[0].ready, false)
+  const u = flaky('implement:C1', ['throw', 'throw'])
+  const out2 = await run({ ...base, prs: only('C1') }, u.fn, parallel, log)
+  assert.equal(u.seen.length, 2)
+  assert.equal(out2.prs[0], null)
+})
+await check('a normal failure answer is not retried', async () => {
+  calls = []; preflight = GOOD
+  const t = flaky('implement:C1', ['fail'])
+  const out = await run({ ...base, prs: only('C1') }, t.fn, parallel, log)
+  assert.equal(t.seen.length, 1)
+  assert.equal(out.prs[0].reason, 'implementation not pushed')
 })
 const cleanupOf = (cs, id, kind) => cs.filter(c => c.label === `io:${id}#cleanup${kind}`)
 await check('cleanup: init runs before the first agent', () => {

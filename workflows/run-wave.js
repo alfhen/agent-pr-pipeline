@@ -274,10 +274,17 @@ const call = async (role, pr, prompt, label, extra) => {
   agentCounts[r.agent] = (agentCounts[r.agent] || 0) + 1
   const skillStep = r.skills === undefined ? role : r.skills
   const step = r.reviewModel ? reviewStep(pr) : STEPS[r.model || role]
-  const out = await agent(skillStep ? withSkills(skillStep, pr, prompt, !!r.clone) : prompt, Object.assign(
+  const text = skillStep ? withSkills(skillStep, pr, prompt, !!r.clone) : prompt
+  const opts = Object.assign(
     { agentType: AGENT_PREFIX + r.agent, model: step.model, effort: step.effort, label, phase: r.phase },
     r.isolation ? { isolation: r.isolation } : {},
-    extra))
+    extra)
+  // An agent that dies on a transport or API error yields null or throws; a normal failure is an answer and is not retried.
+  const attempt = async () => { try { return { out: await agent(text, opts) } } catch (e) { return { err: e } } }
+  let got = await attempt()
+  if (got.err || got.out == null) { log(`${label}: agent died (${got.err ? got.err.message : 'no result'}), retrying once`); got = await attempt() }
+  if (got.err) throw got.err
+  const out = got.out
   if (pr && WRITERS.includes(role) && out && typeof out.worktree === 'string' && out.worktree.trim()) (worktreesOf[pr.id] = worktreesOf[pr.id] || new Set()).add(out.worktree.trim())
   return out
 }
