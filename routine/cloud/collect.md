@@ -27,7 +27,7 @@ You are the collect routine for the feedback repo `<repo>`. `/tmp/apl-start.json
 4. For each source repo, in that order:
    1. Run `bash <pluginRoot>/scripts/routine-state.sh <source> list outboxes`. If it exits non-zero, log it and go on with the next repo. Each output line holds a `run`. Use a `run` only when it matches `^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$`. Log any other and skip it. A record can hold any text as its key.
    2. For each `run`, run `bash <pluginRoot>/scripts/routine-state.sh <source> get outbox <run>`. If it exits 65, go on with the next run. The output holds `items`, a list.
-   3. Read the open feedback issues of `<repo>`, titles and bodies: `gh api --paginate "repos/<repo>/issues?labels=pipeline-feedback&state=open&per_page=100"`.
+   3. Read the open feedback issues of `<repo>`, titles and bodies: `gh api --paginate "repos/<repo>/issues?labels=pipeline-feedback&state=open&per_page=100" --jq '.[] | {number, title, body}'`.
    4. Decide which `items` repeat an open issue. This list is your only judgment. Write it to `/tmp/apl-collect/dups-<run>.json` as a JSON list of `{ "item": <index in items, from 0>, "issue": <number> }`. Write no file at stage 0, or when no item repeats.
    5. Run `bash <pluginRoot>/scripts/file-feedback.sh --auto --outbox <source> <run> --dups /tmp/apl-collect/dups-<run>.json --repo <repo>`. Leave out `--dups` when you wrote no file.
    6. If the output has `paused <repo>`, stop. If it has `paused <source>`, go on with the next source repo. If the exit code is 65, go on with the next run. Log the output.

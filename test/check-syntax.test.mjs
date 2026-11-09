@@ -63,6 +63,14 @@ test('a syntax error in routine/*.sh gives SYNTAX and exit 1', () => {
   rmSync(dir, { recursive: true })
 })
 
+test('the error message of bash reaches stderr', () => {
+  const dir = makeRoot()
+  writeFileSync(join(dir, 'scripts/x.sh'), BAD)
+  const r = run(dir)
+  assert.match(r.stderr, /x\.sh: line \d+/)
+  rmSync(dir, { recursive: true })
+})
+
 test('a pattern that matches no file gives MISSING and exit 1', () => {
   const dir = makeRoot()
   rmSync(join(dir, 'routine/r.sh'))

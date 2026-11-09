@@ -47,6 +47,15 @@ function commandProblems(prompts) {
 
 const prompts = Object.fromEntries(KINDS.map((k) => [k, read(`routine/cloud/${k}.md`)]))
 
+test('a failed next stops build and triage, and prompt.md stops on any other apl-start exit', () => {
+  for (const k of ['build', 'triage']) assert.match(prompts[k], /If `next` exits non-zero, log its output and stop/)
+  const p = read('routine/cloud/prompt.md')
+  assert.match(p, /On any other exit code \(2, 127\), stop and do nothing else/)
+  assert.match(p, /put env-ok <version>` \(if it exits non-zero, stop/)
+  assert.match(prompts.build, /Run scripts only from `<pluginRoot>`, or the copy of the workflow script that step 5\.4 makes from it/)
+  assert.match(prompts.collect, /per_page=100" --jq '\.\[\] \| \{number, title, body\}'/)
+})
+
 test('every command a prompt names is in the usage of its script', () => {
   assert.deepEqual(commandProblems(prompts), [])
   assert.ok(Object.values(prompts).join('\n').match(/routine-state\.sh/g).length >= 10, 'the check reads the commands')
@@ -169,7 +178,7 @@ test('build reads the build result with wave-result.sh and goes back to next aft
   assert.match(b, /script exits non-zero, stop and run no more command/)
   assert.match(b, /Never type or edit a result by hand/)
   assert.doesNotMatch(b, /Take `<pr>` from|Take `<reasonCode>` from/)
-  assert.match(b, /- `build`: do step 5\. Then run step 1 again\. If that `next` prints a `build` step, stop/)
+  assert.match(b, /- `build`: if this run already did a build or printed `would-build`, stop\. Otherwise do step 5, then go back to step 1/)
   assert.doesNotMatch(b, /do step 5, then stop/)
   assert.match(usageOf('wave-result.sh'), /wave-result\.sh <workflow output file> <result file>/)
   assert.match(rs, /put built <issue> <run> <pr> <ready> <reasonCode> \[<result file>\]/)
