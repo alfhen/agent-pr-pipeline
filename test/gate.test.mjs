@@ -515,6 +515,17 @@ test('gate --scope: lists a gated file the branch changes, and no floor path', (
   assert.equal(calls(r, /\/pulls\//).length, 0)
 })
 
+test('gate --scope: in the plugin repo a gated code file is listed and the floor is not', () => {
+  const s = setup({ files: null })
+  const A = 'repos__alfhen__agent-pr-pipeline'
+  put(s.fx, `${A}.json`, { default_branch: 'main' })
+  copyFileSync(join(FX, 'pipeline.json'), join(s.fx, `${A}__contents__.github__pipeline.json.json`))
+  put(s.fx, `${A}__compare__main...feat__x.json`, { files: [{ filename: 'scripts/gate-files.sh' }, { filename: 'workflows/run-wave.js' }, { filename: 'AGENTS.md' }, { filename: '.github/pipeline.json' }, { filename: 'src/a.js' }] })
+  const r = run(s, 'gate-files.sh', ['alfhen/agent-pr-pipeline', '--scope', 'feat/x'])
+  assert.equal(r.code, 0)
+  assert.deepEqual(JSON.parse(r.out.trim().replace(/^SCOPE /, '')), ['scripts/gate-files.sh', 'src/a.js', 'workflows/run-wave.js'])
+})
+
 test('gate --scope: a branch that cannot be compared fails closed', () => {
   const r = run(setup({ files: null }), 'gate-files.sh', ['o/r', '--scope', 'feat/x'])
   assert.equal(r.code, 3)
