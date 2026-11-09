@@ -130,6 +130,7 @@ const splitFindings = groups => {
   const normalized = groups.map(([findings, source]) => normalizeFindings(findings, source))
   return { ...partition(mergeDuplicates(normalized.flatMap(n => n.items))), conflicts: normalized.reduce((n, x) => n + x.conflicts, 0) }
 }
+const invariantFindings = review => (review.invariants || []).filter(i => !i.holds).map(i => ({ severity: 'major', title: `[invariant] ${i.text}`, detail: i.evidence }))
 // The higher severity keeps its own detail and fix; the other detail is appended so no reasoning is lost.
 const absorb = (prev, f) => {
   if (f.fileIssue) prev.fileIssue = true
@@ -604,7 +605,7 @@ const minorReviewPrompt = (pr, fromSha, fix, fixed, files) => `${ctx(pr)}
 Task: review only the commits of the minor pass, which fixed minor findings after the rest of the PR passed review.
 Clone it: ${cloneTo(`minorreview-${pr.id}`, pr)}. Those commits are \`git diff ${fromSha || 'origin/HEAD'}..HEAD\`; the whole PR is \`git diff origin/HEAD...HEAD\` for context.
 Check that each change fixes its finding, that it breaks nothing, and that it stays inside these files: ${JSON.stringify(files)}. Report a finding only about this diff. Do not review the rest of the PR again.
-Return headSha, a summary, the findings, and \`unconfirmed\`: the numbers of the findings below that the diff does not really fix.
+Return headSha, a summary, the findings, \`unconfirmed\`: the numbers of the findings below that the diff does not really fix, and, when the plan entry or brief has an Invariants line, \`invariants\`: one row per invariant, with holds and evidence.
 
 ${prBlock(pr)}
 
@@ -960,9 +961,8 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     const archFindings = !arch || arch.verdict === 'escalate' ? []
       : (arch.findings && arch.findings.length) ? arch.findings
       : arch.verdict === 'needs-change' ? [{ severity: 'major', title: 'Architecture review asked for changes', detail: arch.summary }] : []
-    const invariantFindings = (review.invariants || []).filter(i => !i.holds).map(i => ({ severity: 'major', title: `[invariant] ${i.text}`, detail: i.evidence }))
     const qaFindings = qa ? qa.findings.concat(noteQa(pr, loopState, qa)) : []
-    const split = splitFindings([[review.findings.concat(invariantFindings), 'review'], [archFindings, 'architecture'], [qaFindings, 'qa'], [outcome.findings, 'test']])
+    const split = splitFindings([[review.findings.concat(invariantFindings(review)), 'review'], [archFindings, 'architecture'], [qaFindings, 'qa'], [outcome.findings, 'test']])
     const blocking = split.blocking
     minors.push(...split.minors)
     if (arch) loopState.archOpen = blocking.some(f => f.sources.includes('architecture'))
@@ -1074,7 +1074,7 @@ async function minorPass(pr, signedSha, history, minors) {
   if (!test || !review) why = 'the check failed to run'
   else {
     const outcome = testOutcome(pr, test)
-    split = splitFindings([[review.findings, 'minor-check'], [outcome.findings, 'test']])
+    split = splitFindings([[review.findings.concat(invariantFindings(review)), 'minor-check'], [outcome.findings, 'test']])
     history.push(historyRow('minor1', outcome, split.blocking, split.conflicts))
     log(`${pr.id} minor check: tests ${outcome.pass ? 'pass' : 'fail'}, ${split.blocking.length} blockers/majors`)
     if (outcome.nothingRan) why = 'tests did not run'

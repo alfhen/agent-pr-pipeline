@@ -1846,7 +1846,7 @@ const headed = (r, id = 'C1') => { if (r.headSha) lastHead[id] = r.headSha; retu
 const passHook = (over = {}, id = 'C1') => (p, o) => {
   if (o.label === `review:${id}#1`) return reviewOf([minorOf(), f('minor', 'unmarked nit', { file: 'src/b.js' }), f('minor', 'design nit', { file: 'src/c.js', fileIssue: true })])
   if (o.label === `minorfix:${id}`) return { changed: true, headSha: 'fixsha', fixed: [1], summary: 'renamed', ...over.fix }
-  if (o.label === `minorreview:${id}`) return { ...reviewOf(over.findings || []), unconfirmed: over.unconfirmed || [] }
+  if (o.label === `minorreview:${id}`) return { ...reviewOf(over.findings || [], over.invariants ? { invariants: over.invariants } : {}), unconfirmed: over.unconfirmed || [] }
   if (o.label === `test:${id}#minor1`) return headed({ pass: over.testPass !== false, headSha: 'sha-minor', checks: [{ name: 'lint', pass: over.testPass !== false }] }, id)
   if (o.label.startsWith(`minorrevert:${id}`) && over.revert) return headed(over.revert, id)
   if (o.label.startsWith(`minorrevert:${id}`)) return headed({ reverted: true, headSha: 'sha-revert', summary: 'reverted' }, id)
@@ -1898,6 +1898,12 @@ await check('minor pass: plan and docs PRs run none, and their minors stay in th
   assert.ok(!calls.some(c => /^minorfix/.test(c.label)))
   assert.match(calls.find(c => c.label === 'open:D1').prompt, /rename helper/)
   assert.equal(x.D1.ready, true)
+})
+await check('minor pass: a reviewer invariant that does not hold drops the pass', async () => {
+  const x = await hooked(only1('C1'), passHook({ invariants: [{ text: 'no new files', holds: false, evidence: 'adds src/new.js' }], revert: { reverted: true, headSha: 'sha-revert' } }))
+  assert.ok(calls.some(c => c.label === 'minorrevert:C1'))
+  assert.equal(x.C1.minorPass.kept, false)
+  assert.equal(x.C1.land.split(':')[1], 'sha-revert')
 })
 await check('minor pass: a fixer that fixes nothing starts no check, and the branch is confirmed unchanged', async () => {
   const x = await hooked(only1('C1'), passHook({ fix: { changed: false, fixed: [] }, revert: { reverted: true, headSha: 'sha-C1' } }))
