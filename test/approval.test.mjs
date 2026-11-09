@@ -55,7 +55,7 @@ test('a malformed element is skipped', () => {
 })
 
 test('a labeled event by the maintainer, a removal, then a claude labeled event gives null', () => {
-  holds('removed-then-readded-by-claude', labeledBy('alfhen'))
+  holds('removed-then-readded-by-claude', (e) => labeledBy('alfhen')(e) && e.performed_via_github_app === null)
   holds('removed-then-readded-by-claude', (e) => e.event === 'unlabeled' && e.label.name === 'maintainer-approved')
   holds('removed-then-readded-by-claude', (e) => labeledBy('alfhen')(e) && e.performed_via_github_app?.slug === 'claude')
   assert.equal(approval('removed-then-readded-by-claude'), null)

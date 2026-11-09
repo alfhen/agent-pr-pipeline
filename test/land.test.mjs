@@ -16,10 +16,10 @@ const CONTENTS = `${P}__contents__.github__pipeline.json`
 const put = (fx, name, v) => writeFileSync(join(fx, name), typeof v === 'string' ? v : JSON.stringify(v))
 const fixture = (name) => readFileSync(join(FX, name), 'utf8')
 
-const run = (s, script, args, env = {}) => {
+const run = (s, script, args, env = {}, scripts = join(root, 'scripts')) => {
   const e = { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log, PIPELINE_TEST_FAST: '1', ...env }
   delete e.CLAUDECODE
-  const r = spawnSync('bash', [join(root, 'scripts', script), ...args], { env: e, encoding: 'utf8' })
+  const r = spawnSync('bash', [join(scripts, script), ...args], { env: e, encoding: 'utf8' })
   const log = existsSync(s.log) ? readFileSync(s.log, 'utf8').split('\n').filter(Boolean) : []
   return { code: r.status, out: r.stdout + r.stderr, log }
 }
@@ -131,12 +131,9 @@ test('land: a repo with no settings file takes its known flakes from the templat
   cpSync(join(root, 'scripts'), join(copy, 'scripts'), { recursive: true })
   mkdirSync(join(copy, 'templates'))
   writeFileSync(join(copy, 'templates/pipeline.json'), JSON.stringify({ gates: [], knownFlakes: ['e2e'], autoRelease: false }))
-  const e = { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log, PIPELINE_TEST_FAST: '1' }
-  delete e.CLAUDECODE
-  const r = spawnSync('bash', [join(copy, 'scripts/land-wave.sh'), 'o/r', `7:${SHA}`], { env: e, encoding: 'utf8' })
-  const log = readFileSync(s.log, 'utf8').split('\n').filter(Boolean)
-  assert.equal(r.status, 0, r.stdout + r.stderr)
-  assert.equal(reruns({ log }).length, 1)
+  const r = run(s, 'land-wave.sh', ['o/r', `7:${SHA}`], {}, join(copy, 'scripts'))
+  assert.equal(r.code, 0, r.out)
+  assert.equal(reruns(r).length, 1)
 })
 
 const git = (cwd, ...a) => {

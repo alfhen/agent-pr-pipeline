@@ -246,7 +246,7 @@ test('mutated prompts fail the loop and script checks', () => {
 
 test('short-step bullets do not stop, so the loop is reachable', () => {
   const shortStop = (t) => t.split('\n').some((l) => /^ {3}- `(adopt|untrusted|revoke|pr-seen|exhausted|needs-plan|block)`/.test(l) &&
-    /\bstop\b/i.test(l.replace('else log it and stop', '')))
+    /\bstop\b/i.test(/^ {3}- `block`/.test(l) ? l.replace('else log it and stop', '') : l))
   for (const k of LOOP_KINDS) {
     assert.ok(!shortStop(prompts[k]), k)
   }

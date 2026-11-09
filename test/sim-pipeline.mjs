@@ -1424,12 +1424,12 @@ await check('cleanup: a path with a quote is passed as one shell word', async ()
 })
 
 // Findings: one severity source, duplicates, sweep, invariants and round caps.
-const hooked = async (prs, hook, extra = {}) => {
+const hookedOut = async (prs, hook, extra = {}) => {
   calls = []; cleanupCalls = []; timeline = []; logs = []
   preflight = GOOD
-  const out = await run({ ...base, ...extra, prs }, async (p, o) => { const h = hook(p, o); if (h === undefined) return agent(p, o); calls.push({ label: o.label, model: o.model, prompt: p }); return h }, parallel, log)
-  return Object.fromEntries(out.prs.map(x => [x.id, x]))
+  return run({ ...base, ...extra, prs }, async (p, o) => { const h = hook(p, o); if (h === undefined) return agent(p, o); calls.push({ label: o.label, model: o.model, prompt: p }); return h }, parallel, log)
 }
+const hooked = async (prs, hook, extra = {}) => Object.fromEntries((await hookedOut(prs, hook, extra)).prs.map(x => [x.id, x]))
 const only1 = id => PRS.filter(p => p.id === id)
 const f = (severity, title, extra = {}) => ({ severity, title, detail: 'd', ...extra })
 const reviewOf = (findings, extra = {}) => ({ summary: 's', findings, ...extra })
@@ -2171,11 +2171,6 @@ await check('minors: the opener list drops a minor the docs check repeats', asyn
   assert.equal((open.match(/"title": "[Ss]ame nit"/g) || []).length, 2)
 })
 
-const hookedOut = async (prs, hook, extra = {}) => {
-  calls = []; cleanupCalls = []; timeline = []; logs = []
-  preflight = GOOD
-  return run({ ...base, ...extra, prs }, async (p, o) => { const h = hook(p, o); if (h === undefined) return agent(p, o); calls.push({ label: o.label, model: o.model, prompt: p }); return h }, parallel, log)
-}
 await check('minors: a minor marked in a later round keeps its mark when round 1 left it unmarked', async () => {
   await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x'), f('minor', 'Repeated nit')])
     : o.label === 'review:C1#2' ? reviewOf([f('minor', 'repeated  NIT!', { fileIssue: true })]) : undefined)
@@ -2184,7 +2179,7 @@ await check('minors: a minor marked in a later round keeps its mark when round 1
   assert.match(open.split('Minor findings to file:')[1], /[Rr]epeated nit/)
 })
 await check('minor pass: a plan PR with a minor in a file runs no fixer', async () => {
-  const x = await hooked(only1('P1'), (p, o) => o.label.startsWith('review:P1') ? reviewOf([minorOf()]) : undefined)
+  const x = await hooked([{ ...PRS.find(p => p.id === 'P1'), skipImpl: false }], (p, o) => o.label.startsWith('review:P1') ? reviewOf([minorOf()]) : undefined)
   assert.ok(calls.some(c => c.label.startsWith('review:P1')))
   assert.ok(!calls.some(c => /^minor(fix|review|revert)/.test(c.label)))
   assert.equal(x.P1.minorPass, null)
