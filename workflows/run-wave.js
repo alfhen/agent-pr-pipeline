@@ -572,12 +572,13 @@ Return headSha, a summary, every scenario you ran with its \`result\` (pass, fai
 ${prBlock(pr)}
 ${scenarios && scenarios.size ? `\nScenarios still open or untested. Use the same names, and run the open ones again (one left out stays open): ${JSON.stringify([...scenarios].map(([name, v]) => ({ name, state: v.state })))}` : ''}${last && last.length ? `\nYour findings from the last round (check each is really fixed):\n${JSON.stringify(last, null, 1)}` : ''}`
 
-const archPrompt = (pr, round, earlier = []) => `${ctx(pr)}
+const archPrompt = (pr, round, earlier = [], themes = []) => `${ctx(pr)}
 
 Task: review the branch for architecture against ${ARCH}.
 Clone it: ${cloneTo(`arch-${pr.id}-r${round}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`.
 Return the verdict, a short summary, the new concepts, the findings (each with a severity and, for a blocker or major, a \`theme\`; a fits may list minors) and the escalation (for escalate).
 ${round > 1 ? `The fixer has added commits since round 1 (\`git log --oneline origin/HEAD..HEAD\`; the first commits are the implementer's). Check each fixer commit against the decisions in the plan entry, the notes and the architecture document. A fixer commit that adds what a decided item rejected, or removes what it keeps, is \`escalate\`, never \`fits\`: the question for the maintainer is whether to keep the decision or change it.\n` : ''}
+${themes.length ? `Themes of earlier blockers and majors. Reuse a name below when a finding is the same weakness:\n${JSON.stringify(themes)}\n` : ''}
 ${prBlock(pr)}${earlier.length ? `\n\nYour earlier reports on this PR. The plan changed since. Check each earlier \`fits\` against the new head, and report it as a finding if it no longer holds:\n${JSON.stringify(earlier, null, 1)}` : ''}`
 
 const numbered = findings => {
@@ -952,13 +953,13 @@ const scopeEscalation = themes => ({
 async function reviewLoop(pr, startRound, history, minors, loopState) {
   const { max, cap } = roundsFor(pr)
   for (let round = startRound; round < startRound + max; round++) {
-    const wantArch = archRuns(pr) && (round === startRound || loopState.fixed || pr.kind === 'plan')
+    const wantArch = archRuns(pr) && (round === startRound || loopState.fixed || loopState.archOpen || pr.kind === 'plan')
     const wantProduct = productRuns(pr) && round === startRound
     const wantQa = qaRuns(pr) && (round === startRound || loopState.qaOpen.length > 0)
     const [test, review, arch, product, qa] = await parallel([
       () => call('test', pr, testPrompt(pr, round), `test:${pr.id}#${round}`, { schema: TEST }),
       () => call('review', pr, reviewPrompt(pr, round, history, loopState.siblings), `review:${pr.id}#${round}`, { schema: REVIEW }),
-      () => wantArch ? call('arch', pr, archPrompt(pr, round, pr.kind === 'plan' ? loopState.reports : []), `arch:${pr.id}#${round}`, { schema: ARCHREV }) : Promise.resolve(null),
+      () => wantArch ? call('arch', pr, archPrompt(pr, round, pr.kind === 'plan' ? loopState.reports : [], [...new Set(history.flatMap(h => h.themes || []))]), `arch:${pr.id}#${round}`, { schema: ARCHREV }) : Promise.resolve(null),
       () => wantProduct ? call('product', pr, productPrompt(pr, round), `product:${pr.id}#${round}`, { schema: PRODUCT }) : Promise.resolve(null),
       () => wantQa ? call('qa', pr, qaPrompt(pr, round, loopState.qaOpen, loopState.qaScenarios), `qa:${pr.id}#${round}`, { schema: QA }) : Promise.resolve(null),
     ])
