@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -100,4 +100,18 @@ test('no PR is flagged when the PRs are alike, and the feedback list is empty', 
 test('a bad argument exits 64', () => {
   assert.equal(run().status, 64)
   assert.equal(run('--bogus').status, 64)
+})
+
+test('a truncated line keeps the valid usage, marks the report incomplete and flags no PR', () => {
+  const { outFile, folder } = setup([
+    { role: 'fixer', desc: 'fixer:A1#1', lines: [first('A1'), msg('m1', [1, 10, 100, 5])] },
+    { role: 'fixer', desc: 'fixer:B1#1', lines: [first('B1'), msg('m2', [1, 10, 100, 5])] },
+    { role: 'fixer', desc: 'fixer:C1#1', lines: [first('C1'), msg('m3', [1000, 10, 100, 5])] },
+  ])
+  appendFileSync(join(folder, 'agent-0.jsonl'), '{"type":"assistant","message":{"id":"m9","us\n')
+  const r = run(outFile, folder)
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stdout, /^fixer \| 3 \| 1002 /m)
+  assert.match(r.stdout, /incomplete, 1 file/)
+  assert.doesNotMatch(r.stdout, /^FLAG /m)
 })

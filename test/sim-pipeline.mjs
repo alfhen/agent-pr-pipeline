@@ -1443,6 +1443,15 @@ await check('a decision rerun fixer that pushed nothing shows as rerunFixChanged
   const ev = calls.find(c => c.label === 'evaluate:wave')
   assert.match(ev.prompt, /"rerunFixChanged":false/)
 })
+await check('a fixer that omits changed leaves fixChanged unset', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x')]) : o.label === 'fix:C1#1' ? { summary: 's' } : undefined)
+  assert.equal(x.C1.history[0].fixChanged, undefined)
+})
+await check('a decision rerun that stops at open still reports rerunFixChanged', async () => {
+  const x = await hooked(only('C1').map(p => ({ ...p, skipImpl: true, architectureDecision: 'use A' })), (p, o) => /^fix:C1#0/.test(o.label) ? { summary: 's', changed: false } : o.label === 'open:C1' ? {} : undefined)
+  assert.equal(x.C1.reason, 'PR not opened')
+  assert.equal(x.C1.rerunFixChanged, false)
+})
 await check('severity: a review major titled [minor] x is one major line, a conflict and a clean title for the fixer', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)
   assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [review]: x'])

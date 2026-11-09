@@ -4,6 +4,7 @@
 # notice names (agentCount, totalTokens). With a transcript folder (agent-<id>.jsonl, with agent-<id>.meta.json beside it)
 # it also prints input, cache write, cache read, output, agent count and average context per role, the top roles, and
 # the PRs that used more than TOKEN_REPORT_FLAG_MULTIPLE (default 2) times the median of the wave (needs 3 PRs).
+# A transcript line that is not valid JSON is skipped; the report then says it is incomplete and flags no PR.
 # A missing transcript folder prints the totals only. A message id that repeats in a transcript counts once.
 # A PR is found from the description in the agent's meta file (<role>:<PR id>#<step>, as run-wave.js labels agents); the
 # labels wave and goals are no PR. Without a description it falls back to the indented or plain "PR: <id> - " line of the
@@ -35,6 +36,7 @@ if [ -z "$dir" ] || [ ! -d "$dir" ]; then
   exit 0
 fi
 
+bad=0
 rows=$(mktemp) || exit 1
 trap 'rm -f "$rows"' EXIT
 while IFS= read -r f; do
@@ -42,7 +44,8 @@ while IFS= read -r f; do
   role=$(jq -r '.agentType // "unknown" | sub("^[^:]*:"; "")' "$meta" 2>/dev/null) || role=unknown
   [ -n "$role" ] || role=unknown
   desc=$(jq -r '.description // ""' "$meta" 2>/dev/null) || desc=""
-  jq -c -s --arg role "$role" --arg desc "$desc" '
+  jq -c . "$f" >/dev/null 2>&1 || bad=$((bad + 1))
+  jq -R -c 'fromjson? // empty' "$f" | jq -c -s --arg role "$role" --arg desc "$desc" '
     ([.[] | select(.type == "user") | .message.content | strings] | first // "") as $first
     | ([to_entries[] | select(.value.message.usage != null) | {key: (.value.message.id // "line\(.key)"), value: .value.message.usage}] | from_entries | [.[]]) as $u
     | {role: $role,
@@ -52,12 +55,12 @@ while IFS= read -r f; do
        cacheWrite: ([$u[] | .cache_creation_input_tokens // 0] | add // 0),
        cacheRead: ([$u[] | .cache_read_input_tokens // 0] | add // 0),
        output: ([$u[] | .output_tokens // 0] | add // 0),
-       messages: ($u | length)}' "$f" >> "$rows" 2>/dev/null || echo "token-report: skipped unreadable $f" >&2
+       messages: ($u | length)}' >> "$rows" 2>/dev/null || echo "token-report: skipped unreadable $f" >&2
 done < <(find "$dir" -maxdepth 1 -name 'agent-*.jsonl' | sort)
 
 if [ ! -s "$rows" ]; then echo "transcripts: no agent files in the folder, totals only"; exit 0; fi
 
-report=$(jq -s -r --argjson mult "$mult" '
+report=$(jq -s -r --argjson mult "$mult" --argjson bad "$bad" '
   def tot: .input + .cacheWrite + .cacheRead + .output;
   (group_by(.role) | map({role: .[0].role, agents: length,
      input: (map(.input) | add), cacheWrite: (map(.cacheWrite) | add), cacheRead: (map(.cacheRead) | add), output: (map(.output) | add),
@@ -68,8 +71,10 @@ report=$(jq -s -r --argjson mult "$mult" '
     "role | agents | input | cache write | cache read | output | avg context",
     ($roles[] | "\(.role) | \(.agents) | \(.input) | \(.cacheWrite) | \(.cacheRead) | \(.output) | \(.avgContext)"),
     "top roles: \($roles[:3] | map("\(.role) \(.total)") | join(", "))",
+    (if $bad > 0 then "transcripts: incomplete, \($bad) file(s) had unreadable lines" else empty end),
     ( [.[] | select(.pr != null)] | group_by(.pr) | map({pr: .[0].pr, total: (map(tot) | add)}) | sort_by(.total) ) as $prs
-    | if ($prs | length) < 3 then "PR flags: need 3 PRs with transcripts, have \($prs | length)"
+    | if $bad > 0 then "PR flags: none, the transcripts are incomplete"
+      elif ($prs | length) < 3 then "PR flags: need 3 PRs with transcripts, have \($prs | length)"
       else (($prs | length) as $c | ($prs | map(.total)) as $t | (if $c % 2 == 1 then $t[($c - 1) / 2] else ($t[$c / 2 - 1] + $t[$c / 2]) / 2 end)) as $med
         | ($prs | map(select($med > 0 and .total > $med * $mult))) as $hot
         | "wave median per PR: \($med | floor) tokens",

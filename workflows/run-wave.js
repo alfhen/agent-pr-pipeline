@@ -993,7 +993,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     if (round === startRound + max - 1) return { signedOff: false, reason: exhausted('', max, max, cap), lastFindings: blocking, lastTest: test }
     const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, round, review.sweep), `fix:${pr.id}#${round}`, { schema: FIX })
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
-    row.fixChanged = !!(fix && fix.changed)
+    if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
     loopState.siblings = labelSiblings(fix && fix.siblings, blocking)
   }
 }
@@ -1383,7 +1383,7 @@ async function runPRSteps(input) {
   if (docsRuns(pr) && redHead) untestedFor(pr).pass.push('docs not updated: the minor pass commits are still on the branch')
   else if (docsRuns(pr)) {
     const d = await docsStep(pr, loop.headSha, history, minors)
-    if (!d.ok) return { id: pr.id, ready: false, reason: d.reason, history, lastFindings: d.lastFindings, docs: d.docs, architecture: loopState.reports, product: loopState.product }
+    if (!d.ok) return { id: pr.id, ready: false, reason: d.reason, history, lastFindings: d.lastFindings, docs: d.docs, architecture: loopState.reports, product: loopState.product, ...rerunFix() }
     loop.headSha = d.headSha
     docs = { changed: d.docs.changed, files: d.docs.files || [], summary: d.docs.summary }
   }
@@ -1391,8 +1391,8 @@ async function runPRSteps(input) {
   const openedUntested = untestedOf(pr)
   const openMinors = mergeDuplicates(minors)
   const opened = await call('open', pr, openPrompt(pr, history, openMinors, { architecture: loopState.reports, product: loopState.product, docs }, openedUntested, pass.fixed), `open:${pr.id}`, { schema: OPEN })
-  if (opened && opened.blocked) return { id: pr.id, ready: false, reason: MILESTONE_MISSING && opened.blockedReason === MILESTONE_MISSING ? 'milestone not found' : 'needs human: permission', blockedReason: opened.blockedReason, commands: opened.commands || [], history, ...(opened.prNumber ? { prNumber: opened.prNumber } : {}), ...(opened.issuesCreated ? { issuesCreated: opened.issuesCreated } : {}) }
-  if (!opened || !opened.prNumber) return { id: pr.id, ready: false, reason: 'PR not opened', history }
+  if (opened && opened.blocked) return { id: pr.id, ready: false, reason: MILESTONE_MISSING && opened.blockedReason === MILESTONE_MISSING ? 'milestone not found' : 'needs human: permission', blockedReason: opened.blockedReason, commands: opened.commands || [], history, ...(opened.prNumber ? { prNumber: opened.prNumber } : {}), ...(opened.issuesCreated ? { issuesCreated: opened.issuesCreated } : {}), ...rerunFix() }
+  if (!opened || !opened.prNumber) return { id: pr.id, ready: false, reason: 'PR not opened', history, ...rerunFix() }
   const n = opened.prNumber
 
   if (PLUGIN_ROOT) {
@@ -1402,11 +1402,11 @@ async function runPRSteps(input) {
 
   if (redHead) untestedFor(pr).pass.push('bots not waited for or answered: the minor pass commits are still on the branch')
   const b = redHead ? { ok: true, headSha: loop.headSha, lateMinors: [] } : await bots(pr, n, loop.headSha, opened.issuesCreated || [], history, minors)
-  if (!b.ok) return { id: pr.id, ready: false, reason: b.reason, history, prNumber: n, headSha: b.headSha, lastFindings: b.lastFindings, untested: untestedOf(pr) }
+  if (!b.ok) return { id: pr.id, ready: false, reason: b.reason, history, prNumber: n, headSha: b.headSha, lastFindings: b.lastFindings, untested: untestedOf(pr), ...rerunFix() }
   const { wait, answer } = b
   const headSha = b.headSha
   const sync = await syncUntested(pr, n, openedUntested)
-  if (!sync.ok) return { id: pr.id, ready: false, reason: sync.reason, history, prNumber: n, headSha, untested: untestedOf(pr) }
+  if (!sync.ok) return { id: pr.id, ready: false, reason: sync.reason, history, prNumber: n, headSha, untested: untestedOf(pr), ...rerunFix() }
   const landing = await landFor(pr, n, headSha)
   return {
     id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl, headSha,
