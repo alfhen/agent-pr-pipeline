@@ -40,14 +40,26 @@ else
     # Only a release key directly under on, or a tags key directly under push, counts: a workflow_dispatch input may share the name.
     if awk '
       # A one-line on: value counts only when release is the value, a first-level list item or a first-level key.
-      function inline_hit(s,   i, c, d, tok, t, ctx) {
-        sub(/(^|[ \t]+)#.*$/, "", s); gsub(/^[ \t]+|[ \t]+$/, "", s)
+      # Quotes hide #, commas and brackets from the scan.
+      function uncomment(s,   i, c, q, p) {
+        q = ""; p = " "
+        for (i = 1; i <= length(s); i++) {
+          c = substr(s, i, 1)
+          if (q != "") { if (c == q) q = "" }
+          else if (c == "\"" || c == "\047") q = c
+          else if (c == "#" && (p == " " || p == "\t")) return substr(s, 1, i - 1)
+          p = c }
+        return s }
+      function inline_hit(s,   i, c, d, tok, t, ctx, q) {
+        s = uncomment(s); gsub(/^[ \t]+|[ \t]+$/, "", s)
         if (s == "release") return 1
         ctx = substr(s, 1, 1)
         if (ctx != "[" && ctx != "{") return 0
-        d = 0; tok = ""
+        d = 0; tok = ""; q = ""
         for (i = 1; i <= length(s); i++) {
           c = substr(s, i, 1)
+          if (q != "") { if (c == q) q = ""; tok = tok c; continue }
+          if (c == "\"" || c == "\047") { q = c; tok = tok c; continue }
           if (c == "[" || c == "{") { d++; tok = ""; continue }
           if (c == "]" || c == "}" || c == "," || c == ":") {
             t = tok; gsub(/^[ \t"\047]+|[ \t"\047]+$/, "", t)
