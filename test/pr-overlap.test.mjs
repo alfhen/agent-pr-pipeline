@@ -20,7 +20,12 @@ const setup = ({ open, comments = [], login = 'me' }) => {
   copyFileSync(join(root, 'test/fake-gh'), join(dir, 'fake-gh')); chmodSync(join(dir, 'fake-gh'), 0o755)
   writeFileSync(join(bin, 'gh'), `#!/bin/bash
 for a in "$@"; do case "$a" in body=@*) cp "\${a#body=@}" "${dir}/posted-body" ;; esac; done
-exec "${dir}/fake-gh" "$@"
+case "$*" in
+  *"pulls?state=open&per_page="*)
+    n=$(sed -E 's/.*pulls\\?state=open&per_page=([0-9]+).*/\\1/' <<<"$*")
+    "${dir}/fake-gh" "$@" | jq ".[:$n]" ;;
+  *) exec "${dir}/fake-gh" "$@" ;;
+esac
 `)
   chmodSync(join(bin, 'gh'), 0o755)
   put(fx, 'user.json', { login })

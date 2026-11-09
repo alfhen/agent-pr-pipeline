@@ -25,7 +25,7 @@ if [ "$(jq length <<<"$posted")" -gt 0 ]; then
 fi
 
 gh api --paginate "repos/$R/pulls/$pr/files?per_page=100" --jq '.[].filename' >"$tmp/mine" || fail "cannot read the files of #$pr"
-gh api "repos/$R/pulls?state=open&per_page=$((LIMIT + 1))" >"$tmp/open" || fail "cannot list the open pull requests"
+gh api "repos/$R/pulls?state=open&per_page=$((LIMIT + 2))" >"$tmp/open" || fail "cannot list the open pull requests"
 jq --argjson pr "$pr" '[.[] | select(.number != $pr)]' "$tmp/open" >"$tmp/others" || fail "cannot list the open pull requests"
 if [ "$(jq length "$tmp/others")" -gt "$LIMIT" ]; then echo "stopped at the first $LIMIT open pull requests"; fi
 
