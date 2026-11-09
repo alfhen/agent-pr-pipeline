@@ -135,7 +135,7 @@ const agentRaw = async (prompt, o) => {
   const round = o.label.split('#')[1] || ''
   if (o.label.startsWith('test')) return { pass: true, headSha: /^land/.test(round) && !land.testMoved.has(id) ? landHead[id].padEnd(40, 'c') : 'sha-' + id + (/^(docs|bots|land)/.test(round) ? '-' + round : ''), checks: [{ name: 'lint', pass: true }] }
   if (o.label.startsWith('landreview')) return { summary: 's', findings: land.landBad.has(id) || (land.landBadOnce.has(id) && round === '1') ? [{ severity: 'major', title: 'the resolution drops the new flag', detail: 'd' }] : [{ severity: 'minor', title: 'land nit', detail: 'd' }] }
-  if (o.label.startsWith('botreview')) return { summary: 's', findings: id === 'B1' && round === '1' ? [{ severity: 'major', title: 'the new regex anchor rejects valid input', detail: 'd' }] : [{ severity: 'minor', title: 'late nit', detail: 'd' }], invariants: id === 'B1' && round === '1' ? [{ text: 'the gate refuses an unknown path', holds: false, evidence: 'it accepts one' }] : [], sweep: [] }
+  if (o.label.startsWith('botreview')) return { summary: 's', findings: id === 'B1' && round === '1' ? [{ severity: 'major', title: 'the new regex anchor rejects valid input', detail: 'd' }, { severity: 'minor', title: 'round one nit', detail: 'd' }] : [{ severity: 'minor', title: 'late nit', detail: 'd' }], invariants: id === 'B1' && round === '1' ? [{ text: 'the gate refuses an unknown path', holds: false, evidence: 'it accepts one' }] : [], sweep: [] }
   if (o.label.startsWith('docsreview')) {
     const major = id === 'G3' || (id === 'G2' && round === '1')
     return { summary: 's', findings: major ? [{ severity: 'major', title: 'docs say the flag is --all, code has --every', detail: 'd' }] : [] }
@@ -241,6 +241,7 @@ await check('a finding in the bot answer check gets a fix round and a second che
   assert.match(mainCalls.find(c => c.label === 'botreview:B1#2').prompt, /the new regex anchor rejects valid input/)
   const second = mainCalls.find(c => c.label === 'botreview:B1#2').prompt
   assert.match(second, /fixer's sweep/)
+  assert.match(second, /round one nit/)
   assert.match(second, /other anchors/)
   const num = /pulls\/(\d+)\/comments\/<id>\/replies/.exec(mainCalls.find(c => c.label === 'botanswer:B1').prompt)[1]
   assert.ok(second.includes(`pulls/${num}/comments`) && !/undefined/.test(second))
@@ -1971,6 +1972,17 @@ await check('minor pass: a minor in a PR file runs one fixer, a check of its dif
   assert.match(open, /Minors fixed in the minor pass: \[\s+\{\s+"title": "rename helper"/)
   assert.match(open, /Minor findings not fixed: \[[\s\S]*unmarked nit/)
   assert.doesNotMatch(open.split('Minor findings not fixed:')[1], /rename helper/)
+})
+await check('minor pass: a file with a line number or ./ prefix still matches the scope', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([minorOf({ file: './src/a.js:12' })]) : passHook()(p, o))
+  assert.ok(calls.some(c => c.label === 'minorfix:C1'))
+  assert.equal(x.C1.ready, true)
+})
+await check('minor pass: a skipImpl rerun or a resume runs no pass', async () => {
+  for (const extra of [{ skipImpl: true }, { resume: { history: [], minors: [minorOf()] } }]) {
+    await hooked(only1('C1').map(p => ({ ...p, ...extra })), passHook())
+    assert.ok(!calls.some(c => /^minor(fix|review|revert)/.test(c.label)), JSON.stringify(Object.keys(extra)))
+  }
 })
 await check('minor pass: a PR with no minor in a file runs no fixer', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('minor', 'no file')]) : undefined)
