@@ -4,7 +4,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync, cpSync, readdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync, cpSync, readdirSync, rmSync, lstatSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -403,4 +403,12 @@ test('manifest.sh --check without a files.txt fails', () => {
   const r = manifest(manifestRepo(), '--check')
   assert.equal(r.code, 1)
   assert.equal(r.out, 'MANIFEST missing .claude-plugin/files.txt')
+})
+
+test('the committed releases.txt has 1 to 3 unique vX.Y.Z lines', () => {
+  assert.ok(lstatSync(join(root, '.claude-plugin/releases.txt')).isFile(), 'releases.txt must be a regular file, not a symlink')
+  const lines = readFileSync(join(root, '.claude-plugin/releases.txt'), 'utf8').replace(/\n$/, '').split('\n')
+  assert.ok(lines.length >= 1 && lines.length <= 3, `${lines.length} lines`)
+  for (const l of lines) assert.match(l, /^v[0-9]+\.[0-9]+\.[0-9]+$/, `bad line: ${l}`)
+  assert.equal(new Set(lines).size, lines.length, 'repeated line')
 })
