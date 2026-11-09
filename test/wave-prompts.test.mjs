@@ -40,3 +40,12 @@ test('an explicit title is passed as it is', () => {
   assert.match(src, /: `title "\$\{pr\.title\}"`/)
   assert.match(src, /'-f title=<title>'/)
 })
+
+test('bot answer check reviews the whole PR on the new head', () => {
+  const m = /const botReviewPrompt = [\s\S]*?const landReviewPrompt/.exec(src)
+  assert.ok(m)
+  assert.match(m[0], /review the whole PR on its new head/)
+  assert.match(m[0], /acceptance test and Touches line/)
+  assert.match(m[0], /A regression that a bot found and the earlier review missed is a finding/)
+  assert.doesNotMatch(m[0], /Do not review the rest of the PR again/)
+})

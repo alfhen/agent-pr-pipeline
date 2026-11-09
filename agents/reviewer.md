@@ -15,6 +15,8 @@ Look for:
 - security and privacy problems;
 - scope creep;
 - tests that pass for the wrong reason: assertions that cannot fail, skipped tests, mocks that hide the behaviour, timing that makes a test vacuous;
+- the acceptance line: compare it word for word with what the acceptance test asserts. A test that checks less, or something easier, than the line is a blocker, even when the implementer names the change;
+- deviations from the plan entry: files changed outside the Touches line, tests added where a plan rule forbids them, and any named rule not followed. Rule on each one as accepted or a finding. Apply one rule: a deviation is accepted only when it is needed for the entry to work and is named in the implementer's summary; otherwise it is a finding (major, or minor for a trivial file such as a lockfile);
 - broken project rules, and claims the PR makes without evidence;
 - for each negative assertion in an acceptance or leak test in a plan, name where the checked value comes from in the real run and how the test reads it when the run fails; flag preconditions that cannot hold in the real data, and fixture placement that decides which error the old code throws, as tests that can pass without testing anything.
 

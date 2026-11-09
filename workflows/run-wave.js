@@ -662,9 +662,9 @@ ${prBlock(pr)}`
 
 const botReviewPrompt = (pr, round, fromSha, answer) => `${ctx(pr)}
 
-Task: review only the commits the bot answer agent added after the rest of the PR passed review.
-Clone it: ${cloneTo(`botreview-${pr.id}-r${round}`, pr)}. Those commits are \`git diff ${fromSha || 'origin/HEAD'}..HEAD\`; the whole PR is \`git diff origin/HEAD...HEAD\` for context.
-Check that each change is right and complete, that its tests can fail, and that it breaks nothing the PR already did. Do not review the rest of the PR again.
+Task: review the whole PR on its new head, after the bot answer agent added commits. Review it against ${SPEC ? `${SPEC} and ` : ''}${ref(pr)}, as in a full adversarial review.
+Clone it: ${cloneTo(`botreview-${pr.id}-r${round}`, pr)}. The whole PR is \`git diff origin/HEAD...HEAD\`. The commits the bot answer agent added are \`git diff ${fromSha || 'origin/HEAD'}..HEAD\`: read them first and hardest.
+Check that each added change is right and complete, that its tests can fail, and that it breaks nothing the PR already did, including the plan entry's acceptance test and Touches line. A regression that a bot found and the earlier review missed is a finding.
 Return headSha, a summary and the findings.
 
 ${prBlock(pr)}
