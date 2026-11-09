@@ -53,10 +53,11 @@ repo=${1:-}
 pin=none
 AGENT_FN_HERE
 
+# The pin is never offered as ROOT: a stop can be its failed file check, and the prompt runs scripts from ROOT.
 highest() {
   local d
   for d in "$ROOT"/v*; do
-    [ -f "$d/.complete" ] && [[ "${d##*/}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "${d##*/}"
+    [ "${d##*/}" != "$pin" ] && [ -f "$d/.complete" ] && [[ "${d##*/}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "${d##*/}"
   done | sort -V | tail -1
 }
 stop() {

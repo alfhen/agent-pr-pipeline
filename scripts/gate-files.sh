@@ -10,8 +10,8 @@
 # floor path matches. It exits 0, or 3 ("GATE ERROR") when the gates or the files cannot be read.
 # Exit 0 when no changed file of the PR matches a gate; exit 1 ("GATED") when one does; exit 3
 # ("GATE ERROR") when that cannot be told (fails closed); exit 2 on a usage error.
-# A fixed floor is gated on top of the settings, and no settings file removes it: .github, .claude, AGENTS.md,
-# CLAUDE.md (at any depth) and docs/goals.md, and in the plugin's own repo (plugin-repo.sh) also the plugin's code folders.
+# A fixed floor is gated on top of the settings, and no settings file removes it: .github, .claude folders,
+# AGENTS.md, CLAUDE.md and CLAUDE.local.md (at any depth, in any letter case) and docs/goals.md, and in the plugin's own repo (plugin-repo.sh) also the plugin's code folders.
 # The gates come from .github/pipeline.json on the default branch, or from templates/pipeline.json when the repo has no settings file. Both filename and previous_filename count.
 R=$1; pr=$2; scope=
 if [ "$pr" = "--head" ]; then
@@ -61,28 +61,30 @@ else
   [ "$(jq length <<<"$list")" -lt 3000 ] || err "3000 changed files or more, the list may be cut"
 fi
 
-floor='[".github/**",".claude/**","**/AGENTS.md","**/CLAUDE.md","docs/goals.md"]'
-if [ "$(bash "$here/plugin-repo.sh" 2>/dev/null)" = "$(tr '[:upper:]' '[:lower:]' <<<"$R")" ]; then
+floor='[".github/**","**/.claude/**","**/AGENTS.md","**/CLAUDE.md","**/CLAUDE.local.md","docs/goals.md"]'
+plugin=$(bash "$here/plugin-repo.sh" 2>/dev/null) || err "cannot read the plugin repository from the plugin manifest"
+if [ "$plugin" = "$(tr '[:upper:]' '[:lower:]' <<<"$R")" ]; then
   floor=$(jq -c '. + ["agents/**","workflows/**","scripts/**","skills/**","routine/**","templates/**",".claude-plugin/**"]' <<<"$floor")
 fi
 
-# matches <gates> [free]: the changed files a gate matches, joined; with "free", the files no gate matches, as a JSON array.
-matches() { jq -r --argjson gates "$1" --arg free "$2" '
+# matches <gates> [flags] [free]: the changed files a gate matches, joined; with "free", the files no gate matches, as a JSON array.
+matches() { jq -r --argjson gates "$1" --arg flags "${2:-}" --arg free "${3:-}" '
   def rx: (if endswith("/") then . + "**" else . end)
     | gsub("(?<c>[.+^${}()|\\[\\]\\\\])"; "\\" + .c)
     | gsub("\\*\\*/"; "\u0001") | gsub("\\*\\*"; "\u0002") | gsub("\\*"; "\u0003") | gsub("\\?"; "\u0004")
     | gsub("\u0001"; "([\\s\\S]*/)?") | gsub("\u0002"; "[\\s\\S]*") | gsub("\u0003"; "[^/]*") | gsub("\u0004"; "[^/]")
     | "\\A" + . + "\\z";
-  def hit: . as $f | any($gates[]; . as $g | $f | test($g | rx));
+  def hit: . as $f | any($gates[]; . as $g | $f | test($g | rx; $flags));
   if $free == "" then [.[] | (.filename, (.previous_filename // empty))] | unique | map(select(hit)) | join(", ")
   else map(select([.filename, (.previous_filename // empty)] | any(hit) | not) | .filename) | unique | tojson end' <<<"$list"; }
 if [ -n "$scope" ]; then
-  both=$(jq -nc --argjson a "$gates" --argjson b "$floor" '$a + $b') || err "cannot match the changed files"
-  free=$(matches "$both" free) || err "cannot match the changed files"
+  free=$(matches "$gates" "" free) || err "cannot match the changed files"
+  list=$(jq -c --argjson f "$free" '[.[] | select(.filename as $n | $f | index($n))]' <<<"$list") || err "cannot match the changed files"
+  free=$(matches "$floor" i free) || err "cannot match the changed files"
   echo "SCOPE $free"; exit 0
 fi
 hit=$(matches "$gates") || err "cannot match the changed files"
 [ -z "$hit" ] || gated "$hit"
-hit=$(matches "$floor") || err "cannot match the changed files"
+hit=$(matches "$floor" i) || err "cannot match the changed files"
 [ -z "$hit" ] || gated "floor: $hit"
 echo "not gated #$pr"
