@@ -41,10 +41,12 @@ read_failing() {
 # wait_ci would see the old failure.
 wait_rerun_started() {
   for _ in $(seq 1 "$rtries"); do
-    st=$(gh api "repos/$R/actions/runs/$1" --jq '"\(.run_attempt) \(.status)"' 2>/dev/null) || return 0
-    [ "${st%% *}" != 1 ] || [ "${st#* }" != completed ] && return 0
+    if st=$(gh api "repos/$R/actions/runs/$1" --jq '"\(.run_attempt) \(.status)"' 2>/dev/null); then
+      { [ "${st%% *}" != 1 ] || [ "${st#* }" != completed ]; } && return 0
+    fi
     sleep "$((pause / 3))"
   done
+  return 1
 }
 # Prints the run ids to rerun when every failing check is a known flake, else nothing. The list is read from
 # the default branch, never from the PR head, so a PR cannot add its own failing check to it. Any doubt means no rerun.
@@ -93,7 +95,7 @@ for arg in "$@"; do
       done
       if [ "$rerun_ok" = 1 ]; then
         echo "RERUN #$pr: known flake(s) [$failing], failed jobs rerun once"
-        for id in $ids; do wait_rerun_started "$id"; done
+        for id in $ids; do wait_rerun_started "$id" || { echo "STOP #$pr: the rerun of run $id did not show a new attempt"; exit 5; }; done
         wait_ci
         if [ "$head" != "$sha" ]; then echo "HEAD MOVED #$pr: checked ${sha:0:7}, now ${head:0:7}. Check the new head before merging."; exit 6; fi
         read_failing

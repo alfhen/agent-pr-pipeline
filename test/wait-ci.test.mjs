@@ -135,6 +135,7 @@ test('a head that moves to one with no check runs and a green status is not succ
   const out = JSON.parse(run(s, '2').stdout)
   assert.equal(out.head, B)
   assert.equal(out.state, 'success')
+  assert.equal(out.timedOut, false)
   assert.equal(readFileSync(join(s.fx, `${P}__pulls__7.count`), 'utf8').trim(), '3')
 })
 

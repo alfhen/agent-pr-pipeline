@@ -7,7 +7,9 @@
 # not bring the old approval back. `unlabeled` events are never read: a session's removal carries no app
 # mark, so it looks like the maintainer's. Removal is checked against the current labels by the caller.
 # Events in the same second are ordered by id.
-(if $after == "" then null else $after | fromdateiso8601 end) as $cut
+(if $after == "" then null
+ elif ($after | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) then $after | fromdateiso8601
+ else error("after must be YYYY-MM-DDTHH:MM:SSZ") end) as $cut
 | [.[]?
   | select(type == "object" and .event == "labeled" and .label.name == $label and (.created_at | type) == "string")]
 | sort_by([.created_at, (.id // 0)])

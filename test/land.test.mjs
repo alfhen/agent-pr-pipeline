@@ -249,6 +249,17 @@ test('land: after a rerun the script waits until GitHub lists the new attempt', 
   assert.equal(r.log.filter((l) => l === 'GET /repos/o/r/actions/runs/55').length, 3)
 })
 
+test('land: a rerun that never shows a new attempt stops the wave, not LAND FIX', () => {
+  const s = landSetup({ checks: [[failed('e2e')], [failed('e2e')]] })
+  const runPath = `${P}__actions__runs__55`
+  rmSync(join(s.fx, `${runPath}.json`))
+  put(s.fx, `${runPath}.json`, { run_attempt: 1, status: 'completed' })
+  const r = land(s)
+  assert.equal(r.code, 5, r.out)
+  assert.match(r.out, /did not show a new attempt/)
+  assert.doesNotMatch(r.out, /LAND FIX/)
+})
+
 test('land: check runs with large payloads are read and merged', () => {
   const big = (i) => ({ ...passed(`ci${i}`), output: { text: 'x'.repeat(3000) } })
   const r = land(landSetup({ checks: [Array.from({ length: 100 }, (_, i) => big(i))] }))
