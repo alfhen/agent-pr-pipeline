@@ -170,7 +170,7 @@ test('the answer prompt and the bot-answerer role reply in the bot thread when c
 })
 
 test('the end of a run reads the head, the bots and the CI state from the scripts', () => {
-  assert.match(src, /'bot-status\.sh', `\$\{REPO\} \$\{n\}`/)
+  assert.match(src, /#endstatus`, 'bot-status\.sh'/)
   assert.match(src, /'wait-ci\.sh', `\$\{REPO\} \$\{n\} 1`/)
   assert.match(src, /CI failed on the head/)
 })

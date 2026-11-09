@@ -105,7 +105,7 @@ const agentRaw = async (prompt, o) => {
     return land.statusDown.has(id) ? { exitCode: 1, output: 'bot-status: cannot read the reviews' } : { exitCode: 0, output: JSON.stringify({ head: land.headMoved.has(id) ? 'moved' : lastHead[id], approvedBy: ['gitar-bot'], seenHead: ['gitar-bot'], openThreads: land.threads.has(id) || ['C2', 'L1', 'B1', 'W1'].includes(id) ? 1 : 0, pending: land.pendingBot.has(id) ? ['Gitar'] : [], reviewBodies: land.bodies.has(id) && !land.answered.has(id) ? 1 : 0 }) }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#endstatus')) {
-    return { exitCode: 0, output: JSON.stringify({ head: endHead(id), approvedBy: ['gitar-bot'], seenHead: [], openThreads: 0, pending: [], reviewBodies: 0 }) }
+    return { exitCode: 0, output: JSON.stringify({ head: endHead(id), approvedBy: ['gitar-bot (end read)'], seenHead: [], openThreads: 0, pending: [], reviewBodies: 0 }) }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#endci')) {
     const head = endHead(id)
@@ -956,8 +956,7 @@ const suffix = x => x.land.split(':').slice(2).join(':')
 await check('end facts: the bots, the CI state and the call come from the script', async () => {
   const x = await landRun({}, only('C2'))
   assert.ok(ran(/^botanswer:C2/).length > 0)
-  assert.deepEqual(x.C2.approvedBy, ['gitar-bot'])
-  assert.notDeepEqual(x.C2.approvedBy, ['the-waiter-says-so'])
+  assert.deepEqual(x.C2.approvedBy, ['gitar-bot (end read)'])
   assert.deepEqual(x.C2.ci, { state: 'success', failed: [] })
   assert.equal(x.C2.ready, true)
   assert.ok(x.C2.land.startsWith(`${x.C2.prNumber}:${x.C2.headSha}`))
@@ -1000,7 +999,7 @@ await check('end facts: a head that does not extend the checked head stops the P
   assert.equal(x.prs[0].headSha, 'sha-other')
   assert.equal(x.prs[0].land, undefined)
 })
-await check('reused PR: the open prompt keeps the body and the land fix path reads the final facts too', async () => {
+await check('reused PR: the open prompt keeps the body', async () => {
   await simulate({ ...base, prs: [{ id: 'C1', title: 't', branch: 'b1', skipImpl: true }] })
   const open = calls.find(c => c.label === 'open:C1').prompt
   assert.match(open, /Read its body with .*and keep all of it, including every `Closes #N` line, the Minor fixes section/)
@@ -1140,7 +1139,7 @@ await check('merge safety: without pluginRoot no PR is :auto', async () => {
 
 await check('bot status: approvedBy comes from the script through pipeline-io, not from the waiter', async () => {
   const x = await landRun({}, only('C1'))
-  assert.deepEqual(x.C1.approvedBy, ['gitar-bot'])
+  assert.deepEqual(x.C1.approvedBy, ['gitar-bot (end read)'])
   const st = calls.find(c => c.label === 'io:C1#botstatus')
   assert.match(st.prompt, /bash \/plug\/scripts\/io\.sh bot-status\.sh o\/r \d+/)
   assert.match(st.prompt, /never from a clone of o\/r/)
