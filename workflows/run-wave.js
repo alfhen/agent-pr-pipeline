@@ -995,14 +995,14 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     }
     const row = historyRow(round, outcome, blocking, split.conflicts)
     history.push(row)
-    const conflict = blocking.find(f => /^plan conflict:/i.test(f.title))
+    const conflict = pr.kind !== 'plan' && blocking.find(f => /^plan conflict:/i.test(f.title))
     if (conflict) return { signedOff: false, reason: 'needs human: plan conflict', conflict: `${conflict.title}: ${conflict.detail}` }
     log(`${pr.id} round ${round}: tests ${outcome.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (outcome.pass && blocking.length === 0) return { signedOff: true, headSha: test.headSha || review.headSha }
     if (round === startRound + max - 1) return { signedOff: false, reason: exhausted('', max, max, cap), lastFindings: blocking, lastTest: test }
     const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, round, review.sweep, true), `fix:${pr.id}#${round}`, { schema: FIX })
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
-    if (fix && fix.planConflict) return { signedOff: false, reason: 'needs human: plan conflict', conflict: fix.planConflict }
+    if (pr.kind !== 'plan' && fix && fix.planConflict) return { signedOff: false, reason: 'needs human: plan conflict', conflict: fix.planConflict }
     if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
     loopState.siblings = labelSiblings(fix && fix.siblings, blocking)
   }
