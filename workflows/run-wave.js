@@ -42,7 +42,10 @@ const FEEDBACK = A.feedback !== false
 const CLEANUP = A.cleanup !== false
 const FEEDBACK_REPO = A.feedbackRepo || 'alfhen/agent-pr-pipeline'
 const MILESTONE = A.milestone ? ` -F milestone=<number>` : ''
-const MILESTONE_STEP = A.milestone ? `\nFirst read the milestone number: \`gh api --paginate 'repos/${REPO}/milestones?per_page=100' --jq '.[] | select(.title == "${A.milestone.replace(/["\\]/g, '\\$&')}") | .number'\`. If it prints nothing, stop and return blocked true with blockedReason "milestone ${A.milestone} not found".` : ''
+const MILESTONE_TITLE = String(A.milestone || '')
+// The title sits in a jq string inside a single-quoted shell argument: escape for jq first, then for the shell.
+const MILESTONE_JQ = MILESTONE_TITLE.replace(/["\\]/g, '\\$&').replace(/'/g, "'\\''")
+const MILESTONE_STEP = A.milestone ? `\nFirst read the milestone number: \`gh api --paginate 'repos/${REPO}/milestones?per_page=100' --jq '.[] | select(.title == "${MILESTONE_JQ}") | .number'\`. If it prints nothing, stop and return blocked true with blockedReason "milestone ${MILESTONE_TITLE} not found".` : ''
 const STEPS = Object.assign({
   impl: { model: 'sonnet', effort: 'medium' },
   test: { model: 'sonnet', effort: 'low' },
@@ -108,8 +111,8 @@ const roundsFor = pr => pr.quickState && pr.quickState.roundsCap && pr.maxRounds
   : pr.kind === 'plan' ? { max: A.planRounds || 3, cap: 'planRounds' } : { max: A.maxRounds || 4, cap: 'maxRounds' }
 const exhausted = (what, used, max, cap) => `${what}rounds exhausted: ${used} of ${max} (${cap})`
 
-const SEVERITY_WORD = /^\s*(?:[[(]\s*(blocker|major|minor)\s*[\])]\s*[:\-\u2013]?|(blocker|major|minor)\s*[:\-\u2013])\s*/i
-const normTitle = t => String(t).toLowerCase().replace(/[^a-z0-9]/g, '')
+const SEVERITY_WORD = /^\s*(?:[[(]\s*(blocker|major|minor)\s*[\])]\s*[:\-\u2013]?|(blocker|major|minor)(?:\s*:|\s+[\-\u2013]))\s*/i
+const normTitle = t => String(t).toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
 const RANK = { minor: 0, major: 1, blocker: 2 }
 const byFile = (a, b) => (a.file ? 0 : 1) - (b.file ? 0 : 1) || String(a.file || '').localeCompare(String(b.file || ''))
 // The field decides the severity; a severity word in the title is stripped and counted when it disagrees.
@@ -134,15 +137,21 @@ const splitFindings = groups => {
 const absorb = (prev, f) => {
   if (f.fileIssue) prev.fileIssue = true
   if (RANK[f.severity] > RANK[prev.severity]) {
-    const extra = prev.detail && prev.detail !== f.detail ? `\n\nAlso: ${prev.detail}` : ''
-    Object.assign(prev, { severity: f.severity, detail: `${f.detail || ''}${extra}`, ...(f.suggestedFix ? { suggestedFix: f.suggestedFix } : {}) })
-  } else if (f.detail && f.detail !== prev.detail) prev.detail = `${prev.detail || ''}\n\nAlso: ${f.detail}`
+    const extra = prev.detail && !(f.detail || '').includes(prev.detail) ? `\n\nAlso: ${prev.detail}` : ''
+    const lost = prev.suggestedFix && !(f.suggestedFix || '').includes(prev.suggestedFix) && f.suggestedFix ? `\n\nAlso: ${prev.suggestedFix}` : ''
+    const fix = f.suggestedFix || prev.suggestedFix
+    Object.assign(prev, { severity: f.severity, detail: `${f.detail || ''}${extra}`, ...(fix ? { suggestedFix: `${fix}${lost}` } : {}) })
+  } else {
+    if (f.detail && !(prev.detail || '').includes(f.detail)) prev.detail = `${prev.detail || ''}\n\nAlso: ${f.detail}`
+    if (f.suggestedFix && !(prev.suggestedFix || '').includes(f.suggestedFix)) prev.suggestedFix = prev.suggestedFix ? `${prev.suggestedFix}\n\nAlso: ${f.suggestedFix}` : f.suggestedFix
+  }
 }
 // One item per file and normalized title, with the highest severity and every source. The result is sorted by file, so the fix prompt numbers match the history.
 const mergeDuplicates = findings => {
   const seen = new Map()
   for (const f of findings) {
-    const key = `${f.file || ''}\n${normTitle(f.title)}`
+    const norm = normTitle(f.title)
+    const key = `${f.file || ''}\n${norm || `\u0000${seen.size}`}`
     const sources = f.sources || (f.source ? [f.source] : [])
     const prev = seen.get(key)
     if (!prev) { seen.set(key, { ...f, sources: [...new Set(sources)] }); continue }
@@ -151,6 +160,8 @@ const mergeDuplicates = findings => {
   }
   return [...seen.values()].map(({ source, ...f }) => f).sort(byFile)
 }
+// The finding number only means something in the fix prompt, so the next reviewer also gets the title and file.
+const labelSiblings = (siblings, blocking) => (siblings || []).map(s => { const f = blocking[s.finding - 1]; return f ? { ...s, title: f.title, file: f.file } : s })
 const findingLine = f => `${f.severity} [${(f.sources || []).join(', ')}]: ${f.title}`
 // sameAs holds groups of 1-based numbers from the fix prompt. A number counts once; a group of fewer than two valid numbers changes nothing.
 const foldSameAs = (findings, sameAs) => {
@@ -768,7 +779,7 @@ Return decision (build, plan or decline), size, risk, why, newConcepts, and for 
 
 ${prBlock(pr)}`
 
-const entryText = (t, e) => `Touches: ${e.touches}\nAcceptance: ${e.acceptance}${e.invariants ? `\nInvariants: ${e.invariants}` : ''}${e.qa ? `\nQA: ${e.qa}` : ''}\nTriage: size ${t.size}, risk ${t.risk}, new concepts: ${(t.newConcepts || []).join('; ') || 'none'}`
+const entryText = (t, e) => `Touches: ${e.touches}\nAcceptance: ${e.acceptance}${e.invariants ? `\nInvariants: ${e.invariants}` : ''}${e.qa ? `\nQA: ${e.qa}` : ''}\nTriage: size ${t.size}, risk ${t.risk}, new concepts: ${(t.newConcepts || []).join('; ') || 'none'}`.replace(/\n+$/, '')
 // S and low risk get two rounds and no architecture review, unless the triager named a new concept.
 const withBrief = (pr, brief) => {
   const small = /^Triage: size S, risk low, new concepts: (.*)$/m.exec(brief)
@@ -906,7 +917,7 @@ async function landFor(pr, n, sha) {
   if (!PLUGIN_ROOT) return person('pluginRoot missing: no gate or safety check ran')
   const gate = await ioCall(pr, `io:${pr.id}#gate`, 'gate-files.sh', `${REPO} ${n}`, { phase: 'Merge safety' })
   if (!gate) return person('gate check failed: pipeline-io failed')
-  if (gate.exitCode !== 0 || !/^not gated/m.test(gate.output)) {
+  if (gate.exitCode !== 0 || !/^not gated #\d+$/.test(gate.output.trim())) {
     const first = gate.output.trim().split('\n')[0]
     const hit = gate.exitCode === 1 && /^GATED #\d+: /.exec(first)
     return person(hit ? `gated paths, the maintainer merges: ${first.slice(hit[0].length)}` : `gate check failed: ${first}`, { gateOutput: gate.output.trim() })
@@ -976,7 +987,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     if (round === startRound + max - 1) return { signedOff: false, reason: exhausted('', max, max, cap), lastFindings: blocking, lastTest: test }
     const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, round, review.sweep), `fix:${pr.id}#${round}`, { schema: FIX })
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
-    loopState.siblings = (fix && fix.siblings) || []
+    loopState.siblings = labelSiblings(fix && fix.siblings, blocking)
   }
 }
 
@@ -1124,7 +1135,7 @@ async function checkNewCode(pr, { tag, label, role, what, reviewPrompt }, histor
     if (round === BOT_CHECK_ROUNDS) return { ok: false, reason: exhausted(`${what}: `, BOT_CHECK_ROUNDS, BOT_CHECK_ROUNDS, 'botCheckRounds'), lastFindings: blocking }
     prior = blocking
     const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, `${tag}${round}`, review.sweep), `fix:${pr.id}#${tag}${round}`, { schema: FIX })
-    siblings = (fix && fix.siblings) || []
+    siblings = labelSiblings(fix && fix.siblings, blocking)
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
   }
 }
@@ -1310,11 +1321,11 @@ async function runPRSteps(input) {
     const r = await call('landFix', pr, landFixPrompt(pr), `landfix:${pr.id}`, { schema: LANDFIX })
     if (!r || !r.readyToMerge) return stopped('land fix not ready', { headSha: r && r.headSha, notes: r && r.notes })
     const check = await landFixCheck(pr, n, before, r.headSha, history, lateMinors)
-    if (!check.ok) return stopped(check.reason, { headSha: r.headSha, lastFindings: check.lastFindings, notes: r.notes, lateMinors })
+    if (!check.ok) return stopped(check.reason, { headSha: r.headSha, lastFindings: check.lastFindings, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     const b = await bots(pr, n, check.headSha, [], history, lateMinors)
-    if (!b.ok) return stopped(b.reason, { headSha: b.headSha, lastFindings: b.lastFindings, notes: r.notes, lateMinors })
+    if (!b.ok) return stopped(b.reason, { headSha: b.headSha, lastFindings: b.lastFindings, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     const sync = await syncUntested(pr, n, null)
-    if (!sync.ok) return stopped(sync.reason, { headSha: b.headSha, notes: r.notes, lateMinors })
+    if (!sync.ok) return stopped(sync.reason, { headSha: b.headSha, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     const landing = await landFor(pr, n, b.headSha)
     return {
       id: pr.id, prNumber: n, ready: true, headSha: b.headSha, ...landing, untested: untestedOf(pr), notes: r.notes,
@@ -1360,7 +1371,7 @@ async function runPRSteps(input) {
   const openedUntested = untestedOf(pr)
   const openMinors = mergeDuplicates(minors)
   const opened = await call('open', pr, openPrompt(pr, history, openMinors, { architecture: loopState.reports, product: loopState.product, docs }, openedUntested, pass.fixed), `open:${pr.id}`, { schema: OPEN })
-  if (opened && opened.blocked) return { id: pr.id, ready: false, reason: 'needs human: permission', blockedReason: opened.blockedReason, commands: opened.commands || [], history }
+  if (opened && opened.blocked) return { id: pr.id, ready: false, reason: 'needs human: permission', blockedReason: opened.blockedReason, commands: opened.commands || [], history, ...(opened.prNumber ? { prNumber: opened.prNumber } : {}), ...(opened.issuesCreated ? { issuesCreated: opened.issuesCreated } : {}) }
   if (!opened || !opened.prNumber) return { id: pr.id, ready: false, reason: 'PR not opened', history }
   const n = opened.prNumber
 
@@ -1371,11 +1382,11 @@ async function runPRSteps(input) {
 
   if (redHead) untestedFor(pr).pass.push('bots not waited for or answered: the minor pass commits are still on the branch')
   const b = redHead ? { ok: true, headSha: loop.headSha, lateMinors: [] } : await bots(pr, n, loop.headSha, opened.issuesCreated || [], history, minors)
-  if (!b.ok) return { id: pr.id, ready: false, reason: b.reason, history, prNumber: n, headSha: b.headSha, lastFindings: b.lastFindings }
+  if (!b.ok) return { id: pr.id, ready: false, reason: b.reason, history, prNumber: n, headSha: b.headSha, lastFindings: b.lastFindings, untested: untestedOf(pr) }
   const { wait, answer } = b
   const headSha = b.headSha
   const sync = await syncUntested(pr, n, openedUntested)
-  if (!sync.ok) return { id: pr.id, ready: false, reason: sync.reason, history, prNumber: n, headSha }
+  if (!sync.ok) return { id: pr.id, ready: false, reason: sync.reason, history, prNumber: n, headSha, untested: untestedOf(pr) }
   const landing = await landFor(pr, n, headSha)
   return {
     id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl, headSha,
@@ -1398,8 +1409,8 @@ async function checkVersion() {
   try {
     const io = await ioCall(null, 'io:wave#version', 'plugin-version.sh', VERSION, { phase: 'Preflight' })
     if (!io) return ['version check could not run: pipeline-io failed']
-    if (io.exitCode !== 0 && io.exitCode !== 3) return [`version check could not run: exit ${io.exitCode}`]
     const lines = String(io.output).split('\n').map(l => l.trim()).filter(Boolean)
+    if (io.exitCode !== 0 && io.exitCode !== 3) return [`version check could not run: exit ${io.exitCode}${lines.length ? `: ${lines.join(' ')}` : ''}`]
     if (io.exitCode === 3) return [`version check could not run: ${lines.join(' ') || 'no output'}`]
     const warns = lines.filter(l => l.startsWith('WARN '))
     return warns.length || lines.includes('OK') ? warns : ['version check could not run: unexpected output']
