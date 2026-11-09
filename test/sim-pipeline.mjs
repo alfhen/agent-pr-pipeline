@@ -1,6 +1,6 @@
 // Runs workflow/pr-pipeline.js against a fake agent() that returns schema-shaped answers.
 // Usage: node test/sim-pipeline.mjs (exits non-zero on the first failed check).
-import { readFileSync, readdirSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, copyFileSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, copyFileSync, rmSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -62,6 +62,7 @@ const realScope = changed => {
   copyFileSync(fileURLToPath(new URL('./fixtures/gate/pipeline.json', import.meta.url)), join(fx, P + '__contents__.github__pipeline.json.json'))
   writeFileSync(join(fx, P + '__compare__main...b1.json'), JSON.stringify({ files: changed.map(filename => ({ filename })) }))
   const r = spawnSync('bash', [fileURLToPath(new URL('../scripts/gate-files.sh', import.meta.url)), 'alfhen/agent-pr-pipeline', '--scope', 'b1'], { encoding: 'utf8', env: { ...process.env, PATH: bin + ':' + process.env.PATH, FAKE_GH_FIXTURES: fx } })
+  rmSync(dir, { recursive: true, force: true })
   return { exitCode: r.status, output: r.stdout + r.stderr }
 }
 let cleanupMode = 'ok'
