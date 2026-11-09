@@ -152,8 +152,27 @@ test('a missing milestone has its own reason', () => {
   assert.match(src, /opened\.blockedReason === MILESTONE_MISSING \? 'milestone not found'/)
 })
 
-test('the opener rewrites the body of a reused PR', () => {
-  assert.match(src, /use that PR, create none, and replace its body with the body described below: \\`gh api -X PATCH repos\/\$\{REPO\}\/pulls\/<number> -F body=@<file>\\`/)
+test('the opener keeps the body of a reused PR and changes only the Review line and the Untested section', () => {
+  assert.match(src, /use that PR and create none\. Read its body with \\`gh api repos\/\$\{REPO\}\/pulls\/<number> --jq \.body\\` and keep all of it, including every \\`Closes #N\\` line, the Minor fixes section/)
+  assert.match(src, /Change only the Review line .* and the Untested section/)
+  assert.match(src, /Never rebuild the body from the data below/)
+  assert.doesNotMatch(src, /replace its body with the body described below/)
+  const role = readFileSync(new URL('../agents/pr-opener.md', import.meta.url), 'utf8')
+  assert.match(role, /keep all of it, including each `Closes #N` line, the Minor fixes section/)
+  assert.match(role, /Change only its Review line and its Untested section/)
+})
+
+test('the answer prompt and the bot-answerer role reply in the bot thread when code changed', () => {
+  assert.match(src, /6\. If you changed code, reply in the thread of each bot comment that the change answers, with the commit you pushed/)
+  assert.match(src, /A bot that gets no reply in its thread does not know the head changed/)
+  const role = readFileSync(new URL('../agents/bot-answerer.md', import.meta.url), 'utf8')
+  assert.match(role, /When you change code for a bot comment, reply in that bot's thread with the commit you pushed/)
+})
+
+test('the end of a run reads the head, the bots and the CI state from the scripts', () => {
+  assert.match(src, /'bot-status\.sh', `\$\{REPO\} \$\{n\}`/)
+  assert.match(src, /'wait-ci\.sh', `\$\{REPO\} \$\{n\} 1`/)
+  assert.match(src, /CI failed on the head/)
 })
 
 test('the plan review checks each Acceptance line against the plan decisions and can stop for a plan conflict', () => {

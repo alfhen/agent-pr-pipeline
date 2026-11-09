@@ -42,7 +42,7 @@ let evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'READM
 // Exit codes the put script gives, per PR id: the first call, then the #put2 retry. Default 0.
 const putPlan = {}
 // Merge safety: ids the gate holds, ids the agent calls person, and ids where an agent fails or answers badly.
-const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), pendingBot: new Set(), gateOdd: new Set(), headMoved: new Set(), blocked: new Set(), landOutput: new Set(), landFail: new Set(), landBad: new Set(), landBadOnce: new Set(), landOther: new Set(), testMoved: new Set(), threads: new Set(), bodies: new Set(), answered: new Set(), waitOpen: new Set() }
+const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyDown: new Set(), statusDown: new Set(), pendingBot: new Set(), gateOdd: new Set(), headMoved: new Set(), blocked: new Set(), landOutput: new Set(), landFail: new Set(), landBad: new Set(), landBadOnce: new Set(), landOther: new Set(), testMoved: new Set(), threads: new Set(), bodies: new Set(), answered: new Set(), waitOpen: new Set(), finalHead: new Set(), ciFail: new Set(), ciPending: new Set() }
 const landHead = {}
 const wt = o => '/wt/' + o.label.replace(/[:#]/g, '-')
 const overlap = { fail: new Set(), down: new Set() }
@@ -52,6 +52,9 @@ const cleanupAnswer = label => label.endsWith('init') ? (cleanupMode === 'initdo
   : cleanupMode === 'down' ? null : cleanupMode === 'fail' ? { exitCode: 1, output: 'cleanup: boom' }
   : { exitCode: 0, output: /(clones|all)$/.test(label) ? 'REMOVED /x/test-1' : '' }
 const lastHead = {}
+const checkedHead = {}
+// A bot answer reports a head of its own, which the tester replaces; the end read must not follow it.
+const endHead = id => (lastHead[id] === 'sha-answer-' + id ? checkedHead[id] : lastHead[id]) || ''
 // Cleanup calls are kept apart so the step-by-step checks below see only the pipeline's own steps.
 let cleanupCalls = []
 let timeline = []
@@ -78,7 +81,7 @@ const agentRaw = async (prompt, o) => {
   if (o.label.startsWith('io:') && /#landhead\d*$/.test(o.label)) {
     // Right after the fix the PR head extends the fixer's short sha, as a real full sha does.
     const head = o.label.endsWith('#landhead') ? 'b'.repeat(40) : o.label.endsWith('#landhead1') ? (land.landOther.has(id) ? 'd'.repeat(40) : (lastHead[id] || '').padEnd(40, 'c')) : 'c'.repeat(40)
-    if (!o.label.endsWith('#landhead')) lastHead[id] = head
+    if (!o.label.endsWith('#landhead')) { lastHead[id] = head; checkedHead[id] = head }
     return { exitCode: 0, output: JSON.stringify({ head, approvedBy: [] }) }
   }
   if (o.label.startsWith('io:') && /#landcommits\d*$/.test(o.label)) {
@@ -100,6 +103,13 @@ const agentRaw = async (prompt, o) => {
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#botstatus')) {
     return land.statusDown.has(id) ? { exitCode: 1, output: 'bot-status: cannot read the reviews' } : { exitCode: 0, output: JSON.stringify({ head: land.headMoved.has(id) ? 'moved' : lastHead[id], approvedBy: ['gitar-bot'], seenHead: ['gitar-bot'], openThreads: land.threads.has(id) || ['C2', 'L1', 'B1', 'W1'].includes(id) ? 1 : 0, pending: land.pendingBot.has(id) ? ['Gitar'] : [], reviewBodies: land.bodies.has(id) && !land.answered.has(id) ? 1 : 0 }) }
+  }
+  if (o.label.startsWith('io:') && o.label.endsWith('#endstatus')) {
+    return { exitCode: 0, output: JSON.stringify({ head: endHead(id) + (land.finalHead.has(id) ? '-final' : ''), approvedBy: ['gitar-bot'], seenHead: [], openThreads: 0, pending: [], reviewBodies: 0 }) }
+  }
+  if (o.label.startsWith('io:') && o.label.endsWith('#endci')) {
+    const head = endHead(id) + (land.finalHead.has(id) ? '-final' : '')
+    return { exitCode: 0, output: JSON.stringify({ head, state: land.ciFail.has(id) ? 'failure' : land.ciPending.has(id) ? 'pending' : 'success', failed: land.ciFail.has(id) ? ['unit', 'lint'] : [], timedOut: false }) }
   }
   if (o.label.startsWith('io:')) {
     if (o.label.endsWith('#put') || o.label.endsWith('#put2')) {
@@ -164,6 +174,7 @@ const ioWrap = (label, out) => out && label.startsWith('io:') && typeof out.exit
 const agent = async (prompt, o) => {
   const out = ioWrap(o.label, await agentRaw(prompt, o))
   if (out && out.headSha) lastHead[o.label.split(':')[1].split('#')[0]] = out.headSha
+  if (out && out.headSha && !o.label.startsWith('botanswer')) checkedHead[o.label.split(':')[1].split('#')[0]] = out.headSha
   return out
 }
 const parallel = async thunks => Promise.all(thunks.map(t => t().catch(() => null)))
@@ -276,7 +287,7 @@ await check('planRounds in the args overrides the default', async () => {
 })
 await check('land fix runs the land fixer, then waits for and answers the bots on the new head', () => {
   assert.equal(r.L1.ready, true)
-  assert.deepEqual(mainCalls.filter(c => c.label.includes(':L1')).map(c => c.label), ['io:L1#landhead', 'landfix:L1', 'io:L1#landhead1', 'io:L1#landcommits1', 'botwait:L1', 'io:L1#botstatus', 'botanswer:L1', 'test:L1#bots1', 'botreview:L1#1'])
+  assert.deepEqual(mainCalls.filter(c => c.label.includes(':L1')).map(c => c.label), ['io:L1#landhead', 'landfix:L1', 'io:L1#landhead1', 'io:L1#landcommits1', 'botwait:L1', 'io:L1#botstatus', 'botanswer:L1', 'test:L1#bots1', 'botreview:L1#1', 'io:L1#endstatus', 'io:L1#endci'])
   assert.equal(r.L1.land, '7:sha-L1-bots1')
 })
 await check('architecture escalate stops the PR with the question', () => {
@@ -942,6 +953,43 @@ const landRun = async (cfg, prs, extra = {}) => {
 }
 const ran = (re) => calls.filter(c => re.test(c.label)).map(c => c.label)
 const suffix = x => x.land.split(':').slice(2).join(':')
+await check('end facts: the result names the head GitHub holds after the bot-answer commits, and the bots from the script', async () => {
+  const x = await landRun({ finalHead: ['C2'] }, only('C2'))
+  assert.ok(x.C2.headSha.endsWith('-final'), x.C2.headSha)
+  assert.ok(ran(/^botanswer:C2/).length > 0)
+  assert.deepEqual(x.C2.approvedBy, ['gitar-bot'])
+  assert.notDeepEqual(x.C2.approvedBy, ['the-waiter-says-so'])
+  assert.deepEqual(x.C2.ci, { state: 'success', failed: [] })
+  assert.equal(x.C2.ready, true)
+  assert.ok(x.C2.land.startsWith(`${x.C2.prNumber}:${x.C2.headSha}`))
+  assert.match(calls.find(c => c.label === 'io:C2#endci').prompt, /io\.sh wait-ci\.sh o\/r \d+ 1/)
+})
+await check('end facts: red CI on the head gives ready false with the failed checks', async () => {
+  const x = await landRun({ ciFail: ['C1'] }, only('C1'))
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /^CI failed on the head .*: unit, lint/)
+  assert.deepEqual(x.C1.ci, { state: 'failure', failed: ['unit', 'lint'] })
+  assert.deepEqual(ran(/^(safety:|io:.*#gate)/), [])
+})
+await check('end facts: pending CI is reported as pending and the PR stays ready', async () => {
+  const x = await landRun({ ciPending: ['C1'] }, only('C1'))
+  assert.equal(x.C1.ready, true)
+  assert.deepEqual(x.C1.ci, { state: 'pending', failed: [] })
+})
+await check('end facts: a head that does not extend the checked head stops the PR', async () => {
+  const odd = (p, o) => o.label === 'io:C1#endstatus' ? ioWrap(o.label, { exitCode: 0, output: JSON.stringify({ head: 'sha-other', approvedBy: [] }) }) : o.label === 'io:C1#endci' ? ioWrap(o.label, { exitCode: 0, output: JSON.stringify({ head: 'sha-other', state: 'success', failed: [] }) }) : agent(p, o)
+  calls = []
+  const x = await run({ ...base, prs: only('C1') }, odd, parallel, log)
+  assert.equal(x.prs[0].ready, false)
+  assert.match(x.prs[0].reason, /^final facts: head moved/)
+})
+await check('reused PR: the open prompt keeps the body and the land fix path reads the final facts too', async () => {
+  await simulate({ ...base, prs: [{ id: 'C1', title: 't', branch: 'b1', skipImpl: true }] })
+  const open = calls.find(c => c.label === 'open:C1').prompt
+  assert.match(open, /Read its body with .*and keep all of it, including every `Closes #N` line, the Minor fixes section/)
+  assert.match(open, /Change only the Review line .* and the Untested section/)
+  assert.doesNotMatch(open, /replace its body with the body described below/)
+})
 await check('decision rerun: a skipImpl rerun with productDecision runs the fixer first, then reviews', async () => {
   const order = id => calls.filter(c => c.label.includes(`:${id}`)).map(c => c.label)
   const findingsOf = label => calls.find(c => c.label === label).prompt.split('together:\n')[1].split(/^File .*:\n/m).filter(Boolean).flatMap(g => JSON.parse(g)).sort((x, y) => x.n - y.n)
@@ -1490,7 +1538,7 @@ await check('cleanup: a path with a quote is passed as one shell word', async ()
 const hookedOut = async (prs, hook, extra = {}) => {
   calls = []; cleanupCalls = []; timeline = []; logs = []
   preflight = GOOD
-  return run({ ...base, ...extra, prs }, async (p, o) => { const h = hook(p, o); if (h === undefined) return agent(p, o); calls.push({ label: o.label, model: o.model, prompt: p }); return h }, parallel, log)
+  return run({ ...base, ...extra, prs }, async (p, o) => { const h = hook(p, o); if (h === undefined) return agent(p, o); if (h && h.headSha && !o.label.startsWith('botanswer')) checkedHead[o.label.split(':')[1].split('#')[0]] = h.headSha; calls.push({ label: o.label, model: o.model, prompt: p }); return h }, parallel, log)
 }
 const hooked = async (prs, hook, extra = {}) => Object.fromEntries((await hookedOut(prs, hook, extra)).prs.map(x => [x.id, x]))
 const only1 = id => PRS.filter(p => p.id === id)
