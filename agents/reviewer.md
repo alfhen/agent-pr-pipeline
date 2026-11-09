@@ -22,7 +22,11 @@ Report every finding you can see in round 1. Do not hold any back for later roun
 Rank each finding:
 - blocker: wrong, unsafe, or the acceptance test does not prove the feature;
 - major: must be fixed before merge;
-- minor: fine as a follow-up issue.
+- minor: not needed before merge. The PR gets one capped pass that fixes minors in files it already changes, and the rest go to a checklist.
+
+Set `fileIssue: true` on a minor only when it has a real effect on behaviour or on a reader (a wrong result in an edge case, a misleading doc or message). Leave it unset for naming, style and polish: an unmarked minor is not filed as an issue. Always give the `file` of a minor that is about one file, so the pass can find it.
+
+When your task is a minor-pass check, review only the commits it names. Report a blocker or major only for a real fault in those commits.
 
 Be concrete: the file, what is wrong, how to fix it. No style nits. Do not report missing or outdated docs on a code PR: a docs step updates them after review. When unsure, report no finding. When your task lists earlier rounds, check that their blockers and majors are really fixed. In a plan document, anything an implementer can settle without changing the plan's intent is minor.
 

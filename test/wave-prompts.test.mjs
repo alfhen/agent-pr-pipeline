@@ -40,3 +40,18 @@ test('an explicit title is passed as it is', () => {
   assert.match(src, /: `title "\$\{pr\.title\}"`/)
   assert.match(src, /'-f title=<title>'/)
 })
+
+test('the minor fixer prompt limits the pass to the PR files and forbids gated paths', () => {
+  assert.match(src, /Fix a finding only when its file is on that list\. Change no other file/)
+  assert.match(src, /Never change a gated path: the \\`gates\\` list in \\`\.github\/pipeline\.json\\`/)
+  assert.match(src, /Skip a finding that needs a design choice/)
+})
+
+test('the minor review prompt reads only the commits of the pass', () => {
+  assert.match(src, /Report a finding only about this diff/)
+})
+
+test('the opener files only marked minors, once, and posts one checklist', () => {
+  assert.match(src, /file one issue for each finding under "Minor findings to file", and for no other finding/)
+  assert.match(src, /Post it once, and post no other comment/)
+})
