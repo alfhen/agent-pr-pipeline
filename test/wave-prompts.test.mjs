@@ -55,7 +55,7 @@ test('bot answer check reviews the whole PR on the new head', () => {
   assert.match(src, /botReviewPrompt\(pr, n, round, fromSha, answer, history, prior, siblings, issues\)/)
   assert.match(m[0], /Found in review of \$\{pr\.id\}/)
   assert.match(m[0], /Do not report a minor that one of them already covers/)
-  assert.match(m[0], /gh api --paginate "repos\/\$\{REPO\}\/issues\?labels=\$\{LABEL\}&state=open/)
+  assert.match(m[0], /gh api --paginate "repos\/\$\{REPO\}\/issues\?labels=\$\{LABEL\}&state=open&creator=\$\(gh api user --jq \.login\)/)
   assert.doesNotMatch(m[0], /issues -f /)
   assert.match(m[0], /pulls\/\$\{n\}\/comments/)
   assert.doesNotMatch(m[0], /pr\.prNumber/)
