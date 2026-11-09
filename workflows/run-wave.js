@@ -12,7 +12,7 @@ export const meta = {
     { title: 'Architecture', detail: 'a stronger model checks the PR against the architecture, and asks a person when the architecture itself should change' },
     { title: 'Fix', detail: 'an agent fixes blockers, majors and failing checks' },
     { title: 'Docs', detail: 'after sign-off, an agent updates the docs the change affects; a short round checks the new head' },
-    { title: 'Open PR', detail: 'open the PR and file minor findings as issues' },
+    { title: 'Open PR', detail: 'open the PR, post the minors checklist and file the marked minors as issues' },
     { title: 'Bots', detail: 'a small agent waits for the review bots; another answers them only if they commented' },
     { title: 'Merge safety', detail: 'for each ready PR: a script checks the gated paths; for a PR it does not hold, a stronger model decides safe or person; only safe PRs get the :auto land suffix' },
     { title: 'Land fix', detail: 'only for PRs passed with landFix: resolve a conflict or a CI failure' },
@@ -192,11 +192,11 @@ const testOutcome = (pr, test) => {
     pass: !nothingRan && failed.length === 0 && !accMissing,
   }
 }
-// Per PR: the refused checks of the last test round and the QA scenarios that did not run. Every test round replaces `checks`.
+// Per PR: the refused checks of the last test round, the QA scenarios that did not run, and the minor pass state no agent could confirm. Every test round replaces `checks`; `pass` is never replaced.
 const untestedState = {}
-const untestedFor = pr => untestedState[pr.id] || (untestedState[pr.id] = { checks: [], qa: [] })
+const untestedFor = pr => untestedState[pr.id] || (untestedState[pr.id] = { checks: [], qa: [], pass: [] })
 const noteTest = (pr, outcome) => { untestedFor(pr).checks = outcome.notRun }
-const untestedOf = pr => { const u = untestedFor(pr); return u.checks.concat(u.qa) }
+const untestedOf = pr => { const u = untestedFor(pr); return u.checks.concat(u.qa, u.pass) }
 const historyRow = (round, outcome, blocking, conflicts) => ({
   round, testPass: outcome.pass, failingChecks: outcome.failed.map(c => c.name), blockersAndMajors: blocking.map(findingLine),
   ...(outcome.notRun.length ? { notRun: outcome.notRun } : {}),
@@ -427,6 +427,7 @@ const MINORFIX = {
   },
   required: ['changed', 'summary'],
 }
+const MINORREVIEW = { ...REVIEW, properties: { ...REVIEW.properties, unconfirmed: { type: 'array', items: { type: 'number' } } } }
 const MINORREVERT = {
   type: 'object',
   properties: { reverted: { type: 'boolean' }, headSha: { type: 'string' }, summary: { type: 'string' }, worktree: { type: 'string' } },
@@ -582,15 +583,14 @@ ${JSON.stringify(outcome ? outcome.failed : [], null, 1)}
 Findings, numbered. Findings of one file are together:
 ${numbered(findings)}${sweep && sweep.length ? `\nThe reviewer's sweep of sibling places this round:\n${JSON.stringify(sweep, null, 1)}` : ''}`
 
-const minorFixPrompt = (pr, findings, signedSha) => `${ctx(pr)}
+const minorFixPrompt = (pr, findings, signedSha, files) => `${ctx(pr)}
 
 Task: fix minor findings in one pass. This is the only minor pass of this PR: nobody fixes what it leaves.
 1. You are in a fresh git worktree. ${freshBranch('minor', pr, 0)}
-2. List the files this PR changes: \`git diff --name-only origin/HEAD...HEAD\`. Fix a finding only when its file is on that list. Change no other file.
-3. Never change a gated path: the \`gates\` list in \`.github/pipeline.json\`, \`.github/\`, \`.claude/\`, AGENTS.md, CLAUDE.md and docs/goals.md. Skip a finding that needs a change there.
-4. Skip a finding that needs a design choice: more than one fix would be right, or the fix changes behaviour the plan entry names. Fix only what is plain.
-5. Checks: ${fastText}, and ${ownE2e}.
-6. Commit and push. If you fix no finding, push nothing and return changed false.
+2. You may change only these files, which the PR already changes and no gate holds: ${JSON.stringify(files)}. Fix a finding only when its file is on that list. Change no other file, and never a gated path. Skip a finding that needs a change outside the list.
+3. Skip a finding that needs a design choice: more than one fix would be right, or the fix changes behaviour the plan entry names. Fix only what is plain.
+4. Checks: ${fastText}, and ${ownE2e}.
+5. Commit and push. If you fix no finding, push nothing and return changed false.
 Return changed, headSha (\`git rev-parse HEAD\` after your push), fixed (the numbers of the findings you fixed), skipped (the number and why, for each finding you left), a short summary, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}
@@ -599,24 +599,26 @@ The branch head before your commits: ${signedSha || '(unknown)'}.
 Minor findings, numbered. Findings of one file are together:
 ${numbered(findings)}`
 
-const minorReviewPrompt = (pr, fromSha, fix) => `${ctx(pr)}
+const minorReviewPrompt = (pr, fromSha, fix, fixed, files) => `${ctx(pr)}
 
 Task: review only the commits of the minor pass, which fixed minor findings after the rest of the PR passed review.
 Clone it: ${cloneTo(`minorreview-${pr.id}`, pr)}. Those commits are \`git diff ${fromSha || 'origin/HEAD'}..HEAD\`; the whole PR is \`git diff origin/HEAD...HEAD\` for context.
-Check that each change fixes its finding, that it breaks nothing, and that it stays in files the PR already changes and outside gated paths. Report a finding only about this diff. Do not review the rest of the PR again.
-Return headSha, a summary and the findings.
+Check that each change fixes its finding, that it breaks nothing, and that it stays inside these files: ${JSON.stringify(files)}. Report a finding only about this diff. Do not review the rest of the PR again.
+Return headSha, a summary, the findings, and \`unconfirmed\`: the numbers of the findings below that the diff does not really fix.
 
 ${prBlock(pr)}
 
-Minor pass summary: ${JSON.stringify((fix && fix.summary) || '')}`
+Minor pass summary: ${JSON.stringify((fix && fix.summary) || '')}
+Findings the fixer says it fixed, numbered:
+${JSON.stringify(fixed.map(({ n, m }) => ({ n, title: m.title, file: m.file, detail: m.detail })), null, 1)}`
 
-const minorRevertPrompt = (pr, signedSha) => `${ctx(pr)}
+const minorRevertPrompt = (pr, signedSha, attempt) => `${ctx(pr)}
 
 Task: drop the minor pass of ${pr.branch}. Its check failed, so the branch goes back to the state that passed review, with a new commit.
-1. You are in a fresh git worktree. ${freshBranch('minorrevert', pr, 0)}
-2. Revert every commit added after ${signedSha}: \`git revert --no-edit ${signedSha}..HEAD\` (add \`-m 1\` for a merge commit). Never force-push and never rebase.
-3. Check that \`git diff --quiet ${signedSha} HEAD\` succeeds, so the tree equals the signed-off state. Push.
-Return reverted (true only when the tree equals ${signedSha} and you pushed), headSha (\`git rev-parse HEAD\` after your push), a short summary, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
+1. You are in a fresh git worktree. ${freshBranch('minorrevert', pr, attempt)}
+2. If \`git rev-list ${signedSha}..HEAD\` prints nothing, the branch has no commit after the signed-off state: push nothing. Otherwise revert every commit added after ${signedSha}: \`git revert --no-edit ${signedSha}..HEAD\` (add \`-m 1\` for a merge commit). Never force-push and never rebase.
+3. Check that \`git diff --quiet ${signedSha} HEAD\` succeeds, so the tree equals the signed-off state. Push when you added a commit.
+Return reverted (true only when the tree equals ${signedSha} and the branch on GitHub holds it), headSha (\`git rev-parse HEAD\` after your push), a short summary, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}`
 
@@ -1005,22 +1007,60 @@ async function docsStep(pr, signedSha, history, minors) {
   }
 }
 
+// The files the PR changes that no gate holds, read by one script from the default branch's settings. Null when
+// they cannot be read, and the pass then does not run.
+async function minorScope(pr) {
+  if (!PLUGIN_ROOT) return null
+  const io = await ioCall(pr, `io:${pr.id}#minorscope`, 'gate-files.sh', `${REPO} --scope ${pr.branch}`)
+  const m = io && io.exitCode === 0 ? /^SCOPE (\[.*\])$/m.exec(io.output) : null
+  let files = null
+  try { files = m ? JSON.parse(m[1]) : null } catch (e) { files = null }
+  return Array.isArray(files) && files.every(f => typeof f === 'string') ? files : null
+}
+
+// Puts the branch back to the signed-off state with a new commit; two tries. Null when both fail.
+async function minorRestore(pr, signedSha) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const rev = await call('minorRevert', pr, minorRevertPrompt(pr, signedSha, attempt - 1), `minorrevert:${pr.id}${attempt === 1 ? '' : '#2'}`, { schema: MINORREVERT })
+    if (rev && rev.reverted && rev.headSha) return rev
+  }
+  return null
+}
+
 // One capped pass: a fixer, one check of its commits, and a revert commit when the check fails. There is no fix round and no second pass.
-// It never stops the PR, except when a failed pass cannot be reverted: the branch would hold code no agent checked.
+// It never stops the PR. A fixer that dies after its push is treated like a failed check, since its commits are unchecked. When the
+// branch cannot be restored, the PR goes on and a person merges it: the untested list says why.
 async function minorPass(pr, signedSha, history, minors) {
   const open = mergeDuplicates(minors)
   minors.splice(0, minors.length, ...open)
-  const candidates = open.filter(m => m.file)
-  if (!candidates.length) return { headSha: signedSha, fixed: [], report: null }
-  const fix = await call('minorFix', pr, minorFixPrompt(pr, candidates, signedSha), `minorfix:${pr.id}`, { schema: MINORFIX })
-  if (!fix || !fix.changed) {
-    log(`${pr.id} minor pass: ${fix ? 'nothing fixed' : 'fixer failed'}`)
-    return { headSha: signedSha, fixed: [], report: { ran: false, why: fix ? 'no minor could be fixed' : 'fixer failed' } }
+  const none = { headSha: signedSha, fixed: [], report: null }
+  const withFile = open.filter(m => m.file)
+  if (!withFile.length) return none
+  const files = await minorScope(pr)
+  if (!files) {
+    log(`${pr.id} minor pass skipped: the files in scope could not be read`)
+    return none
   }
-  const fixedItems = [...new Set(Array.isArray(fix.fixed) ? fix.fixed : [])].filter(n => Number.isInteger(n) && n >= 1 && n <= candidates.length).map(n => candidates[n - 1])
+  const candidates = withFile.filter(m => files.includes(m.file))
+  if (!candidates.length) return none
+  const drop = async (why, head) => {
+    const rev = await minorRestore(pr, signedSha)
+    if (rev) {
+      log(`${pr.id} minor pass dropped: ${why}`)
+      return { headSha: rev.headSha, fixed: [], report: { ran: true, kept: false, why } }
+    }
+    untestedFor(pr).pass.push('minor pass commits not checked and not reverted')
+    log(`${pr.id} minor pass could not be reverted: ${why}`)
+    return { headSha: head || signedSha, fixed: [], report: { ran: true, kept: false, why: `${why}; the revert failed` } }
+  }
+  const fix = await call('minorFix', pr, minorFixPrompt(pr, candidates, signedSha, files), `minorfix:${pr.id}`, { schema: MINORFIX })
+  if (!fix || !fix.changed) {
+    return drop(fix ? 'the fixer changed nothing' : 'the fixer failed', fix && fix.headSha)
+  }
+  const claimed = [...new Set(Array.isArray(fix.fixed) ? fix.fixed : [])].filter(n => Number.isInteger(n) && n >= 1 && n <= candidates.length)
   const [test, review] = await parallel([
     () => call('test', pr, testPrompt(pr, 'minor1'), `test:${pr.id}#minor1`, { schema: TEST }),
-    () => call('minorReview', pr, minorReviewPrompt(pr, signedSha, fix), `minorreview:${pr.id}`, { schema: REVIEW }),
+    () => call('minorReview', pr, minorReviewPrompt(pr, signedSha, fix, claimed.map(n => ({ n, m: candidates[n - 1] })), files), `minorreview:${pr.id}`, { schema: MINORREVIEW }),
   ])
   let why = ''
   let split = { blocking: [], minors: [], conflicts: 0 }
@@ -1035,15 +1075,12 @@ async function minorPass(pr, signedSha, history, minors) {
     else if (split.blocking.length) why = `the check found ${split.blocking.length} blockers or majors`
     else noteTest(pr, outcome)
   }
-  if (!why) {
-    const rest = open.filter(m => !fixedItems.includes(m))
-    minors.splice(0, minors.length, ...mergeDuplicates(rest.concat(split.minors)))
-    return { headSha: test.headSha || review.headSha, fixed: fixedItems, report: { ran: true, kept: true, fixed: fixedItems.map(m => m.title) } }
-  }
-  const rev = await call('minorRevert', pr, minorRevertPrompt(pr, signedSha), `minorrevert:${pr.id}`, { schema: MINORREVERT })
-  if (!rev || !rev.reverted || !rev.headSha) return { stop: 'minor pass could not be reverted', headSha: signedSha, fixed: [], report: null }
-  log(`${pr.id} minor pass dropped: ${why}`)
-  return { headSha: rev.headSha, fixed: [], report: { ran: true, kept: false, why } }
+  if (why) return drop(why, (test && test.headSha) || (review && review.headSha) || fix.headSha)
+  const unconfirmed = new Set(Array.isArray(review.unconfirmed) ? review.unconfirmed : [])
+  const fixedItems = claimed.filter(n => !unconfirmed.has(n)).map(n => candidates[n - 1])
+  const rest = open.filter(m => !fixedItems.includes(m))
+  minors.splice(0, minors.length, ...mergeDuplicates(rest.concat(split.minors)))
+  return { headSha: test.headSha || review.headSha, fixed: fixedItems, report: { ran: true, kept: true, fixed: fixedItems.map(m => m.title) } }
 }
 
 // Tests and reviews the commits an agent added after the PR passed review, with fix rounds.
@@ -1287,7 +1324,6 @@ async function runPRSteps(input) {
   let pass = { fixed: [], report: null }
   if (minorPassRuns(pr)) {
     pass = await minorPass(pr, loop.headSha, history, minors)
-    if (pass.stop) return { id: pr.id, ready: false, reason: pass.stop, history, architecture: loopState.reports, product: loopState.product }
     loop.headSha = pass.headSha
   }
 

@@ -45,6 +45,7 @@ const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyD
 const landHead = {}
 const wt = o => '/wt/' + o.label.replace(/[:#]/g, '-')
 const overlap = { fail: new Set(), down: new Set() }
+const minorScope = { files: {}, down: new Set() }
 let cleanupMode = 'ok'
 const cleanupAnswer = label => label.endsWith('init') ? { exitCode: 0, output: cleanupMode === 'refused' ? 'KEPT /x refused: shared temp folder' : 'MARKED /x' }
   : cleanupMode === 'down' ? null : cleanupMode === 'fail' ? { exitCode: 1, output: 'cleanup: boom' }
@@ -83,6 +84,9 @@ const agentRaw = async (prompt, o) => {
     if (land.landFail.has(id)) return { exitCode: 1, output: 'land-commits: cannot read ' + 'b'.repeat(40) }
     landHead[id] = prompt.match(/land-commits\.sh \S+ \S+ (\S+)/)[1]
     return { exitCode: 0, output: land.landOutput.has(id) ? 'merge abc\n+resolved line\n' : '' }
+  }
+  if (o.label.startsWith('io:') && o.label.endsWith('#minorscope')) {
+    return minorScope.down.has(id) ? null : { exitCode: 0, output: 'SCOPE ' + JSON.stringify(minorScope.files[id] || ['src/a.js', 'src/b.js', 'src/c.js']) }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#overlap')) {
     return overlap.down.has(id) ? null : overlap.fail.has(id) ? { exitCode: 1, output: 'pr-overlap: cannot read the files of #9' } : { exitCode: 0, output: 'none' }
@@ -1835,14 +1839,14 @@ for (const [how, set] of [['fails', overlap.fail], ['cannot run', overlap.down]]
 // Minor pass: one capped fixer pass, a check of its commits, a revert when the check fails.
 const minorOf = (extra = {}) => f('minor', 'rename helper', { file: 'src/a.js', ...extra })
 // A hooked answer skips the fake's head tracking, which the bot status reads.
-const headed = r => { lastHead.C1 = r.headSha; return r }
+const headed = r => { if (r.headSha) lastHead.C1 = r.headSha; return r }
 const passHook = (over = {}) => (p, o) => {
   if (o.label === 'review:C1#1') return reviewOf([minorOf(), f('minor', 'unmarked nit', { file: 'src/b.js' }), f('minor', 'design nit', { file: 'src/c.js', fileIssue: true })])
   if (o.label === 'minorfix:C1') return { changed: true, headSha: 'fixsha', fixed: [1], summary: 'renamed', ...over.fix }
-  if (o.label === 'minorreview:C1') return reviewOf(over.findings || [])
+  if (o.label === 'minorreview:C1') return { ...reviewOf(over.findings || []), ...(over.unconfirmed ? { unconfirmed: over.unconfirmed } : {}) }
   if (o.label === 'test:C1#minor1') return headed({ pass: over.testPass !== false, headSha: 'sha-minor', checks: [{ name: 'lint', pass: over.testPass !== false }] })
-  if (o.label === 'minorrevert:C1' && over.revert) return over.revert
-  if (o.label === 'minorrevert:C1') return headed({ reverted: true, headSha: 'sha-revert', summary: 'reverted' })
+  if (o.label.startsWith('minorrevert:C1') && over.revert) return headed(over.revert)
+  if (o.label.startsWith('minorrevert:C1')) return headed({ reverted: true, headSha: 'sha-revert', summary: 'reverted' })
   return over.extra ? over.extra(p, o) : undefined
 }
 const labelsOf = re => calls.filter(c => re.test(c.label)).map(c => c.label)
@@ -1850,6 +1854,9 @@ await check('minor pass: a minor in a PR file runs one fixer, a check of its dif
   const x = await hooked(only1('C1'), passHook())
   assert.ok(calls.some(c => c.label === 'minorfix:C1') && calls.some(c => c.label === 'minorreview:C1') && calls.some(c => c.label === 'test:C1#minor1'))
   assert.match(calls.find(c => c.label === 'minorreview:C1').prompt, /git diff sha-C1\.\.HEAD/)
+  assert.match(calls.find(c => c.label === 'minorreview:C1').prompt, /Findings the fixer says it fixed, numbered:[\s\S]*rename helper/)
+  assert.match(calls.find(c => c.label === 'io:C1#minorscope').prompt, /gate-files\.sh o\/r --scope b1/)
+  assert.match(calls.find(c => c.label === 'minorfix:C1').prompt, /only these files[^\n]*\["src\/a\.js","src\/b\.js","src\/c\.js"\]/)
   assert.equal(x.C1.ready, true)
   assert.equal(x.C1.land.split(':')[1], 'sha-minor')
   assert.deepEqual(x.C1.minorPass, { ran: true, kept: true, fixed: ['rename helper'] })
@@ -1865,17 +1872,51 @@ await check('minor pass: a PR with no minor in a file runs no fixer', async () =
   assert.ok(!calls.some(c => /^minor(fix|review|revert)/.test(c.label) || c.label === 'test:C1#minor1'))
   assert.equal(x.C1.minorPass, null)
 })
+const noPass = x => {
+  assert.ok(!calls.some(c => /^minor(fix|review|revert)/.test(c.label) || c.label === 'test:C1#minor1'))
+  assert.equal(x.C1.minorPass, null)
+  assert.equal(x.C1.ready, true)
+}
+await check('minor pass: a minor in a file the PR does not change, or in a gated path, runs no fixer', async () => {
+  minorScope.files.C1 = ['src/other.js']
+  noPass(await hooked(only1('C1'), passHook()))
+  delete minorScope.files.C1
+})
+await check('minor pass: files that cannot be read, or no pluginRoot, run no fixer and stop nothing', async () => {
+  minorScope.down.add('C1')
+  noPass(await hooked(only1('C1'), passHook()))
+  minorScope.down.clear()
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([minorOf()]) : undefined, { pluginRoot: undefined })
+  assert.ok(!calls.some(c => /^minorfix/.test(c.label)))
+  assert.ok(x.C1)
+})
 await check('minor pass: plan and docs PRs run none, and their minors stay in the list', async () => {
   const x = await hooked(PRS.filter(p => p.id === 'D1'), (p, o) => o.label === 'review:D1#1' ? reviewOf([minorOf()]) : undefined)
   assert.ok(!calls.some(c => /^minorfix/.test(c.label)))
   assert.match(calls.find(c => c.label === 'open:D1').prompt, /rename helper/)
   assert.equal(x.D1.ready, true)
 })
-await check('minor pass: a fixer that fixes nothing starts no check', async () => {
-  const x = await hooked(only1('C1'), passHook({ fix: { changed: false, fixed: [] } }))
+await check('minor pass: a fixer that fixes nothing starts no check, and the branch is confirmed unchanged', async () => {
+  const x = await hooked(only1('C1'), passHook({ fix: { changed: false, fixed: [] }, revert: { reverted: true, headSha: 'sha-C1' } }))
   assert.ok(!calls.some(c => c.label === 'minorreview:C1' || c.label === 'test:C1#minor1'))
+  assert.match(calls.find(c => c.label === 'minorrevert:C1').prompt, /git rev-list sha-C1\.\.HEAD/)
   assert.equal(x.C1.ready, true)
   assert.equal(x.C1.land.split(':')[1], 'sha-C1')
+})
+await check('minor pass: a fixer that dies after its push is reverted like a failed check', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'minorfix:C1' ? null : passHook({ revert: { reverted: true, headSha: 'sha-revert' } })(p, o))
+  assert.ok(!calls.some(c => c.label === 'minorreview:C1' || c.label === 'test:C1#minor1'))
+  assert.ok(calls.some(c => c.label === 'minorrevert:C1'))
+  assert.equal(x.C1.ready, true)
+  assert.equal(x.C1.land.split(':')[1], 'sha-revert')
+})
+await check('minor pass: a finding the reviewer cannot confirm stays in the not-fixed list and is filed when marked', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([minorOf({ fileIssue: true }), f('minor', 'unmarked nit', { file: 'src/b.js' })])
+    : passHook({ unconfirmed: [1] })(p, o))
+  const open = calls.find(c => c.label === 'open:C1').prompt
+  assert.doesNotMatch(open.split('Minors fixed in the minor pass:')[1].split('Minor findings not fixed:')[0], /rename helper/)
+  assert.match(open.split('Minor findings to file:')[1], /rename helper/)
+  assert.deepEqual(x.C1.minorPass.fixed, [])
 })
 await check('minor pass: failing tests add a revert commit and the PR is still ready', async () => {
   const x = await hooked(only1('C1'), passHook({ testPass: false }))
@@ -1899,10 +1940,13 @@ await check('minor pass: a minor from the check starts no second pass and goes t
   assert.match(calls.find(c => c.label === 'open:C1').prompt, /Minor findings not fixed: \[[\s\S]*late thought/)
   assert.equal(x.C1.ready, true)
 })
-await check('minor pass: a failed revert stops the PR, since unchecked code would stay', async () => {
+await check('minor pass: a failed revert is tried twice, then the PR goes on for a person to merge', async () => {
   const x = await hooked(only1('C1'), passHook({ testPass: false, revert: { reverted: false } }))
-  assert.equal(x.C1.ready, false)
-  assert.equal(x.C1.reason, 'minor pass could not be reverted')
+  assert.equal(labelsOf(/^minorrevert/).length, 2)
+  assert.equal(x.C1.ready, true)
+  assert.equal(x.C1.landMode, 'person')
+  assert.ok(x.C1.untested.includes('minor pass commits not checked and not reverted'))
+  assert.match(calls.find(c => c.label === 'open:C1').prompt, /Untested items: \[\s*"minor pass commits not checked and not reverted"/)
 })
 await check('minors: only marked minors are listed to file, and the checklist lists the rest', async () => {
   await hooked(only1('C1'), passHook())
@@ -1919,4 +1963,19 @@ await check('minors: a minor repeated in several rounds reaches the opener once'
   assert.equal(x.C1.ready, true)
   const open = calls.find(c => c.label === 'open:C1').prompt
   assert.equal((open.match(/"title": "[Rr]epeated/g) || []).length, 2, 'once in the checklist list and once in the file list')
+})
+await check('minors: the opener list drops a repeat on a plan PR, where no pass runs', async () => {
+  await hooked(PRS.filter(p => p.id === 'P1'), (p, o) => o.label.startsWith('review:P1') ? reviewOf([])
+    : /^arch:P1#[12]$/.test(o.label)
+      ? { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [{ title: 'Repeated nit', detail: 'd', severity: 'minor', fileIssue: true }, ...(o.label.endsWith('#1') ? [{ title: 'blocks', detail: 'd', severity: 'major' }] : [])] }
+      : undefined)
+  assert.ok(calls.some(c => c.label === 'arch:P1#2'))
+  const open = calls.find(c => c.label === 'open:P1').prompt
+  assert.equal((open.match(/"title": "Repeated nit"/g) || []).length, 2, 'once in the checklist list and once in the file list')
+})
+await check('minors: the opener list drops a minor the docs check repeats', async () => {
+  await hooked(only1('G1'), (p, o) => o.label === 'review:G1#1' ? reviewOf([f('minor', 'Same nit', { fileIssue: true })])
+    : o.label === 'docsreview:G1#1' ? reviewOf([f('minor', 'same nit', { fileIssue: true })]) : undefined)
+  const open = calls.find(c => c.label === 'open:G1').prompt
+  assert.equal((open.match(/"title": "[Ss]ame nit"/g) || []).length, 2)
 })
