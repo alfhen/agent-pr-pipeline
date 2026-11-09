@@ -34,6 +34,8 @@ const ARCH = A.architecture || SPEC
 const GOALS = A.goals
 const FAST_CHECKS = A.checks || ['pnpm install --frozen-lockfile', 'pnpm lint', 'pnpm typecheck', 'pnpm test']
 const E2E_PATTERN = A.e2ePattern || '\\.e2e\\.test\\.ts$'
+const RELATED_TESTS = A.relatedTests !== false
+const RELATED_MAX = 10
 const E2E_COMMAND = A.e2eCommand || 'pnpm exec vitest run {files}'
 const BOTS = A.bots || 'CodeRabbit (login coderabbitai) and Gitar (login contains "gitar")'
 const BOT_WAIT_MIN = A.botWaitMinutes || 20
@@ -199,7 +201,7 @@ const testOutcome = (pr, test) => {
   const findings = accMissing ? [{ severity: 'major', title: 'acceptance test did not run', detail: `The tester ran checks, but none is named ${JSON.stringify(acc.check || '')}, the acceptance test from the plan entry. Make sure it exists and runs.` }] : []
   const nothingRan = failed.length === 0 && passed.length === 0
   return {
-    failed, refused, nothingRan, findings,
+    failed, refused, nothingRan, findings, related: test.related,
     notRun: refused.map(c => `${c.name} (refused)`),
     pass: !nothingRan && failed.length === 0 && !accMissing,
   }
@@ -212,6 +214,7 @@ const untestedOf = pr => { const u = untestedFor(pr); return u.checks.concat(u.q
 const historyRow = (round, outcome, blocking, conflicts) => ({
   round, testPass: outcome.pass, failingChecks: outcome.failed.map(c => c.name), blockersAndMajors: blocking.map(findingLine),
   ...(outcome.notRun.length ? { notRun: outcome.notRun } : {}),
+  ...(outcome.related ? { relatedTests: outcome.related } : {}),
   ...(conflicts ? { severityConflicts: conflicts } : {}),
 })
 // Tracks QA scenarios by name across runs (see the QA states in the plan). A name that a run leaves out keeps its state, and an open
@@ -305,6 +308,7 @@ const TEST = {
     pass: { type: 'boolean' }, headSha: { type: 'string' },
     checks: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, pass: { type: 'boolean' }, refused: { type: 'boolean' }, log: { type: 'string' } }, required: ['name', 'pass'] } },
     acceptance: { type: 'object', properties: { declared: { type: 'boolean' }, check: { type: 'string' } }, required: ['declared'] },
+    related: { type: 'object', properties: { files: { type: 'array', items: { type: 'string' } }, projects: { type: 'array', items: { type: 'string' } } } },
   },
   required: ['pass', 'checks'],
 }
@@ -530,13 +534,13 @@ Return pushed, branch, headSha, a short summary, whether the acceptance test pas
 
 ${prBlock(pr)}`
 
+const relatedStep = RELATED_TESTS ? `3. Then run the e2e and docs test files that import or name the modules the PR touches and are not in that list. Find them with a search (\`git grep -l -E\` for each touched module's file name and exported names, over the test folders). Run at most ${RELATED_MAX}, the files that import a touched module directly first, and name the files you left out in the check, because CI runs them. Never run the whole suite. For each file, read the repo's test config and package scripts to find the command and test project that own it (for example \`--project <name>\` in a vitest workspace), also when that project is left out of the default test command, and name the command in the check. Do not use \`${E2E_COMMAND}\` for a file outside its project. Report a file or project you could not select, or one the environment cannot run (for example a missing browser), as a check with \`refused\`: true, never as passed or failed. Name each extra file in the check, and say which test projects you ran.\n` : ''
 const testPrompt = (pr, round) => `${ctx(pr)}
 
 Task: test the branch from a clean clone.
 1. \`rm -rf ${TMP}/test-${pr.id}-r${round} && git clone --branch ${pr.branch} https://github.com/${REPO}.git ${TMP}/test-${pr.id}-r${round}\` and cd there.
 2. Run in order: ${fastText}. Then run ${ownE2e}.
-3. Then run the e2e and docs test files that import or name the modules the PR touches and are not in that list. Find them with a search (\`git grep -l -E\` for each touched module's file name and exported names, over the test folders). Run them with the same command, also when their test project is left out of the default test command. Name each extra file in the check, and say which test projects you ran.
-Return pass, headSha, one entry per check with the failing log excerpt (\`refused\`: true for a command that a permission check denied, so it did not run), and \`acceptance\`: \`declared\` is true when the entry has an Acceptance line that names a runnable test, and \`check\` is the name of the check that runs it.
+${relatedStep}Return pass, headSha, one entry per check with the failing log excerpt (\`refused\`: true for a command that a permission check denied, or for a file or project you could not run, so it did not run), \`acceptance\`: \`declared\` is true when the entry has an Acceptance line that names a runnable test, and \`check\` is the name of the check that runs it${RELATED_TESTS ? ', and `related`: the files you ran in step 3 and the test projects you ran them in (empty lists when the search found nothing)' : ''}.
 
 ${prBlock(pr)}`
 

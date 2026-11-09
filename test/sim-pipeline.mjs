@@ -1713,12 +1713,28 @@ await check('untested: the same list with declared false signs off, and a passed
   assert.equal(on.C1.history.length, 1)
   assert.equal(on.C1.landMode, 'auto')
 })
-await check('tester: the test prompt asks for related e2e files and a report that names them signs off', async () => {
+await check('tester: the related files and projects reach the history, and the prompt names the limit', async () => {
   let prompt = ''
-  const x = await hooked(only1('C1'), (p, o) => { if (o.label !== 'test:C1#1') return; prompt = p; return { pass: true, headSha: 'sha-C1', checks: [chk('lint'), chk('e2e related: test/a.e2e.test.ts, docs/b.test.ts (projects: e2e, docs)')] } })
+  const related = { files: ['test/a.e2e.test.ts', 'docs/b.test.ts'], projects: ['e2e', 'docs'] }
+  const x = await hooked(only1('C1'), (p, o) => { if (o.label !== 'test:C1#1') return; prompt = p; return { pass: true, headSha: 'sha-C1', checks: [chk('lint')], related } })
   assert.match(prompt, /import or name the modules the PR touches/)
-  assert.equal(x.C1.history.length, 1)
+  assert.match(prompt, /Run at most 10/)
+  assert.deepEqual(x.C1.history[0].relatedTests, related)
   assert.equal(fixCalls('C1').length, 0)
+})
+await check('tester: a report with no related field leaves the history without relatedTests', async () => {
+  const x = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint')] }))
+  assert.equal('relatedTests' in x.C1.history[0], false)
+})
+await check('tester: relatedTests false leaves step 3 out of the test prompt', async () => {
+  let prompt = ''
+  await hooked(only1('C1'), (p, o) => { if (o.label !== 'test:C1#1') return; prompt = p; return { pass: true, headSha: 'sha-C1', checks: [chk('lint')] } }, { relatedTests: false })
+  assert.doesNotMatch(prompt, /import or name the modules/)
+})
+await check('tester: a related file that could not run is refused, so it starts no fix', async () => {
+  const x = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint'), { name: 'e2e related: a.e2e.test.ts', pass: false, refused: true }] }))
+  assert.equal(fixCalls('C1').length, 0)
+  assert.deepEqual(x.C1.history[0].notRun, ['e2e related: a.e2e.test.ts (refused)'])
 })
 await check('untested: a refused acceptance check starts no fix, signs off, is untested and gets no :auto', async () => {
   const x = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint'), { name: 'x', pass: false, refused: true }], acceptance: acc('x') }))

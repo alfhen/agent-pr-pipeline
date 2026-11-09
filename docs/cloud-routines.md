@@ -273,7 +273,7 @@ Nothing in `alfhen/tagreeve` changes until the maintainer does these steps there
 - Add `.github/pipeline.json` with `routine.pipelineVersion`, `trustedAuthors`, `triageFrom` above the newest issue or PR number of the repo (read it with `gh api "repos/alfhen/tagreeve/issues?state=all&per_page=1"`), and `typeLabels` with `feat` to `enhancement` and `docs` to `documentation`.
 - In `waveArgs`: `checks` `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm typecheck`, `pnpm test`; `e2eCommand` `pnpm exec vitest run --project e2e {files}`; `docsBuild` `pnpm docs:build`.
 - Add `.claude/worktrees/` to `.gitignore`.
-- Use an environment whose setup script is the printed part plus pnpm. Its network level must allow npm and the Playwright browser download. Trusted does not list the download; Custom does. Otherwise run no e2e in waves, because CI runs it.
+- Use an environment whose setup script is the printed part plus pnpm. Its network level must allow npm and the Playwright browser download. Trusted does not list the download; Custom does. Otherwise run no e2e in waves, because CI runs it: set `relatedTests` to false in `waveArgs`, and make `e2ePattern` match nothing.
 - The existing ruleset already holds `main`, with an empty bypass list. It needs signed commits, so check that a GitHub squash merge passes it before stage 2.
 - `release-tag.yml` runs on a pushed `v*` tag, and the proxy refuses tag pushes. Before stage 3, check that `POST releases` makes a tag that starts the workflow.
 - Install the Claude GitHub App on the repo.

@@ -64,7 +64,7 @@ for (const key of ['repo', 'tmp', 'pluginRoot', 'agentPrefix', 'prs', 'plan', 'f
   })
 }
 
-for (const key of ['e2ePattern', 'e2eCommand', 'docs', 'docsBuild', 'bots', 'botWaitMinutes', 'architecture', 'spec', 'context', 'skills', 'steps', 'qa', 'maxRounds']) {
+for (const key of ['e2ePattern', 'e2eCommand', 'relatedTests', 'docs', 'docsBuild', 'bots', 'botWaitMinutes', 'architecture', 'spec', 'context', 'skills', 'steps', 'qa', 'maxRounds']) {
   test(`allows waveArgs.${key}`, () => {
     const r = run(withRoutine({ ...minimal, waveArgs: { ...minimal.waveArgs, [key]: 'x' } }))
     assert.equal(r.status, 0, r.stderr)
