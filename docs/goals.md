@@ -6,7 +6,7 @@ A Claude Code plugin that builds a release as small PRs, each checked by separat
 
 1. **Self-improvement (most important).** After each pipeline run ends, agents evaluate what worked well and what didn't. They file the feedback in this repo as issues, with details of the other repo (code, data, names) left out. When I watch a run, they show me the feedback first. An unattended run files it without my approval, within limits: at most three items for each run, only items with evidence and a suggested change, a daily cap, and an item that repeats an open issue becomes a comment on that issue.
 2. **Quality.** No agent checks its own work, and no code lands that no other agent checked.
-3. **My attention.** I set goals and outcomes, and I decide scope and architecture questions. I do not read code, merge PRs or make releases. An action that cannot be undone stops and asks me, in plain words about its effect.
+3. **My attention.** I set goals and outcomes, and I decide scope and architecture questions. I do not read code or make releases. The only PRs I merge are changes to this file. An action that cannot be undone stops and asks me, in plain words about its effect.
 4. **Cost.** Fewer tokens per merged PR.
 5. **Speed matched to effort.** How fast a PR goes, and how much checking it gets, follows how big or risky the change is. A single quick fix can skip the full plan, but only after a small triage step: an adversarial review checks whether its size and risk allow going straight to build.
 6. **Works on all my repos:** laravel-idioms, Tagreeve, Gossamr and the rest, whatever the stack.
