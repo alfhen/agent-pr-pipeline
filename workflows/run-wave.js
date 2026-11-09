@@ -539,11 +539,11 @@ Return pass, headSha, one entry per check with the failing log excerpt (\`refuse
 
 ${prBlock(pr)}`
 
-const reviewPrompt = (pr, round, history, siblings) => `${ctx(pr)}
+const reviewPrompt = (pr, round, history, siblings, stopOnConflict = false) => `${ctx(pr)}
 
 Task: review the branch against ${SPEC ? `${SPEC} and ` : ''}${ref(pr)}.
 Clone it: ${cloneTo(`review-${pr.id}-r${round}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`.
-${pr.kind === 'plan' ? `Check each entry's Acceptance line against the plan's decisions: a line that says a test or file "passes unchanged" while a decision changes a limit, name or default that it hard-codes cannot be met. Report it as a blocker; the fix is to edit the plan.\n` : `If a blocker cannot be fixed without breaking the Touches line or an Acceptance line of the entry, start its title with \`plan conflict:\`. The loop then stops for a person.`}
+${pr.kind === 'plan' ? `Check each entry's Acceptance line against the plan's decisions: a line that says a test or file "passes unchanged" while a decision changes a limit, name or default that it hard-codes cannot be met. Report it as a blocker; the fix is to edit the plan.\n` : stopOnConflict ? `If a blocker cannot be fixed without breaking the Touches line or an Acceptance line of the entry, start its title with \`plan conflict:\`. The loop then stops for a person.` : ''}
 Return headSha, a summary, the findings, the sweep (for each blocker and major: the sibling places you checked and those with the same weakness) and, when the plan entry or brief has an Invariants line, \`invariants\`: one row per invariant, with holds and evidence.
 
 ${prBlock(pr)}
@@ -951,7 +951,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     const wantQa = qaRuns(pr) && (round === startRound || loopState.qaOpen.length > 0)
     const [test, review, arch, product, qa] = await parallel([
       () => call('test', pr, testPrompt(pr, round), `test:${pr.id}#${round}`, { schema: TEST }),
-      () => call('review', pr, reviewPrompt(pr, round, history, loopState.siblings), `review:${pr.id}#${round}`, { schema: REVIEW }),
+      () => call('review', pr, reviewPrompt(pr, round, history, loopState.siblings, true), `review:${pr.id}#${round}`, { schema: REVIEW }),
       () => wantArch ? call('arch', pr, archPrompt(pr, round, pr.kind === 'plan' ? loopState.reports : []), `arch:${pr.id}#${round}`, { schema: ARCHREV }) : Promise.resolve(null),
       () => wantProduct ? call('product', pr, productPrompt(pr, round), `product:${pr.id}#${round}`, { schema: PRODUCT }) : Promise.resolve(null),
       () => wantQa ? call('qa', pr, qaPrompt(pr, round, loopState.qaOpen, loopState.qaScenarios), `qa:${pr.id}#${round}`, { schema: QA }) : Promise.resolve(null),
