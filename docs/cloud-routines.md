@@ -2,9 +2,9 @@
 
 From 0.8.0 the unattended routine runs as Claude Code cloud routines, not as a job on the maintainer's Mac. This page is for the maintainer. It covers what the routines do, how to set up a repo, and how to retire the local routine.
 
-0.8.0 is stage 1 only. A routine triages issues, builds the small ones into PRs and files feedback. It is told never to merge, tag, release, delete a branch or close an issue, and the maintainer merges every PR. See "What holds and what does not".
+0.8.0 is stage 1 only. A routine triages issues, builds the small ones into PRs and files feedback. It is told never to merge, tag, release, delete a branch or close an issue, and the maintainer merges every PR. The routines are told never to merge, and that holds by prompt text. See "What holds and what does not".
 
-There are no webhooks in 0.8.0 (K2). The Issue trigger showed no author filter and no label filter, so every routine runs on a schedule only. `routine/cloud/k2.json` records this, and `routine-spec.sh` emits no webhook entry while both filters are false.
+There are no webhooks in 0.8.0. The Issue trigger showed no author filter and no label filter, so every routine runs on a schedule only. `routine/cloud/k2.json` records this, and `routine-spec.sh` emits no webhook entry while both filters are false.
 
 ## The routines
 
@@ -27,10 +27,10 @@ Summary: triage labels each issue, build turns a ready or approved issue into a 
 | Routine | One per | What it does |
 | --- | --- | --- |
 | triage | repo | Runs `routine-state.sh next --mode cloud-triage`. An issue by an author outside `trustedAuthors` gets `needs-approval` and `untrusted-author` from code, and no agent reads it. A trusted issue goes to the `triager` agent, and code turns its answer into labels. |
-| build | repo | Runs `next --mode cloud-build`, takes at most one issue, and runs `run-wave` with the arguments that code built. The wave opens the PR and answers the bots. `wave-result.sh` turns the Workflow output file into `result.json` and prints the PR, the `ready` flag and the reason code, so the session types none of them. `put built` records them. After a build the routine reads `next` again, so a build with no PR is blocked in the same run. `feedback-outbox.sh` then posts the wave's feedback as one outbox record. |
+| build | repo | Runs `next --mode cloud-build`, builds at most one issue, and runs `run-wave` with the arguments that code built. The wave opens the PR and answers the bots. `wave-result.sh` turns the Workflow output file into `result.json` and prints the PR, the `ready` flag and the reason code, so the session types none of them. `put built` records them. `feedback-outbox.sh` then posts the wave's feedback as one outbox record. After that the routine reads `next` again, so a build with no PR is blocked in the same run. |
 | collect | feedback repo | Files the outboxes of the feedback repo and of every repo in `collectFrom`, through `file-feedback.sh --auto`. It runs no role agent. |
 
-Each routine prompt is `routine/cloud/prompt.md`. It changes into the repo's clone first, because a multi-repo session starts in the parent of the clones (K7). Then it runs `apl-start`, and then it follows `routine/cloud/<kind>.md` from the pinned release. Text from the event that started the session is inert data.
+Each routine prompt is `routine/cloud/prompt.md`. It changes into the repo's clone first, because a multi-repo session starts in the parent of the clones. Then it runs `apl-start`, and then it follows `routine/cloud/<kind>.md` from the pinned release. Text from the event that started the session is inert data.
 
 Code makes the choices. `routine-state.sh` picks the work, checks every argument of a `put`, and sets labels and records. An agent never sets a state label itself.
 
@@ -43,17 +43,19 @@ State is held by GitHub labels, which the maintainer sees, and by records, which
 | init needed | The repo has no tracking issue. | `routine-state.sh <repo> init`. Until then every run prints `init needed` and stops. |
 | new | An open issue with no state label, no trusted `triaged` record, not a PR, not labelled with a `skipLabels` label, number at least `triageFrom`. | Triage. |
 | untrusted | The author is outside `trustedAuthors`. Labels `needs-approval` and `untrusted-author`. | The maintainer adds `maintainer-approved`, or closes the issue. A changed body or a later outside comment revokes the approval. |
-| ready-to-build | Triage: build, size S or M, risk below high, trusted. | Build starts, or the maintainer removes the label. |
+| ready-to-build | Triage: build, size S or M, risk below high, trusted or approved. | Build starts, or the maintainer removes the label. |
 | needs-approval | Size L, risk high, a plan, an untrusted author or a revoked approval. | The maintainer adds `maintainer-approved`, or closes the issue. |
-| needs-plan | An approved issue of size L, risk high or decision plan, or a build that stopped with the reason code `triage-plan`. That block adds no `build-failed`. | The maintainer plans it in a main session and removes the label. |
+| needs-plan | An approved issue of size L, risk high or decision plan, or a build that stopped with the reason code `triage-plan`. That block adds no `build-failed`. | The maintainer plans it in a main session and removes the label. After a `triage-plan` block, a new maintainer approval gives a new build, or ends in `needs-maintainer` when the attempts are used. The label stays until the maintainer removes it. |
 | declined | Triage: invalid. A comment gives the reason. | The maintainer closes the issue, or removes `declined` and the record. |
 | building | `put build-started`. | A PR from `claude/issue-<n>` exists, or the block step. |
 | build-failed | The last attempt has no PR and a `built` record or a record older than `buildHours`, except for the reason code `triage-plan`. | The maintainer adds `maintainer-approved` again, or closes the issue. |
 | PR open | The wave opened a PR. | The maintainer merges or closes it. It counts for `openPRs` while open. |
 | needs-maintainer | The attempts reached `buildAttempts`. | The maintainer only. |
 | outbox open | `feedback-outbox.sh` posts `feedback-outbox <run>`. | Collect posts `feedback-filed <run>`. An outbox older than 7 days is dropped with `feedback-dropped <run>`. |
+| outbox held by the cap | The issues filed in the last 24 hours reach `feedbackPerDay`. | 24 hours pass, and the oldest outbox goes first. The 7-day rule ends it. |
 | env stale | `apl-start` stops: the pin is not installed, or a file does not match. The record and notice exist only when another complete release is installed. Otherwise only the run log shows the stop. | The maintainer updates the setup script or the pin. |
 | paused | The label `routine-paused` is on the tracking issue. | The maintainer removes the label. |
+| lost race | Two runs post `build-started` for the same issue and attempt. | The run whose record is newer stops at once. The older one builds. |
 
 The fixed labels are `ready-to-build`, `needs-approval`, `maintainer-approved`, `declined`, `building`, `build-failed`, `needs-plan`, `needs-maintainer`, `untrusted-author`, `routine-paused`, `size:S`, `size:M` and `size:L`. `routine/config.jq` prints them.
 
@@ -123,12 +125,17 @@ All limits are per repo. They have defaults and an upper bound of 20 (`buildHour
 
 A run has no hard time bound in the cloud. `buildHours` only decides when a silent build counts as failed. The account limits of Claude Code apply on top.
 
+One run handles every step up to a limit of 20 passes. The limit is fixed in `routine/cloud/triage.md` and `routine/cloud/build.md`. It is not a setting, `routine-state.sh` does not check it, and it holds by prompt text. After a `put` of a short step (`adopt`, `untrusted`, `revoke`, `pr-seen`, `block`, `exhausted`, `needs-plan`), the routine reads a new `next`. A build goes back to `next` too, and the run stops at the next `build` or `would-build` step, at `idle`, `wait`, `paused` or `init needed`, and on a `put` that exits non-zero or prints `WOULD`.
+
 ## The pin and the setup script
 
 ```mermaid
 flowchart TD
   P[pipeline.json: routine.pipelineVersion] --> S
-  E[environment setup script from cloud-setup.sh] --> F[fetch each file at the tag from raw.githubusercontent.com]
+  E[environment setup script from cloud-setup.sh] --> L[read releases.txt from main]
+  L -- bad list, empty list or no installed release --> X
+  L --> F[fetch each file at the tag from raw.githubusercontent.com]
+  F -- listed tag with 404 --> K[skip the tag]
   F --> V{every blob sha matches files.txt?}
   V -- no --> X[exit 1: the session does not start]
   V -- yes --> I["/opt/agent-pr-pipeline/tag/ and the prefixed agents"]
@@ -139,22 +146,21 @@ flowchart TD
 
 Summary: the setup script installs each release in the list and each named release, and checks every file against `files.txt`; `apl-start` checks the pin and the files again before any work.
 
-- The pin is `routine.pipelineVersion`. A release tag cannot move, because the tag ruleset below forbids updates and deletions. That is why the setup script can trust a tag's files.
-- `bash scripts/cloud-setup.sh --print [--latest] [<tag>...] [--repo <owner/repo>]` prints the setup script. With `--latest` the script also fetches `.claude-plugin/releases.txt` from the default branch of the plugin repo each time the environment runs the setup script (about every 7 days, or when the script or the allowed hosts change), and installs each listed release. The file holds one tag per line, newest first, at most 3. A change to it needs a merged PR. CI checks that the committed file has 1 to 3 unique `v<X.Y.Z>` lines. The version PR of each release adds the new tag on top and drops the oldest. A listed tag whose `files.txt` gives HTTP 404 is skipped, because the version PR merged and the release is not cut yet. Between the merge of a version PR and the cut of its release, anyone with push access to the repo can create a tag with that name, and the setup script then installs it. A cloud session cannot push tags, and a release runs only when the pin of a repo names it. Cut the release soon after the version PR merges. A named tag with a 404, a failed fetch, an empty list, a bad line, a list of more than 3 lines, or no installed release exits 1. `routine-spec.sh` always prints `--latest`. `release.sh` refuses a release of this repo when the first line of `releases.txt` is not `v<version>`. The release manifest `.claude-plugin/files.txt` lists the shipped files as `<git blob sha> <path>`. `scripts/manifest.sh --write` writes it, and `manifest.sh --check` verifies it. `release.sh` refuses a release of this repo when the manifest does not match the tree.
+- The pin is `routine.pipelineVersion`. A release tag cannot move, because the tag ruleset below forbids updates and deletions. That is why the setup script can trust the files of a tag from a release.
+- `bash scripts/cloud-setup.sh --print [--latest] [<tag>...] [--repo <owner/repo>]` prints the setup script. With `--latest` the script also fetches `.claude-plugin/releases.txt` from the default branch of the plugin repo each time the environment runs the setup script (about every 7 days, or when the script or the allowed hosts change), and installs each listed release. The file holds one tag per line, newest first, at most 3. A change to it needs a merged PR. CI checks that the committed file has 1 to 3 unique `v<X.Y.Z>` lines. The version PR of each release adds the new tag on top and drops the oldest. A listed tag whose `files.txt` gives HTTP 404 is skipped, because the version PR merged and the release is not cut yet. Between the merge of a version PR and the cut of its release, anyone with push access to the repo can create a tag with that name, and the setup script then installs it. The files check proves integrity only, not origin, because `files.txt` and the files come from the same tag. It does not prove who created a tag. A cloud session cannot push tags, and a release runs only when the pin of a repo names it. Cut the release soon after the version PR merges. A named tag with a 404, a failed fetch, an empty list, a bad line, a list of more than 3 lines, or no installed release exits 1. `routine-spec.sh` always prints `--latest`. `release.sh` refuses a release of this repo when the first line of `releases.txt` is not `v<version>`. The release manifest `.claude-plugin/files.txt` lists the shipped files as `<git blob sha> <path>`. `scripts/manifest.sh --write` writes it, and `manifest.sh --check` verifies it. `release.sh` refuses a release of this repo when the manifest does not match the tree.
 - The script writes each release to `/opt/agent-pr-pipeline/<tag>/`, each role agent to `~/.claude/agents/apl-<v>-<name>.md` (for `v0.8.0` the prefix is `apl-v0-8-0-`), and the launcher `/usr/local/bin/apl-start`. One environment can hold several releases, so two repos can pin different ones. Any failed fetch or check exits 1.
-- `apl-start <owner/repo>` reads the pin from the default branch, checks the install and the files, and prints one JSON line with `version`, `pluginRoot`, `agentPrefix` and `defaultSha`. On a failure it prints `APL STOP <reason>`, `PIN <tag>` and `ROOT <path or none>`, and exits 1. `ROOT` is the highest complete release that is not the pin, because the pin may have failed its file check. The prompt then runs `put env-stale` from that root, which writes one record and one notice. When `ROOT` is `none`, no other complete release is installed: the prompt stops with no record and no notice. Later runs with the same record stop without a notice, and the next good start writes `env-ok`.
+- `apl-start <owner/repo>` reads the pin from the default branch, checks the install and the files, and prints one JSON line with `version`, `pluginRoot`, `agentPrefix` and `defaultSha`. On a failure it prints `APL STOP <reason>`, `PIN <tag>` and `ROOT <path or none>`, and exits 1. `ROOT` is the highest complete release that is not the pin, because the pin may have failed its file check. ROOT itself is never file-checked: a complete release needs only a finished install, and `apl-start` hashes only the pin's files. The prompt runs `put env-stale` from that root only when neither `PIN` nor `ROOT` is `none`. It then writes one record and one notice. When `ROOT` is `none`, no other complete release is installed. When `PIN` is `none`, the stop came before the pin was read (a failed fetch, an unreadable default branch or `pipeline.json`, or a bad `pipelineVersion`). In both cases the prompt stops with no record and no notice. Later runs with the same record stop without a notice, and the next good start writes `env-ok`.
 - `pluginRoot` is outside the clone, so a PR cannot change the scripts that judge it. Workflow refuses a script outside the working folder, so the build routine copies `run-wave.js` from `pluginRoot` to `.git/apl/run-wave.js` in the clone, in the same session, just before the call. `.git` is never tracked, and a PR cannot change the copy.
-- One run handles every step up to a limit of 20 passes. After a `put` of a short step (`adopt`, `untrusted`, `revoke`, `pr-seen`, `block`, `exhausted`, `needs-plan`), the routine reads a new `next`. It stops after the work of one `triage` or one `build` step, at `idle`, `wait`, `paused` or `init needed`, and on a `put` that exits non-zero or prints `WOULD`.
 
 ### Create the environment
 
-No API changes an environment (K8). The maintainer does this part in the web UI:
+No API changes an environment. The maintainer does this part in the web UI:
 
 1. Run `bash scripts/routine-spec.sh <owner/repo>` and take the `setupScript` field, or run `bash scripts/cloud-setup.sh --print --latest <pin>`. Add one tag for each release still in use that `releases.txt` does not list.
 2. Paste the output in the environment's setup script. Add the repo's own tools after it (for example pnpm).
 3. Save, and note the environment id.
 
-The setup script costs no model tokens. A saved environment is reused for about 7 days.
+The setup script costs no model tokens. A saved environment is reused for about 7 days. The setup script runs again when the script or the allowed hosts change. A setup script that runs longer than about 5 minutes is not cached, so every session runs it again. Each tag adds install time, so keep the tag list short.
 
 ### Upgrade the pin
 
@@ -169,9 +175,9 @@ A repo whose pin is not installed makes `apl-start` stop. The routine sends one 
 
 ## Approval and its limit
 
-Approval is one label, `maintainer-approved`. It counts only when the newest `labeled` event of the label has the maintainer as actor and a null `performed_via_github_app` (D1). An `unlabeled` event never counts.
+Approval is one label, `maintainer-approved`. It counts only when the newest `labeled` event of the label has the maintainer as actor and a null `performed_via_github_app`. An `unlabeled` event never counts.
 
-A cloud session writes through the Claude GitHub App, so its comments, issues, PRs and `labeled` events carry `performed_via_github_app.slug` `claude`, on every route that adds a label (K1, K1b). A removal made by a session has no such mark, so only `labeled` events can be a signal.
+A cloud session writes through the Claude GitHub App, so its comments, issues, PRs and `labeled` events carry `performed_via_github_app.slug` `claude`, on every route that adds a label. A removal made by a session has no such mark, so only `labeled` events can be a signal.
 
 Limits to know:
 
@@ -183,13 +189,13 @@ A build starts only when the live author, the current approval, the body hash an
 
 ## Pause and notices
 
-The fast pause is the label `routine-paused` on the tracking issue. Every routine stops at its first step, with no session work. A routine can also be turned off with RemoteTrigger `update`.
+The fast pause is the label `routine-paused` on the tracking issue. Every routine stops at its first step, with no session work. Pause is advisory: a session acts as the maintainer, and the prompts only tell it not to remove the label. A session that follows injected text can remove `routine-paused`, and the removal has no app mark. A RemoteTrigger `update` with `enabled` false is the hard stop.
 
 `put blocked` also posts one comment on the issue, after the record and the labels. The first line is fixed text for the reason code. It says what happened and that no PR was opened. When the `built` record has a `why` (the reason of the build, on one line, cut to 500 characters), a second line gives it, with each `@` made inert so the comment notifies nobody. The comment has no `<!-- pipeline:` marker. A failed comment logs a warning and the exit code stays 0, because the record is already written. Stage 0 posts no comment.
 
 A notice is a `PushNotification` call, made only when a `put` wrote a record. Its text is fixed words, a repo, an issue number and a run id. Notices exist for `needs-plan`, `triage-failed`, `blocked`, `exhausted` and `env-stale`. The `env-stale` notice and its record exist only when another complete release is installed. If the pin is the only complete release, a stop leaves only the run log. This is rare, because the setup script with `--latest` installs the newest three releases. Stage 0 sends none. The GitHub labels `needs-approval`, `needs-plan`, `build-failed` and `needs-maintainer` are the other signal, and a saved search for them works well.
 
-The session's auto-mode classifier judges each call, and it can refuse a routine's own write. In K10 it refused a REST merge ("Merge Without Review") and an issue close ("External System Writes"). A refused `put` exits non-zero, the step ends with no write, and it comes back next run. After the first run of a routine, read the run log and check it has no `permission_denied`.
+The session's auto-mode classifier judges each call, and it can refuse a routine's own write. In a test it refused a REST merge ("Merge Without Review") and an issue close ("External System Writes"). A refused `put` exits non-zero, the step ends with no write, and it comes back next run. After the first run of a routine, read the run log and check it has no `permission_denied`.
 
 ## The outbox and the collect routine
 
@@ -205,16 +211,20 @@ Records are advisory. A forged outbox can still put redacted text into a public 
 
 ## Self-modification
 
-At every stage the merge script refuses a PR that touches a gated path or a floor path. The floor always holds `.github/**`, `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md` and `docs/goals.md`, and any `.claude` folder at any depth. It matches the file names `AGENTS.md`, `CLAUDE.md` and `CLAUDE.local.md` at any depth and in any letter case. If the gate cannot read the plugin's own repository from its manifest (`.claude-plugin/plugin.json`), it stops with `GATE ERROR` and the PR is not merged. It does this in every repo. In this repo it also holds `agents/**`, `workflows/**`, `scripts/**`, `skills/**`, `routine/**`, `templates/**` and `.claude-plugin/**`. No setting removes a floor path.
+At every stage the merge script refuses a PR that touches a gated path or a floor path. The floor always holds `.github/**`, `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md` and `docs/goals.md`, and any `.claude` folder at any depth. Every floor path matches in any letter case. The file names `AGENTS.md`, `CLAUDE.md` and `CLAUDE.local.md` match at any depth. The `gates` from `.github/pipeline.json` stay case-sensitive. If the gate cannot read the plugin's own repository from its manifest (`.claude-plugin/plugin.json`), it stops with `GATE ERROR` and the PR is not merged. It does this in every repo. In this repo it also holds `agents/**`, `workflows/**`, `scripts/**`, `skills/**`, `routine/**`, `templates/**` and `.claude-plugin/**`. No setting removes a floor path.
 
 ## What holds and what does not
 
-The no-merge rule holds by prompt text and by the session's auto-mode classifier (K10). The proxy does not enforce it. The ruleset asks for 0 approvals, so a session that follows injected text could merge a PR with a green `ci` or close an issue. The classifier is a second guard that can change, and it judges each call in context.
+The no-merge rule holds by prompt text and by the session's auto-mode classifier. The proxy does not enforce it. The ruleset asks for 0 approvals, so a session that follows injected text could merge a PR with a green `ci` or close an issue. The classifier is a second guard that can change, and it judges each call in context.
 
 - The floor applies only to `merge-pr.sh`. It does not stop a REST merge of a green PR.
 - The proxy does not limit which branches a push can update.
+- Pause is advisory (see "Pause and notices"). A session can remove `routine-paused` with no mark that shows who did it.
+- After approval, the wave's triager reads every comment of the issue, and the bot-answer step reads strangers' comments on the PR. Only the untrusted-input rule of the agents and the newer-comment check of the Live check limit this.
+- Feedback from another repo is public at once, with no human step. The redactor and the denylist always run, and a miss is public. The details of Tagreeve are public anyway. A private repo raises the risk.
+- `CLAUDE.md` and the hooks in `.claude/settings.json` load from the session's checkout, and can be stale. A fetch cannot fix this. The routine reads goals and code from the default branch, and the scripts and agents come from the pin.
 - Records are advisory, because there is one account.
-- The session can write to the installed files under `/opt/agent-pr-pipeline/<tag>/`. `apl-start` checks them only at session start.
+- The session can write to the installed files under `/opt/agent-pr-pipeline/<tag>/`. `apl-start` checks only the pin's files, only at session start. A release that is offered as ROOT is not checked.
 
 ## Rulesets for this repo
 
@@ -231,7 +241,7 @@ Creation of a tag is not restricted, so `release.sh` still works: it creates the
 
 Use the `cloud-routines` skill from a local session, not from a cloud session. It runs `scripts/routine-spec.sh <owner/repo> [--tags <tag>...]`, shows the result, waits for the maintainer to save the setup script, runs `routine-state.sh <repo> init`, then creates or updates each routine with RemoteTrigger and compares the result with `list`. It sets `clear_mcp_connections: true`, so a new routine gets none of the account's connectors.
 
-RemoteTrigger cannot delete a routine or a webhook trigger (K8). The maintainer deletes those in the web UI.
+RemoteTrigger cannot delete a routine or a webhook trigger. The maintainer deletes those in the web UI.
 
 ```mermaid
 flowchart TD
@@ -250,7 +260,7 @@ Do these steps in order. Stay at stage 0 until the first compare is clean.
 
 1. Add `.github/pipeline.json` with a `routine` block, as in the example above.
 2. Add `.claude/worktrees/` to `.gitignore`. A built-in Stop hook asks a session to commit untracked files, and that folder triggers it every turn.
-3. Put no maintainer token in repo secrets (D1).
+3. Put no maintainer token in repo secrets.
 4. Make or update the environment and its setup script.
 5. Create the routines with the skill, at stage 0.
 6. Compare the `would-triage` and `would-build` lines with what you expect. Then set stage 1 in a PR.
@@ -258,9 +268,9 @@ Do these steps in order. Stay at stage 0 until the first compare is clean.
 
 ### Checklist for Tagreeve
 
-Nothing in `alfhen/tagreeve` changes until the maintainer does these steps there. Tagreeve is public, has 204 open issues, and strangers file issues, so the untrusted path is the normal case.
+Nothing in `alfhen/tagreeve` changes until the maintainer does these steps there. Tagreeve is public and has a large backlog, and strangers file issues, so the untrusted path is the normal case.
 
-- Add `.github/pipeline.json` with `routine.pipelineVersion`, `trustedAuthors`, `triageFrom` above the 204 open issues, and `typeLabels` with `feat` to `enhancement` and `docs` to `documentation`.
+- Add `.github/pipeline.json` with `routine.pipelineVersion`, `trustedAuthors`, `triageFrom` above the newest issue or PR number of the repo (read it with `gh api "repos/alfhen/tagreeve/issues?state=all&per_page=1"`), and `typeLabels` with `feat` to `enhancement` and `docs` to `documentation`.
 - In `waveArgs`: `checks` `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm typecheck`, `pnpm test`; `e2eCommand` `pnpm exec vitest run --project e2e {files}`; `docsBuild` `pnpm docs:build`.
 - Add `.claude/worktrees/` to `.gitignore`.
 - Use an environment whose setup script is the printed part plus pnpm. Its network level must allow npm and the Playwright browser download. Trusted does not list the download; Custom does. Otherwise run no e2e in waves, because CI runs it.
