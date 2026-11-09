@@ -145,3 +145,7 @@ test('the QA schema takes file and fileIssue', () => {
 test('a missing milestone has its own reason', () => {
   assert.match(src, /opened\.blockedReason === MILESTONE_MISSING \? 'milestone not found'/)
 })
+
+test('the opener rewrites the body of a reused PR', () => {
+  assert.match(src, /use that PR, create none, and replace its body with the body described below: \\`gh api -X PATCH repos\/\$\{REPO\}\/pulls\/<number> -F body=@<file>\\`/)
+})
