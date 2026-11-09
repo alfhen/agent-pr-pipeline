@@ -444,7 +444,7 @@ await check('a redactor that returns nothing leaves no feedback, keeps the denyl
   assert.deepEqual(lastResult.feedback, [])
   assert.deepEqual(lastResult.denylist, MAIN_DENYLIST)
   assert.equal(lastResult.prs.length, PRS.length)
-  assert.equal(calls.filter(c => c.label.startsWith('redact')).length, 1)
+  assert.equal(calls.filter(c => c.label.startsWith('redact')).length, 2)
 })
 await check('a landFix-only run starts no evaluate or redact agent', async () => {
   await simulate({ ...base, prs: PRS.filter(p => p.landFix) })
@@ -1345,6 +1345,52 @@ await check('a PR whose run throws is null in the result, and the other PRs and 
   assert.ok(out.denylist.includes('b1'))
   assert.ok(calls.some(c => c.label === 'evaluate:wave'))
 })
+const flaky = (label, bad) => { const seen = []; return { seen, fn: async (p, o) => { if (o.label !== label) return agent(p, o); seen.push(1); const b = bad[seen.length - 1]; if (b === 'null') return null; if (b === 'throw') throw new Error('ENOTFOUND'); if (b === 'fail') return { pushed: false, branch: 'b1', summary: 's', acceptanceTestPassed: false }; return agent(p, o) } } }
+await check('an agent that returns null is retried once and the retry result is used', async () => {
+  calls = []; preflight = GOOD
+  const t = flaky('implement:C1', ['null'])
+  const out = await run({ ...base, prs: only('C1') }, t.fn, parallel, log)
+  assert.equal(t.seen.length, 2)
+  assert.equal(out.prs[0].ready, true)
+})
+await check('an agent that throws is retried once', async () => {
+  calls = []; preflight = GOOD
+  const t = flaky('implement:C1', ['throw'])
+  const out = await run({ ...base, prs: only('C1') }, t.fn, parallel, log)
+  assert.equal(t.seen.length, 2)
+  assert.equal(out.prs[0].ready, true)
+})
+await check('the retry of a writer agent carries the retry line and a reader does not', async () => {
+  calls = []; preflight = GOOD
+  const prompts = []
+  const spy = (label) => async (p, o) => { if (o.label === label) { prompts.push(p); if (prompts.length === 1) return null } return agent(p, o) }
+  await run({ ...base, prs: only('C1') }, spy('implement:C1'), parallel, log)
+  assert.ok(!prompts[0].includes('RETRY:') && prompts[1].includes('RETRY:'))
+  assert.ok(prompts[1].includes('in use by another worktree') && prompts[1].includes('-retry') && prompts[1].includes('HEAD:<branch>'))
+  prompts.length = 0
+  calls = []; preflight = GOOD
+  await run({ ...base, prs: only('C1') }, spy('review:C1#1'), parallel, log)
+  assert.equal(prompts.length, 2)
+  assert.ok(!prompts[1].includes('RETRY:'))
+})
+await check('a second failure is not retried again and the step fails', async () => {
+  calls = []; preflight = GOOD
+  const t = flaky('implement:C1', ['null', 'null'])
+  const out = await run({ ...base, prs: only('C1') }, t.fn, parallel, log)
+  assert.equal(t.seen.length, 2)
+  assert.equal(out.prs[0].ready, false)
+  const u = flaky('implement:C1', ['throw', 'throw'])
+  const out2 = await run({ ...base, prs: only('C1') }, u.fn, parallel, log)
+  assert.equal(u.seen.length, 2)
+  assert.equal(out2.prs[0], null)
+})
+await check('a normal failure answer is not retried', async () => {
+  calls = []; preflight = GOOD
+  const t = flaky('implement:C1', ['fail'])
+  const out = await run({ ...base, prs: only('C1') }, t.fn, parallel, log)
+  assert.equal(t.seen.length, 1)
+  assert.equal(out.prs[0].reason, 'implementation not pushed')
+})
 const cleanupOf = (cs, id, kind) => cs.filter(c => c.label === `io:${id}#cleanup${kind}`)
 await check('cleanup: init runs before the first agent', () => {
   assert.equal(mainTimeline[0], 'io:wave#cleanupinit')
@@ -1712,6 +1758,30 @@ await check('untested: the same list with declared false signs off, and a passed
   const on = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint'), chk('x')], acceptance: acc('x') }))
   assert.equal(on.C1.history.length, 1)
   assert.equal(on.C1.landMode, 'auto')
+})
+await check('tester: the related files and projects reach the history, and the prompt names the limit', async () => {
+  let prompt = ''
+  const related = { files: ['test/a.e2e.test.ts', 'docs/b.test.ts'], projects: ['e2e', 'docs'] }
+  const x = await hooked(only1('C1'), (p, o) => { if (o.label !== 'test:C1#1') return; prompt = p; return { pass: true, headSha: 'sha-C1', checks: [chk('lint')], related } })
+  assert.match(prompt, /import or name the modules the PR touches/)
+  assert.match(prompt, /Run at most 10/)
+  assert.deepEqual(x.C1.history[0].relatedTests, related)
+  assert.equal(fixCalls('C1').length, 0)
+})
+await check('tester: a report with no related field leaves the history without relatedTests', async () => {
+  const x = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint')] }))
+  assert.equal('relatedTests' in x.C1.history[0], false)
+})
+await check('tester: relatedTests false leaves step 3 out of the test prompt', async () => {
+  let prompt = ''
+  await hooked(only1('C1'), (p, o) => { if (o.label !== 'test:C1#1') return; prompt = p; return { pass: true, headSha: 'sha-C1', checks: [chk('lint')] } }, { relatedTests: false })
+  assert.match(prompt, /test the branch from a clean clone/)
+  assert.doesNotMatch(prompt, /import or name the modules/)
+})
+await check('tester: a related file that could not run is refused, so it starts no fix', async () => {
+  const x = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint'), { name: 'e2e related: a.e2e.test.ts', pass: false, refused: true }] }))
+  assert.equal(fixCalls('C1').length, 0)
+  assert.deepEqual(x.C1.history[0].notRun, ['e2e related: a.e2e.test.ts (refused)'])
 })
 await check('untested: a refused acceptance check starts no fix, signs off, is untested and gets no :auto', async () => {
   const x = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint'), { name: 'x', pass: false, refused: true }], acceptance: acc('x') }))

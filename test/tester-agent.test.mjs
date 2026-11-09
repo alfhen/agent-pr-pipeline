@@ -31,3 +31,9 @@ test('tester fills acceptance honestly and reports the acceptance test as its ow
   assert.match(body, /Report the acceptance test as a check of its own/);
   assert.match(body, /Fill `acceptance` honestly: `declared` is true only when/);
 });
+
+test('tester also runs the e2e and docs tests that name the touched modules and says which projects ran', () => {
+  assert.match(body, /Also run the e2e and docs test files that import or name the modules the PR touches/);
+  assert.match(body, /leaves out still counts/);
+  assert.match(body, /say which test projects you ran/);
+});
