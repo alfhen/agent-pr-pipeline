@@ -198,3 +198,21 @@ test('gate: routine/run.sh and routine/bin/gh are held by the repo gates', () =>
   assert.match(r.out, /routine\/bin\/gh/)
   assert.match(r.out, /routine\/run\.sh/)
 })
+
+const checkReads = (r) => r.log.filter((l) => /^GET .*check-runs/.test(l)).length
+
+test('land: a head with no check runs yet is waited for, then merges', () => {
+  const r = land(landSetup({ checks: [[], [passed('ci')]] }))
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /all merged/)
+  const put = r.log.findIndex((l) => /^PUT .*pulls\/7\/merge/.test(l))
+  assert.ok(put > 0, r.log.join('\n'))
+  assert.equal(checkReads({ log: r.log.slice(0, put) }), 4)
+})
+
+test('land: a head that never gets check runs is WAITING, not merged', () => {
+  const r = land(landSetup({ checks: [[]] }))
+  assert.equal(r.code, 4, r.out)
+  assert.match(r.out, /WAITING #7/)
+  assert.equal(r.log.filter((l) => /^PUT .*pulls\/7\/merge/.test(l)).length, 0)
+})

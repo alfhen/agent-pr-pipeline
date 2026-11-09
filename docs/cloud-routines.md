@@ -52,7 +52,7 @@ State is held by GitHub labels, which the maintainer sees, and by records, which
 | PR open | The wave opened a PR. | The maintainer merges or closes it. It counts for `openPRs` while open. |
 | needs-maintainer | The attempts reached `buildAttempts`. | The maintainer only. |
 | outbox open | `feedback-outbox.sh` posts `feedback-outbox <run>`. | Collect posts `feedback-filed <run>`. An outbox older than 7 days is dropped with `feedback-dropped <run>`. |
-| env stale | `apl-start` stops: the pin is not installed, or a file does not match. | The maintainer updates the setup script or the pin. |
+| env stale | `apl-start` stops: the pin is not installed, or a file does not match. The record and notice exist only when another complete release is installed. Otherwise only the run log shows the stop. | The maintainer updates the setup script or the pin. |
 | paused | The label `routine-paused` is on the tracking issue. | The maintainer removes the label. |
 
 The fixed labels are `ready-to-build`, `needs-approval`, `maintainer-approved`, `declined`, `building`, `build-failed`, `needs-plan`, `needs-maintainer`, `untrusted-author`, `routine-paused`, `size:S`, `size:M` and `size:L`. `routine/config.jq` prints them.
@@ -133,16 +133,16 @@ flowchart TD
   V -- no --> X[exit 1: the session does not start]
   V -- yes --> I["/opt/agent-pr-pipeline/tag/ and the prefixed agents"]
   I --> S[session: apl-start]
-  S -- pin not installed or a file changed --> Y[APL STOP, one notice, no work]
+  S -- pin not installed or a file changed --> Y[APL STOP, no work. One notice only if another complete release is installed]
   S -- ok --> W[pluginRoot and agentPrefix]
 ```
 
 Summary: the setup script installs each release in the list and each named release, and checks every file against `files.txt`; `apl-start` checks the pin and the files again before any work.
 
 - The pin is `routine.pipelineVersion`. A release tag cannot move, because the tag ruleset below forbids updates and deletions. That is why the setup script can trust a tag's files.
-- `bash scripts/cloud-setup.sh --print [--latest] [<tag>...] [--repo <owner/repo>]` prints the setup script. With `--latest` the script also fetches `.claude-plugin/releases.txt` from the default branch of the plugin repo each time the environment runs the setup script (about every 7 days, or when the script or the allowed hosts change), and installs each listed release. The file holds one tag per line, newest first, at most 3. A change to it needs a merged PR. CI checks that the committed file has 1 to 3 unique `v<X.Y.Z>` lines. The version PR of each release adds the new tag on top and drops the oldest. A listed tag whose `files.txt` gives HTTP 404 is skipped, because the version PR merged and the release is not cut yet. A named tag with a 404, a failed fetch, an empty list, a bad line, a list of more than 3 lines, or no installed release exits 1. `routine-spec.sh` always prints `--latest`. `release.sh` refuses a release of this repo when the first line of `releases.txt` is not `v<version>`. The release manifest `.claude-plugin/files.txt` lists the shipped files as `<git blob sha> <path>`. `scripts/manifest.sh --write` writes it, and `manifest.sh --check` verifies it. `release.sh` refuses a release of this repo when the manifest does not match the tree.
+- `bash scripts/cloud-setup.sh --print [--latest] [<tag>...] [--repo <owner/repo>]` prints the setup script. With `--latest` the script also fetches `.claude-plugin/releases.txt` from the default branch of the plugin repo each time the environment runs the setup script (about every 7 days, or when the script or the allowed hosts change), and installs each listed release. The file holds one tag per line, newest first, at most 3. A change to it needs a merged PR. CI checks that the committed file has 1 to 3 unique `v<X.Y.Z>` lines. The version PR of each release adds the new tag on top and drops the oldest. A listed tag whose `files.txt` gives HTTP 404 is skipped, because the version PR merged and the release is not cut yet. Between the merge of a version PR and the cut of its release, anyone with push access to the repo can create a tag with that name, and the setup script then installs it. A cloud session cannot push tags, and a release runs only when the pin of a repo names it. Cut the release soon after the version PR merges. A named tag with a 404, a failed fetch, an empty list, a bad line, a list of more than 3 lines, or no installed release exits 1. `routine-spec.sh` always prints `--latest`. `release.sh` refuses a release of this repo when the first line of `releases.txt` is not `v<version>`. The release manifest `.claude-plugin/files.txt` lists the shipped files as `<git blob sha> <path>`. `scripts/manifest.sh --write` writes it, and `manifest.sh --check` verifies it. `release.sh` refuses a release of this repo when the manifest does not match the tree.
 - The script writes each release to `/opt/agent-pr-pipeline/<tag>/`, each role agent to `~/.claude/agents/apl-<v>-<name>.md` (for `v0.8.0` the prefix is `apl-v0-8-0-`), and the launcher `/usr/local/bin/apl-start`. One environment can hold several releases, so two repos can pin different ones. Any failed fetch or check exits 1.
-- `apl-start <owner/repo>` reads the pin from the default branch, checks the install and the files, and prints one JSON line with `version`, `pluginRoot`, `agentPrefix` and `defaultSha`. On a failure it prints `APL STOP <reason>`, `PIN <tag>` and `ROOT <path or none>`, and exits 1. The prompt then runs `put env-stale` from that root, which writes one record and one notice. Later runs with the same record stop without a notice, and the next good start writes `env-ok`.
+- `apl-start <owner/repo>` reads the pin from the default branch, checks the install and the files, and prints one JSON line with `version`, `pluginRoot`, `agentPrefix` and `defaultSha`. On a failure it prints `APL STOP <reason>`, `PIN <tag>` and `ROOT <path or none>`, and exits 1. `ROOT` is the highest complete release that is not the pin, because the pin may have failed its file check. The prompt then runs `put env-stale` from that root, which writes one record and one notice. When `ROOT` is `none`, no other complete release is installed: the prompt stops with no record and no notice. Later runs with the same record stop without a notice, and the next good start writes `env-ok`.
 - `pluginRoot` is outside the clone, so a PR cannot change the scripts that judge it. Workflow refuses a script outside the working folder, so the build routine copies `run-wave.js` from `pluginRoot` to `.git/apl/run-wave.js` in the clone, in the same session, just before the call. `.git` is never tracked, and a PR cannot change the copy.
 - One run handles every step up to a limit of 20 passes. After a `put` of a short step (`adopt`, `untrusted`, `revoke`, `pr-seen`, `block`, `exhausted`, `needs-plan`), the routine reads a new `next`. It stops after the work of one `triage` or one `build` step, at `idle`, `wait`, `paused` or `init needed`, and on a `put` that exits non-zero or prints `WOULD`.
 
@@ -163,9 +163,9 @@ The setup script costs no model tokens. A saved environment is reused for about 
 3. To get it sooner, save the setup script again with any small change. That forces a new run.
 4. Paste the script again only when the script text or the tags you need change. This is the case for a tag that the list no longer holds.
 
-A pin raised before the environment has the release makes `apl-start` stop with one env-stale notice.
+A pin raised before the environment has the release makes `apl-start` stop. If the environment holds another complete release, the routine sends one env-stale notice. If not, it stops with no notice.
 
-A repo whose pin is not installed makes `apl-start` stop, and the routine sends one notice.
+A repo whose pin is not installed makes `apl-start` stop. The routine sends one notice only when another complete release is installed.
 
 ## Approval and its limit
 
@@ -187,7 +187,7 @@ The fast pause is the label `routine-paused` on the tracking issue. Every routin
 
 `put blocked` also posts one comment on the issue, after the record and the labels. The first line is fixed text for the reason code. It says what happened and that no PR was opened. When the `built` record has a `why` (the reason of the build, on one line, cut to 500 characters), a second line gives it, with each `@` made inert so the comment notifies nobody. The comment has no `<!-- pipeline:` marker. A failed comment logs a warning and the exit code stays 0, because the record is already written. Stage 0 posts no comment.
 
-A notice is a `PushNotification` call, made only when a `put` wrote a record. Its text is fixed words, a repo, an issue number and a run id. Notices exist for `needs-plan`, `triage-failed`, `blocked`, `exhausted` and `env-stale`. Stage 0 sends none. The GitHub labels `needs-approval`, `needs-plan`, `build-failed` and `needs-maintainer` are the other signal, and a saved search for them works well.
+A notice is a `PushNotification` call, made only when a `put` wrote a record. Its text is fixed words, a repo, an issue number and a run id. Notices exist for `needs-plan`, `triage-failed`, `blocked`, `exhausted` and `env-stale`. The `env-stale` notice and its record exist only when another complete release is installed. If the pin is the only complete release, a stop leaves only the run log. This is rare, because the setup script with `--latest` installs the newest three releases. Stage 0 sends none. The GitHub labels `needs-approval`, `needs-plan`, `build-failed` and `needs-maintainer` are the other signal, and a saved search for them works well.
 
 The session's auto-mode classifier judges each call, and it can refuse a routine's own write. In K10 it refused a REST merge ("Merge Without Review") and an issue close ("External System Writes"). A refused `put` exits non-zero, the step ends with no write, and it comes back next run. After the first run of a routine, read the run log and check it has no `permission_denied`.
 
@@ -205,7 +205,7 @@ Records are advisory. A forged outbox can still put redacted text into a public 
 
 ## Self-modification
 
-At every stage the merge script refuses a PR that touches a gated path or a floor path. The floor always holds `.github/**`, `.claude/**`, `AGENTS.md`, `CLAUDE.md` and `docs/goals.md`. In this repo it also holds `agents/**`, `workflows/**`, `scripts/**`, `skills/**`, `routine/**`, `templates/**` and `.claude-plugin/**`. No setting removes a floor path.
+At every stage the merge script refuses a PR that touches a gated path or a floor path. The floor always holds `.github/**`, `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md` and `docs/goals.md`, and any `.claude` folder at any depth. It matches the file names `AGENTS.md`, `CLAUDE.md` and `CLAUDE.local.md` at any depth and in any letter case. If the gate cannot read the plugin's own repository from its manifest (`.claude-plugin/plugin.json`), it stops with `GATE ERROR` and the PR is not merged. It does this in every repo. In this repo it also holds `agents/**`, `workflows/**`, `scripts/**`, `skills/**`, `routine/**`, `templates/**` and `.claude-plugin/**`. No setting removes a floor path.
 
 ## What holds and what does not
 
