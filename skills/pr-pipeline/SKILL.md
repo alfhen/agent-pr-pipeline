@@ -284,7 +284,7 @@ When the repo has no tag yet it always refuses with "no tag yet: the first relea
 | --- | --- |
 | `rounds exhausted: N of M (cap)` with one small finding left | Fix it yourself on the branch, push, and rerun that PR with `skipImpl: true` and `maxRounds: 1` or 2. |
 | `rounds exhausted: N of M (cap)` with several findings | Rerun with `resume` and the last findings, or rethink the plan entry. |
-| `rounds exhausted: the fix changed nothing in round N` | The fixer could not fix the findings and pushed nothing, so the loop stopped instead of running the same checks again. Read `lastFindings`, then fix them by hand or rethink the entry. |
+| `rounds exhausted: the fix changed nothing in round N` | The fixer could not fix the findings and pushed nothing, so the loop stopped instead of running the same checks again. Read `fixSummary` for the fixer's reason, and `lastFindings`, then fix them by hand or rethink the entry. When `lastFindings` is empty, a check failed with no review finding: read the failing checks in `history`, then rerun or fix them. |
 | `unknown step "..."` or `must be a list of skill names` | Fix `skills` in the arguments: use the step names above, and a list of names even for one skill. |
 | `tests did not run` | Every check was refused or none ran, so no fix agent started. Allow the commands or run the checks yourself, then rerun the PR with `skipImpl: true`. |
 | `docs check: tests did not run`, `bot answer check: tests did not run` or `land-fix check: tests did not run` | The same cause, in a check after the review. Allow the commands or run the checks yourself on the branch, then rerun the PR with `skipImpl: true`; that reruns the step. |

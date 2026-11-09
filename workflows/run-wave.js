@@ -1022,7 +1022,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     if (pr.kind !== 'plan' && fix && fix.planConflict) return { signedOff: false, reason: 'needs human: plan conflict', conflict: fix.planConflict }
     if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
     if (fix && fix.changed === false) {
-      return { signedOff: false, reason: `rounds exhausted: the fix changed nothing in round ${round}, ${round - startRound + 1} of ${max} used (${cap})`, lastFindings: blocking, lastTest: test }
+      return { signedOff: false, reason: `rounds exhausted: the fix changed nothing in round ${round}, ${round - startRound + 1} of ${max} used (${cap})`, lastFindings: blocking, lastTest: test, fixSummary: fix.summary }
     }
     loopState.siblings = labelSiblings(fix && fix.siblings, blocking)
   }
@@ -1399,7 +1399,7 @@ async function runPRSteps(input) {
   }
   const loopState = { archOpen: false, siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
   let loop = await reviewLoop(pr, history.length + 1, history, minors, loopState)
-  if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, conflict: loop.conflict, architecture: loopState.reports, product: loopState.product, ...rerunFix() }
+  if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, ...(loop.fixSummary ? { fixSummary: loop.fixSummary } : {}), escalation: loop.escalation, conflict: loop.conflict, architecture: loopState.reports, product: loopState.product, ...rerunFix() }
 
   let pass = { fixed: [], report: null }
   if (minorPassRuns(pr)) {

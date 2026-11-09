@@ -2386,8 +2386,9 @@ await check('a plan conflict finding from the reviewer or the fixer stops the PR
   assert.doesNotMatch(codeReview.p, /Check each entry's Acceptance line/)
 })
 await check('rounds: a fix that changed nothing stops the loop with the open findings and no second round', async () => {
-  const x = await hooked(only1('C1'), (p, o) => o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : o.label.startsWith('fix:C1') ? { summary: 's', changed: false } : undefined)
+  const x = await hooked(only1('C1'), (p, o) => o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : o.label.startsWith('fix:C1') ? { summary: 'finding is wrong', changed: false } : undefined)
   assert.equal(x.C1.reason, 'rounds exhausted: the fix changed nothing in round 1, 1 of 4 used (maxRounds)')
+  assert.equal(x.C1.fixSummary, 'finding is wrong')
   assert.equal(x.C1.history.length, 1)
   assert.deepEqual(x.C1.lastFindings.map(f => f.title), ['x'])
   assert.equal(calls.filter(c => c.label.startsWith('review:C1')).length, 1)
