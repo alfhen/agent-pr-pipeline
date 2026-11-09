@@ -52,7 +52,7 @@ State is held by GitHub labels, which the maintainer sees, and by records, which
 | PR open | The wave opened a PR. | The maintainer merges or closes it. It counts for `openPRs` while open. |
 | needs-maintainer | The attempts reached `buildAttempts`. | The maintainer only. |
 | outbox open | `feedback-outbox.sh` posts `feedback-outbox <run>`. | Collect posts `feedback-filed <run>`. An outbox older than 7 days is dropped with `feedback-dropped <run>`. |
-| env stale | `apl-start` stops: the pin is not installed, or a file does not match. | The maintainer updates the setup script or the pin. |
+| env stale | `apl-start` stops: the pin is not installed, or a file does not match. The record and notice exist only when another complete release is installed. Otherwise only the run log shows the stop. | The maintainer updates the setup script or the pin. |
 | paused | The label `routine-paused` is on the tracking issue. | The maintainer removes the label. |
 
 The fixed labels are `ready-to-build`, `needs-approval`, `maintainer-approved`, `declined`, `building`, `build-failed`, `needs-plan`, `needs-maintainer`, `untrusted-author`, `routine-paused`, `size:S`, `size:M` and `size:L`. `routine/config.jq` prints them.
@@ -133,7 +133,7 @@ flowchart TD
   V -- no --> X[exit 1: the session does not start]
   V -- yes --> I["/opt/agent-pr-pipeline/tag/ and the prefixed agents"]
   I --> S[session: apl-start]
-  S -- pin not installed or a file changed --> Y[APL STOP, one notice, no work]
+  S -- pin not installed or a file changed --> Y[APL STOP, no work. One notice only if another complete release is installed]
   S -- ok --> W[pluginRoot and agentPrefix]
 ```
 
@@ -187,7 +187,7 @@ The fast pause is the label `routine-paused` on the tracking issue. Every routin
 
 `put blocked` also posts one comment on the issue, after the record and the labels. The first line is fixed text for the reason code. It says what happened and that no PR was opened. When the `built` record has a `why` (the reason of the build, on one line, cut to 500 characters), a second line gives it, with each `@` made inert so the comment notifies nobody. The comment has no `<!-- pipeline:` marker. A failed comment logs a warning and the exit code stays 0, because the record is already written. Stage 0 posts no comment.
 
-A notice is a `PushNotification` call, made only when a `put` wrote a record. Its text is fixed words, a repo, an issue number and a run id. Notices exist for `needs-plan`, `triage-failed`, `blocked`, `exhausted` and `env-stale`. Stage 0 sends none. The GitHub labels `needs-approval`, `needs-plan`, `build-failed` and `needs-maintainer` are the other signal, and a saved search for them works well.
+A notice is a `PushNotification` call, made only when a `put` wrote a record. Its text is fixed words, a repo, an issue number and a run id. Notices exist for `needs-plan`, `triage-failed`, `blocked`, `exhausted` and `env-stale`. The `env-stale` notice and its record exist only when another complete release is installed. If the pin is the only complete release, a stop leaves only the run log. This is rare, because the setup script with `--latest` installs the newest three releases. Stage 0 sends none. The GitHub labels `needs-approval`, `needs-plan`, `build-failed` and `needs-maintainer` are the other signal, and a saved search for them works well.
 
 The session's auto-mode classifier judges each call, and it can refuse a routine's own write. In K10 it refused a REST merge ("Merge Without Review") and an issue close ("External System Writes"). A refused `put` exits non-zero, the step ends with no write, and it comes back next run. After the first run of a routine, read the run log and check it has no `permission_denied`.
 
