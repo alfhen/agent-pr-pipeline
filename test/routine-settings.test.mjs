@@ -115,3 +115,27 @@ test('without --arg form pipeline, a routine.json holding gates is refused as be
   assert.notEqual(r.status, 0)
   assert.match(r.stderr, /routine\.json: unknown key gates/)
 })
+
+for (const f of ['stage', 'trustedAuthors', 'triageFrom', 'skipLabels', 'typeLabels', 'feedbackRepo', 'collectFrom', 'limits']) {
+  check(`${f} set to false`, { ...minimal, [f]: false }, new RegExp(f))
+}
+check('a typeLabels value that is a state label', { ...minimal, typeLabels: { bug: 'ready-to-build' } }, /typeLabels values must not be a fixed label/)
+check('a typeLabels value that is the routine label', { ...minimal, typeLabels: { feat: 'pipeline-routine' } }, /typeLabels values must not be a fixed label/)
+
+test('a null optional key counts as not set', () => {
+  const r = run(withRoutine({ ...minimal, trustedAuthors: null, typeLabels: null, limits: null }))
+  assert.equal(r.status, 0, r.stderr)
+})
+
+// Every run-wave.js argument is refused, allowed, or named here as left out on purpose.
+const runtimeOnly = ['resumeFromRunId']
+const leftOut =['docsUpdate', 'milestone', 'minorLabel', 'securitySkill', 'planRounds', 'docsRounds', 'botCheckRounds', 'productReview', 'architectureReview']
+test('the waveArgs lists of config.jq match the arguments of run-wave.js', () => {
+  const jq = readFileSync(`${root}routine/config.jq`, 'utf8')
+  const list = name => JSON.parse(jq.match(new RegExp(`def ${name}: (\\[.*?\\]);`))[1])
+  const real = new Set([...readFileSync(`${root}workflows/run-wave.js`, 'utf8').matchAll(/\bA\.([A-Za-z0-9_]+)/g)].map(m => m[1]))
+  const listed = [...list('refusedWave'), ...list('allowedWave')]
+  assert.deepEqual(listed.filter(n => !real.has(n) && !runtimeOnly.includes(n)), [], 'listed but not an argument of run-wave.js')
+  assert.deepEqual([...real].filter(n => !listed.includes(n) && !leftOut.includes(n)).sort(), [], 'new run-wave.js argument: refuse it, allow it or add it to leftOut')
+  assert.deepEqual(leftOut.filter(n => !real.has(n) || listed.includes(n)), [], 'leftOut holds a name that is listed or gone')
+})

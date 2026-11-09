@@ -7,7 +7,7 @@
 # get prints the entry (without the marker line). It exits 1 when there is no brief, 2 when two exist,
 # and 4 when the text does not match the sum in its marker (a person edited it).
 # put posts nothing when the entry (trailing newlines removed) does not match --sum: exit 65. --b64 is refused: exit 64.
-# put posts the entry once. A trusted brief with the same text is printed. A pipeline brief with other text is replaced
+# put posts the entry once. A trusted brief with the same text and a good marker is printed. A pipeline brief with other text is replaced
 # in place. Any other trusted brief (edited, or a 0.4 marker) is left alone: exit 4.
 set -uo pipefail
 PREFIX='<!-- pipeline:quick-brief'
@@ -64,12 +64,12 @@ case "$mode" in
   put)
     new_body="$PREFIX $(sumOf "$text") -->
 $text"
-    if [ "$brief_state" != none ] && [ "$brief_text" = "$text" ]; then printf '%s\n' "$brief_text"; exit 0; fi
+    if [ "$brief_state" != none ] && [ "$brief_state" != edited ] && [ "$brief_text" = "$text" ]; then printf '%s\n' "$brief_text"; exit 0; fi
     case "$brief_state" in
       none)
         gh api --method POST "repos/$repo/issues/$issue/comments" -f body="$new_body" >/dev/null || { echo "quick-brief: could not post the brief" >&2; exit 3; } ;;
       pipeline)
-        id=$(printf '%s' "$comments" | jq -r --arg user "$user" --arg body "$body" '[.[] | objects | select((.user | objects | .login) == $user and .body == $body) | .id] | .[0] // empty')
+        id=$(printf '%s' "$comments" | jq -r --arg user "$user" --arg body "$body" '[.[] | objects | select((.user | objects | .login) == $user and (.body | sub("\n+\\z"; "")) == $body) | .id] | .[0] // empty')
         [[ "$id" =~ ^[0-9]+$ ]] || { echo "quick-brief: cannot find the id of the brief comment" >&2; exit 3; }
         gh api --method PATCH "repos/$repo/issues/comments/$id" -f body="$new_body" >/dev/null || { echo "quick-brief: could not replace the brief" >&2; exit 3; } ;;
       *)

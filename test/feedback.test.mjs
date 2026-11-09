@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -475,10 +475,16 @@ for (const [what, extra] of nonStrings) {
   })
 }
 
-// The manual form is frozen at main: a copy of main's script is the oracle, so output and writes must match.
+// A copy of main's script is the oracle for the manual form on items whose printed fields are all strings.
 const MAIN_SCRIPT = join(root, 'test/fixtures/feedback/main-file-feedback.sh')
 const manualCases = [
   ['all strings', item('Tester reports a stale sha')],
+  ['a denylisted title', item('Seen in acme/widgets')],
+  ['a null item', null],
+  ['a string item', 'text'],
+  ['no title', { detail: 'd' }],
+]
+const manualRefused = [
   ['a number title', { title: 4512, detail: 'd' }],
   ['a true title', { title: true, detail: 'd' }],
   ['an empty object title', { title: {}, detail: 'd' }],
@@ -486,11 +492,19 @@ const manualCases = [
   ['an object detail', item('Bad field', { detail: { 'Seen in acme/widgets': 1 } })],
   ['a number severity', item('Bad field', { severity: 3 })],
   ['a number evidence', item('Bad field', { evidence: 4512 })],
-  ['a denylisted title', item('Seen in acme/widgets')],
-  ['a null item', null],
-  ['a string item', 'text'],
-  ['no title', { detail: 'd' }],
 ]
+for (const [what, bad] of manualRefused) {
+  for (const flags of [[], ['--dry-run']]) {
+    test(`the manual form refuses ${what} ${flags.join(' ')} and files the next item`, () => {
+      const w = W.world()
+      const r = w.sh('file-feedback.sh', [w.file('m.json', [bad, item('Second item')]), '--denylist', w.file('md.json', ['acme', 'widgets']), '--repo', W.FB, '--source', W.SRC, ...flags])
+      assert.equal(r.status, 2, r.stdout)
+      assert.match(r.stdout, /^REFUSED item 0: a field is not a string$/m)
+      if (!flags.length) assert.equal(r.issuePosts.length, 1)
+      else assert.match(r.stdout, /WOULD FILE Second item/)
+    })
+  }
+}
 for (const [what, bad] of manualCases) {
   for (const flags of [[], ['--dry-run']]) {
     test(`the manual form gives main's output for ${what} ${flags.join(' ')}`, () => {
@@ -536,3 +550,11 @@ for (const [what, bad] of [
     assert.match(c.stdout, /^REFUSED 0: no title/)
   })
 }
+
+test('a failure inside a helper shows its reason on stderr', () => {
+  const w = W.world()
+  rmSync(join(w.dir, 'fx', `repos__${W.FB.replace('/', '__')}__contents__.github__pipeline.json.json`))
+  const r = w.dropOld()
+  assert.equal(r.status, 1)
+  assert.match(r.stderr, /cannot read/)
+})

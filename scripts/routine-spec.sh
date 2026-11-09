@@ -49,7 +49,7 @@ sums=$(for kind in triage build collect; do echo "$kind $(printf '%s' "apl-$base
 
 jq -nc --arg repo "$repo" --argjson cfg "$cfg" --argjson k2 "$k2_json" --arg base "$base" --arg sums "$sums" \
   --rawfile prompt "$here/../routine/cloud/prompt.md" --rawfile setup <(printf "%s" "$setup") '
-  ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "PushNotification", "Agent", "Workflow", "ToolSearch"] as $tools
+  ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "PushNotification", "Agent", "Workflow", "ToolSearch", "Skill"] as $tools
   | ($sums | split("\n") | map(split(" ") | {key: .[0], value: (.[1] | tonumber)}) | from_entries) as $sum
   | def promptFor($kind): $prompt | split("<repo>") | join($repo) | split("<kind>") | join($kind);
     def cron($kind): "\($sum[$kind] % 60) \(($sum[$kind] / 60 | floor) % 24) * * *";

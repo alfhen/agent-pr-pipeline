@@ -64,7 +64,7 @@ fi
 
 tmp=""; cleanup() { [ -z "$tmp" ] || rm -rf "$tmp"; }
 trap cleanup EXIT
-fail() { echo "$*"; exit 1; }
+fail() { echo "$*" >&2; exit 1; }
 
 # Settings, pause and stage of a repo come from the same scripts as the routine uses.
 RS="$here/routine-state.sh"
@@ -209,13 +209,12 @@ titles=$(jq -c '[add // [] | .[] | select(has("pull_request") | not) | .title | 
 status=0
 seen='[]'
 
-# The manual path stays as on main for every input, non-string fields included: the string check is for the
-# unattended paths only.
 if [ "$auto" = 0 ]; then
   for ((i = 0; i < count; i++)); do
     item=$(jq -c ".[$i]" "$file")
     title=$(jq -r '.title // ""' <<<"$item")
     [ -n "$title" ] || { echo "REFUSED item $i: no title"; [ "$status" = 0 ] && status=2; continue; }
+    text_fields_ok "$item" || { echo "REFUSED item $i: a field is not a string"; [ "$status" = 0 ] && status=2; continue; }
     hit=$(deny_hit "$item") || { echo "REFUSED $title: denylist check failed"; [ "$status" = 0 ] && status=2; continue; }
     if [ -n "$hit" ]; then
       echo "REFUSED $title: contains \"$hit\""

@@ -12,32 +12,34 @@ def login: type == "string" and test("^[A-Za-z0-9][A-Za-z0-9-]*(\\[bot\\])?\\z")
 def repo: type == "string" and test("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\\z");
 def refusedWave: ["repo", "tmp", "pluginRoot", "agentPrefix", "prs", "plan", "feedback", "feedbackRepo", "resumeFromRunId", "cleanup"];
 def allowedWave: ["goals", "checks", "e2ePattern", "e2eCommand", "docs", "docsBuild", "bots", "botWaitMinutes", "architecture", "spec", "context", "skills", "steps", "qa", "maxRounds"];
+def opt($k; $d): if has($k) and .[$k] != null then .[$k] else $d end;
 def uniq: reduce .[] as $x ([]; if index([$x]) == null then . + [$x] else . end);
 
 def routineCheck:
   if type != "object" then badp("must be an object") else . end
   | ((keys - ["stage", "pipelineVersion", "maintainer", "trustedAuthors", "triageFrom", "skipLabels", "typeLabels", "feedbackRepo", "collectFrom", "waveArgs", "limits"])[0] // null) as $extra
   | if $extra != null then badp("unknown key " + $extra) else . end
-  | (.stage // 0) as $stage
+  | opt("stage"; 0) as $stage
   | if ($stage | int(0; 4) | not) then badp("stage must be an integer from 0 to 4")
     elif $stage > 1 then badp("stage " + ($stage | tostring) + " needs a later release") else . end
   | if (.pipelineVersion | type == "string" and test("^v[0-9]+\\.[0-9]+\\.[0-9]+\\z") | not) then badp("pipelineVersion must be a tag like v0.8.0") else . end
   | if (.maintainer | login | not) or (.maintainer | endswith("[bot]")) then badp("maintainer must be a login") else . end
   | .maintainer as $m
-  | (.trustedAuthors // [$m]) as $ta
+  | opt("trustedAuthors"; [$m]) as $ta
   | if ($ta | type) != "array" or any($ta[]; login | not) then badp("trustedAuthors must be a list of logins")
     elif any($ta[]; endswith("[bot]")) then badp("trustedAuthors must not hold a bot") else . end
-  | (.triageFrom // 1) as $tf
+  | opt("triageFrom"; 1) as $tf
   | if ($tf | int(1; 1e9) | not) then badp("triageFrom must be an integer of 1 or more") else . end
-  | (.skipLabels // routineDefaults.skipLabels) as $sl
+  | opt("skipLabels"; routineDefaults.skipLabels) as $sl
   | if ($sl | type) != "array" or any($sl[]; type != "string" or . == "") then badp("skipLabels must be a list of labels") else . end
-  | (.typeLabels // {}) as $tl
+  | opt("typeLabels"; {}) as $tl
   | if ($tl | type) != "object" then badp("typeLabels must be an object")
     elif (($tl | keys) - typeNames | length) > 0 then badp("unknown typeLabels key " + (($tl | keys) - typeNames)[0])
-    elif any($tl[]; type != "string" or . == "") then badp("typeLabels values must be label names") else . end
-  | (.feedbackRepo // routineDefaults.feedbackRepo) as $fr
+    elif any($tl[]; type != "string" or . == "") then badp("typeLabels values must be label names")
+    elif any($tl[]; IN(fixedLabels[]) or . == "pipeline-routine") then badp("typeLabels values must not be a fixed label") else . end
+  | opt("feedbackRepo"; routineDefaults.feedbackRepo) as $fr
   | if ($fr | repo | not) then badp("feedbackRepo must be owner/repo") else . end
-  | (.collectFrom // []) as $cf
+  | opt("collectFrom"; []) as $cf
   | if ($cf | type) != "array" or any($cf[]; repo | not) then badp("collectFrom must be a list of owner/repo") else . end
   | (.waveArgs | if type == "object" then . else badp("waveArgs must be an object") end) as $w
   | if ($w.goals | type) != "string" then badp("waveArgs.goals must be a string") else . end
@@ -46,7 +48,7 @@ def routineCheck:
   | if $refused != null then badp("waveArgs." + $refused + " is not allowed") else . end
   | (($w | keys) - allowedWave)[0] as $unknownWave
   | if $unknownWave != null then badp("unknown waveArgs key " + $unknownWave) else . end
-  | (.limits // {}) as $l
+  | opt("limits"; {}) as $l
   | if ($l | type) != "object" then badp("limits must be an object") else . end
   | if (($l | keys) - (cloudLimits | keys) | length) > 0 then badp("unknown limit " + (($l | keys) - (cloudLimits | keys))[0]) else . end
   | (["openPRs", "wavesPerDay", "buildAttempts", "triagePerRun", "triagePerDay", "feedbackPerDay"][] as $k | select($l | has($k)) | select($l[$k] | int(0; 20) | not) | badp($k + " must be an integer from 0 to 20")) // .
