@@ -1842,7 +1842,7 @@ test('next --mode full still prints the 0.7.0 line with the claude/ prefix', () 
 
 test('the cloud commands refuse a bad argument with exit 64 and no call', () => {
   const s = csetup({})
-  for (const a of [['issue-text', 'x'], ['list', 'x'], ['get', 'outbox', 'x'], ['put', 'revoke', '5', 'because'], ['put', 'env-stale', '0.8'], ['put', 'build-started', '5', c_CRUN(1), 'routine/issue-5', '1'], ['put', 'nothing', '1'], ['next', '--mode', 'cloud-build']]) {
+  for (const a of [['issue-text', 'x'], ['list', 'x'], ['get', 'outbox', 'x'], ['put', 'revoke', '5', 'because'], ['put', 'env-stale', '0.8'], ['put', 'build-started', '5', c_CRUN(1), 'routine/issue-5', '1'], ['put', 'built', '5', c_CRUN(1), '42', 'true', 'opened triage-plan'], ['put', 'blocked', '5', c_CRUN(1), 'opened triage-plan'], ['put', 'nothing', '1'], ['next', '--mode', 'cloud-build']]) {
     const r = run(s, 'o/r', ...a)
     assert.equal(r.status, 64, a.join(' ')); assert.deepEqual(r.calls, [])
   }

@@ -275,7 +275,7 @@ utc_stamp() { date -u +%Y%m%dT%H%M%SZ; }
 text_hash() { jq -j '(.title // "") + "\n" + (.body // "")' <<<"$1" | sha256; }
 
 num_arg() { [[ $1 =~ ^[1-9][0-9]{0,8}$ ]] || die 64 "the issue must be a number"; }
-reason_arg() { case " $REASON_CODES " in *" $1 "*) ;; *) die 64 "bad reason code" ;; esac; }
+reason_arg() { local c; for c in $REASON_CODES; do [ "$1" = "$c" ] && return 0; done; die 64 "bad reason code"; }
 run_arg() { [[ $1 =~ $RUN_RE ]] || die 64 "the run must look like 20261105T120000Z-0a1b2c3d"; }
 
 # Every argument is checked here, before any call to GitHub.
