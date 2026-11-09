@@ -54,4 +54,8 @@ test('reviewer rules on each deviation from the plan entry with one rule', () =>
   assert.match(body, /files changed outside the Touches line/);
   assert.match(body, /Rule on each one as accepted or a finding/);
   assert.match(body, /Apply one rule/);
+  assert.match(body, /a commit message on the branch/);
+  assert.match(body, /list every deviation with its ruling in `summary`/);
+  assert.match(body, /a bot comment, a merge conflict or a CI failure/);
+  assert.match(body, /do not apply the Touches check to conflict resolutions/);
 });
