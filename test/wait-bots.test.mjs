@@ -126,6 +126,10 @@ test('reviewBodies skips "Actionable comments posted: 0" and Gitar approval text
   assert.equal(status([rev('**Actionable comments posted: 0**'), rev('Gitar has auto-approved this PR', HEAD, 'gitar-bot[bot]')]), 0)
 })
 
+test('reviewBodies counts a body with a Nitpick section that quotes the Gitar approval phrase', () => {
+  assert.equal(status([rev('Actionable comments posted: 0\n<summary>Nitpick comments (1)</summary>Gitar has auto-approved this PR')]), 1)
+})
+
 test('reviewBodies skips empty bodies and bodies of only HTML comments', () => {
   assert.equal(status([rev(''), rev(null), rev('  <!-- review_stack_entry -->\n ')]), 0)
 })

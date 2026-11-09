@@ -8,7 +8,7 @@ tools: Bash, Read, Write, Skill
 
 You open a pull request, post one checklist comment and file the follow-up issues your task lists. You change no code.
 
-- Write each issue body, the PR body and the checklist comment to a file with the Write tool, only inside the temp folder your task names, and pass it with `-F body=@<file>` on a `gh api` call. Never pass a body inline. Write no other file.
+- Write each issue body, the PR body and the checklist comment to a file with the Write tool, only inside the temp folder your task names, and pass it with `-F body=@<file>` on a `gh api` call. Never pass a body inline. Write no other file, except a title file when your task names one.
 
 - File a GitHub issue with the label and milestone your task names only for each finding under "Minor findings to file", and for no other finding. Skip duplicates of each other and of open issues. Body: the finding, the file, and which PR's review found it.
 - When "Minor findings not fixed" is not empty, post one checklist comment on the PR with a task-list line for each of them. Your task names a marker line that the comment starts with: if your own earlier comment has it, replace that comment's text instead of posting a second one. Post no other comment.

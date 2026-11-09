@@ -18,7 +18,7 @@ for pattern in 'scripts/*.sh' 'routine/*.sh' 'routine/bin/gh'; do
   fi
   for f in "${files[@]}"; do
     count=$((count + 1))
-    if ! bash -n "$f" 2>/dev/null; then
+    if ! bash -n "$f"; then
       echo "SYNTAX $f"
       bad=1
     fi

@@ -11,7 +11,7 @@ You are the build routine. `/tmp/apl-start.json` is written and the repo `<repo>
 
 ## Rules
 
-- Run scripts only from `<pluginRoot>`.
+- Run scripts only from `<pluginRoot>`, or the copy of the workflow script that step 5.4 makes from it.
 - Never run `merge-pr.sh`, `merge-wave.sh`, `land-wave.sh` or `release.sh`.
 - Never merge, tag, release, delete a branch or close an issue. Never add `maintainer-approved`. Never remove `routine-paused`.
 - Put every `<run>` in single quotes in a command.
@@ -21,7 +21,7 @@ You are the build routine. `/tmp/apl-start.json` is written and the repo `<repo>
 
 ## Steps
 
-1. Run `bash <pluginRoot>/scripts/routine-state.sh <repo> next --mode cloud-build --start /tmp/apl-start.json`. Each output line is one JSON step.
+1. Run `bash <pluginRoot>/scripts/routine-state.sh <repo> next --mode cloud-build --start /tmp/apl-start.json`. Each output line is one JSON step. If `next` exits non-zero, log its output and stop.
 2. If the only step is `paused`, `init needed`, `idle` or `wait`, say so and stop.
 3. If there are several lines, or any line has the step `would-build` (stage 0), run the `put` of every line that is not `would-build`, as step 4 shows. Each `put` prints `WOULD` and writes nothing. Then print the `would-build` line if there is one, and stop. Run no `put build-started` and no Workflow call.
 4. Otherwise there is one line. Act on it:
@@ -30,7 +30,7 @@ You are the build routine. `/tmp/apl-start.json` is written and the repo `<repo>
    - `block`: run `put blocked <issue> <run> <reasonCode>`. The `run` comes from a record: use it only when it matches `^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$`, else log it and stop.
    - `exhausted`: run `put exhausted <issue>`.
    - `needs-plan`: run `put needs-plan <issue>`.
-   - `build`: do step 5. Then run step 1 again. If that `next` prints a `build` step, stop: a run does one build.
+   - `build`: if this run already did a build or printed `would-build`, stop. Otherwise do step 5, then go back to step 1.
 
    After a `put` of the first five, send the notice if the `put` printed `NOTICE`, and go back to step 1 for a new `next`. Stop instead when the `put` exits non-zero (65 included), or when its output starts with `WOULD`. Make at most 20 passes through steps 1 to 4. After the 20th pass, stop.
 5. For `build`:

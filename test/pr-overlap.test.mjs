@@ -84,13 +84,24 @@ test('more than 5 shared files print the count of the others', () => {
   assert.doesNotMatch(body, /f\.js/)
 })
 
-test('it says when it stopped at the limit of 30 open PRs', () => {
-  const open = { 7: ['a.js'] }
-  for (let n = 8; n < 37; n++) open[n] = ['b.js']
-  const s = setup({ open })
+const others = n => { const open = { 7: ['a.js'] }; for (let i = 8; i < 8 + n; i++) open[i] = ['b.js']; return open }
+
+test('it says when more than 30 other PRs are open, and does not read the 31st', () => {
+  const s = setup({ open: others(31) })
   const r = run(s)
   assert.equal(r.status, 0, r.stderr)
   assert.match(r.stdout, /stopped at the first 30 open pull requests/)
+  const log = readFileSync(s.log, 'utf8')
+  assert.match(log, /pulls\/37\/files/)
+  assert.doesNotMatch(log, /pulls\/38\/files/)
+})
+
+test('exactly 30 other open PRs print no stop message', () => {
+  const s = setup({ open: others(30) })
+  const r = run(s)
+  assert.equal(r.status, 0, r.stderr)
+  assert.doesNotMatch(r.stdout, /stopped at/)
+  assert.match(readFileSync(s.log, 'utf8'), /pulls\/37\/files/)
 })
 
 test('a failed GitHub read exits 1 and posts nothing', () => {

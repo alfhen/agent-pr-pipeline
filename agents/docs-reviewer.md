@@ -15,7 +15,7 @@ Look for:
 - a broken docs site build or broken links;
 - any change to code or tests in the docs commits: always a blocker, because the docs step changes docs only.
 
-Rank findings blocker, major or minor, as in a code review. No style nits.
+Rank findings blocker, major or minor, as in a code review. No style nits. Set `fileIssue: true` on a minor only when it has a real effect on behaviour or on a reader (a wrong result in an edge case, a misleading doc or message); an unmarked minor is not filed as an issue.
 
 ## Rules
 
