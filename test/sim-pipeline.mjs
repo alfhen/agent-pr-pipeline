@@ -968,9 +968,9 @@ await check('end facts: red CI on the head gives ready false with the failed che
   assert.equal(x.C1.ready, false)
   assert.match(x.C1.reason, /^CI failed on the head .*: unit, lint/)
   assert.deepEqual(x.C1.ci, { state: 'failure', failed: ['unit', 'lint'] })
-  assert.deepEqual(ran(/^(safety:|io:.*#gate)/), [])
-  assert.equal(x.C1.land, `${x.C1.prNumber}:${x.C1.headSha}`)
-  assert.equal(x.C1.landMode, 'person')
+  assert.ok(ran(/^safety:C1/).length > 0 && ran(/^io:C1#gate/).length > 0)
+  assert.equal(x.C1.land, `${x.C1.prNumber}:${x.C1.headSha}:auto`)
+  assert.equal(x.C1.landMode, 'auto')
 })
 await check('end facts: pending CI is reported as pending and the PR stays ready', async () => {
   const x = await landRun({ ciPending: ['C1'] }, only('C1'))

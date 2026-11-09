@@ -754,13 +754,11 @@ async function endFacts(pr, n, expected) {
   const facts = { head: status.head, approvedBy: status.approvedBy, ci: { state: state.state, failed } }
   if (state.state === 'failure') {
     const reason = `CI failed on the head ${status.head}: ${failed.join(', ') || 'unnamed check'}`
-    // land-wave.sh decides what red CI means (known flakes, LAND FIX), so the result still carries the land value, without :auto.
-    return { ok: false, reason, ...facts, land: `${n}:${status.head}`, landMode: 'person', landWhy: reason }
+    // red is not a stop for landing: land-wave.sh decides what red CI means (known flakes, LAND FIX), so the caller still builds the land value.
+    return { ok: false, red: true, reason, ...facts }
   }
   return { ok: true, ...facts }
 }
-
-const landOf = end => end.land ? { land: end.land, landMode: end.landMode, landWhy: end.landWhy } : {}
 
 const statusCommand = n => `bash ${PLUGIN_ROOT}/scripts/bot-status.sh ${REPO} ${n}`
 const waitCommand = (n, minutes) => `bash ${PLUGIN_ROOT}/scripts/wait-bots.sh ${REPO} ${n} ${minutes}`
@@ -1395,9 +1393,10 @@ async function runPRSteps(input) {
     const sync = await syncUntested(pr, n, null)
     if (!sync.ok) return stopped(sync.reason, { headSha: b.headSha, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     const end = await endFacts(pr, n, b.headSha)
-    if (!end.ok) return stopped(end.reason, { headSha: end.head || b.headSha, ci: end.ci, approvedBy: end.approvedBy, ...landOf(end), notes: r.notes, lateMinors, untested: untestedOf(pr) })
+    if (!end.ok && !end.red) return stopped(end.reason, { headSha: end.head || b.headSha, ci: end.ci, approvedBy: end.approvedBy, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     const landing = await landFor(pr, n, end.head)
     if (landing.landRefused) return stopped(landing.landWhy, { headSha: end.head, notes: r.notes, lateMinors, untested: untestedOf(pr) })
+    if (end.red) return stopped(end.reason, { headSha: end.head, ci: end.ci, approvedBy: end.approvedBy, ...landing, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     return {
       id: pr.id, prNumber: n, ready: true, headSha: end.head, ...landing, untested: untestedOf(pr), notes: r.notes,
       ci: end.ci, approvedBy: end.approvedBy || b.wait.approvedBy || [], botNotes: b.wait.notes, codeChangedByBots: !!(b.answer && b.answer.codeChanged),
@@ -1462,9 +1461,10 @@ async function runPRSteps(input) {
   const sync = await syncUntested(pr, n, openedUntested)
   if (!sync.ok) return { id: pr.id, ready: false, reason: sync.reason, history, prNumber: n, headSha, untested: untestedOf(pr), ...rerunFix() }
   const end = await endFacts(pr, n, headSha)
-  if (!end.ok) return { id: pr.id, ready: false, reason: end.reason, history, prNumber: n, headSha: end.head || headSha, ci: end.ci, approvedBy: end.approvedBy, ...landOf(end), untested: untestedOf(pr), ...rerunFix() }
+  if (!end.ok && !end.red) return { id: pr.id, ready: false, reason: end.reason, history, prNumber: n, headSha: end.head || headSha, ci: end.ci, approvedBy: end.approvedBy, untested: untestedOf(pr), ...rerunFix() }
   const landing = await landFor(pr, n, end.head)
   if (landing.landRefused) return { id: pr.id, ready: false, reason: landing.landWhy, history, prNumber: n, headSha: end.head, untested: untestedOf(pr), ...rerunFix() }
+  if (end.red) return { id: pr.id, ready: false, reason: end.reason, history, prNumber: n, headSha: end.head, ci: end.ci, approvedBy: end.approvedBy, ...landing, untested: untestedOf(pr), ...rerunFix() }
   return {
     id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl, headSha: end.head,
     ...landing, untested: untestedOf(pr), ci: end.ci,
