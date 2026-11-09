@@ -398,8 +398,25 @@ await check('the evaluator runs once per wave, after the last PR, on sonnet/medi
   assert.match(ev[0].prompt, /"id":"C1"/)
   assert.match(ev[0].prompt, /repos\/o\/r\/pulls\/<n>\/files/)
 })
+await check('the evaluate prompt holds the cost criterion and the per-role agent counts', () => {
+  const ev = mainCalls.find(c => c.label === 'evaluate:wave')
+  assert.match(ev.prompt, /Judge token cost/)
+  assert.match(ev.prompt, /a round that pushed no change/)
+  const counts = JSON.parse(ev.prompt.match(/counted by the workflow\): (\{.*\})/)[1])
+  assert.ok(counts.implementer >= 1 && counts.reviewer >= 1)
+  const before = mainCalls.slice(0, mainCalls.indexOf(ev))
+  assert.equal(counts.implementer, before.filter(c => c.agentType === 'agent-pr-pipeline:implementer').length)
+})
+await check('the result has the agent count per role', () => {
+  const byType = {}
+  for (const c of mainCalls) byType[c.agentType.replace('agent-pr-pipeline:', '')] = (byType[c.agentType.replace('agent-pr-pipeline:', '')] || 0) + 1
+  const { 'pipeline-io': io, ...counted } = mainResult.agentCounts
+  delete byType['pipeline-io']
+  assert.ok(io > 0)
+  assert.deepEqual(counted, byType)
+})
 await check('the result has the shape { prs, feedback, denylist, source, feedbackRepo, cleanup }', () => {
-  assert.deepEqual(Object.keys(mainResult).sort(), ['cleanup', 'denylist', 'feedback', 'feedbackRepo', 'prs', 'source', 'warnings'])
+  assert.deepEqual(Object.keys(mainResult).sort(), ['agentCounts', 'cleanup', 'denylist', 'feedback', 'feedbackRepo', 'prs', 'source', 'warnings'])
   assert.equal(mainResult.source, 'o/r')
   assert.equal(mainResult.feedbackRepo, 'alfhen/agent-pr-pipeline')
   assert.ok(Array.isArray(mainResult.prs) && mainResult.prs.length === PRS.length)
@@ -460,7 +477,7 @@ await check('a failed evaluation gives no feedback and does not fail the wave', 
 })
 await check('a refused wave still gets an evaluation, with the refusals in prs', () => {
   assert.deepEqual(refusedResult.feedback, REDACTED)
-  assert.deepEqual(Object.keys(refusedResult).sort(), ['cleanup', 'denylist', 'feedback', 'feedbackRepo', 'prs', 'source', 'warnings'])
+  assert.deepEqual(Object.keys(refusedResult).sort(), ['agentCounts', 'cleanup', 'denylist', 'feedback', 'feedbackRepo', 'prs', 'source', 'warnings'])
   assert.ok(refusedResult.prs.every(x => x.refused))
   assert.match(refusedCalls.find(c => c.label === 'evaluate:wave').prompt, /"refused":true/)
 })

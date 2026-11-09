@@ -90,3 +90,10 @@ test('bot answer check reviews the whole PR on the new head', () => {
   assert.doesNotMatch(m[0], /pr\.prNumber/)
   assert.doesNotMatch(m[0], /Do not review the rest of the PR again/)
 })
+
+test('the evaluate prompt asks for a cost assessment and gets the per-role counts', () => {
+  assert.match(src, /Judge token cost as well as quality/)
+  assert.match(src, /Token numbers are not available here: do not guess them/)
+  assert.match(src, /evaluatePrompt\(prs, \{ \.\.\.agentCounts \}\)/)
+  assert.match(src, /result\.agentCounts = \{ \.\.\.agentCounts \}/)
+})
