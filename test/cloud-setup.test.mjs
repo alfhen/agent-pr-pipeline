@@ -250,6 +250,24 @@ test('apl-start offers another complete release as ROOT, never the pin that fail
   stopped(aplStart(w, work), 'file changed in v9\\.9\\.9: scripts/semver\\.sh', 'v9.9.9', `ROOT ${join(w.opt, 'v9.9.8')}`)
 })
 
+test('apl-start offers no other release whose files changed, and the next intact one instead', () => {
+  const w = world(['v9.9.7', 'v9.9.8', 'v9.9.9']); const { work } = setupRepo(w)
+  assert.equal(install(w, ['v9.9.7', 'v9.9.8', 'v9.9.9']).status, 0)
+  writeFileSync(join(w.opt, 'v9.9.9/scripts/semver.sh'), '# changed\n')
+  writeFileSync(join(w.opt, 'v9.9.8/scripts/semver.sh'), '# changed\n')
+  stopped(aplStart(w, work), 'file changed in v9\\.9\\.9: scripts/semver\\.sh', 'v9.9.9', `ROOT ${join(w.opt, 'v9.9.7')}`)
+  writeFileSync(join(w.opt, 'v9.9.7/scripts/semver.sh'), '# changed\n')
+  stopped(aplStart(w, work), 'file changed in v9\\.9\\.9: scripts/semver\\.sh', 'v9.9.9', 'ROOT none')
+})
+
+test('apl-start reads the pin file from refs/heads/<branch>, not a bare name', () => {
+  const w = world(); const { work } = setupRepo(w)
+  assert.equal(install(w).status, 0)
+  assert.equal(aplStart(w, work).code, 0)
+  const log = readFileSync(w.log, 'utf8').split('\n')
+  assert.ok(log.includes('GET /repos/o/r/contents/.github/pipeline.json?ref=refs/heads/main'), log.join('\n'))
+})
+
 test('apl-start stops when git hash-object fails', () => {
   const w = world(); const { work } = setupRepo(w)
   assert.equal(install(w).status, 0)

@@ -23,13 +23,13 @@ fi
 if [ "$pr" = "--same" ]; then
   [ -n "$3" ] && [ -n "$4" ] || { echo "usage: gate-files.sh <owner/repo> --same <sha> <branch>"; exit 2; }
   [[ "$3" =~ ^[0-9a-f]{40}$ ]] || { echo "not a sha: $3"; exit 1; }
-  cmp=$(gh api "repos/$R/compare/$3...$4" --jq '[.status, (.files | length), (.files | length > 299)] | @tsv' 2>&1) || { echo "cannot compare ($cmp)"; exit 1; }
+  sha=$(gh api "repos/$R/branches/$4" --jq .commit.sha 2>&1) || { echo "cannot read the branch head ($sha)"; exit 1; }
+  [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "unexpected branch head: $sha"; exit 1; }
+  cmp=$(gh api "repos/$R/compare/$3...$sha" --jq '[.status, (if (.files | type) == "array" then (.files | length | tostring) else "nofiles" end), (.files | length > 299)] | @tsv' 2>&1) || { echo "cannot compare ($cmp)"; exit 1; }
   case $cmp in
     identical$'\t'0$'\t'false|ahead$'\t'0$'\t'false) ;;
     *) echo "branch tree differs from $3 ($cmp)"; exit 1 ;;
   esac
-  sha=$(gh api "repos/$R/branches/$4" --jq .commit.sha 2>&1) || { echo "cannot read the branch head ($sha)"; exit 1; }
-  [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "unexpected branch head: $sha"; exit 1; }
   echo "SAME $sha"; exit 0
 fi
 if [ "$pr" = "--scope" ]; then scope=$3; pr=$3; fi
@@ -61,7 +61,7 @@ else
   [ "$(jq length <<<"$list")" -lt 3000 ] || err "3000 changed files or more, the list may be cut"
 fi
 
-floor='[".github/**","**/.claude/**","**/AGENTS.md","**/CLAUDE.md","**/CLAUDE.local.md","docs/goals.md"]'
+floor='[".github/**","**/.claude","**/.claude/**","**/AGENTS.md","**/CLAUDE.md","**/CLAUDE.local.md","docs/goals.md"]'
 plugin=$(bash "$here/plugin-repo.sh" 2>/dev/null) || err "cannot read the plugin repository from the plugin manifest"
 if [ "$plugin" = "$(tr '[:upper:]' '[:lower:]' <<<"$R")" ]; then
   floor=$(jq -c '. + ["agents/**","workflows/**","scripts/**","skills/**","routine/**","templates/**",".claude-plugin/**"]' <<<"$floor")
