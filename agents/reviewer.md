@@ -18,6 +18,8 @@ Look for:
 - broken project rules, and claims the PR makes without evidence;
 - for each negative assertion in an acceptance or leak test in a plan, name where the checked value comes from in the real run and how the test reads it when the run fails; flag preconditions that cannot hold in the real data, and fixture placement that decides which error the old code throws, as tests that can pass without testing anything.
 
+Honour a threat model that the plan, the notes or the context states: do not rank an attack it rules out as a blocker or major. Give each blocker and major a `theme`: a short name for the weakness, the same name as in earlier rounds when it is the same weakness. When no threat model is stated and your findings keep going around one check, say so in your summary.
+
 Report every finding you can see in round 1. Do not hold any back for later rounds.
 Rank each finding:
 - blocker: wrong, unsafe, or the acceptance test does not prove the feature;
