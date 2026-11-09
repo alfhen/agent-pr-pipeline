@@ -11,6 +11,7 @@ A Claude Code plugin that builds a release as small PRs, each checked by separat
 5. **Speed matched to effort.** How fast a PR goes, and how much checking it gets, follows how big or risky the change is. A single quick fix can skip the full plan, but only after a small triage step: an adversarial review checks whether its size and risk allow going straight to build.
 6. **Works on all my repos:** laravel-idioms, Tagreeve, Gossamr and the rest, whatever the stack.
 7. **Automatic improvement.** A scheduled routine triages the issues the evaluation agents file, plans releases from them and runs those releases through the pipeline. Agents merge a PR when its checks pass. The repo's CI makes the release: it runs the release checks, then tags and publishes. No person and no agent session makes a release.
+8. **Small enough to understand.** A new session can learn how the pipeline works from AGENTS.md and the skill in one read. Work on the pipeline itself is a limited share of each release.
 
 ## Non-goals
 
