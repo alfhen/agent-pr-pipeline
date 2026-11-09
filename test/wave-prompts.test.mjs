@@ -155,3 +155,27 @@ test('a missing milestone has its own reason', () => {
 test('the opener rewrites the body of a reused PR', () => {
   assert.match(src, /use that PR, create none, and replace its body with the body described below: \\`gh api -X PATCH repos\/\$\{REPO\}\/pulls\/<number> -F body=@<file>\\`/)
 })
+
+test('the review prompt honours a stated threat model and asks for a theme on each blocker and major', () => {
+  assert.match(src, /Honour a threat model that the plan, the notes or the context states/)
+  assert.match(src, /give each blocker and major a \\`theme\\`: reuse the name from an earlier round/)
+})
+
+test('the architecture prompt escalates a fixer commit against a decided item from round 2', () => {
+  assert.match(src, /A fixer commit that adds what a decided item rejected, or removes what it keeps, is \\`escalate\\`, never \\`fits\\`/)
+  assert.match(src, /\$\{round > 1 \? `The fixer has added commits/)
+})
+
+test('a repeated theme stops the PR with needs human: scope', () => {
+  assert.match(src, /reason: 'needs human: scope'/)
+  assert.match(src, /What is the threat model, and which attacks are out of scope\?/)
+})
+
+test('the role files carry the same rules', () => {
+  const read = n => readFileSync(new URL(`../agents/${n}.md`, import.meta.url), 'utf8')
+  assert.match(read('arch-reviewer'), /fixer commit/)
+  assert.match(read('arch-reviewer'), /escalate, never fits/)
+  assert.match(read('reviewer'), /threat model/)
+  assert.match(read('reviewer'), /`theme`/)
+  assert.match(read('fixer'), /decided against/)
+})

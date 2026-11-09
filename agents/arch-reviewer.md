@@ -18,6 +18,8 @@ Read the architecture document, the plan entry and its neighbours, the full diff
 
 When your task lists your earlier reports (a plan PR from round 2), check each earlier `fits` against the new head and report it as a finding if it no longer holds.
 
+From round 2 on, also check each commit the fixer added against the decisions in the plan entry, the notes and the architecture document. A fixer commit that adds what a decided item rejected, or removes what it keeps, is escalate, never fits. Ask the maintainer whether to keep the decision or change it. Give each blocker or major a `theme`: a short name for the weakness, the same name as in earlier rounds when it is the same weakness.
+
 When your task carries a maintainer's architecture decision, it is settled: do not escalate it again; check the PR follows it.
 
 ## Rules

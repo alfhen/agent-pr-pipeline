@@ -137,6 +137,7 @@ const splitFindings = groups => {
 // The higher severity keeps its own detail and fix; the other detail is appended so no reasoning is lost.
 const absorb = (prev, f) => {
   if (f.fileIssue) prev.fileIssue = true
+  if (f.theme && !prev.theme) prev.theme = f.theme
   if (RANK[f.severity] > RANK[prev.severity]) {
     const extra = prev.detail && !(f.detail || '').includes(prev.detail) ? `\n\nAlso: ${prev.detail}` : ''
     const lost = prev.suggestedFix && !(f.suggestedFix || '').includes(prev.suggestedFix) && f.suggestedFix ? `\n\nAlso: ${prev.suggestedFix}` : ''
@@ -209,8 +210,10 @@ const untestedState = {}
 const untestedFor = pr => untestedState[pr.id] || (untestedState[pr.id] = { checks: [], qa: [], pass: [] })
 const noteTest = (pr, outcome) => { untestedFor(pr).checks = outcome.notRun }
 const untestedOf = pr => { const u = untestedFor(pr); return u.checks.concat(u.qa, u.pass) }
+const themesOf = blocking => [...new Set(blocking.map(f => f.theme).filter(Boolean))]
 const historyRow = (round, outcome, blocking, conflicts) => ({
   round, testPass: outcome.pass, failingChecks: outcome.failed.map(c => c.name), blockersAndMajors: blocking.map(findingLine),
+  ...(themesOf(blocking).length ? { themes: themesOf(blocking) } : {}),
   ...(outcome.notRun.length ? { notRun: outcome.notRun } : {}),
   ...(conflicts ? { severityConflicts: conflicts } : {}),
 })
@@ -309,6 +312,7 @@ const TEST = {
   required: ['pass', 'checks'],
 }
 const FILE = { type: 'string', description: 'Path relative to the repo root, with no line number' }
+const THEME = { type: 'string', description: 'A short name for the weakness behind a blocker or major, such as "bypass of the path check". Reuse the earlier name when the weakness is the same.' }
 const REVIEW = {
   type: 'object',
   properties: {
@@ -319,7 +323,7 @@ const REVIEW = {
         type: 'object',
         properties: {
           severity: { type: 'string', enum: ['blocker', 'major', 'minor'] },
-          title: { type: 'string' }, file: FILE, detail: { type: 'string' }, suggestedFix: { type: 'string' }, fileIssue: { type: 'boolean' },
+          title: { type: 'string' }, file: FILE, detail: { type: 'string' }, suggestedFix: { type: 'string' }, fileIssue: { type: 'boolean' }, theme: THEME,
         },
         required: ['severity', 'title', 'detail'],
       },
@@ -350,7 +354,7 @@ const ARCHREV = {
     },
     findings: {
       type: 'array',
-      items: { type: 'object', properties: { severity: { type: 'string', enum: ['blocker', 'major', 'minor'] }, title: { type: 'string' }, file: FILE, detail: { type: 'string' }, suggestedFix: { type: 'string' }, fileIssue: { type: 'boolean' } }, required: ['severity', 'title', 'detail'] },
+      items: { type: 'object', properties: { severity: { type: 'string', enum: ['blocker', 'major', 'minor'] }, title: { type: 'string' }, file: FILE, detail: { type: 'string' }, suggestedFix: { type: 'string' }, fileIssue: { type: 'boolean' }, theme: THEME }, required: ['severity', 'title', 'detail'] },
     },
     escalation: {
       type: 'object',
@@ -543,7 +547,9 @@ const reviewPrompt = (pr, round, history, siblings) => `${ctx(pr)}
 
 Task: review the branch against ${SPEC ? `${SPEC} and ` : ''}${ref(pr)}.
 Clone it: ${cloneTo(`review-${pr.id}-r${round}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`.
-Return headSha, a summary, the findings, the sweep (for each blocker and major: the sibling places you checked and those with the same weakness) and, when the plan entry or brief has an Invariants line, \`invariants\`: one row per invariant, with holds and evidence.
+Return headSha, a summary, the findings (give each blocker and major a \`theme\`: reuse the name from an earlier round when it is the same weakness), the sweep (for each blocker and major: the sibling places you checked and those with the same weakness) and, when the plan entry or brief has an Invariants line, \`invariants\`: one row per invariant, with holds and evidence.
+
+Honour a threat model that the plan, the notes or the context states: do not report as a blocker or major an attack it rules out. When none is stated and your findings keep going around one check, say so in the summary.
 
 ${prBlock(pr)}
 ${history.length ? `\nEarlier rounds (check their blockers and majors are really fixed):\n${JSON.stringify(history, null, 1)}` : ''}${siblings && siblings.length ? `\nThe fixer's sweep of sibling places in the last fix round. Check that it is complete, and report each sibling place it missed that has the same weakness:\n${JSON.stringify(siblings, null, 1)}` : ''}`
@@ -570,8 +576,8 @@ const archPrompt = (pr, round, earlier = []) => `${ctx(pr)}
 
 Task: review the branch for architecture against ${ARCH}.
 Clone it: ${cloneTo(`arch-${pr.id}-r${round}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`.
-Return the verdict, a short summary, the new concepts, the findings (each with a severity; a fits may list minors) and the escalation (for escalate).
-
+Return the verdict, a short summary, the new concepts, the findings (each with a severity and, for a blocker or major, a \`theme\`; a fits may list minors) and the escalation (for escalate).
+${round > 1 ? `The fixer has added commits since round 1 (\`git log --oneline origin/HEAD..HEAD\`; the first commits are the implementer's). Check each fixer commit against the decisions in the plan entry, the notes and the architecture document. A fixer commit that adds what a decided item rejected, or removes what it keeps, is \`escalate\`, never \`fits\`: the question for the maintainer is whether to keep the decision or change it.\n` : ''}
 ${prBlock(pr)}${earlier.length ? `\n\nYour earlier reports on this PR. The plan changed since. Check each earlier \`fits\` against the new head, and report it as a finding if it no longer holds:\n${JSON.stringify(earlier, null, 1)}` : ''}`
 
 const numbered = findings => {
@@ -936,10 +942,17 @@ async function landFor(pr, n, sha) {
   return { land: `${pair}:auto`, landMode: 'auto', landWhy: verdict.why, safety }
 }
 
+const scopeEscalation = themes => ({
+  question: `Blockers or majors on the same theme came back in two rounds running (${themes.join('; ')}). What is the threat model, and which attacks are out of scope?`,
+  options: ['Name the threat model and the attacks that are out of scope, then rerun the PR with that decision', 'Keep the plan decision as it is and accept the remaining risk', 'Change the plan so the weakness is handled another way'],
+  recommendation: 'Name the threat model. A reviewer that has none keeps finding new ways around a check, and a fixer then adds mechanisms the plan may have decided against.',
+  why: 'Another round would add more fixes for the same theme.',
+})
+
 async function reviewLoop(pr, startRound, history, minors, loopState) {
   const { max, cap } = roundsFor(pr)
   for (let round = startRound; round < startRound + max; round++) {
-    const wantArch = archRuns(pr) && (round === startRound || loopState.archOpen || pr.kind === 'plan')
+    const wantArch = archRuns(pr) && (round === startRound || loopState.fixed || pr.kind === 'plan')
     const wantProduct = productRuns(pr) && round === startRound
     const wantQa = qaRuns(pr) && (round === startRound || loopState.qaOpen.length > 0)
     const [test, review, arch, product, qa] = await parallel([
@@ -990,11 +1003,15 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     history.push(row)
     log(`${pr.id} round ${round}: tests ${outcome.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (outcome.pass && blocking.length === 0) return { signedOff: true, headSha: test.headSha || review.headSha }
+    const repeated = themesOf(blocking).filter(t => loopState.themes.includes(normTitle(t)))
+    loopState.themes = themesOf(blocking).map(normTitle)
+    if (repeated.length) return { signedOff: false, reason: 'needs human: scope', lastFindings: blocking, escalation: scopeEscalation(repeated) }
     if (round === startRound + max - 1) return { signedOff: false, reason: exhausted('', max, max, cap), lastFindings: blocking, lastTest: test }
     const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, round, review.sweep), `fix:${pr.id}#${round}`, { schema: FIX })
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
     if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
     loopState.siblings = labelSiblings(fix && fix.siblings, blocking)
+    loopState.fixed = !fix || fix.changed !== false
   }
 }
 
@@ -1366,7 +1383,7 @@ async function runPRSteps(input) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl }
   }
-  const loopState = { archOpen: false, siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
+  const loopState = { fixed: false, themes: [], archOpen: false, siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
   let loop = await reviewLoop(pr, history.length + 1, history, minors, loopState)
   if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: loopState.reports, product: loopState.product, ...rerunFix() }
 
