@@ -109,6 +109,8 @@ test('the bot check reads only bot authors, every page, and skips minors it alre
 })
 
 test('the wait and answer prompts paginate their reads', () => {
+  const answer = /const answerPrompt = [\s\S]*?const botReviewPrompt/.exec(src)[0]
+  assert.match(answer, /gh api --paginate "repos\/\$\{REPO\}\/pulls\/\$\{n\}\/reviews\?per_page=100"/)
   assert.match(src, /Inline threads: \\`gh api --paginate "repos\/\$\{REPO\}\/pulls\/\$\{n\}\/comments\?per_page=100"/)
   assert.match(src, /gh api --paginate "repos\/\$\{REPO\}\/pulls\/\$\{n\}\/reviews\?per_page=100"/)
 })

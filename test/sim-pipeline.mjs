@@ -135,7 +135,7 @@ const agentRaw = async (prompt, o) => {
   const round = o.label.split('#')[1] || ''
   if (o.label.startsWith('test')) return { pass: true, headSha: /^land/.test(round) && !land.testMoved.has(id) ? landHead[id].padEnd(40, 'c') : 'sha-' + id + (/^(docs|bots|land)/.test(round) ? '-' + round : ''), checks: [{ name: 'lint', pass: true }] }
   if (o.label.startsWith('landreview')) return { summary: 's', findings: land.landBad.has(id) || (land.landBadOnce.has(id) && round === '1') ? [{ severity: 'major', title: 'the resolution drops the new flag', detail: 'd' }] : [{ severity: 'minor', title: 'land nit', detail: 'd' }] }
-  if (o.label.startsWith('botreview')) return { summary: 's', findings: id === 'B1' && round === '1' ? [{ severity: 'major', title: 'the new regex anchor rejects valid input', detail: 'd' }] : [{ severity: 'minor', title: 'late nit', detail: 'd' }], invariants: id === 'B1' && round === '1' ? [{ text: 'the gate refuses an unknown path', holds: false, evidence: 'it accepts one' }] : [], sweep: [] }
+  if (o.label.startsWith('botreview')) return { summary: 's', findings: id === 'B1' && round === '1' ? [{ severity: 'major', title: 'the new regex anchor rejects valid input', detail: 'd' }, { severity: 'minor', title: 'round one nit', detail: 'd' }] : [{ severity: 'minor', title: 'late nit', detail: 'd' }], invariants: id === 'B1' && round === '1' ? [{ text: 'the gate refuses an unknown path', holds: false, evidence: 'it accepts one' }] : [], sweep: [] }
   if (o.label.startsWith('docsreview')) {
     const major = id === 'G3' || (id === 'G2' && round === '1')
     return { summary: 's', findings: major ? [{ severity: 'major', title: 'docs say the flag is --all, code has --every', detail: 'd' }] : [] }
@@ -241,6 +241,7 @@ await check('a finding in the bot answer check gets a fix round and a second che
   assert.match(mainCalls.find(c => c.label === 'botreview:B1#2').prompt, /the new regex anchor rejects valid input/)
   const second = mainCalls.find(c => c.label === 'botreview:B1#2').prompt
   assert.match(second, /fixer's sweep/)
+  assert.match(second, /round one nit/)
   assert.match(second, /other anchors/)
   const num = /pulls\/(\d+)\/comments\/<id>\/replies/.exec(mainCalls.find(c => c.label === 'botanswer:B1').prompt)[1]
   assert.ok(second.includes(`pulls/${num}/comments`) && !/undefined/.test(second))
