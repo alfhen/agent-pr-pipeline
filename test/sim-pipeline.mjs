@@ -88,6 +88,9 @@ const agentRaw = async (prompt, o) => {
   if (o.label.startsWith('io:') && o.label.endsWith('#minorscope')) {
     return minorScope.down.has(id) ? null : { exitCode: 0, output: 'SCOPE ' + JSON.stringify(minorScope.files[id] || ['src/a.js', 'src/b.js', 'src/c.js']) }
   }
+  if (o.label.startsWith('io:') && o.label.endsWith('#minorhead')) {
+    return minorScope.down.has(id) ? null : { exitCode: 0, output: 'HEAD ' + (lastHead[id] || 'sha-' + id) }
+  }
   if (o.label.startsWith('io:') && o.label.endsWith('#overlap')) {
     return overlap.down.has(id) ? null : overlap.fail.has(id) ? { exitCode: 1, output: 'pr-overlap: cannot read the files of #9' } : { exitCode: 0, output: 'none' }
   }
@@ -1843,7 +1846,7 @@ const headed = r => { if (r.headSha) lastHead.C1 = r.headSha; return r }
 const passHook = (over = {}) => (p, o) => {
   if (o.label === 'review:C1#1') return reviewOf([minorOf(), f('minor', 'unmarked nit', { file: 'src/b.js' }), f('minor', 'design nit', { file: 'src/c.js', fileIssue: true })])
   if (o.label === 'minorfix:C1') return { changed: true, headSha: 'fixsha', fixed: [1], summary: 'renamed', ...over.fix }
-  if (o.label === 'minorreview:C1') return { ...reviewOf(over.findings || []), ...(over.unconfirmed ? { unconfirmed: over.unconfirmed } : {}) }
+  if (o.label === 'minorreview:C1') return { ...reviewOf(over.findings || []), unconfirmed: over.unconfirmed || [] }
   if (o.label === 'test:C1#minor1') return headed({ pass: over.testPass !== false, headSha: 'sha-minor', checks: [{ name: 'lint', pass: over.testPass !== false }] })
   if (o.label.startsWith('minorrevert:C1') && over.revert) return headed(over.revert)
   if (o.label.startsWith('minorrevert:C1')) return headed({ reverted: true, headSha: 'sha-revert', summary: 'reverted' })
@@ -1947,6 +1950,25 @@ await check('minor pass: a failed revert is tried twice, then the PR goes on for
   assert.equal(x.C1.landMode, 'person')
   assert.ok(x.C1.untested.includes('minor pass commits not checked and not reverted'))
   assert.match(calls.find(c => c.label === 'open:C1').prompt, /Untested items: \[\s*"minor pass commits not checked and not reverted"/)
+})
+await check('minor pass: a fixer that dies after its push and two failed reverts still leave the PR ready, at the real head', async () => {
+  const x = await hooked(only1('C1'), (p, o) => {
+    if (o.label === 'minorfix:C1') { lastHead.C1 = 'sha-dead'; return null }
+    return passHook({ revert: { reverted: false } })(p, o)
+  })
+  assert.equal(labelsOf(/^minorrevert/).length, 2)
+  assert.ok(calls.some(c => c.label === 'io:C1#minorhead'))
+  assert.equal(x.C1.ready, true)
+  assert.equal(x.C1.landMode, 'person')
+  assert.equal(x.C1.land.split(':')[1], 'sha-dead')
+})
+await check('minor pass: an answer without the unconfirmed field confirms no claim', async () => {
+  const x = await hooked(only1('C1'), (p, o) => {
+    if (o.label === 'minorreview:C1') { const r = passHook()(p, o); delete r.unconfirmed; return r }
+    return passHook()(p, o)
+  })
+  assert.deepEqual(x.C1.minorPass.fixed, [])
+  assert.equal(x.C1.ready, true)
 })
 await check('minors: only marked minors are listed to file, and the checklist lists the rest', async () => {
   await hooked(only1('C1'), passHook())

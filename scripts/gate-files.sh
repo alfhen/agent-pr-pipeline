@@ -1,6 +1,8 @@
 #!/bin/bash
 # usage: gate-files.sh <owner/repo> <pr>
 #        gate-files.sh <owner/repo> --scope <branch>
+#        gate-files.sh <owner/repo> --head <branch>
+# --head prints "HEAD <sha>", the branch head on GitHub. It exits 1 when that cannot be read.
 # --scope prints "SCOPE <json array>": the files the branch changes against the default branch that no gate and no
 # floor path matches. It exits 0, or 3 ("GATE ERROR") when the gates or the files cannot be read.
 # Exit 0 when no changed file of the PR matches a gate; exit 1 ("GATED") when one does; exit 3
@@ -9,6 +11,12 @@
 # CLAUDE.md (at any depth) and docs/goals.md, and in the plugin's own repo (plugin-repo.sh) also the plugin's code folders.
 # The gates come from .github/pipeline.json on the default branch, or from templates/pipeline.json when the repo has no settings file. Both filename and previous_filename count.
 R=$1; pr=$2; scope=
+if [ "$pr" = "--head" ]; then
+  [ -n "$3" ] || { echo "usage: gate-files.sh <owner/repo> --head <branch>"; exit 2; }
+  sha=$(gh api "repos/$R/branches/$3" --jq .commit.sha 2>&1) || { echo "cannot read the branch head ($sha)"; exit 1; }
+  [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "unexpected branch head: $sha"; exit 1; }
+  echo "HEAD $sha"; exit 0
+fi
 if [ "$pr" = "--scope" ]; then scope=$3; pr=$3; fi
 [ -n "$pr" ] || { echo "usage: gate-files.sh <owner/repo> <pr> | --scope <branch>"; exit 2; }
 here=$(dirname "$0")

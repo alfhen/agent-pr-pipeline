@@ -486,6 +486,16 @@ test('gate --scope: a branch that cannot be compared fails closed', () => {
   assert.match(r.out, /GATE ERROR/)
 })
 
+test('gate --head: prints the branch head, and exits 1 when it cannot be read', () => {
+  const sha = 'a'.repeat(40)
+  const s = setup({ files: null })
+  put(s.fx, `${P}__branches__feat__x.json`, { commit: { sha } })
+  const r = run(s, 'gate-files.sh', ['o/r', '--head', 'feat/x'])
+  assert.equal(r.code, 0)
+  assert.equal(r.out.trim(), `HEAD ${sha}`)
+  assert.equal(run(setup({ files: null }), 'gate-files.sh', ['o/r', '--head', 'feat/x']).code, 1)
+})
+
 test('plugin-repo: no other script parses the manifest repository', () => {
   const r = spawnSync('grep', ['-rlE', '\\.repository', join(root, 'scripts'), join(root, 'routine')], { encoding: 'utf8' })
   assert.deepEqual(r.stdout.split('\n').filter(Boolean).map((f) => f.slice(f.indexOf('scripts/'))), ['scripts/plugin-repo.sh'])

@@ -427,7 +427,7 @@ const MINORFIX = {
   },
   required: ['changed', 'summary'],
 }
-const MINORREVIEW = { ...REVIEW, properties: { ...REVIEW.properties, unconfirmed: { type: 'array', items: { type: 'number' } } } }
+const MINORREVIEW = { ...REVIEW, required: [...REVIEW.required, 'unconfirmed'], properties: { ...REVIEW.properties, unconfirmed: { type: 'array', items: { type: 'number' } } } }
 const MINORREVERT = {
   type: 'object',
   properties: { reverted: { type: 'boolean' }, headSha: { type: 'string' }, summary: { type: 'string' }, worktree: { type: 'string' } },
@@ -1018,6 +1018,13 @@ async function minorScope(pr) {
   return Array.isArray(files) && files.every(f => typeof f === 'string') ? files : null
 }
 
+// The branch head on GitHub, for a failed revert: the agents' own answers can name a sha the branch no longer holds. Null when unreadable.
+async function branchHead(pr) {
+  const io = await ioCall(pr, `io:${pr.id}#minorhead`, 'gate-files.sh', `${REPO} --head ${pr.branch}`)
+  const m = io && io.exitCode === 0 ? /^HEAD (\S+)$/m.exec(io.output) : null
+  return m ? m[1] : null
+}
+
 // Puts the branch back to the signed-off state with a new commit; two tries. Null when both fail.
 async function minorRestore(pr, signedSha) {
   for (let attempt = 1; attempt <= 2; attempt++) {
@@ -1051,7 +1058,7 @@ async function minorPass(pr, signedSha, history, minors) {
     }
     untestedFor(pr).pass.push('minor pass commits not checked and not reverted')
     log(`${pr.id} minor pass could not be reverted: ${why}`)
-    return { headSha: head || signedSha, fixed: [], report: { ran: true, kept: false, why: `${why}; the revert failed` } }
+    return { headSha: await branchHead(pr) || head || signedSha, fixed: [], report: { ran: true, kept: false, why: `${why}; the revert failed` } }
   }
   const fix = await call('minorFix', pr, minorFixPrompt(pr, candidates, signedSha, files), `minorfix:${pr.id}`, { schema: MINORFIX })
   if (!fix || !fix.changed) {
@@ -1077,7 +1084,7 @@ async function minorPass(pr, signedSha, history, minors) {
   }
   if (why) return drop(why, (test && test.headSha) || (review && review.headSha) || fix.headSha)
   const unconfirmed = new Set(Array.isArray(review.unconfirmed) ? review.unconfirmed : [])
-  const fixedItems = claimed.filter(n => !unconfirmed.has(n)).map(n => candidates[n - 1])
+  const fixedItems = claimed.filter(n => Array.isArray(review.unconfirmed) && !unconfirmed.has(n)).map(n => candidates[n - 1])
   const rest = open.filter(m => !fixedItems.includes(m))
   minors.splice(0, minors.length, ...mergeDuplicates(rest.concat(split.minors)))
   return { headSha: test.headSha || review.headSha, fixed: fixedItems, report: { ran: true, kept: true, fixed: fixedItems.map(m => m.title) } }
