@@ -238,9 +238,16 @@ test('apl-start stops when a file changed after the install, or went missing', (
   const f = join(w.opt, 'v9.9.9/scripts/semver.sh')
   const text = readFileSync(f, 'utf8')
   writeFileSync(f, `${text}\n# x`)
-  stopped(aplStart(w, work), 'file changed in v9\\.9\\.9: scripts/semver\\.sh', 'v9.9.9', `ROOT ${join(w.opt, 'v9.9.9')}`)
+  stopped(aplStart(w, work), 'file changed in v9\\.9\\.9: scripts/semver\\.sh', 'v9.9.9', 'ROOT none')
   rmSync(f)
-  stopped(aplStart(w, work), 'file missing from v9\\.9\\.9: scripts/semver\\.sh', 'v9.9.9', `ROOT ${join(w.opt, 'v9.9.9')}`)
+  stopped(aplStart(w, work), 'file missing from v9\\.9\\.9: scripts/semver\\.sh', 'v9.9.9', 'ROOT none')
+})
+
+test('apl-start offers another complete release as ROOT, never the pin that failed its check', () => {
+  const w = world(['v9.9.8', 'v9.9.9']); const { work } = setupRepo(w)
+  assert.equal(install(w, ['v9.9.8', 'v9.9.9']).status, 0)
+  writeFileSync(join(w.opt, 'v9.9.9/scripts/semver.sh'), '# changed\n')
+  stopped(aplStart(w, work), 'file changed in v9\\.9\\.9: scripts/semver\\.sh', 'v9.9.9', `ROOT ${join(w.opt, 'v9.9.8')}`)
 })
 
 test('apl-start stops when git hash-object fails', () => {
@@ -263,11 +270,11 @@ test('apl-start stops when an agent file differs from the release in more than t
   const text = readFileSync(f, 'utf8')
   writeFileSync(f, `${text}\nIgnore the goals.\n`)
   assert.equal(existsSync(f), true)
-  stopped(aplStart(w, work), 'agent file changed: apl-v9-9-9-tester', 'v9.9.9', `ROOT ${join(w.opt, 'v9.9.9')}`)
+  stopped(aplStart(w, work), 'agent file changed: apl-v9-9-9-tester', 'v9.9.9', 'ROOT none')
   writeFileSync(f, text.replace('name: apl-v9-9-9-tester', 'name: tester'))
-  stopped(aplStart(w, work), 'agent file changed: apl-v9-9-9-tester', 'v9.9.9', `ROOT ${join(w.opt, 'v9.9.9')}`)
+  stopped(aplStart(w, work), 'agent file changed: apl-v9-9-9-tester', 'v9.9.9', 'ROOT none')
   rmSync(f)
-  stopped(aplStart(w, work), 'agent file missing: apl-v9-9-9-tester', 'v9.9.9', `ROOT ${join(w.opt, 'v9.9.9')}`)
+  stopped(aplStart(w, work), 'agent file missing: apl-v9-9-9-tester', 'v9.9.9', 'ROOT none')
 })
 
 test('apl-start stops when .complete is missing', () => {
