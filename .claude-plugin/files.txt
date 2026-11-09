@@ -1,4 +1,4 @@
-5168e8a0b086c946aefba89f8518354d96cd263f .claude-plugin/plugin.json
+b2313112ec6714f189abdd180cb1b22c7a1b4f34 .claude-plugin/plugin.json
 16a46b7a4ab92501f6516391cef61ec242c32805 agents/arch-reviewer.md
 28b724bad25b15efd56a46e4efa28821142a6714 agents/bot-answerer.md
 425ba8deef3b75444764f4eff38d0954d25865d0 agents/bot-waiter.md
@@ -62,4 +62,4 @@ b7dfc4812860fd1557c04a9857bd832065aa630b templates/AGENTS-section.md
 da1165c50617506cd97855bf1c610e267359baf3 templates/goals.md
 21564f933ba8ef79bfa072bcbbdf04c1a817746b templates/pipeline.json
 df63672e3fa9bc63b434d613801da1639ed83118 templates/plan.md
-965a3897cc81c29eb0f9f7211ed6ef720229def0 workflows/run-wave.js
+dc26bc50250618ebf2e25dfcc2ec43adcd524be3 workflows/run-wave.js
