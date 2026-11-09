@@ -41,10 +41,10 @@ test('an explicit title is passed as it is', () => {
   assert.match(src, /'-f title=<title>'/)
 })
 
-test('the minor fixer prompt limits the pass to the PR files and forbids gated paths', () => {
+test('the minor fixer prompt limits the pass to the PR files and forbids the floor paths', () => {
   assert.match(src, /Fix a finding only when its file is on that list\. Change no other file/)
-  assert.match(src, /You may change only these files, which the PR already changes and no gate holds/)
-  assert.match(src, /Change no other file, and never a gated path/)
+  assert.match(src, /You may change only these files, which the PR already changes: /)
+  assert.match(src, /Change no other file, and never a path under \.github, a \.claude folder, AGENTS\.md/)
   assert.match(src, /Skip a finding that needs a design choice/)
 })
 
@@ -173,6 +173,34 @@ test('the end of a run reads the head, the bots and the CI state from the script
   assert.match(src, /#endstatus`, 'bot-status\.sh'/)
   assert.match(src, /'wait-ci\.sh', `\$\{REPO\} \$\{n\} 1`/)
   assert.match(src, /CI failed on the head/)
+})
+
+test('the review prompt honours a stated threat model and asks for a theme on each blocker and major', () => {
+  assert.match(src, /Honour a threat model that the plan, the notes or the context states/)
+  assert.match(src, /give each blocker and major a \\`theme\\`: reuse the name from an earlier round/)
+})
+
+test('the architecture prompt escalates a fixer commit against a decided item from round 2', () => {
+  assert.match(src, /A fixer commit that adds what a decided item rejected, or removes what it keeps, is \\`escalate\\`, never \\`fits\\`/)
+  assert.match(src, /\$\{round > 1 \? `The fixer has added commits/)
+  assert.match(src, /decisions anywhere in the plan \(the entry, Scope and Not in, Rules for every PR, Flagged concerns\)/)
+  for (const n of ['arch-reviewer', 'fixer']) {
+    assert.match(readFileSync(new URL(`../agents/${n}.md`, import.meta.url), 'utf8'), /Scope and Not in, Rules for every PR, Flagged concerns/)
+  }
+})
+
+test('a repeated theme stops the PR with needs human: scope', () => {
+  assert.match(src, /reason: 'needs human: scope'/)
+  assert.match(src, /What is the threat model, and which attacks are out of scope\?/)
+})
+
+test('the role files carry the same rules', () => {
+  const read = n => readFileSync(new URL(`../agents/${n}.md`, import.meta.url), 'utf8')
+  assert.match(read('arch-reviewer'), /fixer commit/)
+  assert.match(read('arch-reviewer'), /escalate, never fits/)
+  assert.match(read('reviewer'), /threat model/)
+  assert.match(read('reviewer'), /`theme`/)
+  assert.match(read('fixer'), /decided against/)
 })
 
 test('the plan review checks each Acceptance line against the plan decisions and can stop for a plan conflict', () => {

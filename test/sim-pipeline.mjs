@@ -1,6 +1,9 @@
 // Runs workflow/pr-pipeline.js against a fake agent() that returns schema-shaped answers.
 // Usage: node test/sim-pipeline.mjs (exits non-zero on the first failed check).
-import { readFileSync, readdirSync, existsSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, copyFileSync, rmSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 
@@ -46,7 +49,22 @@ const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyD
 const landHead = {}
 const wt = o => '/wt/' + o.label.replace(/[:#]/g, '-')
 const overlap = { fail: new Set(), down: new Set() }
-const minorScope = { files: {}, down: new Set(), differ: new Set() }
+const minorScope = { files: {}, compare: {}, down: new Set(), differ: new Set() }
+// Runs the real scripts/gate-files.sh --scope against test/fake-gh, with the plugin repo as the repo (its floor is the widest).
+const realScope = changed => {
+  const dir = mkdtempSync(join(tmpdir(), 'sim-scope-'))
+  const bin = join(dir, 'bin'); const fx = join(dir, 'fx')
+  mkdirSync(bin); mkdirSync(fx)
+  copyFileSync(fileURLToPath(new URL('./fake-gh', import.meta.url)), join(bin, 'gh'))
+  spawnSync('chmod', ['755', join(bin, 'gh')])
+  const P = 'repos__alfhen__agent-pr-pipeline'
+  writeFileSync(join(fx, P + '.json'), JSON.stringify({ default_branch: 'main' }))
+  copyFileSync(fileURLToPath(new URL('./fixtures/gate/pipeline.json', import.meta.url)), join(fx, P + '__contents__.github__pipeline.json.json'))
+  writeFileSync(join(fx, P + '__compare__main...b1.json'), JSON.stringify({ files: changed.map(filename => ({ filename })) }))
+  const r = spawnSync('bash', [fileURLToPath(new URL('../scripts/gate-files.sh', import.meta.url)), 'alfhen/agent-pr-pipeline', '--scope', 'b1'], { encoding: 'utf8', env: { ...process.env, PATH: bin + ':' + process.env.PATH, FAKE_GH_FIXTURES: fx } })
+  rmSync(dir, { recursive: true, force: true })
+  return { exitCode: r.status, output: r.stdout + r.stderr }
+}
 let cleanupMode = 'ok'
 const cleanupAnswer = label => label.endsWith('init') ? (cleanupMode === 'initdown' ? null : cleanupMode === 'initfail' ? { exitCode: 1, output: 'cleanup: boom' } : { exitCode: 0, output: cleanupMode === 'refused' ? 'KEPT /x refused: shared temp folder' : 'MARKED /x' })
   : cleanupMode === 'down' ? null : cleanupMode === 'fail' ? { exitCode: 1, output: 'cleanup: boom' }
@@ -90,6 +108,7 @@ const agentRaw = async (prompt, o) => {
     return { exitCode: 0, output: land.landOutput.has(id) ? 'merge abc\n+resolved line\n' : '' }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#minorscope')) {
+    if (minorScope.compare[id]) return realScope(minorScope.compare[id])
     return minorScope.down.has(id) ? null : { exitCode: 0, output: 'SCOPE ' + JSON.stringify(minorScope.files[id] || ['src/a.js', 'src/b.js', 'src/c.js']) }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#minorsame')) {
@@ -1629,20 +1648,20 @@ await check('severity: a QA finding titled (Minor) x is one major line and a con
   assert.deepEqual(x.Q1.history[0].blockersAndMajors, ['major [qa]: x'])
   assert.equal(x.Q1.history[0].severityConflicts, 1)
 })
-await check('severity: an architecture minor goes to the minors and starts no fix and no second architecture run', async () => {
+await check('severity: an architecture minor goes to the minors and starts no fix for the minor', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'y')])
     : o.label === 'arch:C1#1' ? { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [f('minor', '[major] naming')] } : undefined)
   assert.ok(calls.some(c => c.label === 'review:C1#2'))
-  assert.ok(!calls.some(c => c.label === 'arch:C1#2'))
   assert.match(calls.find(c => c.label === 'open:C1').prompt, /"title": "naming"/)
+  assert.doesNotMatch(calls.find(c => c.label === 'fix:C1#1').prompt, /naming/)
   assert.equal(x.C1.history[0].severityConflicts, 1)
 })
-await check('severity: a fits architecture report keeps its minors and starts no fix and no second architecture run', async () => {
+await check('severity: a fits architecture report keeps its minors and starts no fix for the minor', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'y')])
     : o.label === 'arch:C1#1' ? { verdict: 'fits', summary: 's', newConcepts: [], findings: [f('minor', 'naming')] } : undefined)
   assert.ok(calls.some(c => c.label === 'review:C1#2'))
-  assert.ok(!calls.some(c => c.label === 'arch:C1#2'))
   assert.match(calls.find(c => c.label === 'open:C1').prompt, /"title": "naming"/)
+  assert.doesNotMatch(calls.find(c => c.label === 'fix:C1#1').prompt, /naming/)
 })
 await check('severity: a review finding goes through splitFindings, so a severity word in the title is stripped', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)
@@ -1664,6 +1683,52 @@ await check('severity: an architecture major keeps the architecture review runni
   assert.ok(mainCalls.some(c => c.label === 'arch:N1#2'))
   assert.ok(!mainCalls.some(c => c.label === 'arch:N1#3'))
   assert.ok(!mainCalls.some(c => c.label === 'arch:C1#2'))
+})
+await check('scope: a fixer commit against a decided item makes the round-2 architecture review escalate, and the PR stops', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'y')])
+    : o.label === 'arch:C1#2' ? { verdict: 'escalate', summary: 's', newConcepts: [], escalation: { question: 'The fixer added the queue the plan rejected. Keep the decision?', options: ['keep', 'change'], recommendation: 'keep' } } : undefined)
+  assert.equal(x.C1.reason, 'needs human: architecture')
+  assert.match(x.C1.escalation.question, /plan rejected/)
+  assert.match(calls.find(c => c.label === 'arch:C1#2').prompt, /A fixer commit that adds what a decided item rejected/)
+  assert.doesNotMatch(calls.find(c => c.label === 'arch:C1#1').prompt, /fixer commit/)
+})
+await check('scope: majors on one theme in two rounds running stop the PR with needs human: scope and the threat-model question', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'path check bypass with dots', { theme: 'bypass of the path check' })])
+    : o.label === 'review:C1#2' ? reviewOf([f('major', 'path check bypass with links', { theme: 'Bypass of the path check' })]) : undefined)
+  assert.equal(x.C1.ready, false)
+  assert.equal(x.C1.reason, 'needs human: scope')
+  assert.match(x.C1.escalation.question, /threat model/)
+  assert.deepEqual(x.C1.history.map(h => h.themes), [['bypass of the path check'], ['Bypass of the path check']])
+  assert.ok(!calls.some(c => c.label === 'fix:C1#2'))
+})
+await check('scope: the rendered review prompt carries the threat-model sentence and the theme instruction', async () => {
+  await hooked(only1('C1'), () => undefined)
+  const prompt = calls.find(c => c.label === 'review:C1#1').prompt
+  assert.match(prompt, /Honour a threat model that the plan, the notes or the context states/)
+  assert.match(prompt, /give each blocker and major a `theme`: reuse the name from an earlier round/)
+})
+await check('scope: majors on different themes in two rounds do not stop the PR', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'a', { theme: 'one' })])
+    : o.label === 'review:C1#2' ? reviewOf([f('major', 'b', { theme: 'two' })]) : undefined)
+  assert.notEqual(x.C1.reason, 'needs human: scope')
+})
+await check('scope: an open architecture major runs the architecture review again, and the round-2 review gets the round-1 themes', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'arch:C1#1' ? { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [f('major', 'wrong layer', { file: 'a.js', theme: 'layering' })] }
+    : o.label === 'arch:C1#2' ? { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [f('major', 'still the wrong layer', { file: 'a.js', theme: 'Layering' })] } : undefined)
+  assert.ok(calls.some(c => c.label === 'arch:C1#2'))
+  assert.match(calls.find(c => c.label === 'arch:C1#2').prompt, /Reuse a name below[^]*layering/)
+  assert.equal(x.C1.ready, false)
+  assert.equal(x.C1.reason, 'needs human: scope')
+})
+await check('scope: a theme from the last resumed history row counts as the previous round', async () => {
+  const x = await hooked([{ id: 'C1', title: 't', branch: 'b1', resume: { history: [{ round: 1, themes: ['bypass of the path check'] }], minors: [], findings: [] } }], (p, o) => o.label === 'review:C1#2' ? reviewOf([f('major', 'again', { theme: 'Bypass of the path check' })]) : undefined)
+  assert.equal(x.C1.reason, 'needs human: scope')
+  assert.ok(!calls.some(c => c.label === 'fix:C1#2'))
+})
+await check('scope: a resume after a scope stop runs the fixer in its first round', async () => {
+  const x = await hooked([{ id: 'C1', title: 't', branch: 'b1', resume: { history: [{ round: 1, themes: ['bypass of the path check'] }, { round: 2, themes: ['Bypass of the path check'] }], minors: [], findings: [] } }], (p, o) => o.label === 'review:C1#3' ? reviewOf([f('major', 'again', { theme: 'Bypass of the path check' })]) : undefined)
+  assert.notEqual(x.C1.reason, 'needs human: scope')
+  assert.ok(calls.some(c => c.label === 'fix:C1#3'))
 })
 await check('duplicates: one finding from the reviewer and the architecture reviewer is one line, one item and the highest severity', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'Wrong layer!', { file: 'a.js' })])
@@ -2192,7 +2257,15 @@ const noPass = x => {
   assert.equal(x.C1.minorPass, null)
   assert.equal(x.C1.ready, true)
 }
-await check('minor pass: a minor in a file the PR does not change, or in a gated path, runs no fixer', async () => {
+await check('minor pass: a minor in a gated file the PR changes runs the pass, and one in a floor path does not', async () => {
+  minorScope.compare.C1 = ['scripts/gate-files.sh', 'AGENTS.md', 'src/a.js']
+  await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([minorOf({ file: 'scripts/gate-files.sh' })]) : passHook()(p, o))
+  assert.ok(calls.some(c => c.label === 'minorfix:C1'))
+  assert.match(calls.find(c => c.label === 'minorfix:C1').prompt, /only these files[^\n]*\["scripts\/gate-files\.sh","src\/a\.js"\]/)
+  noPass(await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([minorOf({ file: 'AGENTS.md' })]) : passHook()(p, o)))
+  delete minorScope.compare.C1
+})
+await check('minor pass: a minor in a file the PR does not change runs no fixer', async () => {
   minorScope.files.C1 = ['src/other.js']
   noPass(await hooked(only1('C1'), passHook()))
   delete minorScope.files.C1
@@ -2459,4 +2532,21 @@ await check('a plan conflict finding from the reviewer or the fixer stops the PR
   const codeReview = {}
   await hooked(only1('C1'), (p, o) => { if (o.label === 'review:C1#1') codeReview.p = p })
   assert.doesNotMatch(codeReview.p, /Check each entry's Acceptance line/)
+})
+await check('rounds: a fix that changed nothing stops the loop with the open findings and no second round', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : o.label.startsWith('fix:C1') ? { summary: 'finding is wrong', changed: false } : undefined)
+  assert.equal(x.C1.reason, 'rounds exhausted: the fix changed nothing in round 1, 1 of 4 used (maxRounds)')
+  assert.equal(x.C1.fixSummary, 'finding is wrong')
+  assert.equal(x.C1.history.length, 1)
+  assert.deepEqual(x.C1.lastFindings.map(f => f.title), ['x'])
+  assert.equal(calls.filter(c => c.label.startsWith('review:C1')).length, 1)
+})
+await check('rounds: a resume with maxRounds 5 after 4 rounds logs its range and ends at round 9', async () => {
+  const rows = [1, 2, 3, 4].map(n => ({ round: n, tests: 'pass', blockersAndMajors: [] }))
+  const resumed = [{ ...only1('C1')[0], resume: { history: rows, minors: [], findings: [] } }]
+  const x = await hooked(resumed, (p, o) => o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : undefined, { maxRounds: 5 })
+  assert.ok(logs.some(m => /C1 resume: this run does at most 5 rounds \(5 to 9\)/.test(m)))
+  assert.ok(calls.some(c => c.label === 'review:C1#9'))
+  assert.ok(!calls.some(c => c.label === 'review:C1#10'))
+  assert.equal(x.C1.reason, 'rounds exhausted: 5 of 5 (maxRounds)')
 })
