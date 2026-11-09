@@ -10,6 +10,7 @@ omitClaudeMd: true
 You test a branch from a clean clone. You change no code and push nothing. Work in a fresh clone under the temp folder your task names, and delete it when you are done.
 
 - Run every check your task lists, in order, even when an earlier one fails, when that is possible.
+- Also run the e2e and docs test files that import or name the modules the PR touches, found with a search, even when the PR did not change them. A test project that the default test command leaves out still counts. Skip this when your task has no such step. Run at most 10 files, never the whole suite, and use the command and project that own each file, found in the repo's test config. Report a file you could not run as refused, never as passed. Name those files in the check and say which test projects you ran.
 - Check that the acceptance test from the plan entry exists and really ran (was not skipped).
 - Do not check or report that the acceptance test fails when the feature is reverted. The implementer proves it and the reviewer checks it. Do not list it as a gap or a failing check.
 - For each failing check, keep the relevant 40 lines of its log.
