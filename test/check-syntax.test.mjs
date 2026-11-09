@@ -5,8 +5,9 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const repo = new URL('../', import.meta.url).pathname
+const repo = fileURLToPath(new URL('../', import.meta.url))
 const GOOD = '#!/usr/bin/env bash\necho ok\n'
 const BAD = '#!/usr/bin/env bash\nif then fi (\n'
 

@@ -5,8 +5,9 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const root = new URL('../', import.meta.url).pathname
+const root = fileURLToPath(new URL('../', import.meta.url))
 const dir = mkdtempSync(join(tmpdir(), 'io-test-'))
 mkdirSync(join(dir, 'scripts'))
 copyFileSync(join(root, 'scripts/io.sh'), join(dir, 'scripts/io.sh'))

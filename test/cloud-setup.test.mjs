@@ -7,8 +7,9 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync, cpSync, readdirSync, rmSync, lstatSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const root = new URL('../', import.meta.url).pathname
+const root = fileURLToPath(new URL('../', import.meta.url))
 const tmp = mkdtempSync(join(tmpdir(), 'cloud-setup-test-'))
 const ident = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' }
 const sh = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: 'utf8', ...opts, env: { ...process.env, ...ident, ...(opts.env || {}) } })
@@ -33,9 +34,15 @@ writeFileSync(join(stubBin, 'curl'), `#!/bin/bash
 out=""; url=""; code=""
 while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2 ;; -w) code=1; shift 2 ;; --retry) shift 2 ;; -*) shift ;; *) url=$1; shift ;; esac; done
 echo "$url" >> "$CURL_LOG"
-rest=\${url#https://raw.githubusercontent.com/*/*/}
+case "$url" in https://raw.githubusercontent.com/o/r/*) rest=\${url#https://raw.githubusercontent.com/o/r/} ;; *) rest=none ;; esac
 case "$rest" in refs/tags/*) rest=\${rest#refs/tags/} ;; refs/heads/main/*) rest=main/\${rest#refs/heads/main/} ;; *) rest=none ;; esac
 src="$SERVE/$rest"
+# A file <path>.status holds the HTTP code to answer for <path>.
+if [ -f "$src.status" ]; then
+  status=$(cat "$src.status")
+  [ -n "$code" ] && { printf '%s' "$status"; exit 0; }
+  echo "curl: (22) $status $url" >&2; exit 22
+fi
 if [ ! -f "$src" ]; then
   [ -n "$code" ] && { printf 404; exit 0; }
   echo "curl: (22) 404 $url" >&2; exit 22
@@ -347,6 +354,27 @@ test('--latest exits 1 for a named tag with a 404 files.txt, and when no release
   assert.equal(r2.status, 1)
   assert.match(r2.stderr, /no release installed/)
   assert.equal(existsSync(join(w2.bin, 'apl-start')), false)
+})
+
+test('--latest exits 1 for a listed tag whose files.txt answers a code other than 404', () => {
+  for (const status of ['500', '403']) {
+    const w = world(['v9.9.9'], 'v9.9.9\n')
+    writeFileSync(join(w.serve, 'v9.9.9/.claude-plugin/files.txt.status'), status)
+    const r = latest(w)
+    assert.equal(r.status, 1, r.stdout + r.stderr)
+    assert.match(r.stderr, new RegExp(`fetch failed: files\\.txt of v9\\.9\\.9 \\(HTTP ${status}\\)`))
+    assert.doesNotMatch(r.stdout, /skipped/)
+    assert.equal(existsSync(join(w.opt, 'v9.9.9')), false)
+    assert.equal(existsSync(join(w.bin, 'apl-start')), false)
+  }
+})
+
+test('the stub curl refuses a URL of another owner or repo', () => {
+  const w = world()
+  const r = install(w, ['v9.9.9'], (s) => s.replaceAll('o/r', 'x/y'))
+  assert.equal(r.status, 1, r.stdout + r.stderr)
+  assert.equal(complete(w, 'v9.9.9'), false)
+  assert.match(readFileSync(w.curlLog, 'utf8'), /raw\.githubusercontent\.com\/x\/y\//)
 })
 
 test('--latest exits 1 for a listed tag with a changed file, with no .complete for it', () => {

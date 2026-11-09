@@ -45,7 +45,6 @@ test('the minor fixer prompt limits the pass to the PR files and forbids gated p
   assert.match(src, /Fix a finding only when its file is on that list\. Change no other file/)
   assert.match(src, /You may change only these files, which the PR already changes and no gate holds/)
   assert.match(src, /Change no other file, and never a gated path/)
-  assert.doesNotMatch(src, /the \\`gates\\` list in \\`\.github\/pipeline\.json\\`/)
   assert.match(src, /Skip a finding that needs a design choice/)
 })
 

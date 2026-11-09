@@ -5,8 +5,9 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const root = new URL('../', import.meta.url).pathname
+const root = fileURLToPath(new URL('../', import.meta.url))
 const tmp = mkdtempSync(join(tmpdir(), 'routine-spec-test-'))
 const bin = join(tmp, 'bin'); mkdirSync(bin)
 copyFileSync(join(root, 'test/fake-gh'), join(bin, 'gh')); chmodSync(join(bin, 'gh'), 0o755)
@@ -17,13 +18,13 @@ const BOTH = { authorFilter: true, labelFilter: true }
 const k2File = (v) => { const f = join(tmp, `k2-${Math.random().toString(36).slice(2)}.json`); writeFileSync(f, typeof v === 'string' ? v : JSON.stringify(v)); return f }
 
 let n = 0
-function spec(repo, pipeline, args = []) {
+function spec(repo, pipeline, args = [], extraEnv = {}) {
   const fx = join(tmp, `fx${n++}`); mkdirSync(fx)
   const [o, r] = repo.split('/')
   writeFileSync(join(fx, `repos__${o}__${r}__contents__.github__pipeline.json.json`), JSON.stringify(pipeline))
   const res = spawnSync('bash', [join(root, 'scripts/routine-spec.sh'), repo, ...args], {
     encoding: 'utf8', maxBuffer: 1 << 26,
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: fx, FAKE_GH_LOG: join(fx, 'log') },
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: fx, FAKE_GH_LOG: join(fx, 'log'), ...extraEnv },
   })
   return { ...res, json: res.status === 0 ? JSON.parse(res.stdout) : null }
 }
@@ -173,7 +174,12 @@ test('the output depends on the settings only: the full good file works', () => 
 })
 
 test('the output holds no token', () => {
-  const r = spec('alfhen/pipeline-dogfood', settings({}), [])
+  const env = { GH_TOKEN: 'ghp_testtoken123', ANTHROPIC_API_KEY: 'sk-ant-test' }
+  const pipeline = settings({ waveArgs: { goals: 'docs/goals.md', checks: [], e2eCommand: 'run ghp_settingstoken456' } })
+  assert.match(JSON.stringify(pipeline), /ghp_settingstoken456/)
+  assert.match(env.GH_TOKEN, /^ghp_/)
+  const r = spec('alfhen/pipeline-dogfood', pipeline, [], env)
+  assert.equal(r.status, 0, r.stderr)
   assert.doesNotMatch(r.stdout, /ghp_|github_pat_|sk-ant-|GH_TOKEN/)
 })
 

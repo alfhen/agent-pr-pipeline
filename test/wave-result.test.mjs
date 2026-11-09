@@ -5,8 +5,9 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const script = new URL('../scripts/wave-result.sh', import.meta.url).pathname
+const script = fileURLToPath(new URL('../scripts/wave-result.sh', import.meta.url))
 
 function run(output, { raw } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'wave-result-test-'))
@@ -37,6 +38,15 @@ for (const [pr, line] of CODES) {
     assert.equal(r.stdout, `${line}\n`)
   })
 }
+
+test('the reason texts that the script maps still come from run-wave.js', () => {
+  const src = readFileSync(fileURLToPath(new URL('../workflows/run-wave.js', import.meta.url)), 'utf8')
+  assert.ok(src.includes('`quick fix: ${decision}. ${t.why}`'), 'quick fix: <decision>. <why>')
+  assert.ok(src.includes("enum: ['build', 'plan', 'decline']"), 'the decisions plan and decline')
+  assert.ok(src.includes('`${what}rounds exhausted: ${used} of ${max} (${cap})`'), 'rounds exhausted')
+  assert.ok(src.includes("'needs human: permission'"), 'needs human: permission')
+  assert.ok(src.includes('needs human: product'), 'needs human: product')
+})
 
 test('writes .result from a pretty-printed output file', () => {
   const o = wave({ id: 'q', prNumber: 42, ready: true })

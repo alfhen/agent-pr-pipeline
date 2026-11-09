@@ -6,8 +6,9 @@ import { spawn, spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, copyFileSync, chmodSync, symlinkSync, cpSync, statSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const root = new URL('../', import.meta.url).pathname
+const root = fileURLToPath(new URL('../', import.meta.url))
 const fname = path => path.replaceAll('/', '__')
 const lines = file => (existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean) : [])
 const writable = path => (statSync(path).mode & 0o222) !== 0

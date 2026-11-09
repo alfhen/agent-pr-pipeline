@@ -2,11 +2,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync, rmSync, cpSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const root = new URL('../', import.meta.url).pathname
+const root = fileURLToPath(new URL('../', import.meta.url))
 const FX = join(root, 'test/fixtures/land')
 const SHA = 'a'.repeat(40)
 const P = 'repos__o__r'
@@ -121,6 +122,21 @@ test('land: a repo with no settings file has no known flakes', () => {
   const r = land(s)
   assert.equal(r.code, 3, r.out)
   assert.equal(reruns(r).length, 0)
+})
+
+test('land: a repo with no settings file takes its known flakes from the template next to the scripts', () => {
+  const s = landSetup({ checks: [[failed('e2e')], [failed('e2e')], [passed('e2e')]] })
+  rmSync(join(s.fx, `${CONTENTS}@ref=main.json`))
+  const copy = join(s.dir, 'plugin')
+  cpSync(join(root, 'scripts'), join(copy, 'scripts'), { recursive: true })
+  mkdirSync(join(copy, 'templates'))
+  writeFileSync(join(copy, 'templates/pipeline.json'), JSON.stringify({ gates: [], knownFlakes: ['e2e'], autoRelease: false }))
+  const e = { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log, PIPELINE_TEST_FAST: '1' }
+  delete e.CLAUDECODE
+  const r = spawnSync('bash', [join(copy, 'scripts/land-wave.sh'), 'o/r', `7:${SHA}`], { env: e, encoding: 'utf8' })
+  const log = readFileSync(s.log, 'utf8').split('\n').filter(Boolean)
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.equal(reruns({ log }).length, 1)
 })
 
 const git = (cwd, ...a) => {

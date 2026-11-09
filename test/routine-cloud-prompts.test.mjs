@@ -3,8 +3,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const root = new URL('../', import.meta.url).pathname
+const root = fileURLToPath(new URL('../', import.meta.url))
 const read = (rel) => readFileSync(join(root, rel), 'utf8')
 const KINDS = ['triage', 'build', 'collect']
 const WORKTREE = '/tmp/apl-src-<defaultSha>'
@@ -244,10 +245,57 @@ test('mutated prompts fail the loop and script checks', () => {
 })
 
 test('short-step bullets do not stop, so the loop is reachable', () => {
-  const shortStop = (t) => /^ {3}- `(adopt|untrusted|revoke|pr-seen|exhausted|needs-plan)`.*then stop/m.test(t)
+  const shortStop = (t) => t.split('\n').some((l) => /^ {3}- `(adopt|untrusted|revoke|pr-seen|exhausted|needs-plan|block)`/.test(l) &&
+    /\bstop\b/i.test(l.replace('else log it and stop', '')))
   for (const k of LOOP_KINDS) {
     assert.ok(!shortStop(prompts[k]), k)
-    assert.ok(shortStop(prompts[k].replace(/^( {3}- `(?:adopt|revoke)`.*)\.$/m, '$1, then stop.')), `${k}: mutated`)
+  }
+  const mutations = [
+    ['build', /^( {3}- `block`.*)$/m, '$1 Then stop.'],
+    ['build', /^( {3}- `exhausted`.*)\.$/m, '$1, and stop.'],
+    ['build', /^( {3}- `pr-seen`.*)\.$/m, '$1, then stop.'],
+    ['triage', /^( {3}- `untrusted`.*)$/m, '$1 Stop.'],
+    ['triage', /^( {3}- `adopt`.*)\.$/m, '$1, then stop.'],
+  ]
+  for (const [k, re, to] of mutations) {
+    assert.match(prompts[k], re, `${k}: the bullet to mutate exists`)
+    assert.ok(shortStop(prompts[k].replace(re, to)), `${k}: ${re}`)
+  }
+  assert.match(prompts.build, /^ {3}- `block`:.*else log it and stop\./m)
+})
+
+test('each step that must stop says so, so the one-wave-per-run and triagePerRun limits hold', () => {
+  const missing = (build, triage) => [
+    [triage, /^ {3}- `triage`: do step 5, then stop\.$/m, 'triage bullet'],
+    [triage, /A run does the work of at most one `triage` step\./, 'triage closing line'],
+    [build, /^ {3}- `build`: do step 5\. Then run step 1 again\. If that `next` prints a `build` step, stop: a run does one build\.$/m, 'build bullet'],
+    [build, /A run does the work of at most one `build` step\./, 'build closing line'],
+    [build, /^ {3}- `block`:.*else log it and stop\./m, 'block bullet'],
+    [build, /After the 20th pass, stop\./, 'build 20th pass'],
+    [triage, /After the 20th pass, stop\./, 'triage 20th pass'],
+    [build, /^2\. If the only step is [^\n]*say so and stop\.$/m, 'build step 2'],
+    [triage, /^2\. If the only step is [^\n]*say so and stop\.$/m, 'triage step 2'],
+    [build, /^ {3}4\. From the clone, run `mkdir -p[^\n]*If the command fails, stop\./m, 'build copy failure'],
+    [triage, /^5\. Read the settings once:[^\n]*If the command fails, log its output and stop\./m, 'triage settings failure'],
+  ].filter(([t, re]) => !re.test(t)).map(([, , name]) => name)
+  assert.deepEqual(missing(prompts.build, prompts.triage), [])
+  const mutations = [
+    ['build', 'If that `next` prints a `build` step, stop: a run does one build.', 'go back to step 1.', 'build bullet'],
+    ['build', 'A run does the work of at most one `build` step. A `build` step after a build is not run.', '', 'build closing line'],
+    ['triage', '`triage`: do step 5, then stop.', '`triage`: do step 5, then go back to step 1.', 'triage bullet'],
+    ['triage', 'A run does the work of at most one `triage` step.', '', 'triage closing line'],
+    ['build', 'else log it and stop', 'else use it anyway', 'block bullet'],
+    ['build', 'After the 20th pass, stop.', '', 'build 20th pass'],
+    ['triage', 'After the 20th pass, stop.', '', 'triage 20th pass'],
+    ['build', 'say so and stop', 'go back to step 1', 'build step 2'],
+    ['triage', 'say so and stop', 'go back to step 1', 'triage step 2'],
+    ['build', 'If the command fails, stop.', '', 'build copy failure'],
+    ['triage', 'log its output and stop', 'go on', 'triage settings failure'],
+  ]
+  for (const [kind, from, to, name] of mutations) {
+    assert.ok(prompts[kind].includes(from), `the text to mutate exists: ${from}`)
+    const mutated = { ...prompts, [kind]: prompts[kind].replace(from, to) }
+    assert.deepEqual(missing(mutated.build, mutated.triage), [name], name)
   }
 })
 

@@ -3,8 +3,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
-const root = new URL('../', import.meta.url).pathname
+const root = fileURLToPath(new URL('../', import.meta.url))
 const good = JSON.parse(readFileSync(new URL('./fixtures/settings/good.json', import.meta.url), 'utf8'))
 const minimal = { pipelineVersion: 'v0.8.0', maintainer: 'alfhen', waveArgs: { goals: 'g', checks: [] } }
 const run = (input, ...args) => spawnSync('jq', ['-c', '--arg', 'form', 'pipeline', ...args, '-f', `${root}routine/config.jq`], { input: JSON.stringify(input), encoding: 'utf8' })

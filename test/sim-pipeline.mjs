@@ -2,6 +2,7 @@
 // Usage: node test/sim-pipeline.mjs (exits non-zero on the first failed check).
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import assert from 'node:assert/strict'
+import { fileURLToPath } from 'node:url'
 
 const src = readFileSync(new URL('../workflows/run-wave.js', import.meta.url), 'utf8').replace('export const meta', 'const meta')
 const RealDate = globalThis.Date
@@ -47,7 +48,7 @@ const wt = o => '/wt/' + o.label.replace(/[:#]/g, '-')
 const overlap = { fail: new Set(), down: new Set() }
 const minorScope = { files: {}, down: new Set(), differ: new Set() }
 let cleanupMode = 'ok'
-const cleanupAnswer = label => label.endsWith('init') ? { exitCode: 0, output: cleanupMode === 'refused' ? 'KEPT /x refused: shared temp folder' : 'MARKED /x' }
+const cleanupAnswer = label => label.endsWith('init') ? (cleanupMode === 'initdown' ? null : cleanupMode === 'initfail' ? { exitCode: 1, output: 'cleanup: boom' } : { exitCode: 0, output: cleanupMode === 'refused' ? 'KEPT /x refused: shared temp folder' : 'MARKED /x' })
   : cleanupMode === 'down' ? null : cleanupMode === 'fail' ? { exitCode: 1, output: 'cleanup: boom' }
   : { exitCode: 0, output: /(clones|all)$/.test(label) ? 'REMOVED /x/test-1' : '' }
 const lastHead = {}
@@ -228,6 +229,8 @@ await check('a bot answer that changed code is tested and reviewed on its diff b
   assert.match(review.prompt, /anchored the regex/)
   assert.match(review.prompt, /already filed: .*21/)
   assert.match(review.prompt, /Found in review of C2\./)
+  assert.match(review.prompt, /Earlier rounds/)
+  assert.match(review.prompt, /"round": 1/)
   assert.ok(mainCalls.some(c => c.label === 'test:C2#bots1'))
   assert.deepEqual(r.C2.lateMinors.map(f => f.title), ['late nit'])
 })
@@ -241,6 +244,8 @@ await check('a finding in the bot answer check gets a fix round and a second che
   assert.match(mainCalls.find(c => c.label === 'botreview:B1#2').prompt, /the new regex anchor rejects valid input/)
   const second = mainCalls.find(c => c.label === 'botreview:B1#2').prompt
   assert.match(second, /fixer's sweep/)
+  assert.match(second, /Earlier rounds/)
+  assert.match(second, /The last check found these blockers and majors/)
   assert.match(second, /round one nit/)
   assert.match(second, /other anchors/)
   const num = /pulls\/(\d+)\/comments\/<id>\/replies/.exec(mainCalls.find(c => c.label === 'botanswer:B1').prompt)[1]
@@ -1145,6 +1150,7 @@ await check('land fix: an unreadable head before the fix stops before the fixer 
   const x = await run({ ...base, prs: [{ ...LANDS[0], id: 'LH' }] }, async (p, o) => o.label.endsWith('#landhead') ? { output: 'pipeline-io: begin\ngh: HTTP 404\npipeline-io: exit 1' } : agent(p, o), parallel, log)
   assert.equal(x.prs[0].ready, false)
   assert.match(x.prs[0].reason, /cannot read the head/)
+  assert.ok(!calls.some(c => c.label === 'landfix:LH'))
 })
 await check('land fix: round 2 reads from the head before the land fix to the new head and gets the last blockers', async () => {
   await landFixRun({ landOutput: ['LA'], landBad: ['LA'] })
@@ -1187,7 +1193,7 @@ await check('the land-fixer role file tells it never to answer bot threads', () 
 // Land gate: scripts/bot-approval.jq on fixture reviews and comments.
 const { execFileSync } = await import('node:child_process')
 const GITAR_RAN = [{ name: 'Gitar', status: 'completed', conclusion: 'success' }]
-const gate = (reviews, comments = [], checks = GITAR_RAN) => JSON.parse(execFileSync('jq', ['-f', new URL('scripts/bot-approval.jq', root).pathname], {
+const gate = (reviews, comments = [], checks = GITAR_RAN) => JSON.parse(execFileSync('jq', ['-f', fileURLToPath(new URL('scripts/bot-approval.jq', root))], {
   input: JSON.stringify({ reviews, comments, checks, head: 'HEAD', bots: 'coderabbit|gitar|\\[bot\\]' }),
 }))
 const BOT = 'gitar-bot[bot]'
@@ -1388,6 +1394,18 @@ await check('cleanup: a refused init means no clones call and no --all call, but
   assert.equal(cleanupOf(cleanupCalls, 'C1', 'worktrees').length, 1)
   assert.ok(logs.some(m => /clones cleanup is off for this run: KEPT/.test(m)))
   assert.ok(!('cleanup' in lastResult))
+})
+await check('cleanup: an init that fails or gets no answer means no clones call and no --all call, and the PR still finishes', async () => {
+  for (const mode of ['initfail', 'initdown']) {
+    cleanupMode = mode
+    try {
+      await simulate({ ...base, prs: only('C1', 'E1') })
+    } finally { cleanupMode = 'ok' }
+    assert.ok(cleanupCalls.some(c => c.label.endsWith('cleanupinit')), mode)
+    assert.equal(cleanupCalls.filter(c => /cleanup(clones|all)$/.test(c.label)).length, 0, mode)
+    assert.equal(cleanupOf(cleanupCalls, 'C1', 'worktrees').length, 1, mode)
+    assert.equal(lastResult.prs.find(p => p.id === 'C1').ready, true, mode)
+  }
 })
 await check('cleanup: a PR whose run throws is still cleaned up', async () => {
   calls = []; cleanupCalls = []; timeline = []
@@ -2151,4 +2169,60 @@ await check('minors: the opener list drops a minor the docs check repeats', asyn
     : o.label === 'docsreview:G1#1' ? reviewOf([f('minor', 'same nit', { fileIssue: true })]) : undefined)
   const open = calls.find(c => c.label === 'open:G1').prompt
   assert.equal((open.match(/"title": "[Ss]ame nit"/g) || []).length, 2)
+})
+
+const hookedOut = async (prs, hook, extra = {}) => {
+  calls = []; cleanupCalls = []; timeline = []; logs = []
+  preflight = GOOD
+  return run({ ...base, ...extra, prs }, async (p, o) => { const h = hook(p, o); if (h === undefined) return agent(p, o); calls.push({ label: o.label, model: o.model, prompt: p }); return h }, parallel, log)
+}
+await check('minors: a minor marked in a later round keeps its mark when round 1 left it unmarked', async () => {
+  await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x'), f('minor', 'Repeated nit')])
+    : o.label === 'review:C1#2' ? reviewOf([f('minor', 'repeated  NIT!', { fileIssue: true })]) : undefined)
+  const open = calls.find(c => c.label === 'open:C1').prompt
+  assert.ok(open.includes('Minor findings to file:'))
+  assert.match(open.split('Minor findings to file:')[1], /[Rr]epeated nit/)
+})
+await check('minor pass: a plan PR with a minor in a file runs no fixer', async () => {
+  const x = await hooked(only1('P1'), (p, o) => o.label.startsWith('review:P1') ? reviewOf([minorOf()]) : undefined)
+  assert.ok(calls.some(c => c.label.startsWith('review:P1')))
+  assert.ok(!calls.some(c => /^minor(fix|review|revert)/.test(c.label)))
+  assert.equal(x.P1.minorPass, null)
+})
+await check('minor pass: the restored head is the sha the script reads, not the one the reverting agent claims', async () => {
+  const x = await hooked(only1('C1'), (p, o) => {
+    if (o.label.startsWith('minorrevert:C1')) { lastHead.C1 = 'sha-script'; return { reverted: true, headSha: 'sha-claimed', summary: 'reverted' } }
+    return passHook({ testPass: false })(p, o)
+  })
+  assert.ok(calls.some(c => c.label === 'io:C1#minorsame'))
+  assert.equal(x.C1.land.split(':')[1], 'sha-script')
+})
+await check('open prompt: a milestone adds the lookup and the not-found stop, and none adds neither', async () => {
+  await hooked(only1('C1'), () => undefined, { milestone: 'v1' })
+  assert.match(openOf('C1').prompt, /gh api --paginate 'repos\/o\/r\/milestones\?per_page=100'/)
+  assert.match(openOf('C1').prompt, /blockedReason "milestone v1 not found"/)
+  assert.match(openOf('C1').prompt, /-F milestone=<number>/)
+  await hooked(only1('C1'), () => undefined)
+  assert.doesNotMatch(openOf('C1').prompt, /milestones|not found|milestone=/)
+})
+await check('open prompt: the default branch is read before the PR is created over REST', async () => {
+  await hooked(only1('C1'), () => undefined)
+  const prompt = openOf('C1').prompt
+  assert.match(prompt, /gh api repos\/o\/r --jq \.default_branch/)
+  assert.match(prompt, /gh api -X POST repos\/o\/r\/pulls /)
+  assert.ok(prompt.indexOf('--jq .default_branch') < prompt.indexOf('-X POST repos/o/r/pulls'))
+})
+await check('land fix prompt: it waits for CI with wait-ci.sh from the plugin root', async () => {
+  await landFixRun({})
+  assert.match(calls.find(c => c.label === 'landfix:LA').prompt, /bash \/plug\/scripts\/wait-ci\.sh o\/r 8 9/)
+})
+await check('the denylist holds the files of a docs result and a bot-check minor when changedPaths is empty', async () => {
+  evaluation = { items: ITEMS, changedPaths: [] }
+  try {
+    const out = await hookedOut(PRS.filter(p => p.id === 'G1' || p.id === 'C2'), (p, o) =>
+      o.label === 'docs:G1' ? { changed: true, headSha: 'docs-G1', files: ['docsonly/guide/page.md'], summary: 's', worktree: '/wt/docs-G1' }
+        : o.label === 'botreview:C2#1' ? { summary: 's', findings: [{ severity: 'minor', title: 'late', detail: 'd', file: 'lateonly/deep/file.js' }], invariants: [], sweep: [] } : undefined)
+    for (const want of ['docsonly/guide/page.md', 'guide/page.md', 'lateonly/deep/file.js', 'deep/file.js']) assert.ok(out.denylist.includes(want), want)
+    assert.ok(!out.denylist.includes('page.md'))
+  } finally { evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'README.md'] } }
 })
