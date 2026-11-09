@@ -41,6 +41,35 @@ test('an explicit title is passed as it is', () => {
   assert.match(src, /'-f title=<title>'/)
 })
 
+test('the minor fixer prompt limits the pass to the PR files and forbids gated paths', () => {
+  assert.match(src, /Fix a finding only when its file is on that list\. Change no other file/)
+  assert.match(src, /You may change only these files, which the PR already changes and no gate holds/)
+  assert.match(src, /Change no other file, and never a gated path/)
+  assert.doesNotMatch(src, /the \\`gates\\` list in \\`\.github\/pipeline\.json\\`/)
+  assert.match(src, /Skip a finding that needs a design choice/)
+})
+
+test('the minor review prompt reads only the commits of the pass', () => {
+  assert.match(src, /Report a finding only about this diff/)
+})
+
+test('the opener files only marked minors, once, and posts one checklist', () => {
+  assert.match(src, /file one issue for each finding under "Minor findings to file", and for no other finding/)
+  assert.match(src, /Post it once, and post no other comment/)
+})
+
+test('the opener role file files only listed minors and posts the checklist', () => {
+  const role = readFileSync(new URL('../agents/pr-opener.md', import.meta.url), 'utf8')
+  assert.doesNotMatch(role, /File each minor finding/)
+  assert.match(role, /only for each finding under "Minor findings to file", and for no other finding/)
+  assert.match(role, /post one checklist comment/)
+})
+
+test('the minor review prompt carries the fixed findings and asks for unconfirmed ones', () => {
+  assert.match(src, /Findings the fixer says it fixed, numbered/)
+  assert.match(src, /\\`unconfirmed\\`/)
+})
+
 test('bot answer check reviews the whole PR on the new head', () => {
   const m = /const botReviewPrompt = [\s\S]*?const landReviewPrompt/.exec(src)
   assert.ok(m)

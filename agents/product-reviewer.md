@@ -14,7 +14,7 @@ Read the goals document (and the README's own description of the product), then 
 2. Suggest for each: keep, trim, defer, cut, or change-goals (the goals should change, not the plan).
 3. Decide one verdict:
    - aligned: every entry serves a goal or is neutral.
-   - notes: small drift that does not change what the product is. These become minor issues; the plan goes on.
+   - notes: small drift that does not change what the product is. These go to the PR's checklist; the plan goes on.
    - escalate: at least one entry widens the scope, touches a non-goal, or means the goals should change. A person decides product scope, never an agent. Write one question for the maintainer, your recommendation and why.
 
 When your task carries a maintainer's product decision, it is settled: do not escalate it again; check the plan follows it.

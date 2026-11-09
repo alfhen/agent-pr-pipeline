@@ -181,7 +181,7 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
         </g>
       </svg>
     </div>
-    <p class="caption">Test and review run at the same time, on the same commit. The dashed loop can go round up to four times. After that, a person decides. When the change is clean, a docs writer updates the docs it affects, and a short test and review check that commit before the PR opens. When a PR's work ends, a small agent deletes its clones and finished worktrees.</p>
+    <p class="caption">Test and review run at the same time, on the same commit. The dashed loop can go round up to four times. After that, a person decides. When the change is clean, one minor pass fixes the small findings and a short check keeps or reverts it. Then a docs writer updates the docs it affects, and a short test and review check that commit before the PR opens. When a PR's work ends, a small agent deletes its clones and finished worktrees.</p>
   </section>
 
   <section aria-labelledby="cast">
@@ -196,7 +196,7 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
       <div class="role person"><span class="who">TRIAGER</span><h3>Sizes up a quick fix</h3><p>For a single issue with no plan, an Opus reviewer reads the issue, the code and the goals. It decides to build, to plan properly, or to decline. A change of size L or risk high becomes a plan. A small, low-risk change gets lighter checks.</p></div>
       <div class="role check"><span class="who">MERGE SAFETY</span><h3>Decides who merges</h3><p>A script first checks the changed files against the gated paths. For the rest, a read-only Opus agent answers "safe" or "person". Only a PR that passes both is merged by an agent. A rerun never is.</p></div>
       <div class="role agent"><span class="who">EVALUATOR</span><h3>Reviews the run itself</h3><p>When a wave ends, it reads what happened and writes feedback about the pipeline. You approve it, and a script files it as issues. For another repo, a redactor removes that repo's details first.</p></div>
-      <div class="role fixer"><span class="who">FIXER</span><h3>Repairs, or argues back</h3><p>Fixes blockers and majors. If it thinks a finding is wrong, it has to say why, with evidence.</p></div>
+      <div class="role fixer"><span class="who">FIXER</span><h3>Repairs, or argues back</h3><p>Fixes blockers and majors. After sign-off it also makes one capped pass over the minors in files the PR already changes. A tester and a reviewer check only that pass, and a failed check reverts it with a new commit. If it thinks a finding is wrong, it has to say why, with evidence.</p></div>
       <div class="role agent"><span class="who">DOCS WRITER</span><h3>Keeps the docs true</h3><p>After the review passes, it reads the change and fixes every page it makes wrong: README, docs and the docs site. A separate reviewer checks its edits.</p></div>
       <div class="role agent"><span class="who">PR AGENT</span><h3>Talks to the bots</h3><p>Opens the pull request, files small findings as issues for later, and replies to every review-bot comment.</p></div>
       <div class="role agent"><span class="who">ROUTINE</span><h3>Triages feedback each hour</h3><p>An optional hourly job reads the open feedback issues of a repo and decides for each one: build, plan or decline. It starts in observe mode, which changes nothing on GitHub. It never writes code, opens a PR or merges. See <code>docs/routine.md</code>.</p></div>
@@ -222,7 +222,7 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
           <tr><td>Product-fit reviewer</td><td><span class="pill opus">Opus</span></td><td><span class="pill high">high</span></td><td>New in the skill: round 1 of every plan PR. Scope decisions go to you.</td></tr>
           <tr><td>Architecture reviewer</td><td><span class="pill opus">Opus</span></td><td><span class="pill high">high</span></td><td>New in the skill: round 1 of every code and plan PR, and again after a fix it asked for. Escalates architecture changes to you.</td></tr>
           <tr><td>Fixer</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Fixing blockers and majors, then running every check again.</td></tr>
-          <tr><td>PR agent</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Opening the PR, filing minors, then polling the bots for up to 20 minutes and answering them.</td></tr>
+          <tr><td>PR agent</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Opening the PR, writing the minors checklist, filing the minors that matter, then polling the bots for up to 20 minutes and answering them.</td></tr>
           <tr><td>Land agent</td><td><span class="pill sonnet">Sonnet</span></td><td><span class="pill def">session</span></td><td>Mostly waiting for CI. It merges <span class="mono">main</span> in when a PR conflicts.</td></tr>
         </tbody>
       </table>
@@ -285,7 +285,7 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
       <li><span class="dot">2</span><p><strong>No marking your own homework.</strong> The builder, tester and reviewer are different agents with different instructions. Mistakes one makes, another tends to catch.</p></li>
       <li><span class="dot">3</span><p><strong>Tests that can fail.</strong> Every change needs a test that fails when the change is removed. "Passes for the wrong reason" is the most common real problem reviewers find.</p></li>
       <li><span class="dot">4</span><p><strong>Waves.</strong> PRs in the same wave touch different files, so several are built at once without stepping on each other.</p></li>
-      <li><span class="dot">5</span><p><strong>Small stuff waits.</strong> Minor findings become issues and get fixed in batches later, so the loop doesn't drag on over nits.</p></li>
+      <li><span class="dot">5</span><p><strong>Small stuff waits.</strong> Minor findings get one capped fix pass after sign-off. The rest go into one checklist comment on the PR. An issue is filed only for a minor that has a real effect, so the loop doesn't drag on over nits.</p></li>
     </ul>
   </section>
 
