@@ -274,10 +274,21 @@ const call = async (role, pr, prompt, label, extra) => {
   agentCounts[r.agent] = (agentCounts[r.agent] || 0) + 1
   const skillStep = r.skills === undefined ? role : r.skills
   const step = r.reviewModel ? reviewStep(pr) : STEPS[r.model || role]
-  const out = await agent(skillStep ? withSkills(skillStep, pr, prompt, !!r.clone) : prompt, Object.assign(
+  const text = skillStep ? withSkills(skillStep, pr, prompt, !!r.clone) : prompt
+  const opts = Object.assign(
     { agentType: AGENT_PREFIX + r.agent, model: step.model, effort: step.effort, label, phase: r.phase },
     r.isolation ? { isolation: r.isolation } : {},
-    extra))
+    extra)
+  // An agent that dies on a transport or API error yields null or throws; a normal failure is an answer and is not retried.
+  const attempt = async (t) => { try { return { out: await agent(t, opts) } } catch (e) { return { err: e } } }
+  let got = await attempt(text)
+  if (got.err || got.out == null) {
+    log(`${label}: agent died (${got.err ? got.err.message : 'no result'}), retrying once`)
+    // A dead writer may have pushed or posted before it died; without this line the retry sees a finished branch and reports no change, which skips the check on that push.
+    got = await attempt(WRITERS.includes(role) ? `${text}\n\nRETRY: an earlier attempt of this task died and may have pushed commits or posted replies and comments. Read the branch and the existing threads and comments first. Do not repeat a reply or a comment. If the branch holds commits from that attempt, report changed or codeChanged as true for them. The dead attempt's worktree may still hold a local branch. If git refuses a checkout because a local branch is in use by another worktree, check out a new local name with the suffix -retry from the same origin ref (origin/HEAD if the branch is not on origin) and push with git push origin HEAD:<branch>.` : text)
+  }
+  if (got.err) throw got.err
+  const out = got.out
   if (pr && WRITERS.includes(role) && out && typeof out.worktree === 'string' && out.worktree.trim()) (worktreesOf[pr.id] = worktreesOf[pr.id] || new Set()).add(out.worktree.trim())
   return out
 }
