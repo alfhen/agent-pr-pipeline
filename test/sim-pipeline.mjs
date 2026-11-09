@@ -2389,6 +2389,7 @@ await check('rounds: a fix that changed nothing stops the loop with the open fin
   const x = await hooked(only1('C1'), (p, o) => o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : o.label.startsWith('fix:C1') ? { summary: 's', changed: false } : undefined)
   assert.equal(x.C1.reason, 'rounds exhausted: the fix changed nothing in round 1, 1 of 4 used (maxRounds)')
   assert.equal(x.C1.history.length, 1)
+  assert.deepEqual(x.C1.lastFindings.map(f => f.title), ['x'])
   assert.equal(calls.filter(c => c.label.startsWith('review:C1')).length, 1)
 })
 await check('rounds: a resume with maxRounds 5 after 4 rounds logs its range and ends at round 9', async () => {
