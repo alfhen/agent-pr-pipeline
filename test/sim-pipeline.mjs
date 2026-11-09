@@ -444,7 +444,7 @@ await check('a redactor that returns nothing leaves no feedback, keeps the denyl
   assert.deepEqual(lastResult.feedback, [])
   assert.deepEqual(lastResult.denylist, MAIN_DENYLIST)
   assert.equal(lastResult.prs.length, PRS.length)
-  assert.equal(calls.filter(c => c.label.startsWith('redact')).length, 1)
+  assert.equal(calls.filter(c => c.label.startsWith('redact')).length, 2)
 })
 await check('a landFix-only run starts no evaluate or redact agent', async () => {
   await simulate({ ...base, prs: PRS.filter(p => p.landFix) })
@@ -1345,6 +1345,52 @@ await check('a PR whose run throws is null in the result, and the other PRs and 
   assert.ok(out.denylist.includes('b1'))
   assert.ok(calls.some(c => c.label === 'evaluate:wave'))
 })
+const flaky = (label, bad) => { const seen = []; return { seen, fn: async (p, o) => { if (o.label !== label) return agent(p, o); seen.push(1); const b = bad[seen.length - 1]; if (b === 'null') return null; if (b === 'throw') throw new Error('ENOTFOUND'); if (b === 'fail') return { pushed: false, branch: 'b1', summary: 's', acceptanceTestPassed: false }; return agent(p, o) } } }
+await check('an agent that returns null is retried once and the retry result is used', async () => {
+  calls = []; preflight = GOOD
+  const t = flaky('implement:C1', ['null'])
+  const out = await run({ ...base, prs: only('C1') }, t.fn, parallel, log)
+  assert.equal(t.seen.length, 2)
+  assert.equal(out.prs[0].ready, true)
+})
+await check('an agent that throws is retried once', async () => {
+  calls = []; preflight = GOOD
+  const t = flaky('implement:C1', ['throw'])
+  const out = await run({ ...base, prs: only('C1') }, t.fn, parallel, log)
+  assert.equal(t.seen.length, 2)
+  assert.equal(out.prs[0].ready, true)
+})
+await check('the retry of a writer agent carries the retry line and a reader does not', async () => {
+  calls = []; preflight = GOOD
+  const prompts = []
+  const spy = (label) => async (p, o) => { if (o.label === label) { prompts.push(p); if (prompts.length === 1) return null } return agent(p, o) }
+  await run({ ...base, prs: only('C1') }, spy('implement:C1'), parallel, log)
+  assert.ok(!prompts[0].includes('RETRY:') && prompts[1].includes('RETRY:'))
+  assert.ok(prompts[1].includes('in use by another worktree') && prompts[1].includes('-retry') && prompts[1].includes('HEAD:<branch>'))
+  prompts.length = 0
+  calls = []; preflight = GOOD
+  await run({ ...base, prs: only('C1') }, spy('review:C1#1'), parallel, log)
+  assert.equal(prompts.length, 2)
+  assert.ok(!prompts[1].includes('RETRY:'))
+})
+await check('a second failure is not retried again and the step fails', async () => {
+  calls = []; preflight = GOOD
+  const t = flaky('implement:C1', ['null', 'null'])
+  const out = await run({ ...base, prs: only('C1') }, t.fn, parallel, log)
+  assert.equal(t.seen.length, 2)
+  assert.equal(out.prs[0].ready, false)
+  const u = flaky('implement:C1', ['throw', 'throw'])
+  const out2 = await run({ ...base, prs: only('C1') }, u.fn, parallel, log)
+  assert.equal(u.seen.length, 2)
+  assert.equal(out2.prs[0], null)
+})
+await check('a normal failure answer is not retried', async () => {
+  calls = []; preflight = GOOD
+  const t = flaky('implement:C1', ['fail'])
+  const out = await run({ ...base, prs: only('C1') }, t.fn, parallel, log)
+  assert.equal(t.seen.length, 1)
+  assert.equal(out.prs[0].reason, 'implementation not pushed')
+})
 const cleanupOf = (cs, id, kind) => cs.filter(c => c.label === `io:${id}#cleanup${kind}`)
 await check('cleanup: init runs before the first agent', () => {
   assert.equal(mainTimeline[0], 'io:wave#cleanupinit')
@@ -1761,6 +1807,30 @@ await check('untested: the same list with declared false signs off, and a passed
   const on = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint'), chk('x')], acceptance: acc('x') }))
   assert.equal(on.C1.history.length, 1)
   assert.equal(on.C1.landMode, 'auto')
+})
+await check('tester: the related files and projects reach the history, and the prompt names the limit', async () => {
+  let prompt = ''
+  const related = { files: ['test/a.e2e.test.ts', 'docs/b.test.ts'], projects: ['e2e', 'docs'] }
+  const x = await hooked(only1('C1'), (p, o) => { if (o.label !== 'test:C1#1') return; prompt = p; return { pass: true, headSha: 'sha-C1', checks: [chk('lint')], related } })
+  assert.match(prompt, /import or name the modules the PR touches/)
+  assert.match(prompt, /Run at most 10/)
+  assert.deepEqual(x.C1.history[0].relatedTests, related)
+  assert.equal(fixCalls('C1').length, 0)
+})
+await check('tester: a report with no related field leaves the history without relatedTests', async () => {
+  const x = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint')] }))
+  assert.equal('relatedTests' in x.C1.history[0], false)
+})
+await check('tester: relatedTests false leaves step 3 out of the test prompt', async () => {
+  let prompt = ''
+  await hooked(only1('C1'), (p, o) => { if (o.label !== 'test:C1#1') return; prompt = p; return { pass: true, headSha: 'sha-C1', checks: [chk('lint')] } }, { relatedTests: false })
+  assert.match(prompt, /test the branch from a clean clone/)
+  assert.doesNotMatch(prompt, /import or name the modules/)
+})
+await check('tester: a related file that could not run is refused, so it starts no fix', async () => {
+  const x = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint'), { name: 'e2e related: a.e2e.test.ts', pass: false, refused: true }] }))
+  assert.equal(fixCalls('C1').length, 0)
+  assert.deepEqual(x.C1.history[0].notRun, ['e2e related: a.e2e.test.ts (refused)'])
 })
 await check('untested: a refused acceptance check starts no fix, signs off, is untested and gets no :auto', async () => {
   const x = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint'), { name: 'x', pass: false, refused: true }], acceptance: acc('x') }))
@@ -2315,4 +2385,52 @@ await check('the denylist holds the files of a docs result and a bot-check minor
     for (const want of ['docsonly/guide/page.md', 'guide/page.md', 'lateonly/deep/file.js', 'deep/file.js']) assert.ok(out.denylist.includes(want), want)
     assert.ok(!out.denylist.includes('page.md'))
   } finally { evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'README.md'] } }
+})
+
+await check('every land value carries a 40-character sha, and a short tested sha is expanded from the PR head', async () => {
+  const FULL = 'e'.repeat(40)
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? { pass: true, headSha: (lastHead.C1 = FULL), checks: [chk('lint')] } : undefined)
+  assert.ok(x.C1.land, JSON.stringify(x.C1).slice(0, 500))
+  assert.match(x.C1.land, /^\d+:[0-9a-f]{40}:auto$/)
+  const short = (head) => (p, o) => o.label === 'test:C2#1' ? { pass: true, headSha: (lastHead.C2 = 'd'.repeat(40)), checks: [chk('lint')] }
+    : o.label === 'test:C2#bots1' ? { pass: true, headSha: 'eeeeeee', checks: [chk('lint')] }
+    : o.label === 'io:C2#landfull' ? { exitCode: 0, output: `pipeline-io: begin\n${JSON.stringify({ head, approvedBy: [] })}\npipeline-io: exit 0` } : undefined
+  const y = await hooked(only1('C2'), short(FULL))
+  assert.ok(y.C2.land, JSON.stringify(y.C2).slice(0, 500))
+  assert.match(y.C2.land, /^\d+:e{40}:/)
+  const z = await hooked(only1('C2'), short('f'.repeat(40)))
+  assert.equal(z.C2.ready, false)
+  assert.match(z.C2.reason, /is short/)
+})
+await check('a plan conflict finding from the reviewer or the fixer stops the PR before another round', async () => {
+  const a = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('blocker', 'plan conflict: E3 says the test passes unchanged', { detail: 'D2 changes the limit it hard-codes' })]) : undefined)
+  assert.equal(a.C1.reason, 'needs human: plan conflict')
+  assert.match(a.C1.conflict, /D2 changes the limit/)
+  assert.equal(fixCalls('C1').length, 0)
+  const b = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x')]) : o.label === 'fix:C1#1' ? { summary: 's', changed: false, planConflict: 'E3 and D2 disagree' } : undefined)
+  assert.equal(b.C1.reason, 'needs human: plan conflict')
+  assert.equal(b.C1.conflict, 'E3 and D2 disagree')
+  assert.equal(fixCalls('C1').length, 1)
+  const seen = {}
+  await hooked(only1('P1'), (p, o) => { if (o.label === 'review:P1#1') { seen.review = p; return reviewOf([f('blocker', 'E3 says the test passes unchanged but D2 changes it')]) } if (o.label === 'fix:P1#1') seen.fix = p })
+  assert.doesNotMatch(seen.review, /plan conflict:/)
+  assert.match(seen.review, /Check each entry's Acceptance line against the plan's decisions/)
+  assert.doesNotMatch(seen.fix, /planConflict/)
+  assert.equal(fixCalls('P1').length >= 1, true)
+  const pc = await hooked(only1('P1'), (p, o) => o.label === 'review:P1#1' ? reviewOf([f('blocker', 'Plan conflict: E3 vs D2')]) : o.label === 'fix:P1#1' ? { summary: 's', changed: true, planConflict: 'E3 and D2 disagree' } : undefined)
+  assert.notEqual(pc.P1.reason, 'needs human: plan conflict')
+  assert.equal(fixCalls('P1').length >= 1, true)
+  await hooked(only1('C1'), (p, o) => { if (o.label === 'review:C1#1') return reviewOf([f('major', 'x')]); if (o.label === 'fix:C1#1') seen.codeFix = p })
+  assert.match(seen.codeFix, /planConflict/)
+  await hooked(only1('B1'), (p, o) => { if (o.label === 'botreview:B1#1') { seen.botReview = p; return reviewOf([f('major', 'x')]) } if (o.label === 'fix:B1#bots1') seen.botFix = p })
+  assert.ok(seen.botReview && seen.botFix)
+  assert.doesNotMatch(seen.botReview, /plan conflict:/)
+  assert.doesNotMatch(seen.botFix, /planConflict/)
+  const resumed = [{ ...only1('C1')[0], resume: { history: [], minors: [], findings: [{ severity: 'major', title: 'old', detail: 'd' }] } }]
+  await hooked(resumed, (p, o) => { if (o.label === 'fix:C1#0') seen.preFix = p })
+  assert.ok(seen.preFix)
+  assert.doesNotMatch(seen.preFix, /planConflict/)
+  const codeReview = {}
+  await hooked(only1('C1'), (p, o) => { if (o.label === 'review:C1#1') codeReview.p = p })
+  assert.doesNotMatch(codeReview.p, /Check each entry's Acceptance line/)
 })

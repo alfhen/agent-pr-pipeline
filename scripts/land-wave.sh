@@ -71,6 +71,7 @@ for arg in "$@"; do
   pr=${arg%%:*}; rest=${arg#*:}; sha=${rest%%:*}; suffix=auto_none
   [ "$rest" != "$sha" ] && suffix=${rest#*:}
   [ "$pr" != "$arg" ] && [ -n "$sha" ] && { [ "$suffix" = auto_none ] || [ "$suffix" = auto ]; } || { echo "need <pr>:<sha> or <pr>:<sha>:auto, got $arg"; exit 2; }
+  [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "need the full 40-character commit id in $arg: a short id cannot match the PR head. Use the land value from the workflow result as it is."; exit 2; }
   auto=""; [ "$suffix" = auto ] && auto=--auto
   wait_ci
   for _ in $(seq 1 "$mtries"); do

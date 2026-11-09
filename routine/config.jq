@@ -11,7 +11,7 @@ def int($lo; $hi): type == "number" and . == floor and . >= $lo and . <= $hi;
 def login: type == "string" and test("^[A-Za-z0-9][A-Za-z0-9-]*(\\[bot\\])?\\z");
 def repo: type == "string" and test("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\\z");
 def refusedWave: ["repo", "tmp", "pluginRoot", "agentPrefix", "prs", "plan", "feedback", "feedbackRepo", "resumeFromRunId", "cleanup"];
-def allowedWave: ["goals", "checks", "e2ePattern", "e2eCommand", "docs", "docsBuild", "bots", "botWaitMinutes", "architecture", "spec", "context", "skills", "steps", "qa", "maxRounds"];
+def allowedWave: ["goals", "checks", "e2ePattern", "e2eCommand", "relatedTests", "docs", "docsBuild", "bots", "botWaitMinutes", "architecture", "spec", "context", "skills", "steps", "qa", "maxRounds"];
 def opt($k; $d): if has($k) and .[$k] != null then .[$k] else $d end;
 def uniq: reduce .[] as $x ([]; if index([$x]) == null then . + [$x] else . end);
 

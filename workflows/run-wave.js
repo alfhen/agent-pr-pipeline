@@ -34,6 +34,8 @@ const ARCH = A.architecture || SPEC
 const GOALS = A.goals
 const FAST_CHECKS = A.checks || ['pnpm install --frozen-lockfile', 'pnpm lint', 'pnpm typecheck', 'pnpm test']
 const E2E_PATTERN = A.e2ePattern || '\\.e2e\\.test\\.ts$'
+const RELATED_TESTS = A.relatedTests !== false
+const RELATED_MAX = 10
 const E2E_COMMAND = A.e2eCommand || 'pnpm exec vitest run {files}'
 const BOTS = A.bots || 'CodeRabbit (login coderabbitai) and Gitar (login contains "gitar")'
 const BOT_WAIT_MIN = A.botWaitMinutes || 20
@@ -200,7 +202,7 @@ const testOutcome = (pr, test) => {
   const findings = accMissing ? [{ severity: 'major', title: 'acceptance test did not run', detail: `The tester ran checks, but none is named ${JSON.stringify(acc.check || '')}, the acceptance test from the plan entry. Make sure it exists and runs.` }] : []
   const nothingRan = failed.length === 0 && passed.length === 0
   return {
-    failed, refused, nothingRan, findings,
+    failed, refused, nothingRan, findings, related: test.related,
     notRun: refused.map(c => `${c.name} (refused)`),
     pass: !nothingRan && failed.length === 0 && !accMissing,
   }
@@ -215,6 +217,7 @@ const historyRow = (round, outcome, blocking, conflicts) => ({
   round, testPass: outcome.pass, failingChecks: outcome.failed.map(c => c.name), blockersAndMajors: blocking.map(findingLine),
   ...(themesOf(blocking).length ? { themes: themesOf(blocking) } : {}),
   ...(outcome.notRun.length ? { notRun: outcome.notRun } : {}),
+  ...(outcome.related ? { relatedTests: outcome.related } : {}),
   ...(conflicts ? { severityConflicts: conflicts } : {}),
 })
 // Tracks QA scenarios by name across runs (see the QA states in the plan). A name that a run leaves out keeps its state, and an open
@@ -277,10 +280,21 @@ const call = async (role, pr, prompt, label, extra) => {
   agentCounts[r.agent] = (agentCounts[r.agent] || 0) + 1
   const skillStep = r.skills === undefined ? role : r.skills
   const step = r.reviewModel ? reviewStep(pr) : STEPS[r.model || role]
-  const out = await agent(skillStep ? withSkills(skillStep, pr, prompt, !!r.clone) : prompt, Object.assign(
+  const text = skillStep ? withSkills(skillStep, pr, prompt, !!r.clone) : prompt
+  const opts = Object.assign(
     { agentType: AGENT_PREFIX + r.agent, model: step.model, effort: step.effort, label, phase: r.phase },
     r.isolation ? { isolation: r.isolation } : {},
-    extra))
+    extra)
+  // An agent that dies on a transport or API error yields null or throws; a normal failure is an answer and is not retried.
+  const attempt = async (t) => { try { return { out: await agent(t, opts) } } catch (e) { return { err: e } } }
+  let got = await attempt(text)
+  if (got.err || got.out == null) {
+    log(`${label}: agent died (${got.err ? got.err.message : 'no result'}), retrying once`)
+    // A dead writer may have pushed or posted before it died; without this line the retry sees a finished branch and reports no change, which skips the check on that push.
+    got = await attempt(WRITERS.includes(role) ? `${text}\n\nRETRY: an earlier attempt of this task died and may have pushed commits or posted replies and comments. Read the branch and the existing threads and comments first. Do not repeat a reply or a comment. If the branch holds commits from that attempt, report changed or codeChanged as true for them. The dead attempt's worktree may still hold a local branch. If git refuses a checkout because a local branch is in use by another worktree, check out a new local name with the suffix -retry from the same origin ref (origin/HEAD if the branch is not on origin) and push with git push origin HEAD:<branch>.` : text)
+  }
+  if (got.err) throw got.err
+  const out = got.out
   if (pr && WRITERS.includes(role) && out && typeof out.worktree === 'string' && out.worktree.trim()) (worktreesOf[pr.id] = worktreesOf[pr.id] || new Set()).add(out.worktree.trim())
   return out
 }
@@ -308,6 +322,7 @@ const TEST = {
     pass: { type: 'boolean' }, headSha: { type: 'string' },
     checks: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, pass: { type: 'boolean' }, refused: { type: 'boolean' }, log: { type: 'string' } }, required: ['name', 'pass'] } },
     acceptance: { type: 'object', properties: { declared: { type: 'boolean' }, check: { type: 'string' } }, required: ['declared'] },
+    related: { type: 'object', properties: { files: { type: 'array', items: { type: 'string' } }, projects: { type: 'array', items: { type: 'string' } } } },
   },
   required: ['pass', 'checks'],
 }
@@ -478,7 +493,7 @@ const LANDFIX = {
 const FIX = {
   type: 'object',
   properties: {
-    summary: { type: 'string' }, worktree: { type: 'string' }, changed: { type: 'boolean' },
+    summary: { type: 'string' }, worktree: { type: 'string' }, changed: { type: 'boolean' }, planConflict: { type: 'string' },
     sameAs: { type: 'array', items: { type: 'array', items: { type: 'number' } } },
     siblings: {
       type: 'array',
@@ -534,19 +549,21 @@ Return pushed, branch, headSha, a short summary, whether the acceptance test pas
 
 ${prBlock(pr)}`
 
+const relatedStep = RELATED_TESTS ? `3. Then run the e2e and docs test files that import or name the modules the PR touches and are not in that list. Find them with a search (\`git grep -l -E\` for each touched module's file name and exported names, over every tracked test file in the repo, such as \`*.test.*\` and \`*.spec.*\` files in any folder, and the paths the test config's projects include, docs folders too). Run at most ${RELATED_MAX}, the files that import a touched module directly first, and name the files you left out in the check, because CI runs them. Never run the whole suite. For each file, read the repo's test config and package scripts to find the command and test project that own it (for example \`--project <name>\` in a vitest workspace), also when that project is left out of the default test command, and name the command in the check. Do not use \`${E2E_COMMAND}\` for a file outside its project. Report a file or project you could not select, or one the environment cannot run (for example a missing browser), as a check with \`refused\`: true, never as passed or failed. Name each extra file in the check, and say which test projects you ran.\n` : ''
 const testPrompt = (pr, round) => `${ctx(pr)}
 
 Task: test the branch from a clean clone.
 1. \`rm -rf ${TMP}/test-${pr.id}-r${round} && git clone --branch ${pr.branch} https://github.com/${REPO}.git ${TMP}/test-${pr.id}-r${round}\` and cd there.
 2. Run in order: ${fastText}. Then run ${ownE2e}.
-Return pass, headSha, one entry per check with the failing log excerpt (\`refused\`: true for a command that a permission check denied, so it did not run), and \`acceptance\`: \`declared\` is true when the entry has an Acceptance line that names a runnable test, and \`check\` is the name of the check that runs it.
+${relatedStep}Return pass, headSha, one entry per check with the failing log excerpt (\`refused\`: true for a command that a permission check denied, or for a file or project you could not run, so it did not run), \`acceptance\`: \`declared\` is true when the entry has an Acceptance line that names a runnable test, and \`check\` is the name of the check that runs it${RELATED_TESTS ? ', and `related`: the files you ran in step 3 and the test projects you ran them in (empty lists when the search found nothing)' : ''}.
 
 ${prBlock(pr)}`
 
-const reviewPrompt = (pr, round, history, siblings) => `${ctx(pr)}
+const reviewPrompt = (pr, round, history, siblings, stopOnConflict = false) => `${ctx(pr)}
 
 Task: review the branch against ${SPEC ? `${SPEC} and ` : ''}${ref(pr)}.
 Clone it: ${cloneTo(`review-${pr.id}-r${round}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`.
+${pr.kind === 'plan' ? `Check each entry's Acceptance line against the plan's decisions: a line that says a test or file "passes unchanged" while a decision changes a limit, name or default that it hard-codes cannot be met. Report it as a blocker; the fix is to edit the plan.\n` : stopOnConflict ? `If a blocker cannot be fixed without breaking the Touches line or an Acceptance line of the entry, start its title with \`plan conflict:\`. The loop then stops for a person.` : ''}
 Return headSha, a summary, the findings (give each blocker and major a \`theme\`: reuse the name from an earlier round when it is the same weakness), the sweep (for each blocker and major: the sibling places you checked and those with the same weakness) and, when the plan entry or brief has an Invariants line, \`invariants\`: one row per invariant, with holds and evidence.
 
 Honour a threat model that the plan, the notes or the context states: do not report as a blocker or major an attack it rules out. When none is stated and your findings keep going around one check, say so in the summary.
@@ -590,12 +607,13 @@ const numbered = findings => {
   return [...groups].map(([file, items]) => `File ${file}:\n${JSON.stringify(items, null, 1)}`).join('\n')
 }
 // findings come from mergeDuplicates, so their order is the order of the numbers.
-const fixPrompt = (pr, outcome, findings, round, sweep) => `${ctx(pr)}
+const fixPrompt = (pr, outcome, findings, round, sweep, stopOnConflict = false) => `${ctx(pr)}
 
 Task: fix the branch after review round ${round}.
 1. You are in a fresh git worktree. ${freshBranch('fix', pr, round)}
 2. For each finding, list every sibling place with the same weakness and fix them in the same round. For a plan, list the other entries and states each edit touches.
-3. Checks: ${fastText}, and ${ownE2e}.
+${stopOnConflict && pr.kind !== 'plan' ? `3. If a fix would need a change outside the Touches line, or would break an Acceptance line (for example, editing a test the entry says passes unchanged), change nothing and return \`planConflict\`: one sentence that names the two plan statements that disagree.
+` : ''}${stopOnConflict && pr.kind !== 'plan' ? '4' : '3'}. Checks: ${fastText}, and ${ownE2e}.
 Return a short summary of each fix, any finding you disagree with and why, \`siblings\` (per finding number: the places you checked and the places you fixed), \`sameAs\` (groups of finding numbers that you fixed as one), changed (true when you pushed a commit, false when you pushed nothing), and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}
@@ -920,6 +938,11 @@ ${prBlock(pr)}`
 // Builds every land value. The gate and the merge-safety agent run on the sha that goes into the value, so
 // a new head (land fix, rerun) never inherits :auto from an earlier sha. Fail closed: only a normal first run, a clean gate and a safe verdict give :auto.
 async function landFor(pr, n, sha) {
+  if (/^[0-9a-f]{4,39}$/.test(sha)) {
+    const full = await readHead(pr, n, 'landfull')
+    if (full.head && full.head.startsWith(sha)) sha = full.head
+    else return { land: null, landMode: 'person', landWhy: `the checked commit ${sha} is short and the PR head ${full.head || 'cannot be read'} does not extend it: no land value`, landRefused: true }
+  }
   const pair = `${n}:${sha}`
   const person = (why, more) => ({ land: pair, landMode: 'person', landWhy: why, ...more })
   const rerunReason = pr.landFix ? 'a land fix run' : pr.resume ? 'a resume run after exhausted rounds' : pr.skipImpl ? 'a skipImpl rerun'
@@ -965,7 +988,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     const wantQa = qaRuns(pr) && (round === startRound || loopState.qaOpen.length > 0)
     const [test, review, arch, product, qa] = await parallel([
       () => call('test', pr, testPrompt(pr, round), `test:${pr.id}#${round}`, { schema: TEST }),
-      () => call('review', pr, reviewPrompt(pr, round, history, loopState.siblings), `review:${pr.id}#${round}`, { schema: REVIEW }),
+      () => call('review', pr, reviewPrompt(pr, round, history, loopState.siblings, true), `review:${pr.id}#${round}`, { schema: REVIEW }),
       () => wantArch ? call('arch', pr, archPrompt(pr, round, pr.kind === 'plan' ? loopState.reports : [], [...new Set(history.flatMap(h => h.themes || []))]), `arch:${pr.id}#${round}`, { schema: ARCHREV }) : Promise.resolve(null),
       () => wantProduct ? call('product', pr, productPrompt(pr, round), `product:${pr.id}#${round}`, { schema: PRODUCT }) : Promise.resolve(null),
       () => wantQa ? call('qa', pr, qaPrompt(pr, round, loopState.qaOpen, loopState.qaScenarios), `qa:${pr.id}#${round}`, { schema: QA }) : Promise.resolve(null),
@@ -1009,14 +1032,17 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     }
     const row = historyRow(round, outcome, blocking, split.conflicts)
     history.push(row)
+    const conflict = pr.kind !== 'plan' && blocking.find(f => /^plan conflict:/i.test(f.title))
+    if (conflict) return { signedOff: false, reason: 'needs human: plan conflict', conflict: `${conflict.title}: ${conflict.detail}` }
     log(`${pr.id} round ${round}: tests ${outcome.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (outcome.pass && blocking.length === 0) return { signedOff: true, headSha: test.headSha || review.headSha }
     const repeated = themesOf(blocking).filter(t => loopState.themes.includes(normTitle(t)))
     loopState.themes = themesOf(blocking).map(normTitle)
     if (repeated.length) return { signedOff: false, reason: 'needs human: scope', lastFindings: blocking, escalation: scopeEscalation(repeated) }
     if (round === startRound + max - 1) return { signedOff: false, reason: exhausted('', max, max, cap), lastFindings: blocking, lastTest: test }
-    const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, round, review.sweep), `fix:${pr.id}#${round}`, { schema: FIX })
+    const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, round, review.sweep, true), `fix:${pr.id}#${round}`, { schema: FIX })
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
+    if (pr.kind !== 'plan' && fix && fix.planConflict) return { signedOff: false, reason: 'needs human: plan conflict', conflict: fix.planConflict }
     if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
     loopState.siblings = labelSiblings(fix && fix.siblings, blocking)
     loopState.fixed = !fix || fix.changed !== false
@@ -1369,6 +1395,7 @@ async function runPRSteps(input) {
     const sync = await syncUntested(pr, n, null)
     if (!sync.ok) return stopped(sync.reason, { headSha: b.headSha, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     const landing = await landFor(pr, n, b.headSha)
+    if (landing.landRefused) return stopped(landing.landWhy, { headSha: b.headSha, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     return {
       id: pr.id, prNumber: n, ready: true, headSha: b.headSha, ...landing, untested: untestedOf(pr), notes: r.notes,
       approvedBy: b.wait.approvedBy || [], botNotes: b.wait.notes, codeChangedByBots: !!(b.answer && b.answer.codeChanged),
@@ -1393,7 +1420,7 @@ async function runPRSteps(input) {
   }
   const loopState = { fixed: false, themes: resumeThemes(history), archOpen: false, siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
   let loop = await reviewLoop(pr, history.length + 1, history, minors, loopState)
-  if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: loopState.reports, product: loopState.product, ...rerunFix() }
+  if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, conflict: loop.conflict, architecture: loopState.reports, product: loopState.product, ...rerunFix() }
 
   let pass = { fixed: [], report: null }
   if (minorPassRuns(pr)) {
@@ -1433,6 +1460,7 @@ async function runPRSteps(input) {
   const sync = await syncUntested(pr, n, openedUntested)
   if (!sync.ok) return { id: pr.id, ready: false, reason: sync.reason, history, prNumber: n, headSha, untested: untestedOf(pr), ...rerunFix() }
   const landing = await landFor(pr, n, headSha)
+  if (landing.landRefused) return { id: pr.id, ready: false, reason: landing.landWhy, history, prNumber: n, headSha, untested: untestedOf(pr), ...rerunFix() }
   return {
     id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl, headSha,
     ...landing, untested: untestedOf(pr),

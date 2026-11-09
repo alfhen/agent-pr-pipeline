@@ -183,3 +183,20 @@ test('the role files carry the same rules', () => {
   assert.match(read('reviewer'), /`theme`/)
   assert.match(read('fixer'), /decided against/)
 })
+
+test('the plan review checks each Acceptance line against the plan decisions and can stop for a plan conflict', () => {
+  assert.match(src, /Check each entry's Acceptance line against the plan's decisions/)
+  assert.match(src, /start its title with \\`plan conflict:\\`/)
+  assert.match(src, /return \\`planConflict\\`/)
+  assert.match(src, /stopOnConflict && pr.kind !== 'plan'/)
+})
+
+test('the test prompt runs the related e2e and docs files and names the projects', () => {
+  assert.match(src, /e2e and docs test files that import or name the modules the PR touches/)
+  assert.match(src, /find the command and test project that own it/)
+  assert.match(src, /Run at most \$\{RELATED_MAX\}/)
+  assert.match(src, /Report a file or project you could not select/)
+  assert.match(src, /over every tracked test file in the repo/)
+  assert.match(src, /RELATED_TESTS = A\.relatedTests !== false/)
+  assert.match(src, /say which test projects you ran/)
+})
