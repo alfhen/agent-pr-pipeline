@@ -1384,7 +1384,7 @@ async function runPRSteps(input) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl }
   }
-  const loopState = { fixed: false, themes: [], archOpen: false, siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
+  const loopState = { fixed: false, themes: ((history[history.length - 1] || {}).themes || []).map(normTitle), archOpen: false, siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
   let loop = await reviewLoop(pr, history.length + 1, history, minors, loopState)
   if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: loopState.reports, product: loopState.product, ...rerunFix() }
 

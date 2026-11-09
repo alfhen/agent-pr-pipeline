@@ -1594,6 +1594,11 @@ await check('scope: an architecture major stays open when the fixer pushes nothi
   assert.equal(x.C1.ready, false)
   assert.equal(x.C1.reason, 'needs human: scope')
 })
+await check('scope: a theme from the last resumed history row counts as the previous round', async () => {
+  const x = await hooked([{ id: 'C1', title: 't', branch: 'b1', resume: { history: [{ round: 1, themes: ['bypass of the path check'] }], minors: [], findings: [] } }], (p, o) => o.label === 'review:C1#2' ? reviewOf([f('major', 'again', { theme: 'Bypass of the path check' })]) : undefined)
+  assert.equal(x.C1.reason, 'needs human: scope')
+  assert.ok(!calls.some(c => c.label === 'fix:C1#2'))
+})
 await check('duplicates: one finding from the reviewer and the architecture reviewer is one line, one item and the highest severity', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'Wrong layer!', { file: 'a.js' })])
     : o.label === 'arch:C1#1' ? { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [f('blocker', 'wrong layer', { file: 'a.js' })] } : undefined)
