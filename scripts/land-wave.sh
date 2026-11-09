@@ -14,7 +14,7 @@ R=$1; shift
 [ -n "$1" ] || { echo "usage: land-wave.sh [--person] <owner/repo> <pr>:<sha>[:auto] [...]"; exit 2; }
 M="$(dirname "$0")/merge-pr.sh"
 tries=90; pause=30; mtries=6; mpause=10
-[ "$PIPELINE_TEST_FAST" = 1 ] && { tries=1; pause=0; mtries=1; mpause=0; }
+[ "$PIPELINE_TEST_FAST" = 1 ] && { tries=2; pause=0; mtries=1; mpause=0; }
 wait_ci() {
   for _ in $(seq 1 "$tries"); do
     pull=$(gh api "repos/$R/pulls/$pr") || { echo "cannot read #$pr"; exit 5; }
@@ -22,7 +22,7 @@ wait_ci() {
     runs=$(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100" | jq -s -c '[.[].check_runs[]]')
     sts=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100" | jq -s -c '[.[].statuses[]]')
     pending=$(jq -n --argjson r "$runs" --argjson s "${sts:-[]}" '[$r[] | select(.status != "completed")] + [$s[] | select(.state == "pending")] | length')
-    [ "$pending" = "0" ] && break
+    [ "$pending" = "0" ] && [ "$(jq length <<<"$runs")" != 0 ] && break
     sleep "$pause"
   done
 }

@@ -117,3 +117,16 @@ test("no check runs and no statuses: pending", () => {
   assert.equal(out.state, "pending")
   assert.equal(out.timedOut, true)
 })
+
+test('a green status on the first poll with no check runs is not success yet', () => {
+  const r = run(setup({ runs: [[], [{ name: 'ci', status: 'in_progress', conclusion: null }]], statuses: [{ context: 'ext/ci', state: 'success' }] }), '2')
+  const out = JSON.parse(r.stdout)
+  assert.equal(out.state, 'pending')
+  assert.equal(out.timedOut, true)
+})
+
+test('a statuses-only head is accepted on a later poll even with one minute', () => {
+  const out = JSON.parse(run(setup({ runs: [], statuses: [{ context: 'ext/ci', state: 'success' }] }), '1').stdout)
+  assert.equal(out.state, 'success')
+  assert.equal(out.timedOut, false)
+})

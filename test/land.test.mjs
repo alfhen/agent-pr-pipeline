@@ -198,3 +198,9 @@ test('gate: routine/run.sh and routine/bin/gh are held by the repo gates', () =>
   assert.match(r.out, /routine\/bin\/gh/)
   assert.match(r.out, /routine\/run\.sh/)
 })
+
+test("land: a head with no check runs yet is waited for, then merges", () => {
+  const r = land(landSetup({ checks: [[], [], [], [passed("ci")]] }))
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /all merged/)
+})
