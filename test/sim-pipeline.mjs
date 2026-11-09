@@ -1713,6 +1713,13 @@ await check('untested: the same list with declared false signs off, and a passed
   assert.equal(on.C1.history.length, 1)
   assert.equal(on.C1.landMode, 'auto')
 })
+await check('tester: the test prompt asks for related e2e files and a report that names them signs off', async () => {
+  let prompt = ''
+  const x = await hooked(only1('C1'), (p, o) => { if (o.label !== 'test:C1#1') return; prompt = p; return { pass: true, headSha: 'sha-C1', checks: [chk('lint'), chk('e2e related: test/a.e2e.test.ts, docs/b.test.ts (projects: e2e, docs)')] } })
+  assert.match(prompt, /import or name the modules the PR touches/)
+  assert.equal(x.C1.history.length, 1)
+  assert.equal(fixCalls('C1').length, 0)
+})
 await check('untested: a refused acceptance check starts no fix, signs off, is untested and gets no :auto', async () => {
   const x = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint'), { name: 'x', pass: false, refused: true }], acceptance: acc('x') }))
   assert.equal(x.C1.ready, true)

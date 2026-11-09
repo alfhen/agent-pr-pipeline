@@ -535,6 +535,7 @@ const testPrompt = (pr, round) => `${ctx(pr)}
 Task: test the branch from a clean clone.
 1. \`rm -rf ${TMP}/test-${pr.id}-r${round} && git clone --branch ${pr.branch} https://github.com/${REPO}.git ${TMP}/test-${pr.id}-r${round}\` and cd there.
 2. Run in order: ${fastText}. Then run ${ownE2e}.
+3. Then run the e2e and docs test files that import or name the modules the PR touches and are not in that list. Find them with a search (\`git grep -l -E\` for each touched module's file name and exported names, over the test folders). Run them with the same command, also when their test project is left out of the default test command. Name each extra file in the check, and say which test projects you ran.
 Return pass, headSha, one entry per check with the failing log excerpt (\`refused\`: true for a command that a permission check denied, so it did not run), and \`acceptance\`: \`declared\` is true when the entry has an Acceptance line that names a runnable test, and \`check\` is the name of the check that runs it.
 
 ${prBlock(pr)}`

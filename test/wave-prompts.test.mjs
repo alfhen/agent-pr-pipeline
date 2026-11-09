@@ -155,3 +155,9 @@ test('a missing milestone has its own reason', () => {
 test('the opener rewrites the body of a reused PR', () => {
   assert.match(src, /use that PR, create none, and replace its body with the body described below: \\`gh api -X PATCH repos\/\$\{REPO\}\/pulls\/<number> -F body=@<file>\\`/)
 })
+
+test('the test prompt runs the related e2e and docs files and names the projects', () => {
+  assert.match(src, /e2e and docs test files that import or name the modules the PR touches/)
+  assert.match(src, /also when their test project is left out of the default test command/)
+  assert.match(src, /say which test projects you ran/)
+})
