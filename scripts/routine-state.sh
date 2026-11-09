@@ -588,7 +588,7 @@ put_triaged() {
     | withcut($w)
     | if .decision == "build" and (.size == "L" or .risk == "high") then . + {decision: "plan", triagerDecision: "build"} else . end')
   final=$(jq -r .decision <<<"$rec")
-  # The labels go first: a failure after them leaves an issue that triage lists again, never one that no step reads.
+  # The labels go first: a failure after them leaves an issue that triage lists again. Exception: a decline whose record write fails keeps `declined` and no record, and no step lists it.
   would triaged "$issue" "$final"
   tlabel=$(jq -r --arg t "$itype" '.typeLabels[$t]' <<<"$routine_cfg")
   case "$final" in
