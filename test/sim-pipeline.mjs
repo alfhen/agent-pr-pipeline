@@ -1432,6 +1432,16 @@ const only1 = id => PRS.filter(p => p.id === id)
 const f = (severity, title, extra = {}) => ({ severity, title, detail: 'd', ...extra })
 const reviewOf = (findings, extra = {}) => ({ summary: 's', findings, ...extra })
 const fixCalls = id => calls.filter(c => c.label.startsWith(`fix:${id}#`))
+await check('a fix round that pushed nothing shows as fixChanged false in the evaluate prompt', async () => {
+  await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x')]) : o.label === 'fix:C1#1' ? { summary: 's', changed: false } : undefined)
+  const ev = calls.find(c => c.label === 'evaluate:wave')
+  assert.match(ev.prompt, /"fixChanged":false/)
+})
+await check('a decision rerun fixer that pushed nothing shows as rerunFixChanged false', async () => {
+  await hooked(only('C1', 'P1').map(p => p.id === 'C1' ? { ...p, skipImpl: true, architectureDecision: 'use A' } : p), (p, o) => /^fix:C1#0/.test(o.label) ? { summary: 's', changed: false } : undefined)
+  const ev = calls.find(c => c.label === 'evaluate:wave')
+  assert.match(ev.prompt, /"rerunFixChanged":false/)
+})
 await check('severity: a review major titled [minor] x is one major line, a conflict and a clean title for the fixer', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)
   assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [review]: x'])
