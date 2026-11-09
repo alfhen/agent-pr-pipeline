@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, existsSync, copyFileSync, chmodSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, existsSync, cpSync, copyFileSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -113,6 +113,20 @@ test('release: a workflow_dispatch input named release or tags, or a similar wor
   const dispatch = name => `on:\n  workflow_dispatch:\n    inputs:\n      ${name}:\n        description: x\njobs:\n  x:\n    runs-on: ubuntu-latest\n`
   for (const workflow of [dispatch('release'), dispatch('tags'), 'on: [push, prerelease]\n', 'on:\n  push:\n    branches: [main]\n  pull_request:\n    tags: [x]\n']) {
     refused(release(setup({ workflow })), /MISSING: no workflow has a release or tag trigger/)
+  }
+})
+
+test('release: a comment or a nested key on the on: line is not a trigger', () => {
+  const lines = ['on: workflow_dispatch # add release later', 'on: [push] # release', 'on: { workflow_dispatch: { inputs: { release: { description: x } } } }', 'on: { push: { branches: [release] } }', 'on: { push: release }']
+  for (const on of lines) {
+    refused(release(setup({ workflow: `${on}\njobs:\n  x:\n    runs-on: ubuntu-latest\n` })), /MISSING: no workflow has a release or tag trigger/)
+  }
+})
+
+test('release: a first-level release key with a comment still counts', () => {
+  for (const on of ['on: [push, release] # ok', 'on: { release: { types: [published] } } # ok', 'on: release # ok']) {
+    const r = release(setup({ workflow: `${on}\njobs:\n  x:\n    runs-on: ubuntu-latest\n` }), '--dry-run')
+    assert.equal(r.code, 0, `${on}\n${r.out}`)
   }
 })
 
@@ -293,6 +307,20 @@ test('release: the plugin repo with a changed, added or missing shipped file sto
   const r = releasePlugin(s)
   assert.match(r.out, /MANIFEST missing scripts\/gone\.sh/)
   assert.deepEqual(writes(r), [])
+})
+
+test('release: a plugin manifest with no usable repository stops and makes no release', () => {
+  const s = pluginSetup()
+  const copy = mkdtempSync(join(tmpdir(), 'release-copy-'))
+  cpSync(join(root, 'scripts'), join(copy, 'scripts'), { recursive: true })
+  mkdirSync(join(copy, '.claude-plugin'))
+  writeFileSync(join(copy, '.claude-plugin/plugin.json'), '{}')
+  const env = { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log }
+  const r = spawnSync('bash', [join(copy, 'scripts/release.sh'), 'alfhen/agent-pr-pipeline', '0.3.0'], { env, encoding: 'utf8' })
+  assert.equal(r.status, 1, r.stdout + r.stderr)
+  assert.match(r.stdout, /cannot read the plugin repo/)
+  const log = existsSync(s.log) ? readFileSync(s.log, 'utf8') : ''
+  assert.doesNotMatch(log, /^POST /m)
 })
 
 test('release: the plugin repo without a files.txt stops and makes no release', () => {

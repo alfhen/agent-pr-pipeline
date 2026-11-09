@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, chmodSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -123,6 +123,19 @@ test('a green status on the first poll with no check runs is not success yet', (
   const out = JSON.parse(r.stdout)
   assert.equal(out.state, 'pending')
   assert.equal(out.timedOut, true)
+})
+
+test('a head that moves to one with no check runs and a green status is not success on its first poll', () => {
+  const B = 'a'.repeat(40)
+  const s = setup({ runs: [[{ name: 'ci', status: 'in_progress', conclusion: null }]] })
+  put(s.fx, `${P}__pulls__7.call1.json`, { head: { sha: HEAD } })
+  put(s.fx, `${P}__pulls__7.call2.json`, { head: { sha: B } })
+  put(s.fx, `${P}__commits__${B}__check-runs.json`, { check_runs: [] })
+  put(s.fx, `${P}__commits__${B}__status.json`, { statuses: [{ context: 'ext/ci', state: 'success' }] })
+  const out = JSON.parse(run(s, '2').stdout)
+  assert.equal(out.head, B)
+  assert.equal(out.state, 'success')
+  assert.equal(readFileSync(join(s.fx, `${P}__pulls__7.count`), 'utf8').trim(), '3')
 })
 
 test('a statuses-only head is accepted on a later poll even with one minute', () => {
