@@ -238,3 +238,26 @@ test('get --clear empties a brief-* folder and refuses any other folder', () => 
   assert.equal(bad.status, 64)
   assert.ok(existsSync(keep))
 })
+
+test('a stored brief that ends with a newline is read, kept and replaced like one without', () => {
+  for (const fixture of ['footer-newline', 'pipeline-newline']) {
+    const g = run(fixture)
+    assert.equal(g.status, 0, fixture + g.stderr)
+    assert.equal(g.stdout.trim(), ENTRY)
+    const same = run(fixture, 'put')
+    assert.equal(same.status, 0, fixture + same.stderr)
+    assert.equal(same.calls.filter(l => !l.startsWith('GET ')).length, 0, fixture)
+    const replaced = run(fixture, 'put', [], undefined, undefined, NEW)
+    assert.equal(replaced.status, 0, fixture + replaced.stderr)
+    assert.equal(replaced.calls.filter(l => l.startsWith('PATCH /repos/o/r/issues/comments/2 ')).length, 1, fixture)
+    assert.ok(replaced.calls.some(l => l.startsWith(`PATCH /repos/o/r/issues/comments/2 body=${markerOf(NEW)}`)), fixture)
+    assert.equal(replaced.posts.length, 0)
+  }
+})
+
+test('put with the same text but a wrong marker sum is edited: exit 4, nothing written', () => {
+  assert.equal(run('pipeline-badsum').status, 4)
+  const r = run('pipeline-badsum', 'put')
+  assert.equal(r.status, 4)
+  assert.equal(r.calls.filter(l => !l.startsWith('GET ')).length, 0)
+})

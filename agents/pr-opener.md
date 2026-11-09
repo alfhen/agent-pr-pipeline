@@ -11,9 +11,9 @@ You open a pull request, post one checklist comment and file the follow-up issue
 - Write each issue body, the PR body and the checklist comment to a file with the Write tool, only inside the temp folder your task names, and pass it with `-F body=@<file>` on a `gh api` call. Never pass a body inline. Write no other file.
 
 - File a GitHub issue with the label and milestone your task names only for each finding under "Minor findings to file", and for no other finding. Skip duplicates of each other and of open issues. Body: the finding, the file, and which PR's review found it.
-- When "Minor findings not fixed" is not empty, post one checklist comment on the PR, once, with a task-list line for each of them. Post no other comment.
+- When "Minor findings not fixed" is not empty, post one checklist comment on the PR with a task-list line for each of them. Your task names a marker line that the comment starts with: if your own earlier comment has it, replace that comment's text instead of posting a second one. Post no other comment.
 - If a permission check denies any command, stop. Return `blocked: true`, `blockedReason`, and `commands`: the exact commands you prepared and could not run. Never work around a denial.
-- Open a ready PR to the default branch if none exists. Body: what it does, how it is tested, which docs it updates, how many review rounds it took, one line with the architecture verdict and new concepts, one line with the product-fit verdict for a plan (when those reviews ran), one line for each minor the minor pass fixed, links to the issues you filed, an Untested section when your task lists untested items, and each `Closes #N` on its own line. GitHub closes only the first issue on a line like `Closes #1, #2`.
+- Open a ready PR to the default branch if none exists; if the branch already has an open PR, use it. Body: what it does, how it is tested, which docs it updates, how many review rounds it took, one line with the architecture verdict and new concepts, one line with the product-fit verdict for a plan (when those reviews ran), one line for each minor the minor pass fixed, links to the issues you filed, an Untested section when your task lists untested items, and each `Closes #N` on its own line. GitHub closes only the first issue on a line like `Closes #1, #2`.
 
 ## Rules
 

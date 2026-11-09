@@ -13,24 +13,40 @@ person=""
 R=$1; shift
 [ -n "$1" ] || { echo "usage: land-wave.sh [--person] <owner/repo> <pr>:<sha>[:auto] [...]"; exit 2; }
 M="$(dirname "$0")/merge-pr.sh"
-tries=90; pause=30; mtries=6; mpause=10
-[ "$PIPELINE_TEST_FAST" = 1 ] && { tries=3; pause=0; mtries=1; mpause=0; }
+tries=90; pause=30; mtries=6; mpause=10; rtries=6
+[ "$PIPELINE_TEST_FAST" = 1 ] && { tries=3; pause=0; mtries=1; mpause=0; rtries=3; }
+# Trimmed to the fields read below: one jq argument is limited to 128 KiB on Linux, and a full check run is several KB.
+fetch_checks() {
+  runs=$(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100" | jq -s -c '[.[].check_runs[] | {name, status, conclusion, details_url}]')
+  sts=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100" | jq -s -c '[.[].statuses[] | {context, state}]')
+}
 wait_ci() {
   for _ in $(seq 1 "$tries"); do
     pull=$(gh api "repos/$R/pulls/$pr") || { echo "cannot read #$pr"; exit 5; }
     head=$(jq -r .head.sha <<<"$pull")
-    runs=$(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100" | jq -s -c '[.[].check_runs[]]')
-    sts=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100" | jq -s -c '[.[].statuses[]]')
+    [ "$head" != "$sha" ] && break
+    fetch_checks
     pending=$(jq -n --argjson r "$runs" --argjson s "${sts:-[]}" '[$r[] | select(.status != "completed")] + [$s[] | select(.state == "pending")] | length')
     [ "$(jq length <<<"$runs")" = 0 ] && pending=$((pending + 1))
     [ "$pending" = "0" ] && break
+    [ "$(jq '[.[] | select(.state | IN("failure", "error"))] | length' <<<"${sts:-[]}")" != 0 ] && break
     sleep "$pause"
   done
 }
 read_failing() {
-  runs=$(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100" | jq -s -c '[.[].check_runs[]]')
-  sts=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100" | jq -s -c '[.[].statuses[]]')
+  fetch_checks
   failing=$(jq -n -r --argjson r "$runs" --argjson s "${sts:-[]}" '[$r[] | select(.conclusion | IN("failure", "timed_out", "action_required")) | .name] + [$s[] | select(.state | IN("failure", "error")) | .context] | join(",")')
+}
+# Waits until a rerun of run $1 shows: GitHub lists the new attempt a moment after the POST, and until then
+# wait_ci would see the old failure.
+wait_rerun_started() {
+  for _ in $(seq 1 "$rtries"); do
+    if st=$(gh api "repos/$R/actions/runs/$1" --jq '"\(.run_attempt) \(.status)"' 2>/dev/null); then
+      { [ "${st%% *}" != 1 ] || [ "${st#* }" != completed ]; } && return 0
+    fi
+    sleep "$((pause / 3))"
+  done
+  return 1
 }
 # Prints the run ids to rerun when every failing check is a known flake, else nothing. The list is read from
 # the default branch, never from the PR head, so a PR cannot add its own failing check to it. Any doubt means no rerun.
@@ -79,7 +95,7 @@ for arg in "$@"; do
       done
       if [ "$rerun_ok" = 1 ]; then
         echo "RERUN #$pr: known flake(s) [$failing], failed jobs rerun once"
-        sleep "$((pause / 3))"
+        for id in $ids; do wait_rerun_started "$id" || { echo "STOP #$pr: the rerun of run $id did not show a new attempt"; exit 5; }; done
         wait_ci
         if [ "$head" != "$sha" ]; then echo "HEAD MOVED #$pr: checked ${sha:0:7}, now ${head:0:7}. Check the new head before merging."; exit 6; fi
         read_failing
