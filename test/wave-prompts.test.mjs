@@ -161,6 +161,7 @@ test('the test prompt runs the related e2e and docs files and names the projects
   assert.match(src, /find the command and test project that own it/)
   assert.match(src, /Run at most \$\{RELATED_MAX\}/)
   assert.match(src, /Report a file or project you could not select/)
+  assert.match(src, /over every tracked test file in the repo/)
   assert.match(src, /RELATED_TESTS = A\.relatedTests !== false/)
   assert.match(src, /say which test projects you ran/)
 })
