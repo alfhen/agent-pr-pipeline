@@ -1519,18 +1519,22 @@ await check('severity: a QA finding titled (Minor) x is one major line and a con
   assert.deepEqual(x.Q1.history[0].blockersAndMajors, ['major [qa]: x'])
   assert.equal(x.Q1.history[0].severityConflicts, 1)
 })
-await check('severity: an architecture minor goes to the minors and starts no fix of its own', async () => {
+await check('severity: an architecture minor goes to the minors and does not keep the architecture review open', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'y')])
+    : o.label === 'fix:C1#1' ? { summary: 's', changed: false, headSha: 'abc' }
     : o.label === 'arch:C1#1' ? { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [f('minor', '[major] naming')] } : undefined)
   assert.ok(calls.some(c => c.label === 'review:C1#2'))
   assert.match(calls.find(c => c.label === 'open:C1').prompt, /"title": "naming"/)
+  assert.ok(!calls.some(c => c.label === 'arch:C1#2'))
   assert.equal(x.C1.history[0].severityConflicts, 1)
 })
-await check('severity: a fits architecture report keeps its minors and starts no fix of its own', async () => {
+await check('severity: a fits architecture report keeps its minors and does not keep the architecture review open', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'y')])
+    : o.label === 'fix:C1#1' ? { summary: 's', changed: false, headSha: 'abc' }
     : o.label === 'arch:C1#1' ? { verdict: 'fits', summary: 's', newConcepts: [], findings: [f('minor', 'naming')] } : undefined)
   assert.ok(calls.some(c => c.label === 'review:C1#2'))
   assert.match(calls.find(c => c.label === 'open:C1').prompt, /"title": "naming"/)
+  assert.ok(!calls.some(c => c.label === 'arch:C1#2'))
 })
 await check('severity: a review finding goes through splitFindings, so a severity word in the title is stripped', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)
@@ -1569,6 +1573,12 @@ await check('scope: majors on one theme in two rounds running stop the PR with n
   assert.match(x.C1.escalation.question, /threat model/)
   assert.deepEqual(x.C1.history.map(h => h.themes), [['bypass of the path check'], ['Bypass of the path check']])
   assert.ok(!calls.some(c => c.label === 'fix:C1#2'))
+})
+await check('scope: the rendered review prompt carries the threat-model sentence and the theme instruction', async () => {
+  await hooked(only1('C1'), () => undefined)
+  const prompt = calls.find(c => c.label === 'review:C1#1').prompt
+  assert.match(prompt, /Honour a threat model that the plan, the notes or the context states/)
+  assert.match(prompt, /give each blocker and major a `theme`: reuse the name from an earlier round/)
 })
 await check('scope: majors on different themes in two rounds do not stop the PR', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'a', { theme: 'one' })])
