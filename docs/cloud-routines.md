@@ -205,7 +205,7 @@ Records are advisory. A forged outbox can still put redacted text into a public 
 
 ## Self-modification
 
-At every stage the merge script refuses a PR that touches a gated path or a floor path. The floor always holds `.github/**`, `.claude/**`, `AGENTS.md`, `CLAUDE.md` and `docs/goals.md`. In this repo it also holds `agents/**`, `workflows/**`, `scripts/**`, `skills/**`, `routine/**`, `templates/**` and `.claude-plugin/**`. No setting removes a floor path.
+At every stage the merge script refuses a PR that touches a gated path or a floor path. The floor always holds `.github/**`, `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md` and `docs/goals.md`, and any `.claude` folder at any depth. It matches the file names `AGENTS.md`, `CLAUDE.md` and `CLAUDE.local.md` at any depth and in any letter case. If the gate cannot read the plugin's own repository from its manifest (`.claude-plugin/plugin.json`), it stops with `GATE ERROR` and the PR is not merged. It does this in every repo. In this repo it also holds `agents/**`, `workflows/**`, `scripts/**`, `skills/**`, `routine/**`, `templates/**` and `.claude-plugin/**`. No setting removes a floor path.
 
 ## What holds and what does not
 
