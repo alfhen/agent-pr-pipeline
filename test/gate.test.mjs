@@ -440,8 +440,27 @@ test('floor: other repos get only the base floor, and src files pass', () => {
   assert.match(r.out, /not gated/)
 })
 
-test('floor: a manifest with no repository adds no plugin paths', () => {
-  assert.equal(floorRun([{ filename: 'scripts/x.sh' }], { repo: 'alfhen/agent-pr-pipeline', repository: null }).code, 0)
+test('floor: nested .claude folders and CLAUDE.local.md are gated', () => {
+  for (const f of ['pkg/.claude/settings.json', 'a/b/.claude/x', 'src/CLAUDE.local.md']) {
+    const r = floorRun([{ filename: f }])
+    assert.equal(r.code, 1, f)
+    assert.match(r.out, /floor:/)
+  }
+  assert.equal(floorRun([{ filename: 'src/not.claude/x' }]).code, 0)
+})
+
+test('floor: CLAUDE.md and AGENTS.md match in any letter case', () => {
+  for (const f of ['claude.md', 'src/Agents.MD', '.CLAUDE/x', '.Github/x']) {
+    const r = floorRun([{ filename: f }])
+    assert.equal(r.code, 1, f)
+    assert.match(r.out, /floor:/)
+  }
+})
+
+test('floor: a manifest with no repository is a gate error', () => {
+  const r = floorRun([{ filename: 'src/x.ts' }], { repo: 'alfhen/agent-pr-pipeline', repository: null })
+  assert.equal(r.code, 3)
+  assert.match(r.out, /GATE ERROR #7: cannot read the plugin repository/)
 })
 
 test('floor: a settings hit is reported without the floor prefix', () => {
