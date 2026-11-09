@@ -127,6 +127,22 @@ test('a merge that sets a file only the default branch changed back to the base 
   assert.match(r.stdout, /main base edit/)
 })
 
+test('a merge that sets a file only the feature branch changed back to the base version prints the dropped change', () => {
+  const t = build()
+  const before = commit(t.work, 'base.txt', 'feature base edit\n', 'feature edits base')
+  push(t)
+  must(t.work, 'fetch', '-q', 'origin')
+  must(t.work, 'merge', '--no-commit', '--no-ff', '-X', 'theirs', 'origin/main')
+  writeFileSync(join(t.work, 'base.txt'), 'base\n')
+  must(t.work, 'add', '.'); must(t.work, 'commit', '-qm', 'merge main')
+  const after = must(t.work, 'rev-parse', 'HEAD')
+  push(t)
+  const r = run(t, before, after)
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stdout, /took one side of base\.txt/)
+  assert.match(r.stdout, /feature base edit/)
+})
+
 test('calls that overlap in the same tmp dir all succeed', async () => {
   const t = build(); push(t)
   const after = commit(t.work, 'fix.txt', 'the fix\n', 'fix a test')
