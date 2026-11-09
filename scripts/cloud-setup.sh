@@ -53,11 +53,29 @@ repo=${1:-}
 pin=none
 AGENT_FN_HERE
 
+# Prints why release <tag> fails its file check and returns 1; prints nothing when every file matches its files.txt.
+check_release() {
+  local tag=$1 root=$ROOT/$1 manifest paths hashes changed p
+  manifest=$root/.claude-plugin/files.txt
+  [ -f "$root/.complete" ] || { echo "release $tag is not installed"; return 1; }
+  [ -s "$manifest" ] || { echo "files.txt of $tag is missing"; return 1; }
+  grep -qvE '^[0-9a-f]{40} [A-Za-z0-9._/-]+$' "$manifest" && { echo "files.txt of $tag has a bad line"; return 1; }
+  grep -qE '(^| |/)\.\.(/|$)|^/| /' "$manifest" && { echo "files.txt of $tag has a path outside the release"; return 1; }
+  paths=$(awk '{ print $2 }' "$manifest")
+  for p in $paths; do [ -f "$root/$p" ] || { echo "file missing from $tag: $p"; return 1; }; done
+  hashes=$(cd "$root" && git hash-object --stdin-paths <<<"$paths") || { echo "cannot hash the files of $tag"; return 1; }
+  [ "$(wc -l <<<"$hashes")" -eq "$(wc -l <"$manifest")" ] || { echo "cannot hash the files of $tag"; return 1; }
+  changed=$(paste -d' ' <(awk '{ print $1 }' "$manifest") <(echo "$hashes") <(echo "$paths") | awk '$1 != $2 { print $3; exit }')
+  [ -z "$changed" ] || { echo "file changed in $tag: $changed"; return 1; }
+}
+
 # The pin is never offered as ROOT: a stop can be its failed file check, and the prompt runs scripts from ROOT.
+# Another release is offered only when it passes the same check, so ROOT is never a tree nobody checked.
 highest() {
-  local d
+  local d t
   for d in "$ROOT"/v*; do
-    [ "${d##*/}" != "$pin" ] && [ -f "$d/.complete" ] && [[ "${d##*/}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "${d##*/}"
+    t=${d##*/}
+    [ "$t" != "$pin" ] && [[ "$t" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && check_release "$t" >/dev/null && echo "$t"
   done | sort -V | tail -1
 }
 stop() {
@@ -72,7 +90,7 @@ stop() {
 # The clone can lag the default branch; every later read uses origin/<branch>, so this runs before anything is printed.
 git fetch origin >/dev/null 2>&1 || stop "fetch failed"
 branch=$(gh api "repos/$repo" --jq .default_branch 2>/dev/null) && [ -n "$branch" ] || stop "cannot read the default branch of $repo"
-settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$repo/contents/.github/pipeline.json?ref=$branch" 2>/dev/null) \
+settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$repo/contents/.github/pipeline.json?ref=refs/heads/$branch" 2>/dev/null) \
   || stop "cannot read .github/pipeline.json of $repo"
 want=$(jq -r '.routine.pipelineVersion // ""' <<<"$settings" 2>/dev/null)
 [[ "$want" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || stop "routine.pipelineVersion is not a release tag"
@@ -81,16 +99,7 @@ sha=$(git rev-parse --verify -q "refs/remotes/origin/$branch^{commit}") || stop 
 
 root=$ROOT/$pin
 manifest=$root/.claude-plugin/files.txt
-[ -f "$root/.complete" ] || stop "release $pin is not installed"
-[ -s "$manifest" ] || stop "files.txt of $pin is missing"
-grep -qvE '^[0-9a-f]{40} [A-Za-z0-9._/-]+$' "$manifest" && stop "files.txt of $pin has a bad line"
-grep -qE '(^| |/)\.\.(/|$)|^/| /' "$manifest" && stop "files.txt of $pin has a path outside the release"
-paths=$(awk '{ print $2 }' "$manifest")
-for p in $paths; do [ -f "$root/$p" ] || stop "file missing from $pin: $p"; done
-hashes=$(cd "$root" && git hash-object --stdin-paths <<<"$paths") || stop "cannot hash the files of $pin"
-[ "$(wc -l <<<"$hashes")" -eq "$(wc -l <"$manifest")" ] || stop "cannot hash the files of $pin"
-changed=$(paste -d' ' <(awk '{ print $1 }' "$manifest") <(echo "$hashes") <(echo "$paths") | awk '$1 != $2 { print $3; exit }')
-[ -z "$changed" ] || stop "file changed in $pin: $changed"
+reason=$(check_release "$pin") || stop "$reason"
 
 prefix=apl-${pin//./-}-
 for p in $(awk '$2 ~ /^agents\/[^\/]+\.md$/ { print $2 }' "$manifest"); do
