@@ -404,8 +404,25 @@ await check('the evaluator runs once per wave, after the last PR, on sonnet/medi
   assert.match(ev[0].prompt, /"id":"C1"/)
   assert.match(ev[0].prompt, /repos\/o\/r\/pulls\/<n>\/files/)
 })
+await check('the evaluate prompt holds the cost criterion and the per-role agent counts', () => {
+  const ev = mainCalls.find(c => c.label === 'evaluate:wave')
+  assert.match(ev.prompt, /Judge token cost/)
+  assert.match(ev.prompt, /a round that pushed no change/)
+  const counts = JSON.parse(ev.prompt.match(/counted by the workflow\): (\{.*\})/)[1])
+  assert.ok(counts.implementer >= 1 && counts.reviewer >= 1)
+  const before = mainCalls.slice(0, mainCalls.indexOf(ev))
+  assert.equal(counts.implementer, before.filter(c => c.agentType === 'agent-pr-pipeline:implementer').length)
+})
+await check('the result has the agent count per role', () => {
+  const byType = {}
+  for (const c of mainCalls) byType[c.agentType.replace('agent-pr-pipeline:', '')] = (byType[c.agentType.replace('agent-pr-pipeline:', '')] || 0) + 1
+  const { 'pipeline-io': io, ...counted } = mainResult.agentCounts
+  delete byType['pipeline-io']
+  assert.ok(io > 0)
+  assert.deepEqual(counted, byType)
+})
 await check('the result has the shape { prs, feedback, denylist, source, feedbackRepo, cleanup }', () => {
-  assert.deepEqual(Object.keys(mainResult).sort(), ['cleanup', 'denylist', 'feedback', 'feedbackRepo', 'prs', 'source', 'warnings'])
+  assert.deepEqual(Object.keys(mainResult).sort(), ['agentCounts', 'cleanup', 'denylist', 'feedback', 'feedbackRepo', 'prs', 'source', 'warnings'])
   assert.equal(mainResult.source, 'o/r')
   assert.equal(mainResult.feedbackRepo, 'alfhen/agent-pr-pipeline')
   assert.ok(Array.isArray(mainResult.prs) && mainResult.prs.length === PRS.length)
@@ -466,7 +483,7 @@ await check('a failed evaluation gives no feedback and does not fail the wave', 
 })
 await check('a refused wave still gets an evaluation, with the refusals in prs', () => {
   assert.deepEqual(refusedResult.feedback, REDACTED)
-  assert.deepEqual(Object.keys(refusedResult).sort(), ['cleanup', 'denylist', 'feedback', 'feedbackRepo', 'prs', 'source', 'warnings'])
+  assert.deepEqual(Object.keys(refusedResult).sort(), ['agentCounts', 'cleanup', 'denylist', 'feedback', 'feedbackRepo', 'prs', 'source', 'warnings'])
   assert.ok(refusedResult.prs.every(x => x.refused))
   assert.match(refusedCalls.find(c => c.label === 'evaluate:wave').prompt, /"refused":true/)
 })
@@ -1434,6 +1451,35 @@ const only1 = id => PRS.filter(p => p.id === id)
 const f = (severity, title, extra = {}) => ({ severity, title, detail: 'd', ...extra })
 const reviewOf = (findings, extra = {}) => ({ summary: 's', findings, ...extra })
 const fixCalls = id => calls.filter(c => c.label.startsWith(`fix:${id}#`))
+await check('a fix round that pushed nothing shows as fixChanged false in the evaluate prompt', async () => {
+  await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x')]) : o.label === 'fix:C1#1' ? { summary: 's', changed: false } : undefined)
+  const ev = calls.find(c => c.label === 'evaluate:wave')
+  assert.match(ev.prompt, /"fixChanged":false/)
+})
+await check('a decision rerun fixer that pushed nothing shows as rerunFixChanged false', async () => {
+  await hooked(only('C1', 'P1').map(p => p.id === 'C1' ? { ...p, skipImpl: true, architectureDecision: 'use A' } : p), (p, o) => /^fix:C1#0/.test(o.label) ? { summary: 's', changed: false } : undefined)
+  const ev = calls.find(c => c.label === 'evaluate:wave')
+  assert.match(ev.prompt, /"rerunFixChanged":false/)
+})
+await check('a fixer that omits changed leaves fixChanged unset', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x')]) : o.label === 'fix:C1#1' ? { summary: 's' } : undefined)
+  assert.equal(x.C1.history[0].fixChanged, undefined)
+})
+await check('a bot-answer check fixer that omits changed leaves fixChanged unset', async () => {
+  const x = await hooked(only1('B1'), (p, o) => o.label === 'botreview:B1#1' ? reviewOf([f('major', 'x')]) : o.label === 'fix:B1#bots1' ? { summary: 's' } : undefined)
+  assert.ok(fixCalls('B1').some(c => c.label === 'fix:B1#bots1'))
+  assert.equal(x.B1.history.find(h => h.round === 'bots1').fixChanged, undefined)
+})
+await check('a decision rerun fixer that omits changed leaves rerunFixChanged unset', async () => {
+  const x = await hooked(only('C1').map(p => ({ ...p, skipImpl: true, architectureDecision: 'use A' })), (p, o) => /^fix:C1#0/.test(o.label) ? { summary: 's' } : o.label === 'open:C1' ? {} : undefined)
+  assert.equal(x.C1.reason, 'PR not opened')
+  assert.equal(x.C1.rerunFixChanged, undefined)
+})
+await check('a decision rerun that stops at open still reports rerunFixChanged', async () => {
+  const x = await hooked(only('C1').map(p => ({ ...p, skipImpl: true, architectureDecision: 'use A' })), (p, o) => /^fix:C1#0/.test(o.label) ? { summary: 's', changed: false } : o.label === 'open:C1' ? {} : undefined)
+  assert.equal(x.C1.reason, 'PR not opened')
+  assert.equal(x.C1.rerunFixChanged, false)
+})
 await check('severity: a review major titled [minor] x is one major line, a conflict and a clean title for the fixer', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)
   assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [review]: x'])

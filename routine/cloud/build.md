@@ -42,5 +42,6 @@ You are the build routine. `/tmp/apl-start.json` is written and the repo `<repo>
    6. Run `bash <pluginRoot>/scripts/wave-result.sh <output-file> /tmp/apl-<run>/result.json`. `<output-file>` is the file that the Workflow completion notice names. Never type or edit a result by hand. If Workflow gave no output file, or the script exits non-zero, stop and run no more command: a later run blocks the issue. The script prints one line: `<pr> <ready> <reasonCode>`.
    7. Run `bash <pluginRoot>/scripts/routine-state.sh <repo> put built <issue> '<run>' <pr> <ready> <reasonCode> /tmp/apl-<run>/result.json`, with the three values of that line as they are. When `<pr>` is `none`, the `put` stores the reason of the build in the record, and the next `block` step shows it on the issue.
    8. Run `bash <pluginRoot>/scripts/feedback-outbox.sh <repo> /tmp/apl-<run>/result.json --run <run>` and log its output.
+   9. If step 7 exited non-zero or printed `WOULD`, stop and run no more command. Otherwise run `bash <pluginRoot>/scripts/token-report.sh <output-file>` and log its output. Give it no transcript folder and no `--feedback`: the totals are enough here. If it exits non-zero, log that and go on.
 
 A run does the work of at most one `build` step. A `build` step after a build is not run.

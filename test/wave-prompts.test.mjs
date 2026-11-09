@@ -92,6 +92,13 @@ test('bot answer check reviews the whole PR on the new head', () => {
   assert.doesNotMatch(m[0], /Do not review the rest of the PR again/)
 })
 
+test('the evaluate prompt asks for a cost assessment and gets the per-role counts', () => {
+  assert.match(src, /Judge token cost as well as quality/)
+  assert.match(src, /Token numbers are not available here: do not guess them/)
+  assert.match(src, /evaluatePrompt\(prs, \{ \.\.\.agentCounts \}\)/)
+  assert.match(src, /result\.agentCounts = \{ \.\.\.agentCounts \}/)
+})
+
 test('the review-minor marker is built by one helper that the opener and the bot check share', () => {
   assert.match(src, /const foundInReview = pr => `Found in review of \$\{pr\.id\}\.`/)
   assert.equal(src.match(/Found in review of/g).length, 1)
