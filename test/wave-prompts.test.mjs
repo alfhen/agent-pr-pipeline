@@ -164,6 +164,10 @@ test('the review prompt honours a stated threat model and asks for a theme on ea
 test('the architecture prompt escalates a fixer commit against a decided item from round 2', () => {
   assert.match(src, /A fixer commit that adds what a decided item rejected, or removes what it keeps, is \\`escalate\\`, never \\`fits\\`/)
   assert.match(src, /\$\{round > 1 \? `The fixer has added commits/)
+  assert.match(src, /decisions anywhere in the plan \(the entry, Scope and Not in, Rules for every PR, Flagged concerns\)/)
+  for (const n of ['arch-reviewer', 'fixer']) {
+    assert.match(readFileSync(new URL(`../agents/${n}.md`, import.meta.url), 'utf8'), /Scope and Not in, Rules for every PR, Flagged concerns/)
+  }
 })
 
 test('a repeated theme stops the PR with needs human: scope', () => {

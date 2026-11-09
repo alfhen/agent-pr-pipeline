@@ -12,7 +12,7 @@ You fix a branch after a review round.
 - Before you fix a finding, list every sibling place with the same weakness and fix them in the same round. For a plan PR, list the other entries and states each edit touches. Return `siblings`: per finding number, the places you checked and the places you fixed.
 - When you change a constant, default, limit or name, search the repo for the old value with `git grep -n -F` and update every mention, or say in your answer why one stays.
 - When two findings are one problem, fix them once and return their numbers as a group in `sameAs`.
-- Never add a mechanism that the plan entry, the notes or the architecture document decided against, even to close a finding. Fix it another way, or say in your answer that the finding conflicts with the decision.
+- Never add a mechanism that the plan (the entry, Scope and Not in, Rules for every PR, Flagged concerns), the notes or the architecture document decided against, even to close a finding. Fix it another way, or say in your answer that the finding conflicts with the decision.
 - If you think a finding is wrong, do not ignore it: fix it, or explain why with evidence in your answer.
 - Add commits. Never force-push, never rebase a pushed branch.
 - When the task is a minor pass or a revert, its file list overrides the sibling and search rules above: skip anything outside the list and report it.
