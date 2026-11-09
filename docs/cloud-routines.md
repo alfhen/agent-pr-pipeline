@@ -102,7 +102,7 @@ The settings are the `routine` block of `.github/pipeline.json` on the default b
 | `trustedAuthors` | Logins whose issues triage reads at once. The maintainer is always in it. Never a bot. |
 | `triageFrom` | The first issue number triage looks at. Set it above the old backlog. |
 | `skipLabels` | Issues with one of these labels are not triaged. Default `review-minor`. `pipeline-routine` is always added. |
-| `typeLabels` | Maps `bug`, `feat`, `docs`, `chore` and `test` to the repo's label names. Each default is the type name. |
+| `typeLabels` | Maps `bug`, `feat`, `docs`, `chore` and `test` to the repo's label names. Each default is the type name. A value must not be one of the pipeline's own labels, like `ready-to-build` or `building`. |
 | `feedbackRepo`, `collectFrom` | Where feedback is filed, and which other repos the collect routine reads. |
 | `waveArgs` | Fixed `run-wave` choices for unattended runs. `goals` and `checks` are required. `repo`, `tmp`, `pluginRoot`, `agentPrefix`, `prs`, `plan`, `feedback`, `feedbackRepo`, `resumeFromRunId` and `cleanup` are refused. |
 | `limits` | Daily and per-run limits, below. |

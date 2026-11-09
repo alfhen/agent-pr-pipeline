@@ -7,7 +7,23 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const root = new URL('../', import.meta.url).pathname
-const GIT_ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' }
+for (const target of ['T01', '--all']) {
+  test(`clones prints KEPT when a folder cannot be deleted (${target})`, () => {
+    const t = build()
+    run(t, ['init', t.tmp])
+    mkdirs(t, 'test-T01-r1')
+    const locked = join(t.tmp, 'test-T01-r1', 'locked')
+    mkdirSync(locked); writeFileSync(join(locked, 'f'), 'x'); chmodSync(locked, 0o555)
+    try {
+      const r = run(t, ['clones', t.tmp, target])
+      assert.equal(r.status, 0)
+      assert.match(r.out, /^KEPT .*test-T01-r1 cannot delete$/m)
+      assert.doesNotMatch(r.out, /^REMOVED /m)
+    } finally { chmodSync(locked, 0o755) }
+  })
+}
+
+const GIT_ENV ={ ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' }
 const git = (cwd, ...args) => {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: GIT_ENV })
   return { status: r.status, out: r.stdout.trim() }
