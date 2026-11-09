@@ -1150,7 +1150,7 @@ async function checkNewCode(pr, { tag, label, role, what, reviewPrompt }, histor
     const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, `${tag}${round}`, review.sweep), `fix:${pr.id}#${tag}${round}`, { schema: FIX })
     siblings = labelSiblings(fix && fix.siblings, blocking)
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
-    row.fixChanged = !!(fix && fix.changed)
+    if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
   }
 }
 
@@ -1361,7 +1361,7 @@ async function runPRSteps(input) {
   const preFindings = mergeDuplicates(((pr.resume && pr.resume.findings) || []).concat(decisionFindings))
   if (preFindings.length) {
     const decisionFix = await call('fix', pr, fixPrompt(pr, null, preFindings, history.length), `fix:${pr.id}#${history.length}`, { schema: FIX })
-    rerunFixChanged = !!(decisionFix && decisionFix.changed)
+    if (decisionFix && typeof decisionFix.changed === 'boolean') rerunFixChanged = decisionFix.changed
   } else if (!pr.skipImpl && !pr.resume) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl }

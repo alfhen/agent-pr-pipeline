@@ -1447,6 +1447,16 @@ await check('a fixer that omits changed leaves fixChanged unset', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x')]) : o.label === 'fix:C1#1' ? { summary: 's' } : undefined)
   assert.equal(x.C1.history[0].fixChanged, undefined)
 })
+await check('a bot-answer check fixer that omits changed leaves fixChanged unset', async () => {
+  const x = await hooked(only1('B1'), (p, o) => o.label === 'botreview:B1#1' ? reviewOf([f('major', 'x')]) : o.label === 'fix:B1#bots1' ? { summary: 's' } : undefined)
+  assert.ok(fixCalls('B1').some(c => c.label === 'fix:B1#bots1'))
+  assert.equal(x.B1.history.find(h => h.round === 'bots1').fixChanged, undefined)
+})
+await check('a decision rerun fixer that omits changed leaves rerunFixChanged unset', async () => {
+  const x = await hooked(only('C1').map(p => ({ ...p, skipImpl: true, architectureDecision: 'use A' })), (p, o) => /^fix:C1#0/.test(o.label) ? { summary: 's' } : o.label === 'open:C1' ? {} : undefined)
+  assert.equal(x.C1.reason, 'PR not opened')
+  assert.equal(x.C1.rerunFixChanged, undefined)
+})
 await check('a decision rerun that stops at open still reports rerunFixChanged', async () => {
   const x = await hooked(only('C1').map(p => ({ ...p, skipImpl: true, architectureDecision: 'use A' })), (p, o) => /^fix:C1#0/.test(o.label) ? { summary: 's', changed: false } : o.label === 'open:C1' ? {} : undefined)
   assert.equal(x.C1.reason, 'PR not opened')
