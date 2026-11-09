@@ -156,6 +156,13 @@ test('the opener rewrites the body of a reused PR', () => {
   assert.match(src, /use that PR, create none, and replace its body with the body described below: \\`gh api -X PATCH repos\/\$\{REPO\}\/pulls\/<number> -F body=@<file>\\`/)
 })
 
+test('the plan review checks each Acceptance line against the plan decisions and can stop for a plan conflict', () => {
+  assert.match(src, /Check each entry's Acceptance line against the plan's decisions/)
+  assert.match(src, /start its title with \\`plan conflict:\\`/)
+  assert.match(src, /return \\`planConflict\\`/)
+  assert.match(src, /stopOnConflict && pr.kind !== 'plan'/)
+})
+
 test('the test prompt runs the related e2e and docs files and names the projects', () => {
   assert.match(src, /e2e and docs test files that import or name the modules the PR touches/)
   assert.match(src, /find the command and test project that own it/)

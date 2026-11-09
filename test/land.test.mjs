@@ -327,3 +327,13 @@ test('merge-pr: a Closes line that is only in a branch commit is not sent', () =
   assert.match(call, /commit_message=Adds it\.$/)
   assert.doesNotMatch(call, /999/)
 })
+
+test('land: a short commit id is refused before any wait or merge', () => {
+  const s = landSetup({ checks: [[passed('e2e')]] })
+  for (const arg of ['7:aaaaaaa', `7:${SHA.slice(0, 39)}:auto`, '7:' + 'A'.repeat(40)]) {
+    const r = run(s, 'land-wave.sh', ['o/r', arg])
+    assert.equal(r.code, 2, r.out)
+    assert.match(r.out, /need the full 40-character commit id/)
+    assert.equal(r.log.length, 0)
+  }
+})
