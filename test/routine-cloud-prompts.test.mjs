@@ -277,7 +277,7 @@ test('each step that must stop says so, so the one-wave-per-run and triagePerRun
   const missing = (build, triage) => [
     [triage, /^ {3}- `triage`: do step 5, then stop\.$/m, 'triage bullet'],
     [triage, /A run does the work of at most one `triage` step\./, 'triage closing line'],
-    [build, /^ {3}- `build`: do step 5\. Then run step 1 again\. If that `next` prints a `build` step, stop: a run does one build\.$/m, 'build bullet'],
+    [build, /^ {3}- `build`: if this run already did a build or printed `would-build`, stop\. Otherwise do step 5, then go back to step 1\.$/m, 'build bullet'],
     [build, /A run does the work of at most one `build` step\./, 'build closing line'],
     [build, /^ {3}- `block`:.*else log it and stop\./m, 'block bullet'],
     [build, /After the 20th pass, stop\./, 'build 20th pass'],
@@ -289,7 +289,7 @@ test('each step that must stop says so, so the one-wave-per-run and triagePerRun
   ].filter(([t, re]) => !re.test(t)).map(([, , name]) => name)
   assert.deepEqual(missing(prompts.build, prompts.triage), [])
   const mutations = [
-    ['build', 'If that `next` prints a `build` step, stop: a run does one build.', 'go back to step 1.', 'build bullet'],
+    ['build', 'if this run already did a build or printed `would-build`, stop. Otherwise', 'Otherwise', 'build bullet'],
     ['build', 'A run does the work of at most one `build` step. A `build` step after a build is not run.', '', 'build closing line'],
     ['triage', '`triage`: do step 5, then stop.', '`triage`: do step 5, then go back to step 1.', 'triage bullet'],
     ['triage', 'A run does the work of at most one `triage` step.', '', 'triage closing line'],
@@ -299,7 +299,7 @@ test('each step that must stop says so, so the one-wave-per-run and triagePerRun
     ['build', 'say so and stop', 'go back to step 1', 'build step 2'],
     ['triage', 'say so and stop', 'go back to step 1', 'triage step 2'],
     ['build', 'If the command fails, stop.', '', 'build copy failure'],
-    ['triage', 'log its output and stop', 'go on', 'triage settings failure'],
+    ['triage', 'If the command fails, log its output and stop', 'If the command fails, go on', 'triage settings failure'],
   ]
   for (const [kind, from, to, name] of mutations) {
     assert.ok(prompts[kind].includes(from), `the text to mutate exists: ${from}`)
