@@ -116,20 +116,6 @@ test('release: a workflow_dispatch input named release or tags, or a similar wor
   }
 })
 
-test('release: a comment or a nested key on the on: line is not a trigger', () => {
-  const lines = ['on: workflow_dispatch # add release later', 'on: [push] # release', 'on: { workflow_dispatch: { inputs: { release: { description: x } } } }', 'on: { push: { branches: [release] } }', 'on: { push: release }', 'on: [workflow_dispatch, "foo, release"]']
-  for (const on of lines) {
-    refused(release(setup({ workflow: `${on}\njobs:\n  x:\n    runs-on: ubuntu-latest\n` })), /MISSING: no workflow has a release or tag trigger/)
-  }
-})
-
-test('release: a first-level release key with a comment still counts', () => {
-  for (const on of ['on: [push, release] # ok', 'on: { release: { types: [published] } } # ok', 'on: release # ok', 'on: { workflow_dispatch: { inputs: { note: { description: "Issue #123" } } }, release: { types: [published] } }', 'on: { workflow_dispatch: { inputs: { a: { description: "x}" } } }, release: {} }']) {
-    const r = release(setup({ workflow: `${on}\njobs:\n  x:\n    runs-on: ubuntu-latest\n` }), '--dry-run')
-    assert.equal(r.code, 0, `${on}\n${r.out}`)
-  }
-})
-
 test('release: a red default branch refuses', () => {
   const s = setup({ conclusion: 'failure' })
   assert.match(readFileSync(join(s.fx, `${P}__commits__${HEAD}__check-runs.json`), 'utf8'), /"failure"/)

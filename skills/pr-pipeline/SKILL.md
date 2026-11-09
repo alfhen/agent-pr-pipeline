@@ -268,7 +268,7 @@ After a wave, count the `lateMinors` over all `prs` and tell the maintainer "N l
 
 After the last wave has landed and the default branch is green, the main session may run `${CLAUDE_PLUGIN_ROOT}/scripts/release.sh [--dry-run] <owner/repo> <version>`. An agent never runs it on its own. It makes the release through the REST releases API, with `target_commitish` set to the sha it checked, and only when all of these hold:
 - `autoRelease` is `true` in `.github/pipeline.json` on the default branch;
-- a workflow has a `release` trigger under `on`, or a `tags` trigger under `push`. A `release` input of `workflow_dispatch` does not count, and neither does a one-line `on:` value where `release` is not the value, a first-level list item or a first-level key. An inline `push` mapping such as `on: {push: {tags: [...]}}` is not recognized: write it in block form;
+- a workflow has a `release` trigger under `on`, or a `tags` trigger under `push`. A `release` input of `workflow_dispatch` does not count;
 - the default branch is green;
 - a tag exists, and every commit since the last tag belongs to a merged PR with a trusted `merge-cleared` comment for the merged head sha (`auto` or `person`, read through `trusted-comment.jq`). A hand merge or a commit with no such comment means the release needs the maintainer;
 - the version in each manifest at that sha (`.claude-plugin/plugin.json`, and `package.json` or `composer.json` when present) equals the release version;
