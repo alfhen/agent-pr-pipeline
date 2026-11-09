@@ -291,6 +291,15 @@ test('put stores an @ in the why inert in the record and in the decline comment'
   assert.ok(r.writes.filter(w => w.includes('@\u200boctocat')).length >= 2, r.writes.join('\n'))
 })
 
+test('put posts a stored record\'s why inert in the decline comment', () => {
+  const s = setup({ issues: [issue(3)], records: [record(3, { decision: 'decline', why: 'ask @octocat' })] })
+  const r = putTriaged(s, '3', 'decline', 'S', 'low', 'ignored')
+  assert.equal(r.status, 0, r.stderr)
+  const post = r.writes.find(w => w.includes('declined 3 -->'))
+  assert.ok(post && post.includes('@\u200boctocat'), r.writes.join('\n'))
+  assert.doesNotMatch(post, /@[A-Za-z0-9]/)
+})
+
 test('put exits 2 and writes nothing when two trusted declined comments exist', () => {
   const mark = '<!-- pipeline:routine declined 3 -->'
   const s = setup({ issues: [issue(3)], issueComments: { 3: [comment('bot', `${mark}\none`), comment('bot', `${mark}\ntwo`)] } })
@@ -654,6 +663,12 @@ test('a build-started record whose run ends in a newline is held as bad, not rea
   const out = step(nextFull(s))
   assert.equal(out.step, 'idle')
   assert.deepEqual(out.held, [{ issue: 4, why: 'bad build-started record' }])
+})
+
+test('a build-started run that ends in a newline does not count toward wavesPerDay', () => {
+  const config = { ...goodConfig, limits: { wavesPerDay: 2 } }
+  const w = { issues: [buildIssue(1)], records: [record(1), started(8, { run: RUN(1) }), started(9, { run: RUN(2) + '\n' })] }
+  assert.equal(step(nextFull(fullSetup(w, 'full', { config }))).step, 'build')
 })
 
 test('two trusted records for one key and a bad triaged record are held, not a failed next', () => {
@@ -2040,7 +2055,11 @@ test('every reason code wave-result.sh prints is accepted by put built', () => {
     const r = c_cput(s, 'built', '5', c_CRUN(1), prn, rdy, code, outFile)
     assert.equal(r.status, 0, `${code}: ${r.stderr}`)
   }
-  assert.equal(seen.size, 6)
+  const source = readFileSync(join(root, 'scripts/wave-result.sh'), 'utf8')
+  const block = source.slice(source.indexOf('(if $ready then'), source.indexOf('as $code'))
+  const printed = [...block.matchAll(/then "([a-z-]+)"|else "([a-z-]+)" end/g)].map(m => m[1] ?? m[2])
+  assert.deepEqual([...seen].sort(), [...new Set(printed)].sort())
+  assert.ok(seen.size >= 6)
 })
 
 test('put built refuses a result file that is not JSON for every pr value, before any call', () => {
