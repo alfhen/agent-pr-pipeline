@@ -104,7 +104,8 @@ for file in .claude-plugin/plugin.json package.json composer.json; do
 done
 [ "$found" -gt 0 ] || miss "no manifest with a version at ${sha:0:7}"
 
-if [ "$(tr '[:upper:]' '[:lower:]' <<<"$R")" = "$(bash "$here/plugin-repo.sh" 2>/dev/null)" ]; then
+pluginRepo=$(bash "$here/plugin-repo.sh" 2>&1) || stop "cannot read the plugin repo ($pluginRepo)"
+if [ "$(tr '[:upper:]' '[:lower:]' <<<"$R")" = "$pluginRepo" ]; then
   ftxt=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.claude-plugin/files.txt?ref=$sha" 2>&1)
   if [ $? -ne 0 ]; then
     is404 "$ftxt" && stop ".claude-plugin/files.txt is missing at ${sha:0:7}" || stop "cannot read .claude-plugin/files.txt ($ftxt)"

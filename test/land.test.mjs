@@ -217,6 +217,55 @@ test('land: a head that never gets check runs is WAITING, not merged', () => {
   assert.equal(r.log.filter((l) => /^PUT .*pulls\/7\/merge/.test(l)).length, 0)
 })
 
+test('land: a failed commit status with no check runs yet ends the wait at once', () => {
+  const s = landSetup({ checks: [[]] })
+  put(s.fx, `${P}__commits__${SHA}__status.json`, { state: 'failure', statuses: [{ context: 'ext/ci', state: 'failure' }] })
+  const r = land(s)
+  assert.equal(r.code, 3, r.out)
+  assert.match(r.out, /LAND FIX #7 .*failing=\[ext\/ci\]/)
+  assert.equal(checkReads(r), 2)
+})
+
+test('land: a head that moved before the first poll ends the wait without reading its checks', () => {
+  const s = landSetup({ checks: [[passed('ci')]] })
+  const NEW = 'b'.repeat(40)
+  put(s.fx, `${PULL}.json`, { merged: false, mergeable: true, head: { sha: NEW, ref: 'feat/x', repo: { full_name: 'o/r' } } })
+  put(s.fx, `${P}__commits__${NEW}__check-runs.json`, { check_runs: [{ name: 'ci', status: 'in_progress', conclusion: null }] })
+  const r = land(s)
+  assert.equal(r.code, 6, r.out)
+  assert.match(r.out, /HEAD MOVED #7/)
+  assert.equal(r.log.filter((l) => l.includes(`commits/${NEW}/check-runs`)).length, 0)
+})
+
+test('land: after a rerun the script waits until GitHub lists the new attempt', () => {
+  const s = landSetup({ checks: [[failed('e2e')], [failed('e2e')], [passed('e2e')]] })
+  const runPath = `${P}__actions__runs__55`
+  rmSync(join(s.fx, `${runPath}.json`))
+  put(s.fx, `${runPath}.call1.json`, { run_attempt: 1, status: 'completed' })
+  put(s.fx, `${runPath}.call2.json`, { run_attempt: 1, status: 'completed' })
+  put(s.fx, `${runPath}.call3.json`, { run_attempt: 2, status: 'in_progress' })
+  const r = land(s)
+  assert.equal(r.code, 0, r.out)
+  assert.equal(r.log.filter((l) => l === 'GET /repos/o/r/actions/runs/55').length, 3)
+})
+
+test('land: a rerun that never shows a new attempt stops the wave, not LAND FIX', () => {
+  const s = landSetup({ checks: [[failed('e2e')], [failed('e2e')]] })
+  const runPath = `${P}__actions__runs__55`
+  rmSync(join(s.fx, `${runPath}.json`))
+  put(s.fx, `${runPath}.json`, { run_attempt: 1, status: 'completed' })
+  const r = land(s)
+  assert.equal(r.code, 5, r.out)
+  assert.match(r.out, /did not show a new attempt/)
+  assert.doesNotMatch(r.out, /LAND FIX/)
+})
+
+test('land: check runs with large payloads are read and merged', () => {
+  const big = (i) => ({ ...passed(`ci${i}`), output: { text: 'x'.repeat(3000) } })
+  const r = land(landSetup({ checks: [Array.from({ length: 100 }, (_, i) => big(i))] }))
+  assert.equal(r.code, 0, r.out)
+})
+
 test('merge-pr: the squash request carries exactly the PR title and body', () => {
   const s = landSetup({ checks: [[passed('ci')]] })
   const pull = JSON.parse(readFileSync(join(s.fx, `${PULL}.json`), 'utf8'))

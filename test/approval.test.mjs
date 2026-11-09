@@ -76,6 +76,21 @@ test('an empty list and a non-array input give null', () => {
   assert.equal(run('{}'), null)
 })
 
+test('two events in one second: the higher id decides, in any input order', () => {
+  assert.equal(approval('same-second-claude-last'), null)
+  assert.equal(approval('same-second-maintainer-last'), '2026-11-05T13:37:50Z')
+  for (const [name, want] of [['same-second-claude-last', null], ['same-second-maintainer-last', '2026-11-05T13:37:50Z']]) {
+    assert.equal(run(JSON.stringify(JSON.parse(fixture(name)).reverse())), want)
+  }
+})
+
+test('an after with fractional seconds or another format is refused', () => {
+  for (const after of ['2026-11-05T10:00:00.500Z', '2026-11-05 10:00:00', '2026-11-05T1:00:00Z', 'yesterday']) {
+    const r = spawnSync('jq', ['-c', '--arg', 'maintainer', 'alfhen', '--arg', 'label', 'maintainer-approved', '--arg', 'after', after, '-f', JQ], { input: fixture('maintainer-null'), encoding: 'utf8' })
+    assert.notEqual(r.status, 0, after)
+  }
+})
+
 test('an event input order does not matter', () => {
   const events = JSON.parse(fixture('claude-readd-then-maintainer-again')).reverse()
   assert.equal(run(JSON.stringify(events)), '2026-11-05T11:00:00Z')

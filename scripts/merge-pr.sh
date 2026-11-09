@@ -39,9 +39,9 @@ done
 head=$(jq -r .head.sha <<<"$pull")
 bots="${BOT_LOGINS:-coderabbit|gitar|\\[bot\\]}"
 checks=$(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100") || { echo "PR $pr NOT merged: cannot read the check runs"; exit 1; }
-runs=$(jq -s -c '[.[].check_runs[]]' <<<"$checks") || { echo "PR $pr NOT merged: unexpected check runs answer"; exit 1; }
+runs=$(jq -s -c '[.[].check_runs[] | {name, status, conclusion}]' <<<"$checks") || { echo "PR $pr NOT merged: unexpected check runs answer"; exit 1; }
 stat=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100") || { echo "PR $pr NOT merged: cannot read the commit statuses"; exit 1; }
-sts=$(jq -s -c '[.[].statuses[]]' <<<"$stat") || { echo "PR $pr NOT merged: unexpected commit status answer"; exit 1; }
+sts=$(jq -s -c '[.[].statuses[] | {context, state}]' <<<"$stat") || { echo "PR $pr NOT merged: unexpected commit status answer"; exit 1; }
 appr=$(jq -n --arg head "$head" --arg bots "$bots" \
   --slurpfile reviews <(gh api --paginate "repos/$R/pulls/$pr/reviews?per_page=100") \
   --slurpfile comments <(gh api --paginate "repos/$R/pulls/$pr/comments?per_page=100") \
