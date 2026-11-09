@@ -2267,3 +2267,29 @@ await check('the denylist holds the files of a docs result and a bot-check minor
     assert.ok(!out.denylist.includes('page.md'))
   } finally { evaluation = { items: ITEMS, changedPaths: ['src/billing/invoice.ts', 'README.md'] } }
 })
+
+await check('every land value carries a 40-character sha, and a short tested sha is expanded from the PR head', async () => {
+  const FULL = 'e'.repeat(40)
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? { pass: true, headSha: (lastHead.C1 = FULL), checks: [chk('lint')] } : undefined)
+  assert.ok(x.C1.land, JSON.stringify(x.C1).slice(0, 500))
+  assert.match(x.C1.land, /^\d+:[0-9a-f]{40}:auto$/)
+  const short = (head) => (p, o) => o.label === 'test:C2#1' ? { pass: true, headSha: (lastHead.C2 = 'd'.repeat(40)), checks: [chk('lint')] }
+    : o.label === 'test:C2#bots1' ? { pass: true, headSha: 'eeeeeee', checks: [chk('lint')] }
+    : o.label === 'io:C2#landfull' ? { exitCode: 0, output: `pipeline-io: begin\n${JSON.stringify({ head, approvedBy: [] })}\npipeline-io: exit 0` } : undefined
+  const y = await hooked(only1('C2'), short(FULL))
+  assert.ok(y.C2.land, JSON.stringify(y.C2).slice(0, 500))
+  assert.match(y.C2.land, /^\d+:e{40}:/)
+  const z = await hooked(only1('C2'), short('f'.repeat(40)))
+  assert.equal(z.C2.ready, false)
+  assert.match(z.C2.reason, /is short/)
+})
+await check('a plan conflict finding from the reviewer or the fixer stops the PR before another round', async () => {
+  const a = await hooked(only1('P1'), (p, o) => o.label === 'review:P1#1' ? reviewOf([f('blocker', 'plan conflict: E3 says the test passes unchanged', { detail: 'D2 changes the limit it hard-codes' })]) : undefined)
+  assert.equal(a.P1.reason, 'needs human: plan conflict')
+  assert.match(a.P1.conflict, /D2 changes the limit/)
+  assert.equal(fixCalls('P1').length, 0)
+  const b = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x')]) : o.label === 'fix:C1#1' ? { summary: 's', changed: false, planConflict: 'E3 and D2 disagree' } : undefined)
+  assert.equal(b.C1.reason, 'needs human: plan conflict')
+  assert.equal(b.C1.conflict, 'E3 and D2 disagree')
+  assert.equal(fixCalls('C1').length, 1)
+})

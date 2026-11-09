@@ -474,7 +474,7 @@ const LANDFIX = {
 const FIX = {
   type: 'object',
   properties: {
-    summary: { type: 'string' }, worktree: { type: 'string' }, changed: { type: 'boolean' },
+    summary: { type: 'string' }, worktree: { type: 'string' }, changed: { type: 'boolean' }, planConflict: { type: 'string' },
     sameAs: { type: 'array', items: { type: 'array', items: { type: 'number' } } },
     siblings: {
       type: 'array',
@@ -543,6 +543,7 @@ const reviewPrompt = (pr, round, history, siblings) => `${ctx(pr)}
 
 Task: review the branch against ${SPEC ? `${SPEC} and ` : ''}${ref(pr)}.
 Clone it: ${cloneTo(`review-${pr.id}-r${round}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`.
+${pr.kind === 'plan' ? `Check each entry's Acceptance line against the plan's decisions: a line that says a test or file "passes unchanged" while a decision changes a limit, name or default that it hard-codes cannot be met. Report it as a blocker.\n` : ''}If a blocker cannot be fixed without breaking the Touches line or an Acceptance line of the entry, start its title with \`plan conflict:\`. The loop then stops for a person.
 Return headSha, a summary, the findings, the sweep (for each blocker and major: the sibling places you checked and those with the same weakness) and, when the plan entry or brief has an Invariants line, \`invariants\`: one row per invariant, with holds and evidence.
 
 ${prBlock(pr)}
@@ -588,7 +589,8 @@ const fixPrompt = (pr, outcome, findings, round, sweep) => `${ctx(pr)}
 Task: fix the branch after review round ${round}.
 1. You are in a fresh git worktree. ${freshBranch('fix', pr, round)}
 2. For each finding, list every sibling place with the same weakness and fix them in the same round. For a plan, list the other entries and states each edit touches.
-3. Checks: ${fastText}, and ${ownE2e}.
+3. If a fix would need a change outside the Touches line, or would break an Acceptance line (for example, editing a test the entry says passes unchanged), change nothing and return \`planConflict\`: one sentence that names the two plan statements that disagree.
+4. Checks: ${fastText}, and ${ownE2e}.
 Return a short summary of each fix, any finding you disagree with and why, \`siblings\` (per finding number: the places you checked and the places you fixed), \`sameAs\` (groups of finding numbers that you fixed as one), changed (true when you pushed a commit, false when you pushed nothing), and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}
@@ -913,6 +915,11 @@ ${prBlock(pr)}`
 // Builds every land value. The gate and the merge-safety agent run on the sha that goes into the value, so
 // a new head (land fix, rerun) never inherits :auto from an earlier sha. Fail closed: only a normal first run, a clean gate and a safe verdict give :auto.
 async function landFor(pr, n, sha) {
+  if (/^[0-9a-f]{4,39}$/.test(sha)) {
+    const full = await readHead(pr, n, 'landfull')
+    if (full.head && full.head.startsWith(sha)) sha = full.head
+    else return { land: null, landMode: 'person', landWhy: `the checked commit ${sha} is short and the PR head ${full.head || 'cannot be read'} does not extend it: no land value`, landRefused: true }
+  }
   const pair = `${n}:${sha}`
   const person = (why, more) => ({ land: pair, landMode: 'person', landWhy: why, ...more })
   const rerunReason = pr.landFix ? 'a land fix run' : pr.resume ? 'a resume run after exhausted rounds' : pr.skipImpl ? 'a skipImpl rerun'
@@ -988,11 +995,14 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     }
     const row = historyRow(round, outcome, blocking, split.conflicts)
     history.push(row)
+    const conflict = blocking.find(f => /^plan conflict:/i.test(f.title))
+    if (conflict) return { signedOff: false, reason: 'needs human: plan conflict', conflict: `${conflict.title}: ${conflict.detail}` }
     log(`${pr.id} round ${round}: tests ${outcome.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (outcome.pass && blocking.length === 0) return { signedOff: true, headSha: test.headSha || review.headSha }
     if (round === startRound + max - 1) return { signedOff: false, reason: exhausted('', max, max, cap), lastFindings: blocking, lastTest: test }
     const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, round, review.sweep), `fix:${pr.id}#${round}`, { schema: FIX })
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
+    if (fix && fix.planConflict) return { signedOff: false, reason: 'needs human: plan conflict', conflict: fix.planConflict }
     if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
     loopState.siblings = labelSiblings(fix && fix.siblings, blocking)
   }
@@ -1344,6 +1354,7 @@ async function runPRSteps(input) {
     const sync = await syncUntested(pr, n, null)
     if (!sync.ok) return stopped(sync.reason, { headSha: b.headSha, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     const landing = await landFor(pr, n, b.headSha)
+    if (landing.landRefused) return stopped(landing.landWhy, { headSha: b.headSha, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     return {
       id: pr.id, prNumber: n, ready: true, headSha: b.headSha, ...landing, untested: untestedOf(pr), notes: r.notes,
       approvedBy: b.wait.approvedBy || [], botNotes: b.wait.notes, codeChangedByBots: !!(b.answer && b.answer.codeChanged),
@@ -1368,7 +1379,7 @@ async function runPRSteps(input) {
   }
   const loopState = { archOpen: false, siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
   let loop = await reviewLoop(pr, history.length + 1, history, minors, loopState)
-  if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: loopState.reports, product: loopState.product, ...rerunFix() }
+  if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, conflict: loop.conflict, architecture: loopState.reports, product: loopState.product, ...rerunFix() }
 
   let pass = { fixed: [], report: null }
   if (minorPassRuns(pr)) {
@@ -1408,6 +1419,7 @@ async function runPRSteps(input) {
   const sync = await syncUntested(pr, n, openedUntested)
   if (!sync.ok) return { id: pr.id, ready: false, reason: sync.reason, history, prNumber: n, headSha, untested: untestedOf(pr), ...rerunFix() }
   const landing = await landFor(pr, n, headSha)
+  if (landing.landRefused) return { id: pr.id, ready: false, reason: landing.landWhy, history, prNumber: n, headSha, untested: untestedOf(pr), ...rerunFix() }
   return {
     id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl, headSha,
     ...landing, untested: untestedOf(pr),
