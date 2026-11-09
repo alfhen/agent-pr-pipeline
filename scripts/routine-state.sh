@@ -7,6 +7,7 @@
 # Cloud forms (0.8.0, settings from .github/pipeline.json): gate | next --mode cloud-triage | next --mode cloud-build --start <file>
 #        | issue-text <n> | list outboxes | get outbox <run> | put adopt|untrusted|revoke|triaged|triage-failed|build-started|built|
 #        blocked|needs-plan|pr-seen|exhausted|env-stale|env-ok|feedback-outbox|feedback-filed|feedback-dropped (see the record keys below).
+#        put built <issue> <run> <pr> <ready> <reasonCode> [<result file>]: with pr none, the file's prs[0].reason is stored as why.
 # State of the unattended routine: one open issue labelled pipeline-routine, opened by the account from GET /user,
 # and one comment on it per triaged issue. A record counts only when scripts/trusted-comment.jq accepts it.
 # next prints one JSON line: init needed, triage (open pipeline-feedback issues with no record, or a decline record
@@ -68,7 +69,7 @@ case "$cmd" in
       blocked) if [ $# -eq 5 ]; then :; elif [ $# -eq 6 ]; then cloud=1; else usage; fi ;;
       adopt|untrusted|pr-seen|exhausted|needs-plan|triage-failed|env-stale|env-ok|feedback-dropped) [ $# -eq 4 ] || usage; cloud=1 ;;
       revoke|feedback-outbox|feedback-filed) [ $# -eq 5 ] || usage; cloud=1 ;;
-      built) [ $# -eq 8 ] || usage; cloud=1 ;;
+      built) [ $# -eq 8 ] || [ $# -eq 9 ] || usage; cloud=1 ;;
       *) usage ;;
     esac ;;
   *) usage ;;
@@ -211,8 +212,8 @@ def hasl($l): .L | index($l) != null;
   | ([$F[] | select(hasl("building") and (.hasPr or ((.inflight | not) and (.legacyLive | not))))] | byAge) as $prseen
   | ([$F[] | select(.ls != null and (.ended | not) and (.hasPr | not)
         and (.built or ((try (.ls.at | fromdateiso8601) catch 0) < now - ($lim.buildHours * 3600))))] | byAge) as $block
-  | ([$F[] | select(hasl("build-failed") and (hasl("needs-maintainer") | not) and .A != null and .lb != null and .A > .lb.at
-        and .att >= $lim.buildAttempts and .authorPart)] | byAge) as $exhausted
+  | ([$F[] | select((hasl("build-failed") or .lb.rec.reasonCode == "triage-plan") and (hasl("needs-maintainer") | not) and .A != null and .lb != null and .A > .lb.at
+        and .att >= $lim.buildAttempts and .ended and .authorPart)] | byAge) as $exhausted
   | ([$F[] | . as $f | select($f.A != null and $f.reason == null and ($f.excluded | not) and $f.trNew
         and ($f.tr.rec.size == "L" or $f.tr.rec.risk == "high" or $f.tr.rec.decision == "plan")
         and ($f.r | any(.kind == "needs-plan" and .key == "\($f.n):\($f.A)") | not))] | byAge) as $needsPlan
@@ -311,10 +312,11 @@ cloud_validate() {
               want_branch=$(branch_prefix) || exit $?
               [ "$branch" = "${want_branch}issue-$issue" ] || die 64 "the branch must be ${want_branch}issue-$issue" ;;
             built)
-              run_arg "$5"; run_id=$5; pr=$6; ready=$7; reason=$8
+              run_arg "$5"; run_id=$5; pr=$6; ready=$7; reason=$8; result_file=${9:-}
               [[ $pr =~ ^([1-9][0-9]{0,8}|none)$ ]] || die 64 "pr must be a number or none"
               case "$ready" in true|false) ;; *) die 64 "ready must be true or false" ;; esac
-              case "$reason" in opened|triage-plan|triage-decline|rounds-exhausted|needs-human|other) ;; *) die 64 "bad reason code" ;; esac ;;
+              case "$reason" in opened|triage-plan|triage-decline|rounds-exhausted|needs-human|other) ;; *) die 64 "bad reason code" ;; esac
+              [ -z "$result_file" ] || [ -f "$result_file" ] || die 64 "$result_file is not a file" ;;
             blocked)
               run_arg "$5"; run_id=$5; reason=$6
               case "$reason" in opened|triage-plan|triage-decline|rounds-exhausted|needs-human|other) ;; *) die 64 "bad reason code" ;; esac ;;
@@ -632,19 +634,41 @@ put_build_started() {
 }
 
 put_built() {
-  local key
+  local key rec why=""
   tracking_prelude
   key=$(started_key "$issue" "$run_id")
   [ -n "$key" ] || die 65 "no build-started record for issue $issue and run $run_id"
   refuse_dup built "$key"
   would built "$issue"
-  write_record built "$key" "$(jq -nc --arg r "$run_id" --arg p "$pr" --arg d "$ready" --arg c "$reason" \
-    '{run: $r, pr: (if $p == "none" then "none" else ($p | tonumber) end), ready: ($d == "true"), reasonCode: $c}')"
+  if [ "$pr" = none ] && [ -n "$result_file" ]; then
+    why=$(jq -r '.prs[0].reason // "" | if type == "string" then . else "" end' "$result_file") || die 64 "$result_file is not JSON"
+  fi
+  # One line, cut at a sentence end or 500 characters, as the why of a triaged record. The cut counts code points.
+  rec=$(jq -nc --arg r "$run_id" --arg p "$pr" --arg d "$ready" --arg c "$reason" --arg w "$why" '
+    ($w | gsub("\\p{Cc}"; " ") | gsub("\\s+"; " ") | sub("^ "; "") | sub(" $"; "")) as $w
+    | ([$w | match("[.!?](?= |\\z)"; "g") | select(.offset < 500) | .offset + 1] | last // 500) as $end
+    | {run: $r, pr: (if $p == "none" then "none" else ($p | tonumber) end), ready: ($d == "true"), reasonCode: $c}
+    | if $w != "" then . + {why: ((if ($w | length) > 500 then $w[:$end] else $w end) | gsub("@(?!​)"; "@​"))} else . end
+    | if ($w | length) > 500 then . + {whyCut: true} else . end')
+  write_record built "$key" "$rec"
   echo "ok built $issue"
 }
 
+blocked_comment() { # issue reasonCode why -> prints the comment body
+  local first
+  case "$2" in
+    triage-plan) first="The build routine stopped and opened no PR. Its triage step decided that this issue needs a plan." ;;
+    triage-decline) first="The build routine stopped and opened no PR. Its triage step decided to decline this issue." ;;
+    rounds-exhausted) first="The build routine stopped and opened no PR. The review rounds ran out before the change was ready." ;;
+    needs-human) first="The build routine stopped and opened no PR. A step needs a person to decide." ;;
+    *) first="The build routine stopped and opened no PR." ;;
+  esac
+  # A zero-width space after each @ keeps the text from notifying anybody.
+  jq -rn --arg f "$first" --arg w "$3" '$f + (if $w == "" then "" else "\n" + ($w | gsub("@(?!​)"; "@​")) end)'
+}
+
 put_blocked() {
-  local key bid
+  local key bid why body
   tracking_prelude
   key=$(started_key "$issue" "$run_id")
   [ -n "$key" ] || die 65 "no build-started record for issue $issue and run $run_id"
@@ -653,9 +677,14 @@ put_blocked() {
   would blocked "$issue"
   write_record blocked "$key" "$(jq -nc --arg r "$run_id" --arg c "$reason" --argjson a "${key#*:}" '{run: $r, reasonCode: $c, attempt: $a}')"
   bid=$REC_ID
-  add_labels "$issue" build-failed
+  # triage-plan gets needs-plan, not build-failed; $exhausted reads the reason code of this record instead.
+  [ "$reason" = triage-plan ] || add_labels "$issue" build-failed
   remove_labels "$issue" building ready-to-build maintainer-approved
   if [ "$reason" = triage-plan ]; then do_needs_plan "$issue" "$issue:$bid"; else echo "NOTICE blocked $repo $issue $run_id $reason"; fi
+  why=$(jq -r --arg k "$key" '[.[] | select(.kind == "built" and .key == $k)] | last | .rec.why // "" | if type == "string" then . else "" end' <<<"$recs")
+  body=$(blocked_comment "$issue" "$reason" "$why")
+  gh api --method POST "repos/$repo/issues/$issue/comments" -f body="$body" >/dev/null \
+    || echo "WARNING could not post the block comment on issue $issue" >&2
 }
 
 put_needs_plan() {

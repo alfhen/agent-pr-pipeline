@@ -1487,8 +1487,163 @@ test('put blocked with triage-plan also writes a needs-plan record and labels ne
   const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['building', 'needs-approval'] }), records: [c_triagedRec(5), c_startedRec(5, 1)] }))
   const r = c_doPut(s, 'blocked', '5', c_CRUN(1), 'triage-plan')
   assert.ok(s.w.records.some(x => x.body.startsWith('<!-- pipeline:routine needs-plan 5:5000 -->')))
-  assert.deepEqual(c_labelsOf(s, 5), ['build-failed', 'needs-plan'])
+  assert.deepEqual(c_labelsOf(s, 5), ['needs-plan'])
   assert.equal(r.stdout.split('\n').filter(l => l.startsWith('NOTICE')).length, 1)
+})
+
+const c_builtRec = (n, a, o = {}) => c_cr('built', `${n}:${a}`, { run: c_CRUN(a), pr: 'none', ready: false, reasonCode: 'other', ...o.rec }, { at: o.at ?? c_T(35) })
+const c_blockSetup = (labels, recs) => csetup(c_withIssues({ issue: c_ci(5, { labels }), records: [c_triagedRec(5), c_startedRec(5, 1), ...recs] }))
+const c_commentsOn = (s, n) => (s.w.comments[n] ?? []).map(c => c.body)
+
+test('put blocked with triage-plan has needs-plan, no build-failed, and one comment with the why', () => {
+  const s = c_blockSetup(['building'], [c_builtRec(5, 1, { rec: { reasonCode: 'triage-plan', why: 'quick fix: plan. The change spans three modules.' } })])
+  c_doPut(s, 'blocked', '5', c_CRUN(1), 'triage-plan')
+  assert.deepEqual(c_labelsOf(s, 5), ['needs-plan'])
+  const [body, ...more] = c_commentsOn(s, 5)
+  assert.equal(more.length, 0)
+  assert.match(body, /^The build routine stopped and opened no PR\. Its triage step decided that this issue needs a plan\.\nquick fix: plan\. The change spans three modules\.$/)
+  assert.doesNotMatch(body, /<!-- pipeline:/)
+})
+
+test('put blocked with rounds-exhausted keeps build-failed and comments', () => {
+  const s = c_blockSetup(['building'], [c_builtRec(5, 1, { rec: { reasonCode: 'rounds-exhausted', why: 'rounds exhausted: 4 of 4 (maxRounds)' } })])
+  c_doPut(s, 'blocked', '5', c_CRUN(1), 'rounds-exhausted')
+  assert.deepEqual(c_labelsOf(s, 5), ['build-failed'])
+  const [body] = c_commentsOn(s, 5)
+  assert.match(body, /^The build routine stopped and opened no PR\. The review rounds ran out[^\n]*\nrounds exhausted: 4 of 4 \(maxRounds\)$/)
+})
+
+test('put blocked with no built record comments with the fixed line only', () => {
+  const s = c_blockSetup(['building'], [])
+  c_doPut(s, 'blocked', '5', c_CRUN(1), 'other')
+  assert.deepEqual(c_commentsOn(s, 5), ['The build routine stopped and opened no PR.'])
+})
+
+test('put blocked makes an @name in the why inert', () => {
+  const s = c_blockSetup(['building'], [c_builtRec(5, 1, { rec: { why: 'ask @octocat and @alfhen/team' } })])
+  c_doPut(s, 'blocked', '5', c_CRUN(1), 'other')
+  const [body] = c_commentsOn(s, 5)
+  assert.doesNotMatch(body, /@[A-Za-z0-9]/)
+  assert.match(body, /octocat/)
+})
+
+test('put blocked exits 0 when the comment fails, and the record and labels stay', () => {
+  const s = c_blockSetup(['building'], [])
+  writeFileSync(join(s.fx, `${fname('repos/o/r/issues/5/comments')}.POST.error`), 'HTTP 403')
+  const r = c_cput(s, 'blocked', '5', c_CRUN(1), 'other')
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stderr, /WARNING could not post the block comment/)
+  assert.ok(r.writes.some(w => w.startsWith('POST /repos/o/r/issues/100/comments')))
+  assert.ok(r.writes.some(w => w.startsWith('POST /repos/o/r/issues/5/comments')))
+})
+
+test('the block comment does not make the next next print revoke', () => {
+  const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['building', 'maintainer-approved'] }), events: c_approved(c_T(5)), records: [c_triagedRec(5), c_startedRec(5, 1), c_builtRec(5, 1, { rec: { why: 'a reason' } })] }))
+  c_doPut(s, 'blocked', '5', c_CRUN(1), 'other')
+  assert.equal(c_commentsOn(s, 5).length, 1)
+  assert.ok(c_lines(c_cnext(s, 'cloud-build')).every(l => l.step !== 'revoke'))
+  assert.ok(c_lines(c_cnext(s, 'cloud-triage')).every(l => l.step !== 'revoke'))
+})
+
+test('stage 0: put blocked posts no comment', () => {
+  const s = csetup({ ...c_withIssues({ issue: c_ci(5, { labels: ['building'] }), records: [c_triagedRec(5), c_startedRec(5, 1)] }), settings: { routine: { ...c_ROUTINE, stage: 0 } } })
+  const r = c_cput(s, 'blocked', '5', c_CRUN(1), 'triage-plan')
+  assert.match(r.stdout, /^WOULD blocked/)
+  assert.deepEqual(r.writes, [])
+})
+
+test('a triage-plan block that is approved again still ends', () => {
+  const s = csetup(c_withIssues({
+    issue: c_ci(5, { labels: ['building'] }),
+    records: [c_triagedRec(5), c_startedRec(5, 1, { at: c_T(30) }), c_builtRec(5, 1, { rec: { reasonCode: 'triage-plan' } })],
+  }))
+  c_doPut(s, 'blocked', '5', c_CRUN(1), 'triage-plan')
+  assert.deepEqual(c_labelsOf(s, 5), ['needs-plan'])
+  s.w.events[5] = [...(s.w.events[5] ?? []), c_lab('maintainer-approved', 'alfhen', c_T(400))]
+  c_issueOf(s, 5).labels.push({ name: 'maintainer-approved' }); s.sync()
+  const seen = []
+  for (let g = 0; g < 8; g++) {
+    const l = c_one(c_cnext(s, 'cloud-build'))
+    seen.push(l.step)
+    if (l.step === 'build') { assert.equal(l.attempt, 2); c_doPut(s, 'build-started', '5', l.run, l.branch, String(l.attempt)); s.w.pulls.push(c_cpr(l.branch)); s.sync() }
+    else if (l.step === 'pr-seen') c_doPut(s, 'pr-seen', '5')
+    else break
+  }
+  assert.deepEqual(seen, ['build', 'pr-seen', 'idle'])
+  assert.ok(!c_labelsOf(s, 5).includes('needs-maintainer'))
+  assert.ok(!c_labelsOf(s, 5).includes('build-failed'))
+})
+
+test('exhausted does not fire while the last attempt runs or after it opened a PR', () => {
+  for (const labels of [['maintainer-approved', 'build-failed'], ['needs-plan', 'maintainer-approved']]) {
+    const lastBlocked = labels.includes('build-failed') ? c_blockedRec(5, 1, { at: c_T(40) }) : c_cr('blocked', '5:1', { run: c_CRUN(1), reasonCode: 'triage-plan', attempt: 1 }, { at: c_T(40) })
+    const mk = () => csetup(c_withIssues({
+      issue: c_ci(5, { labels: [...labels, 'building'] }), events: c_approved(c_T(90)),
+      records: [c_triagedRec(5), c_startedRec(5, 1, { at: c_T(30) }), lastBlocked, c_startedRec(5, 2, { at: c_T(95) })],
+    }))
+    assert.notEqual(c_one(c_cnext(mk(), 'cloud-build')).step, 'exhausted', labels.join())
+    const withPr = mk(); withPr.w.pulls = [c_cpr('claude/issue-5')]; withPr.sync()
+    assert.equal(c_one(c_cnext(withPr, 'cloud-build')).step, 'pr-seen', labels.join())
+    c_doPut(withPr, 'pr-seen', '5')
+    assert.ok(!c_labelsOf(withPr, 5).includes('building'), labels.join())
+    assert.equal(c_one(c_cnext(withPr, 'cloud-build')).step, 'idle', labels.join())
+  }
+})
+
+test('a triage-plan block on the last attempt, approved again, ends: exhausted, needs-maintainer, idle', () => {
+  const planBlock = a => c_cr('blocked', `5:${a}`, { run: c_CRUN(a), reasonCode: 'triage-plan', attempt: a }, { at: c_T(40 + a) })
+  const s = csetup(c_withIssues({
+    issue: c_ci(5, { labels: ['maintainer-approved'] }), events: c_approved(c_T(90)),
+    records: [c_triagedRec(5), c_startedRec(5, 1, { at: c_T(30) }), planBlock(1), c_startedRec(5, 2, { at: c_T(35) }), planBlock(2)],
+  }))
+  assert.deepEqual(c_one(c_cnext(s, 'cloud-build')), { step: 'exhausted', issue: 5 })
+  c_doPut(s, 'exhausted', '5')
+  assert.ok(c_labelsOf(s, 5).includes('needs-maintainer'))
+  assert.equal(c_one(c_cnext(s, 'cloud-build')).step, 'idle')
+})
+
+test('put built makes an @name in the why inert in the record', () => {
+  const s = c_builtSetup()
+  c_doPut(s, 'built', '5', c_CRUN(1), 'none', 'false', 'other', c_resultFile(s, { prs: [{ ready: false, reason: 'ask @octocat' }] }))
+  const posts = s.w.records.at(-1).body
+  assert.doesNotMatch(posts, /@[A-Za-z0-9]/)
+  assert.match(posts, /octocat/)
+})
+
+const c_resultFile = (s, res) => { const f = join(s.dir, 'result.json'); writeFileSync(f, JSON.stringify(res)); return f }
+const c_builtRecOf = s => JSON.parse(s.w.records.at(-1).body.split('\n')[1])
+const c_builtSetup = () => csetup(c_withIssues({ issue: c_ci(5, { labels: ['building'] }), records: [c_triagedRec(5), c_startedRec(5, 1)] }))
+
+test('put built with pr none stores the reason of the result file as why, on one line', () => {
+  const s = c_builtSetup()
+  const f = c_resultFile(s, { prs: [{ ready: false, reason: 'quick fix: plan.\n\tIt   needs\r\na plan.' }] })
+  c_doPut(s, 'built', '5', c_CRUN(1), 'none', 'false', 'triage-plan', f)
+  assert.deepEqual(c_builtRecOf(s), { run: c_CRUN(1), pr: 'none', ready: false, reasonCode: 'triage-plan', why: 'quick fix: plan. It needs a plan.' })
+})
+
+test('put built cuts a long why at a sentence end under 500 characters, as triaged does', () => {
+  const s = c_builtSetup()
+  const f = c_resultFile(s, { prs: [{ ready: false, reason: `${'a'.repeat(100)}. ${'b'.repeat(600)}` }] })
+  c_doPut(s, 'built', '5', c_CRUN(1), 'none', 'false', 'other', f)
+  const rec = c_builtRecOf(s)
+  assert.equal(rec.why, `${'a'.repeat(100)}.`)
+  assert.equal(rec.whyCut, true)
+  const s2 = c_builtSetup()
+  c_doPut(s2, 'built', '5', c_CRUN(1), 'none', 'false', 'other', c_resultFile(s2, { prs: [{ ready: false, reason: 'x'.repeat(700) }] }))
+  assert.equal(c_builtRecOf(s2).why.length, 500)
+})
+
+test('put built stores no why for a PR number, with no file, or with no reason; a missing file is exit 64', () => {
+  const s = c_builtSetup()
+  c_doPut(s, 'built', '5', c_CRUN(1), '42', 'false', 'other', c_resultFile(s, { prs: [{ ready: false, prNumber: 42, reason: 'x' }] }))
+  assert.equal('why' in c_builtRecOf(s), false)
+  const s2 = c_builtSetup()
+  c_doPut(s2, 'built', '5', c_CRUN(1), 'none', 'false', 'other')
+  assert.equal('why' in c_builtRecOf(s2), false)
+  const s3 = c_builtSetup()
+  c_doPut(s3, 'built', '5', c_CRUN(1), 'none', 'false', 'other', c_resultFile(s3, { prs: [{ ready: false }] }))
+  assert.equal('why' in c_builtRecOf(s3), false)
+  assert.equal(c_cput(c_builtSetup(), 'built', '5', c_CRUN(1), 'none', 'false', 'other', join(s.dir, 'missing.json')).status, 64)
 })
 
 test('put built stores a log record with fixed fields and refuses a second one', () => {
