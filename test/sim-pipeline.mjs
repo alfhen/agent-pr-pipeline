@@ -2128,6 +2128,15 @@ const noPass = x => {
   assert.equal(x.C1.minorPass, null)
   assert.equal(x.C1.ready, true)
 }
+await check('minor pass: a minor in a gated file the PR changes runs the pass, and one in a floor path does not', async () => {
+  minorScope.files.C1 = ['scripts/gate-files.sh', 'src/a.js']
+  await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([minorOf({ file: 'scripts/gate-files.sh' })]) : passHook()(p, o))
+  assert.ok(calls.some(c => c.label === 'minorfix:C1'))
+  assert.match(calls.find(c => c.label === 'minorfix:C1').prompt, /\["scripts\/gate-files\.sh","src\/a\.js"\]/)
+  minorScope.files.C1 = ['src/a.js']
+  noPass(await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([minorOf({ file: 'AGENTS.md' })]) : passHook()(p, o)))
+  delete minorScope.files.C1
+})
 await check('minor pass: a minor in a file the PR does not change, or in a gated path, runs no fixer', async () => {
   minorScope.files.C1 = ['src/other.js']
   noPass(await hooked(only1('C1'), passHook()))

@@ -506,12 +506,12 @@ test('plugin-repo: no usable repository exits 1', () => {
   assert.equal(pluginRepo('not-a-repo').code, 1)
 })
 
-test('gate --scope: lists the branch files that no gate matches, and nothing else', () => {
+test('gate --scope: lists a gated file the branch changes, and no floor path', () => {
   const s = setup({ files: null })
-  put(s.fx, `${P}__compare__main...feat__x.json`, { files: [{ filename: 'src/a.js' }, { filename: 'scripts/merge-pr.sh' }, { filename: 'AGENTS.md' }, { filename: 'new/b.js', previous_filename: 'src/old.js' }, { filename: 'x/y.js', previous_filename: 'agents/y.js' }] })
+  put(s.fx, `${P}__compare__main...feat__x.json`, { files: [{ filename: 'src/a.js' }, { filename: 'scripts/merge-pr.sh' }, { filename: 'AGENTS.md' }, { filename: '.github/pipeline.json' }, { filename: 'docs/goals.md' }, { filename: 'sub/.claude/x.md' }, { filename: 'new/b.js', previous_filename: 'src/old.js' }, { filename: 'x/y.js', previous_filename: 'agents/y.js' }] })
   const r = run(s, 'gate-files.sh', ['o/r', '--scope', 'feat/x'])
   assert.equal(r.code, 0)
-  assert.deepEqual(JSON.parse(r.out.trim().replace(/^SCOPE /, '')), ['new/b.js', 'src/a.js'])
+  assert.deepEqual(JSON.parse(r.out.trim().replace(/^SCOPE /, '')), ['new/b.js', 'scripts/merge-pr.sh', 'src/a.js', 'x/y.js'])
   assert.equal(calls(r, /\/pulls\//).length, 0)
 })
 

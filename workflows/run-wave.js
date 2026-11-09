@@ -620,7 +620,7 @@ const minorFixPrompt = (pr, findings, signedSha, files) => `${ctx(pr)}
 
 Task: fix minor findings in one pass. This is the only minor pass of this PR: nobody fixes what it leaves.
 1. You are in a fresh git worktree. ${freshBranch('minor', pr, 0)}
-2. You may change only these files, which the PR already changes and no gate holds: ${JSON.stringify(files)}. Fix a finding only when its file is on that list. Change no other file, and never a gated path. Skip a finding that needs a change outside the list.
+2. You may change only these files, which the PR already changes: ${JSON.stringify(files)}. Some may be gated paths: the maintainer merges a PR that changes one, so editing it adds no way to merge. Fix a finding only when its file is on that list. Change no other file, and never a path under .github, a .claude folder, AGENTS.md, CLAUDE.md, CLAUDE.local.md or docs/goals.md. Skip a finding that needs a change outside the list.
 3. Skip a finding that needs a design choice: more than one fix would be right, or the fix changes behaviour the plan entry names. Fix only what is plain.
 4. Checks: ${fastText}, and ${ownE2e}.
 5. Commit and push. If you fix no finding, push nothing and return changed false.
@@ -1049,7 +1049,7 @@ async function docsStep(pr, signedSha, history, minors) {
   }
 }
 
-// The files the PR changes that no gate holds, read by one script from the default branch's settings. Null when
+// The files the PR changes, gated ones included but never a floor path, read by one script from the default branch's settings. Null when
 // they cannot be read, and the pass then does not run.
 async function minorScope(pr) {
   if (!PLUGIN_ROOT) return null
