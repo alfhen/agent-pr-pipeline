@@ -322,6 +322,8 @@ When the repo has no tag yet it always refuses with "no tag yet: the first relea
 
 ## Step 4: file the feedback
 
+Run `${CLAUDE_PLUGIN_ROOT}/scripts/token-report.sh <workflow output file> <transcript folder> --feedback <file>` first. The output file is the one the Workflow completion notice names. The transcript folder is that run's own folder, `<session folder>/subagents/workflows/wf_<id>`; the script reads only that folder, not the runs beside it. If you cannot find it, leave it out and the script prints the totals only. Show the maintainer the numbers, and add the items in `<file>` (an empty list when no PR is flagged) to the items below, so they go through the same approval and the same denylist.
+
 Show the maintainer the `feedback` items from the workflow result, and add the land-step problems you saw (`LAND FIX`, `HEAD MOVED`, gate refusals). The redactor never sees these items. When the wave's repo is not `feedbackRepo`, write them in generic words, with no PR numbers, branch names or check names from the source repo, and add those PR numbers, branch names and check names to the denylist file before filing. File nothing before the maintainer approves. Write the approved items to a JSON file (a list of `{ title, detail, evidence, suggestedChange, severity }`) and the `denylist` to another, then run:
 
 `${CLAUDE_PLUGIN_ROOT}/scripts/file-feedback.sh <items.json> --denylist <denylist.json> --repo <feedbackRepo> --source <source> [--dry-run]`

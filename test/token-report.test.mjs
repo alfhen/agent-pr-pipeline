@@ -9,14 +9,14 @@ import { join } from 'node:path'
 const SCRIPT = new URL('../scripts/token-report.sh', import.meta.url).pathname
 
 const msg = (id, u) => ({ type: 'assistant', message: { id, usage: { input_tokens: u[0], cache_creation_input_tokens: u[1], cache_read_input_tokens: u[2], output_tokens: u[3] } } })
-const first = pr => ({ type: 'user', message: { role: 'user', content: pr ? `Task\nPR: ${pr} - A title\nBranch: x` : 'no pr here' } })
+const first = pr => ({ type: 'user', message: { role: 'user', content: pr ? `  Task\n  PR: ${pr} - A title\nBranch: x` : 'no pr here' } })
 
 const setup = (agents, output = { summary: 's', agentCount: agents.length, totalTokens: 12345, logs: [], result: {} }) => {
   const dir = mkdtempSync(join(tmpdir(), 'token-report-test-'))
   const folder = join(dir, 'transcripts'); mkdirSync(folder)
   agents.forEach((a, i) => {
     writeFileSync(join(folder, `agent-${i}.jsonl`), a.lines.map(l => JSON.stringify(l)).join('\n') + '\n')
-    writeFileSync(join(folder, `agent-${i}.meta.json`), JSON.stringify({ agentType: `agent-pr-pipeline:${a.role}` }))
+    writeFileSync(join(folder, `agent-${i}.meta.json`), JSON.stringify({ agentType: `agent-pr-pipeline:${a.role}`, ...(a.desc ? { description: a.desc } : {}) }))
   })
   const outFile = join(dir, 'output.json')
   writeFileSync(outFile, typeof output === 'string' ? output : JSON.stringify(output, null, 2))
@@ -77,6 +77,15 @@ test('a PR above twice the wave median is flagged, and the feedback item holds n
   assert.equal(items.length, 1)
   assert.doesNotMatch(JSON.stringify(items), /P4/)
   assert.match(items[0].evidence, /implementer/)
+})
+
+test('a PR is taken from the meta description, and wave and goals labels are no PR', () => {
+  const pr = (id, n, role = 'implementer') => ({ role, desc: `fix:${id}#2`, lines: [first(null), msg(id, [0, 0, 0, n])] })
+  const noPr = (label, n) => ({ role: 'pipeline-io', desc: label, lines: [first(null), msg(label, [0, 0, 0, n])] })
+  const { outFile, folder } = setup([pr('P1', 100), pr('P2', 110), pr('P3', 120), pr('P4', 1000), noPr('io:wave#version', 5000), noPr('preflight:goals', 5000)])
+  const r = run(outFile, folder)
+  assert.match(r.stdout, /^FLAG P4: 1000 tokens/m)
+  assert.doesNotMatch(r.stdout, /FLAG (wave|goals)/)
 })
 
 test('no PR is flagged when the PRs are alike, and the feedback list is empty', () => {
