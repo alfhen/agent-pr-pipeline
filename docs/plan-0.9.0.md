@@ -21,10 +21,10 @@ Readers: the maintainer (the eval list in each PR, the ledger report) and the ag
 - My attention (goal 3): E01 (the list in plain words in the PR body), L01 (one report in plain words), E04 (a stop asks one clear question, and no PR runs rounds that change nothing).
 - Cost (goal 4): L01 measures it. E04 runs the costly reviewers only on a branch that passes its checks, and stops a PR after two rounds with no progress.
 - Self-improvement (goal 1): E06. A defect after sign-off that no check covered becomes an evaluation item for the evals writer.
-- Works on all my repos (goal 6): `ciChecks` and the ledger work for any repo. The product run on Tagreeve is the proof (Product run).
+- Works on all my repos (goal 6): `ciChecks` (repo policy in `.github/pipeline.json`) and the ledger work for any repo. The product run on Tagreeve is the proof (Product run).
 - Automatic improvement (goal 7): the ledger is the evidence that release 2 needs before agents merge without a person.
 - Small enough to understand (goal 8): this release adds two roles (evals writer, verifier), so it works against goal 8. The share of work on the pipeline's own output is in "Goal 8 share". Release 3 (S05) merges roles.
-- Non-goals it comes close to: "Replacing CI or the review bots". The verifier can mark a check as covered by CI, but only by naming a CI check that the land step already needs green. It does not replace CI.
+- Non-goals it comes close to: "Replacing CI or the review bots". The verifier can mark a check as covered by CI, but only by naming a check from the repo policy `ciChecks`, and the item stays on the untested list, so the maintainer merges the PR. It does not replace CI.
 
 ## Findings
 
@@ -64,14 +64,14 @@ Summary: the writer sets the evals, the implementer builds against them, the ver
 
 ### The eval list
 
-- One eval is `{ id, kind, statement, check, test }`. `id` is `<PR id>-<n>` (for example `E01-3`). `kind` is one of `behaviour`, `error path`, `regression`, `quality bar`, `size limit`, `time bound`, `reference`. `statement` is one plain sentence a person can read. `check` is the command or steps, with the expected result. `test` (optional) names the test file or test that runs the check; the break check (E03b) needs it.
+- One eval is `{ id, kind, statement, check, test }`. `id` is `<PR id>-<n>` (for example `E01-3`). `kind` is one of `behaviour`, `error path`, `regression`, `quality bar`, `size limit`, `time bound`, `reference`. `statement` is one plain sentence a person can read. `check` is the command or steps, with the expected result. `test` (optional) names the test file or test that runs the check. The writer sets it only when the plan entry names a test. The verifier fills it from what it ran, and the break check (E03b) uses it.
 - The list lives in the workflow's memory for the run, in every later agent's brief (`prBlock`), in the PR body under "Evals" with the last result of each id, in the result (`evals`) and in the ledger. It is never a file on the branch. So no agent after the writer can edit it. It changes only through a dispute that the writer settles (E02) or a new eval from the reviewer (E04).
-- A rerun gets the list back through `resume.evals` (copied from the earlier result, as `history` is today). `prs[].evals` gives a list by hand and skips the writer.
+- A rerun gets the list back through `resume.evals` (copied from the earlier result, as `history` is today). `prs[].evals` gives a list by hand and skips the writer. An `Evals:` table in a plan entry is input to the writer (E01), never the list itself.
 - Plan and docs PRs get no list. A PR with no list (a resume of a PR built before 0.9.0, or `evals: false`) runs the tester path as today.
 
 ### Verifier results and sign-off
 
-- The verifier returns one result for each eval id: `pass`, `fail` or `ci`. A `ci` result means the sandbox refused the command; it must name a check in `ciChecks` (default `["ci"]`), which the land step already needs green on the head. A `ci` result with no such name counts as no result.
+- The verifier returns one result for each eval id: `pass`, `fail` or `ci`. A `ci` result means the sandbox refused the command; it must name a check in `ciChecks`. `ciChecks` is repo policy: the top level of `.github/pipeline.json` (default `["ci"]`), read from the default branch as `knownFlakes` is. The main session passes it; a run cannot set its own list. A `ci` result with no such name counts as no result. A `ci` item stays on the untested list, so the maintainer merges the PR. No land step reads the named check in this release.
 - Sign-off needs a result for every id and no `fail`. The verifier's own `pass` field is ignored, as the tester's is today. It may add up to 3 checks of its own that the builder did not see. A failed one is a major.
 - Each history row gets `evals: { passed, failed, ci }` (lists of ids). The PR body, the ledger and the stop rule read this field.
 
@@ -96,9 +96,9 @@ Decided: **comments on one ledger issue per repo**, never a file on `main`.
 
 | State | How it starts | What ends it |
 | --- | --- | --- |
-| evals refused | the list breaks a rule (no error-path eval and no reason, or an algorithm entry with no size limit, time bound or reference) after `evalsRounds` writer attempts | the PR stops with `evals refused: <rule>`. The main session fixes the entry or passes `prs[].evals`, then reruns |
+| evals refused | the list breaks a rule (no error-path eval and no reason, or an algorithm entry with no time bound, or with neither a size limit nor a reference) after `evalsRounds` writer attempts | the PR stops with `evals refused: <rule>`. The main session fixes the entry or passes `prs[].evals`, then reruns |
 | dispute open | the implementer or the fixer returns a dispute for an eval id | the writer keeps or changes the eval in the same step; if the writer fails, the eval is kept and the dispute is recorded as `unsettled`. One dispute per id per PR; a second is ignored and logged |
-| eval result `ci` | the verifier could not run the command and named a check in `ciChecks` | the land step reads that check on the head. The item is listed as covered by CI in the PR body |
+| eval result `ci` | the verifier could not run the command and named a check in `ciChecks` | nothing reads the check in this release. The item is listed as covered by CI in the PR body and on the untested list, so the maintainer merges the PR |
 | no progress | two rounds in a row with no progress, or a fix that pushed nothing | a person reruns with `resume` and a decision, or drops the PR |
 | ledger missing | `ledger.sh put` finds no ledger issue (exit 65) | the maintainer allows `ledger.sh init <repo>` |
 
@@ -153,7 +153,7 @@ Summary: the ledger, the writer and the verifier first; then the rules that buil
 | `prs[].algorithm` | boolean | `false` | E01 | The entry adds or changes an algorithm (the plan entry says `Algorithm: yes`). The writer can also set it. |
 | `resume.evals` | eval list | none | E01 | The list of the earlier run, copied from its result. |
 | `steps.verify` | `{ model, effort }` | `sonnet`, `medium` | E03a | Model of the verifier. |
-| `ciChecks` | string list | `["ci"]` | E03a | The CI check names a `ci` result may name. |
+| `ciChecks` | string list | `["ci"]` | E03a | The CI check names a `ci` result may name. The main session reads it from the top level of `.github/pipeline.json` on the default branch and passes it; nobody sets it by hand for one run. |
 | `breakCheck` | boolean | `true` | E03b | `false` turns the break check off for the wave. |
 | `resume.designRules` | string list | `[]` | E04 | Rules a person set after a stop. They go to the verifier, the reviewer and the fixer (#44). |
 | `prs[].maxRounds` | number | unchanged | all | No code change. Each entry below names its value. |
@@ -180,9 +180,10 @@ Summary: the ledger, the writer and the verifier first; then the rules that buil
 **L01 Ledger (#556).** Round cap 3. Touches: `scripts/token-report.sh`, `scripts/ledger.sh` (new), `test/token-report.test.mjs`, `test/ledger.test.mjs` (new), `test/fixtures/ledger/` (new), `test/fake-gh` (only if a new route needs it), `skills/pr-pipeline/SKILL.md` ("Step 4: file the feedback" only), `routine/cloud/build.md` (step 9 only), `test/routine-cloud-prompts.test.mjs` (one case for step 9).
 - #556 first: `token-report.sh` labels the transcript line `transcripts: N agents, M tokens (cache reads included)`, prints per role and per PR the weighted figure (input 1, cache read 0.1, cache write 1.25, output 5) and says that the top roles and the PR flags use it. The flags then use the weighted figure.
 - `token-report.sh --json <file>` writes per PR: tokens by role (four counts), the weighted figure, agent count, wall minutes (first to last `timestamp` over the PR's transcripts), and the minor pass cost (agents labelled `minorfix:`, `minorreview:` and `test:<id>#minor1`). Without a transcript folder it writes the totals only with `comparable: false`.
-- `scripts/ledger.sh <repo> <command>`: `init`; `put <workflow output file> --run <id> [--tokens <json>] [--cloud]` (one record per PR in the result, ready or not; a record that exists for that run and PR is not written again); `list` (one JSON line per trusted record, all pages); `backfill` (one record per merged PR with none: rounds parsed from the PR body, bot threads, merge mode; tokens null; a second run writes nothing); `report [--since <tag>]` (median weighted tokens per merged PR, median rounds, maintainer touches per PR, defects after sign-off, each as one plain sentence, and how many records have no tokens). `put` and `backfill` take `--dry-run`: they print the records and write nothing.
-- Record fields: `v`, `repo`, `run`, `pluginVersion`, `kind` (`wave`, `land-fix`, `backfill`), `pr` (`id`, `number` or null), `ready`, `reason`, `rounds`, `evals` (count, and passed, failed and ci ids by round, from the history rows when they have them), `minorPass` (`ran`, `kept`, `why`, weighted tokens), `codeChangedByBots`, `tokens` (`source`, `comparable`, `byRole`, `weighted`, `agents`, `wallMinutes`).
-- Maintainer touches of a PR: a merge with mode `person` plus each record whose reason starts with `needs human:`. Defects after sign-off: records with `codeChangedByBots` true, land-fix records, and eval misses (E06 adds them).
+- `scripts/ledger.sh <repo> <command>`: `init`; `put <workflow output file> --run <id> [--tokens <json>] [--cloud]` (one record per PR in the result, ready or not; a record that exists for that run and PR is not written again); `list` (one JSON line per trusted record, all pages); `backfill` (one record per merged PR with none: rounds parsed from the PR body, bot threads, merge mode; tokens null; a second run writes nothing); `report [--since <tag>]` (median weighted tokens and median raw tokens per merged PR, median rounds, the share of PRs with 4 or more rounds, maintainer touches per PR, defects after sign-off, hand fixes by kind, each as one plain sentence, and how many records have no tokens); `hand <pr number> code|process` (the main session records a fix by hand after sign-off, or a process fix by hand; `report` counts them by kind). `put` and `backfill` take `--dry-run`: they print the records and write nothing.
+- Record fields: `v`, `repo`, `run`, `pluginVersion`, `kind` (`wave`, `land-fix`, `backfill`), `pr` (`id`, `number` or null), `ready`, `reason`, `rounds` (history rows with an integer `round`; docs, minor1 and bots rows are not rounds; null when backfill cannot parse the PR body), `evals` (count, and passed, failed and ci ids by round, from the history rows when they have them), `minorPass` (`ran`, `kept`, `why`, weighted tokens), `codeChangedByBots`, `tokens` (`source`, `comparable`, `byRole`, `raw` (the sum with cache reads, the unit that `token-report.sh` printed before L01), `weighted`, `agents`, `wallMinutes`).
+- One row per PR in `report`: the PR's records of all runs are combined. Tokens are summed, `ready` comes from the last record, and touches are counted over all records. A stalled run, its resume and a land fix are one PR.
+- Maintainer touches of a PR: a merge with mode `person` plus each record whose reason starts with `needs human:`. Defects after sign-off are a set of PRs: `codeChangedByBots` true or an eval miss (E06), counted once per PR. Land-fix records are counted on a separate line, because a land fix usually resolves a conflict and not a defect. A PR whose rounds are null is left out of the median rounds, and the report says how many.
 - SKILL.md Step 4: after `token-report.sh --json`, run `ledger.sh put`. `routine/cloud/build.md` step 9: after `token-report.sh`, run `ledger.sh <repo> put <output-file> --run <run> --cloud` and log its output; a non-zero exit is logged and the run goes on.
 Invariants: no command writes a file in the repo; `put` and `backfill` write only comments on the ledger issue; `list` and `report` read only records by the `GET user` account; a record that exists for a run and PR is never written twice; a cloud record never has `comparable: true`.
 Evals:
@@ -196,24 +197,27 @@ Evals:
 | L01-5 | regression | #556: the transcript total is labelled, and a PR flag follows the weighted figure, not cache reads. | `test/token-report.test.mjs`: a fixture where cache reads make a different PR the largest. |
 | L01-6 | behaviour | The record says whether the minor pass was kept or reverted, and its weighted cost. | Fixture with `minorPass: { ran: true, kept: false }` and `minorfix:` transcripts. |
 | L01-7 | error path | With no ledger issue, `put` exits 65 and writes nothing; a failed GitHub call exits 3. | `test/fake-gh` with no issue: no POST in the call log. |
+| L01-9 | behaviour | `report` counts each PR once over its records, counts a PR with `codeChangedByBots` and a miss once as a defect, counts land fixes apart, and leaves a null-rounds PR out of the median. | `test/ledger.test.mjs`: two runs of one PR, a land-fix record, a backfill record with null rounds. |
+| L01-10 | behaviour | `hand` records a hand fix, and `report` prints the counts by kind and the share of PRs with 4 or more rounds. | `test/ledger.test.mjs` with `test/fake-gh`. |
 | L01-8 | behaviour | `backfill` writes one record per merged PR with none, and nothing on a second run. | Fixture of three merged PRs, one with a record. |
 
 Acceptance: `node --test test/ledger.test.mjs test/token-report.test.mjs` passes; the L01-5 case fails on the old `token-report.sh` because its flag uses the sum with cache reads.
 QA: on this repo, `ledger.sh alfhen/agent-pr-pipeline backfill` with `--dry-run` printing what it would post, then `report` over the printed records. No write to this repo in QA unless the maintainer allows `init` here.
 
-**E01 Evals writer.** Round cap 4. Touches: `agents/evals-writer.md` (new), `workflows/run-wave.js` (the argument block after `FEEDBACK_REPO`: `EVALS_ON`, `EVALS_ROUNDS`; `STEPS`: the `evals` line before `impl`; `ROLES`: the `evals` line before `impl`; new schemas `EVALS` and `EVALSCHECK` after `IMPL`; new `evalsPrompt` and `evalsCheckPrompt` after `implPrompt`; `prBlock`; new `evalsVerdict` and `writeEvals` before `runPRSteps`; `runPRSteps`: one call before the `impl` call and `evals` in each result; `openPrompt`: the "Evals" section), `test/evals-writer.test.mjs` (new), `test/sim-pipeline.mjs` (fake agent: one `evals:` line after the `triage` line; cases after "no skill instruction without a skills argument").
+**E01 Evals writer.** Round cap 4. Touches: `agents/evals-writer.md` (new), `workflows/run-wave.js` (the argument block after `FEEDBACK_REPO`: `EVALS_ON`, `EVALS_ROUNDS`; `STEPS`: the `evals` line before `impl`; `ROLES`: the `evals` line before `impl`; new schemas `EVALS` and `EVALSCHECK` after `IMPL`; new `evalsPrompt` and `evalsCheckPrompt` after `implPrompt`; `prBlock`; new `evalsVerdict` and `writeEvals` before `runPRSteps`; `runPRSteps`: one call before the `impl` call and `evals` in each result; `openPrompt`: the "Evals" section), `templates/plan.md` (the entry block: Round cap, Algorithm, Evals), `skills/pr-pipeline/SKILL.md` ("Step 1" and the plan-author checklist only), `test/evals-writer.test.mjs` (new; one prompt-text case for the template and the skill), `test/sim-pipeline.mjs` (fake agent: one `evals:` line after the `triage` line; cases after "no skill instruction without a skills argument").
 - `writeEvals(pr)` runs for a code PR (quick fixes too) with no `prs[].evals` and no `resume.evals`, when `evals` is not false. The writer clones the default branch, reads the plan entry (or the quick brief), the goals document and the code. It never sees the PR branch. It returns `{ evals, algorithm, noErrorPath, notes }`.
-- `evalsVerdict(list, pr)` refuses: an empty list; an id that repeats; no `error path` eval and no `noErrorPath` reason; when `pr.algorithm` or the writer's `algorithm` is true, a list with no `size limit`, `time bound` or `reference` eval (the reference is a slow, simple version of the same function, compared on generated inputs).
+- `evalsVerdict(list, pr)` refuses: an empty list; an id that repeats; no `error path` eval and no `noErrorPath` reason; when `pr.algorithm` or the writer's `algorithm` is true, a list with no `time bound` eval, and a list with neither a `size limit` nor a `reference` eval (the reference is a slow, simple version of the same function, compared on generated inputs). So an algorithm entry always needs a time bound and one of the other two.
 - Evals check: the architecture reviewer (`evalsCheckPrompt`, when `archRuns(pr)`) and, per Q3, the product reviewer check the list before the build: `ok` or `needs-change` with notes. A refusal or a `needs-change` goes back to the writer with the reason, at most `evalsRounds` attempts in all. Then the PR stops with `evals refused: <rule>` or `evals check: <notes>`. The writer failing (after the retry) stops it with `evals writer failed`.
+- An `Evals:` table in the plan entry is input to the writer, not the list. The writer keeps or improves each row under the same id, may add rows, and its list goes through `evalsVerdict` and the evals check. `prs[].evals` is only for a list the maintainer gives. The writer gets the entry's `Round cap` and `Algorithm:` lines as plain input.
 - `prBlock` prints the list (id, kind, statement, check). `openPrompt` puts a table "Evals" in the PR body: id, kind, what must be true, and the last result from the history row, or "not checked" before E03a.
-Invariants: no implementer call happens before `evalsVerdict` accepts the list; an algorithm entry with no time bound never reaches the implementer; the writer's prompt names no PR branch; the list in every later prompt equals the accepted list.
+Invariants: no implementer call happens before `evalsVerdict` accepts the list; an algorithm entry with no time bound never reaches the implementer; the writer's prompt names no PR branch; the list in every later prompt equals the accepted list plus settled changes (E02) and reviewer evals (E04), each of which passed `evalsVerdict` again.
 Evals:
 
 | Id | Kind | What must be true | How to check |
 | --- | --- | --- | --- |
 | E01-1 | behaviour | A code PR gets its list before the implementer starts, and every later brief and the PR body hold it. | Sim: `evals:C1` comes before `implement:C1`; the open prompt holds each statement. |
 | E01-2 | error path | A list with no error-path eval and no reason is refused; after `evalsRounds` the PR stops with `evals refused: no error path`. | Sim: the writer returns behaviour evals only, twice. |
-| E01-3 | behaviour | An algorithm entry with no time bound is refused. | Sim: `algorithm: true`, a list with a size limit and a reference but no time bound; no `implement:` call. |
+| E01-3 | behaviour | An algorithm entry with no time bound is refused. A list with a time bound and a size limit or a reference is accepted. | Sim: `algorithm: true`, a list with a size limit and a reference but no time bound gives no `implement:` call; the same list plus a time bound gives one. |
 | E01-4 | behaviour | A `needs-change` from the evals check goes back to the writer once, with the notes. | Sim: the second writer prompt holds the notes. |
 | E01-5 | behaviour | `prs[].evals` or `resume.evals` skips the writer. | Sim: no `evals:` call; the given list is in the implementer prompt. |
 | E01-6 | regression | Plan and docs PRs and `evals: false` run as before. | The existing sim cases pass with no change to their expected values. |
@@ -222,7 +226,7 @@ Evals:
 
 Acceptance: `node test/sim-pipeline.mjs` and `node --test test/evals-writer.test.mjs` pass; the E01-3 case fails when `evalsVerdict` skips the algorithm rule.
 
-**E03a Verifier.** Round cap 4. Touches: `agents/verifier.md` (new), `workflows/run-wave.js` (`STEPS`: the `verify` line after `test`; `ROLES`: the `verify` line after `test`, with `skills: 'test'`; new schema `VERIFY` after `TEST`; new `verifyPrompt` after `testPrompt`; new `CI_CHECKS` and `verifyOutcome` after `testOutcome`; `historyRow`; `reviewLoop`: the `test` call in the first `parallel` and the `testOutcome` line after it), `test/verifier-agent.test.mjs` (new), `test/sim-pipeline.mjs` (fake agent: one `verify:` line before the `test` line; cases after "a decision rerun that stops at open still reports rerunFixChanged").
+**E03a Verifier.** Round cap 4. Touches: `agents/verifier.md` (new), `workflows/run-wave.js` (`STEPS`: the `verify` line after `test`; `ROLES`: the `verify` line after `test`, with `skills: 'test'`; new schema `VERIFY` after `TEST`; new `verifyPrompt` after `testPrompt`; new `CI_CHECKS` and `verifyOutcome` after `testOutcome`; `historyRow`; `reviewLoop`: the `test` call in the first `parallel` and the `testOutcome` line after it), `templates/pipeline.json` and `skills/pr-pipeline/SKILL.md` (the `.github/pipeline.json` line of "Files" only: the `ciChecks` key), `test/verifier-agent.test.mjs` (new; one case that the template has `ciChecks`), `test/sim-pipeline.mjs` (fake agent: one `verify:` line before the `test` line; cases after "a decision rerun that stops at open still reports rerunFixChanged").
 - When `pr.evals` is set, the loop calls the verifier (label `verify:<id>#<round>`) instead of the tester. The verifier clones the branch, runs the fast checks and the branch's own e2e (as the tester does), then each eval's check. It returns the `TEST` fields plus `evals: [{ id, result, evidence, ciCheck }]` and `extra: [{ name, pass, evidence }]` (at most 3).
 - `verifyOutcome(pr, verify)` builds on `testOutcome` and adds: a major `eval <id> has no result` for each missing id or `ci` result whose `ciCheck` is not in `ciChecks`; a major `eval <id> failed: <evidence>` for each fail; a major for each failed extra check. `pass` is false when any of these exist. `ci` results go to the untested list as `<id> (covered by CI check <name>)`.
 - `historyRow` adds `evals: { passed, failed, ci }`.
@@ -246,9 +250,9 @@ Acceptance: `node test/sim-pipeline.mjs` and `node --test test/verifier-agent.te
 
 **E02 Build against the evals (#79).** Round cap 3. Touches: `workflows/run-wave.js` (`implPrompt`; `IMPL` (`disputes`, `deviations`); `fixPrompt` and `FIX` (`disputes`); new `disputePrompt`, `DISPUTE` and `settleDisputes` after `writeEvals`; `runPRSteps`: the lines after the `impl` call, and `evalDisputes` in each result; `reviewLoop`: the lines after the `fix` call only; `reviewPrompt`: the deviation rule), `agents/implementer.md`, `agents/fixer.md`, `agents/evals-writer.md` (the dispute section), `agents/reviewer.md` (the deviation rule only), `test/build-against-evals.test.mjs` (new), `test/sim-pipeline.mjs` (cases after "severity: a fits architecture report keeps its minors and starts no fix for the minor").
 - The implementer and the fixer build until they believe every eval passes. They cannot change an eval. They may return `disputes: [{ id, reason }]`. Any other field that holds evals is ignored.
-- `settleDisputes` sends each dispute to the writer, which answers `keep` or `change` (with the new eval) and a reason. One dispute per id per PR; a second is logged and ignored. If the writer fails, the eval is kept and the dispute is `unsettled`. Every dispute goes into `evalDisputes` on the result and into the PR body.
+- `settleDisputes` sends each dispute to the writer, which answers `keep` or `change` (with the new eval) and a reason. After a `change`, `evalsVerdict` runs on the new list and the evals check runs on it again (when it ran before). A change that fails either is rejected: the old eval stays and the dispute is recorded as `rejected`. One dispute per id per PR; a second is logged and ignored. If the writer fails, the eval is kept and the dispute is `unsettled`. Every dispute goes into `evalDisputes` on the result and into the PR body.
 - #79: the implementer returns `deviations: [{ what, where, why }]` for any change against the entry's Touches line, Acceptance line or a named plan rule. The reviewer gets them and rules on each as accepted or a finding. One rule for both reviewers: a Touches deviation is a finding unless the entry or a rule allows it.
-Invariants: the list changes only through `settleDisputes` (and, after E04, a reviewer eval); no dispute changes an eval without a writer answer; each dispute is in the result.
+Invariants: the list changes only through `settleDisputes` (and, after E04, a reviewer eval), and every changed list passes `evalsVerdict`; no dispute changes an eval without a writer answer; each dispute is in the result.
 Evals:
 
 | Id | Kind | What must be true | How to check |
@@ -259,13 +263,14 @@ Evals:
 | E02-4 | error path | A writer that fails on a dispute keeps the eval and records `unsettled`. | Sim. |
 | E02-5 | error path | A second dispute for the same id is ignored and logged. | Sim. |
 | E02-6 | behaviour | Deviations reach the reviewer prompt. | Sim: the review prompt of round 1 holds the deviation. |
+| E02-8 | error path | A `change` that removes the only error-path eval or the time bound is rejected, and the old eval stays. | Sim: the writer answers `change` with a list that breaks the rule. |
 | E02-7 | regression | A PR with no disputes and no deviations makes the same calls as before. | Sim. |
 
 Acceptance: `node test/sim-pipeline.mjs` and `node --test test/build-against-evals.test.mjs` pass; the E02-2 case fails when the loop takes a list from the implementer's answer.
 
 **E03b Break-the-change check.** Round cap 3. Touches: `workflows/run-wave.js` (`verifyPrompt`; `VERIFY` (`breakCheck` per result); `verifyOutcome`; `BREAK_CHECK` after `CI_CHECKS`), `agents/verifier.md` (the break-check section), `test/verifier-agent.test.mjs`, `test/sim-pipeline.mjs` (cases after the last E03a case).
-- In a round where every eval passed, for each eval with a `test`, the verifier removes the change from the files that are not tests (`git checkout origin/HEAD -- <those files>` in its clone), runs the test, and restores the clone. It returns `breakCheck`: `fails-without-change`, `passes-without-change` or `not-run` (with why).
-- `verifyOutcome` turns `passes-without-change` into a major `eval <id>: the test passes without the change`. `not-run` goes to the untested list. `breakCheck: false` skips the step.
+- In a round where every eval passed, for each eval of kind `behaviour` or `error path`, the verifier maps the eval to the test that ran its check (and fills `test`), removes the change from the files that are not tests in its clone, runs the test, and restores the clone. A file the PR changes is reset with `git checkout origin/HEAD -- <file>`; a file the PR adds is deleted, because it is not on `origin/HEAD`. It returns `breakCheck`: `fails-without-change`, `passes-without-change`, `not-applicable` (kinds `regression`, `quality bar`, `size limit`, `time bound`, `reference`: they pass with and without the change by design) or `not-run` (with why). An eval that it cannot map to a test is `not-run`.
+- `verifyOutcome` turns `passes-without-change` into a major `eval <id>: the test passes without the change`. `not-run` goes to the untested list, so no eval of kind `behaviour` or `error path` is skipped without a trace. `not-applicable` is neither a pass nor a major. `breakCheck: false` skips the step.
 - The verifier pushes nothing; the check happens only in its clone.
 Invariants: a test that passes with the change removed never counts as a pass; the break check never changes the branch.
 Evals:
@@ -273,10 +278,13 @@ Evals:
 | Id | Kind | What must be true | How to check |
 | --- | --- | --- | --- |
 | E03b-1 | behaviour | A test that still passes with the change removed is a failed eval. | Sim: `passes-without-change` stops sign-off. |
-| E03b-2 | behaviour | The break check runs only for evals with a `test`, in a round where every eval passed. | Prompt test and sim. |
+| E03b-2 | behaviour | The break check runs for each `behaviour` and `error path` eval in a round where every eval passed. | Prompt test and sim. |
 | E03b-3 | error path | A break check that could not run is an untested item, not a pass. | Sim: `not-run` is in `untested`. |
 | E03b-4 | behaviour | The verifier pushes nothing. | `test/verifier-agent.test.mjs`: the agent file has no push and says to restore the clone. |
 | E03b-5 | regression | `breakCheck: false` gives the E03a calls and results. | Sim. |
+| E03b-7 | behaviour | A file the PR adds is deleted in the clone and restored, not checked out from `origin/HEAD`. | Prompt test: the agent file names both steps. Sim: a result for an added file. |
+| E03b-8 | behaviour | A `regression` eval gets `not-applicable`, which is not a major. | Sim. |
+| E03b-9 | error path | An eval of kind `behaviour` or `error path` that the verifier cannot map to a test is `not-run` and untested. | Sim: `not-run` is in `untested`. |
 | E03b-6 | break check | The E03b-1 test fails when `verifyOutcome` ignores `breakCheck`. | The verifier removes the rule and runs the test. |
 
 Acceptance: `node test/sim-pipeline.mjs` passes; the E03b-1 case fails on E03a's `verifyOutcome`.
@@ -302,57 +310,60 @@ QA: `file-feedback.sh --dry-run` against this repo with one item whose title equ
 
 ### Wave 3
 
-**E04 Reviewer after the evals (#44, #600, #612).** Round cap 4. Touches: `workflows/run-wave.js` (`reviewLoop`; `wantArch`; new `progressOf` before `reviewLoop`; `resumeThemes`; `scopeEscalation`; `REVIEW` (an `eval` field on a finding); `reviewPrompt` and `fixPrompt`: the eval rule and `designRules`; `historyRow`: no themes on a plan-conflict stop), `agents/reviewer.md`, `test/review-after-evals.test.mjs` (new), `test/sim-pipeline.mjs` (cases at the end of the file).
-- Order in a round for a PR with evals: the verifier first. If an eval fails, the fixer runs without the reviewer, the architecture review or QA. When every eval passes, those three run, on the same head.
-- A reviewer blocker or major must carry an `eval` (statement and check). The workflow adds it to the list with id `<PR id>-R<round>-<n>`, and the verifier checks it next round. A blocker or major with no `eval` counts as a minor. This follows Q2 (a).
+**E04 Reviewer after the evals (#44, #600, #612).** Round cap 4. Touches: `workflows/run-wave.js` (`reviewLoop`; `wantArch`, `wantProduct` and `wantQa` (the `round === startRound` terms); new `progressOf` before `reviewLoop`; `resumeThemes`; `scopeEscalation`; `REVIEW` (an `eval` field on a finding); `reviewPrompt` and `fixPrompt`: the eval rule and `designRules`; `historyRow`: no themes on a plan-conflict stop), `agents/reviewer.md`, `test/review-after-evals.test.mjs` (new), `test/sim-pipeline.mjs` (cases at the end of the file).
+- Order in a round for a PR with evals: the verifier first. If an eval fails, the fixer runs without the reviewer, the architecture review or QA. When every eval passes, those three run, on the same head. `wantArch`, `wantProduct` and `wantQa` use "the first round where the reviewers run" in place of `round === startRound`, so a round 1 that fails an eval does not skip product review or QA for good.
+- A reviewer blocker or major must carry an `eval` (statement and check). The workflow adds it to the list with id `<PR id>-R<round>-<n>`, and the verifier checks it next round. A blocker or major with no `eval` keeps its severity and stops sign-off. It goes back to the reviewer once, to write an eval. If it still has none, the PR stops with `needs human: review after evals`, and the finding is in the PR body. A reviewer eval goes through the `evalsVerdict` structure rules (a unique id, a statement and a check) before it joins the list. This follows Q2 (a).
 - The loop ends when every eval passes and no review finding needs a new eval. At the round cap with every eval passing and a new eval open, the reason is `needs human: review after evals` with the open findings, never `rounds exhausted`.
-- Stop rule (Design): `progressOf(previous row, row)`. Two rows in a row with no progress stop with `no progress: ...`. A fix that pushed nothing gives `no progress: the fix changed nothing in round <n>`. A theme that is in any earlier row stops with `needs human: scope` (#44, on top of #588).
+- Resume: the repeat-theme check reads only the rows after the last `needs human: scope` row (the rows of the current resume onward). `resumeThemes` is empty at a resume after a scope stop, so a resume with `designRules` runs a fix round.
+- Stop rule (Design): `progressOf(previous row, row)`. Two rows in a row with no progress stop with `no progress: ...`. A fix that pushed nothing gives `no progress: the fix changed nothing in round <n>`. A theme that is in any earlier row of the current run segment stops with `needs human: scope` (#44, on top of #588).
 - `resume.designRules` go into the verifier, reviewer and fixer prompts (#44 (c)).
 - #600: a plan-conflict stop leaves `themes` out of its history row, so `resumeThemes` does not carry them. #612: remove the `archOpen` term from `wantArch` if the new order leaves no path where it alone decides, or add a sim case where it does.
-Invariants: the reviewer never runs on a head where an eval failed in that round; no PR ends with `rounds exhausted` while every eval passed in its last round; every blocker or major that stays a blocker or major is an eval the verifier checks; a theme that returns stops the PR.
+Invariants: the reviewer never runs on a head where an eval failed in that round; no PR ends with `rounds exhausted` while every eval passed in its last round; every blocker or major from the reviewer is an eval the verifier checks or a stop (no finding is demoted); the verifier's own extra checks are majors without an eval and go to the fixer; a theme that returns stops the PR.
 Evals:
 
 | Id | Kind | What must be true | How to check |
 | --- | --- | --- | --- |
-| E04-1 | behaviour | Reviewer, architecture and QA run only in a round where every eval passes. | Sim: round 1 has a failed eval and no `review:` call; round 2 has one. |
-| E04-2 | behaviour | A blocker with an `eval` becomes a new eval that the verifier checks next round; one without becomes a minor. | Sim. |
+| E04-1 | behaviour | Reviewer, architecture, product review and QA run only in a round where every eval passes, and then they run. | Sim with product and QA on: round 1 has a failed eval and no `review:`, `product:` or `qa:` call; round 2 has all three. |
+| E04-2 | behaviour | A blocker with an `eval` becomes a new eval that the verifier checks next round; one without goes back to the reviewer once, then stops with `needs human: review after evals`. | Sim, both. |
 | E04-3 | behaviour | No PR ends with `rounds exhausted` while its evals all pass. | Sim at the cap: the reason is `needs human: review after evals`. |
 | E04-4 | behaviour | A theme in rounds 1 and 3 stops the PR. | Sim. |
 | E04-5 | behaviour | Two rounds with no progress stop with `no progress`; a fix that pushed nothing says `no progress`. | Sim, both. |
 | E04-6 | regression | #600: a resume after a plan-conflict stop runs a fix round. | Sim. |
 | E04-7 | regression | #612: a case fails when the `archOpen` term is removed, or the term is gone. | Sim, or the term's absence. |
+| E04-9 | behaviour | A resume after a scope stop with `designRules` runs a fix round, and a theme from before the stop does not stop it again. | Sim: history with a `needs human: scope` row, then `resume.designRules`. |
+| E04-10 | error path | A reviewer eval with a repeated id or no check is not added to the list. | Sim. |
 | E04-8 | behaviour | `resume.designRules` reach the verifier, reviewer and fixer. | `test/review-after-evals.test.mjs` and sim. |
 
 Acceptance: `node test/sim-pipeline.mjs` and `node --test test/review-after-evals.test.mjs` pass; the E04-3 case fails on the old loop because its last-round reason is `rounds exhausted`.
 
-**V01 Version names in docs (Q1).** Round cap 2, `kind: "docs"`. Only if the maintainer chooses Q1 (a). Touches: `docs/cloud-routines.md` (the stage table row "2 to 4"), `docs/routine.md` (line 3), `skills/pr-pipeline/SKILL.md` (the `routine/` line of "Files"), `test/skill-notes.test.mjs` (one case).
+**V01 Version names in docs (Q1).** Round cap 2, `kind: "docs"`. Only if the maintainer chooses Q1 (a). Touches: `docs/cloud-routines.md` (the stage table row "2 to 4", and "0.9.0 deletes the local runner code" at line 292), `docs/routine.md` (line 3), `skills/pr-pipeline/SKILL.md` (the `routine/` line of "Files"), `test/skill-notes.test.mjs` (one case).
 - Stage 2 work and the deletion of the local runner move from "0.9.0" to "release 2 (0.10.0)"; stages 3 and 4 to 0.10.0 too, or later, as release 2's plan decides. `docs/plan-0.8.0.md` stays as it is: it is a record.
 Evals:
 
 | Id | Kind | What must be true | How to check |
 | --- | --- | --- | --- |
-| V01-1 | behaviour | No current doc promises stage 2 or the local runner deletion in 0.9.0. | `test/skill-notes.test.mjs`: no line of the three files pairs `0.9.0` with those words. |
-| V01-2 | regression | `docs/plan-0.8.0.md` is not changed. | The diff does not list it. |
+| V01-1 | behaviour | No current doc promises stage 2 or the local runner deletion in 0.9.0. | `test/skill-notes.test.mjs`: it reads each of the four files, asserts that the file is not empty and that a line has `0.10.0` or `release 2`, and that no line pairs `0.9.0` with `stage 2`, `2 to 4`, `local runner` or `deletes`. |
+| V01-2 | regression | `docs/plan-0.8.0.md` is not changed. | The diff against the default branch is not empty and does not list the file. |
 | V01-3 | behaviour | The stage table names release 2 by its version. | `test/skill-notes.test.mjs`. |
 
-Acceptance: `node --test test/skill-notes.test.mjs` passes; the new case fails on `main` because `docs/cloud-routines.md` line 70 says "0.9.0 and 0.10.0".
+Acceptance: `node --test test/skill-notes.test.mjs` passes; the new case fails on `main` because line 70 ("2 to 4" with 0.9.0) and line 292 of `docs/cloud-routines.md`, line 3 of `docs/routine.md` and the `routine/` line of SKILL.md pair 0.9.0 with those words.
 
 ## Product run
 
 Not a release. It proves 0.9.0 on another repo. No new pipeline features during the run, only fixes that block it.
 
 - Tagreeve 0.7.0 build waves start on the `v0.9.0` tag. Local waves only, because tokens by role exist only there. `pluginRoot` switches between waves, never inside one.
-- Before the first wave, in the Tagreeve repo and with its maintainer's go-ahead (this plan changes nothing in `alfhen/tagreeve`): a PR that adds `.github/pipeline.json` with its gates and `knownFlakes` (exact check-run names), merged by the maintainer; one `ledger.sh alfhen/tagreeve init`; `ciChecks` set to Tagreeve's check-run names in its wave arguments.
+- Before the first wave, in the Tagreeve repo and with its maintainer's go-ahead (this plan changes nothing in `alfhen/tagreeve`): a PR that adds `.github/pipeline.json` with its gates, `knownFlakes` and `ciChecks` (exact check-run names), merged by the maintainer; one `ledger.sh alfhen/tagreeve init`; `ciChecks` in the same file, set to Tagreeve's check-run names.
 - The pairNames entry (Tagreeve #1457, #1465) has the two-rounds-no-progress stop (D8) and is reported apart from the other entries.
 - The baseline is Tagreeve 0.6.2 on plugin 0.8.4 (direction plan, "Baseline").
 
 Success measures of this release (set before the trial; one release against one release points a direction and proves nothing):
 
-- Fewer code fixes by hand after sign-off than 4. This is the main quality measure.
-- A smaller share of entries with 4 or more review rounds than 4 of 21.
-- Mean tokens per entry not above 0.88M, though every entry gains an evals step.
+- Fewer code fixes by hand after sign-off than 4 (counted with `ledger.sh hand`). This is the main quality measure.
+- A smaller share of entries with 4 or more review rounds than 4 of 21 (the share line of `report`).
+- Mean raw tokens per entry (cache reads included, the unit of the 0.88M baseline from the direction plan) not above 0.88M, though every entry gains an evals step. The weighted figure is reported too, but it has no baseline, so the token measure is a direction only.
 - The pairNames rewrite converges, or stops within two rounds at low cost.
-- Fewer process fixes by hand than 6.
+- Fewer process fixes by hand than 6 (counted with `ledger.sh hand`).
 - Eval misses are counted. There is no baseline for them.
 
 The comparison (review rounds, tokens per merged PR, bot findings after sign-off, eval misses, maintainer touches) is reported in plain words from `ledger.sh report`.
@@ -366,8 +377,8 @@ The comparison (review rounds, tokens per merged PR, bot findings after sign-off
 
 ## Maintainer decisions
 
-**Q1. Version names.** `docs/cloud-routines.md` (stage table), `docs/routine.md` line 3, the `routine/` line of the SKILL.md "Files" list, and `docs/plan-0.8.0.md` (D8, D9, D10, "Later releases" and "Out of scope") promise stage 2 work, the plan step, minor batches and the deletion of the local runner "in 0.9.0". This release is 0.9.0 and has none of that.
-- (a) Release 2 is 0.10.0, release 3 is 0.11.0. V01 changes the three current docs. `docs/plan-0.8.0.md` stays as a record.
+**Q1. Version names.** `docs/cloud-routines.md` (stage table), `docs/cloud-routines.md` line 292, `docs/routine.md` line 3, the `routine/` line of the SKILL.md "Files" list, and `docs/plan-0.8.0.md` (D8, D9, D10, "Later releases" and "Out of scope") promise stage 2 work, the plan step, minor batches and the deletion of the local runner "in 0.9.0". This release is 0.9.0 and has none of that.
+- (a) Release 2 is 0.10.0, release 3 is 0.11.0. V01 changes the four places in the current docs. `docs/plan-0.8.0.md` stays as a record.
 - (b) Release 2 keeps the old name: call this release 0.8.6. A patch number for two new roles misleads.
 - (c) Change the docs in this plan PR. The brief for this plan keeps the plan PR to `docs/plan-0.9.0.md`.
 - Recommendation: (a).
@@ -375,6 +386,7 @@ The comparison (review rounds, tokens per merged PR, bot findings after sign-off
 **Q2. Where a new eval comes from in E04.**
 - (a) The reviewer writes the eval (statement and check) in its finding, and the verifier checks it. No extra agent call.
 - (b) The writer runs again in each round that has a blocker or major, and turns the findings into evals. One more Opus call per such round. Evals stay in one hand and one style.
+- Either way, a blocker or major with no eval is not demoted: it goes back once, then stops (E04).
 - Recommendation: (a). The reviewer does not check its own eval (the verifier does), so no agent checks its own work. (b) adds cost in exactly the rounds that are already the most costly. The ledger shows whether the reviewer's evals are weaker; then (b) is one switch away.
 
 **Q3. Who checks the eval list before the build.** The direction plan says the architecture reviewer and the product reviewer. Today the product reviewer runs on plan PRs only (`productRuns`).
@@ -398,7 +410,7 @@ The ledger store is decided in Design (one ledger issue per repo), not asked: th
 - **The pipeline changes its own judge.** Every entry is gated, so the maintainer merges each one. Q4 (a) keeps 0.8.5 as the judge until the tag.
 - **Ledger records are advisory.** One account writes everything, so any session can post a record that looks right. The trust rule only shuts out other accounts. The numbers are for direction, not for a gate.
 - **Reviewer-written evals (Q2 (a)) can be vague.** The verifier then cannot check them and returns no result, which stops sign-off. A vague eval costs a round, not a wrong merge.
-- **The break check needs a clean split of test files and other files.** A repo where tests live beside code with no naming rule gives `not-run`, which is listed as untested and keeps the PR from an agent merge.
+- **The break check needs a clean split of test files and other files.** A repo where tests live beside code with no naming rule gives `not-run`, which is listed as untested and keeps the PR from an agent merge. An eval of kind `regression` gets `not-applicable`, so it is not a break-check gap.
 - **Wall time** comes from transcript timestamps, so it exists for local runs only.
 - **Bot answers, the minor pass, the docs check and the land fix still use the tester**, not the verifier. A bot-answer change is checked by the tester and a diff review, as today.
 
