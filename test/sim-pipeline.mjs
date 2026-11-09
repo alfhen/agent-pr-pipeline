@@ -1729,6 +1729,7 @@ await check('tester: a report with no related field leaves the history without r
 await check('tester: relatedTests false leaves step 3 out of the test prompt', async () => {
   let prompt = ''
   await hooked(only1('C1'), (p, o) => { if (o.label !== 'test:C1#1') return; prompt = p; return { pass: true, headSha: 'sha-C1', checks: [chk('lint')] } }, { relatedTests: false })
+  assert.match(prompt, /test the branch from a clean clone/)
   assert.doesNotMatch(prompt, /import or name the modules/)
 })
 await check('tester: a related file that could not run is refused, so it starts no fix', async () => {
