@@ -216,6 +216,8 @@ await check('a bot answer that changed code is tested and reviewed on its diff b
   assert.equal(review.model, 'opus')
   assert.match(review.prompt, /git diff sha-C2\.\.HEAD/)
   assert.match(review.prompt, /anchored the regex/)
+  assert.match(review.prompt, /already filed: .*21/)
+  assert.match(review.prompt, /Found in review of C2\./)
   assert.ok(mainCalls.some(c => c.label === 'test:C2#bots1'))
   assert.deepEqual(r.C2.lateMinors.map(f => f.title), ['late nit'])
 })
