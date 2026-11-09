@@ -1565,22 +1565,20 @@ await check('severity: a QA finding titled (Minor) x is one major line and a con
   assert.deepEqual(x.Q1.history[0].blockersAndMajors, ['major [qa]: x'])
   assert.equal(x.Q1.history[0].severityConflicts, 1)
 })
-await check('severity: an architecture minor goes to the minors and does not keep the architecture review open', async () => {
+await check('severity: an architecture minor goes to the minors and starts no fix for the minor', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'y')])
-    : o.label === 'fix:C1#1' ? { summary: 's', changed: false, headSha: 'abc' }
     : o.label === 'arch:C1#1' ? { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [f('minor', '[major] naming')] } : undefined)
   assert.ok(calls.some(c => c.label === 'review:C1#2'))
   assert.match(calls.find(c => c.label === 'open:C1').prompt, /"title": "naming"/)
-  assert.ok(!calls.some(c => c.label === 'arch:C1#2'))
+  assert.doesNotMatch(calls.find(c => c.label === 'fix:C1#1').prompt, /naming/)
   assert.equal(x.C1.history[0].severityConflicts, 1)
 })
-await check('severity: a fits architecture report keeps its minors and does not keep the architecture review open', async () => {
+await check('severity: a fits architecture report keeps its minors and starts no fix for the minor', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'y')])
-    : o.label === 'fix:C1#1' ? { summary: 's', changed: false, headSha: 'abc' }
     : o.label === 'arch:C1#1' ? { verdict: 'fits', summary: 's', newConcepts: [], findings: [f('minor', 'naming')] } : undefined)
   assert.ok(calls.some(c => c.label === 'review:C1#2'))
   assert.match(calls.find(c => c.label === 'open:C1').prompt, /"title": "naming"/)
-  assert.ok(!calls.some(c => c.label === 'arch:C1#2'))
+  assert.doesNotMatch(calls.find(c => c.label === 'fix:C1#1').prompt, /naming/)
 })
 await check('severity: a review finding goes through splitFindings, so a severity word in the title is stripped', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)
@@ -1631,9 +1629,8 @@ await check('scope: majors on different themes in two rounds do not stop the PR'
     : o.label === 'review:C1#2' ? reviewOf([f('major', 'b', { theme: 'two' })]) : undefined)
   assert.notEqual(x.C1.reason, 'needs human: scope')
 })
-await check('scope: an architecture major stays open when the fixer pushes nothing, and the round-2 review gets the round-1 themes', async () => {
+await check('scope: an open architecture major runs the architecture review again, and the round-2 review gets the round-1 themes', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'arch:C1#1' ? { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [f('major', 'wrong layer', { file: 'a.js', theme: 'layering' })] }
-    : o.label === 'fix:C1#1' ? { summary: 's', changed: false, headSha: 'abc' }
     : o.label === 'arch:C1#2' ? { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [f('major', 'still the wrong layer', { file: 'a.js', theme: 'Layering' })] } : undefined)
   assert.ok(calls.some(c => c.label === 'arch:C1#2'))
   assert.match(calls.find(c => c.label === 'arch:C1#2').prompt, /Reuse a name below[^]*layering/)
