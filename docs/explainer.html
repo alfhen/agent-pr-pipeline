@@ -284,7 +284,7 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
       <li><span class="dot">1</span><p><strong>Small pieces.</strong> Each PR does one thing from the plan, so a reviewer can hold all of it in mind.</p></li>
       <li><span class="dot">2</span><p><strong>No marking your own homework.</strong> The builder, tester and reviewer are different agents with different instructions. Mistakes one makes, another tends to catch.</p></li>
       <li><span class="dot">3</span><p><strong>Tests that can fail.</strong> Every change needs a test that fails when the change is removed. "Passes for the wrong reason" is the most common real problem reviewers find.</p></li>
-      <li><span class="dot">4</span><p><strong>Waves.</strong> PRs in the same wave touch different files, so several are built at once without stepping on each other.</p></li>
+      <li><span class="dot">4</span><p><strong>Waves.</strong> PRs in the same wave can touch the same file when they edit different parts of it. PRs that edit the same part go in different waves, so several are built at once without stepping on each other.</p></li>
       <li><span class="dot">5</span><p><strong>Small stuff waits.</strong> Minor findings get one capped fix pass after sign-off. The rest go into one checklist comment on the PR. An issue is filed only for a minor that has a real effect, so the loop doesn't drag on over nits.</p></li>
     </ul>
   </section>

@@ -59,7 +59,7 @@ test('routine doc names the cut, the new records and full-mode next; skill names
 
 test('docs say entries of one wave can share a file when they edit different parts', () => {
   const rule = /can touch the same file when they edit different parts of it/
-  for (const f of ['../skills/pr-pipeline/SKILL.md', '../AGENTS.md', '../templates/AGENTS-section.md', '../templates/plan.md']) {
+  for (const f of ['../skills/pr-pipeline/SKILL.md', '../AGENTS.md', '../templates/AGENTS-section.md', '../templates/plan.md', '../docs/explainer.html']) {
     const text = readFileSync(new URL(f, import.meta.url), 'utf8')
     assert.match(text, rule, f)
     assert.doesNotMatch(text, /touch different files/, f)
