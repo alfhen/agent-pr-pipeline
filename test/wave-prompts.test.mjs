@@ -45,7 +45,7 @@ test('bot answer check reviews the whole PR on the new head', () => {
   const m = /const botReviewPrompt = [\s\S]*?const landReviewPrompt/.exec(src)
   assert.ok(m)
   assert.match(m[0], /review the whole PR on its new head/)
-  assert.match(m[0], /Touches line and the acceptance test/)
+  assert.match(m[0], /Commits from the docs step are part of the PR/)
   assert.match(m[0], /A regression that a bot found and an earlier review round missed is a finding from that round/)
   assert.match(m[0], /reviewPrompt\(pr/)
   assert.match(m[0], /name the round in its title/)

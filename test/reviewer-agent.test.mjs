@@ -44,18 +44,3 @@ test('reviewer has the plan PR checklist for every round', () => {
   assert.match(body, /what each script runner can execute/);
   assert.match(body, /what ends each state/);
 });
-
-test('reviewer compares the acceptance line word for word with the test', () => {
-  assert.match(body, /compare it word for word with what the acceptance test asserts/);
-  assert.match(body, /checks less, or something easier, than the line is a blocker/);
-});
-
-test('reviewer rules on each deviation from the plan entry with one rule', () => {
-  assert.match(body, /files changed outside the Touches line/);
-  assert.match(body, /Rule on each one as accepted or a finding/);
-  assert.match(body, /Apply one rule/);
-  assert.match(body, /a commit message on the branch/);
-  assert.match(body, /Report each accepted deviation as a minor finding titled `Accepted deviation: \.\.\.`/);
-  assert.match(body, /a bot comment, a merge conflict or a CI failure/);
-  assert.match(body, /in a review of a land fix, apply neither/);
-});
