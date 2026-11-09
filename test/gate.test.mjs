@@ -449,6 +449,15 @@ test('floor: nested .claude folders and CLAUDE.local.md are gated', () => {
   assert.equal(floorRun([{ filename: 'src/not.claude/x' }]).code, 0)
 })
 
+test('floor: a bare .claude path, such as a symlink, is gated at any depth and letter case', () => {
+  for (const f of ['.claude', 'pkg/.claude', 'a/b/.CLAUDE']) {
+    const r = floorRun([{ filename: f }])
+    assert.equal(r.code, 1, f)
+    assert.match(r.out, /floor:/)
+  }
+  assert.equal(floorRun([{ filename: 'pkg/.claudex' }]).code, 0)
+})
+
 test('floor: CLAUDE.md and AGENTS.md match in any letter case', () => {
   for (const f of ['claude.md', 'src/Agents.MD', '.CLAUDE/x', '.Github/x']) {
     const r = floorRun([{ filename: f }])
@@ -521,7 +530,7 @@ test('gate --same: prints the head only when the branch tree equals the signed-o
   const go = (cmp) => {
     const s = setup({ files: null })
     put(s.fx, `${P}__branches__feat__x.json`, { commit: { sha: head } })
-    if (cmp) put(s.fx, `${P}__compare__${signed}...feat__x.json`, cmp)
+    if (cmp) put(s.fx, `${P}__compare__${signed}...${head}.json`, cmp)
     return run(s, 'gate-files.sh', ['o/r', '--same', signed, 'feat/x'])
   }
   const same = go({ status: 'ahead', files: [] })
@@ -529,6 +538,9 @@ test('gate --same: prints the head only when the branch tree equals the signed-o
   assert.equal(same.out.trim(), `SAME ${head}`)
   assert.equal(go({ status: 'ahead', files: [{ filename: 'src/a.js' }] }).code, 1)
   assert.equal(go(null).code, 1)
+  assert.equal(go({ status: 'ahead' }).code, 1)
+  assert.equal(go({ status: 'identical' }).code, 1)
+  assert.equal(go({ status: 'identical', files: [] }).code, 0)
 })
 
 test('plugin-repo: no other script parses the manifest repository', () => {
