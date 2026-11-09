@@ -526,6 +526,14 @@ test('gate --scope: in the plugin repo a gated code file is listed and the floor
   assert.deepEqual(JSON.parse(r.out.trim().replace(/^SCOPE /, '')), ['scripts/gate-files.sh', 'src/a.js', 'workflows/run-wave.js'])
 })
 
+test('gate --scope: does not read the gate settings', () => {
+  const s = setup({ files: null, settings: 'error' })
+  put(s.fx, `${P}__compare__main...feat__x.json`, { files: [{ filename: 'src/a.js' }] })
+  const r = run(s, 'gate-files.sh', ['o/r', '--scope', 'feat/x'])
+  assert.equal(r.code, 0)
+  assert.match(r.out, /^SCOPE \["src\/a.js"\]/)
+})
+
 test('gate --scope: a branch that cannot be compared fails closed', () => {
   const r = run(setup({ files: null }), 'gate-files.sh', ['o/r', '--scope', 'feat/x'])
   assert.equal(r.code, 3)
