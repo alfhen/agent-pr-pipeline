@@ -280,9 +280,13 @@ const call = async (role, pr, prompt, label, extra) => {
     r.isolation ? { isolation: r.isolation } : {},
     extra)
   // An agent that dies on a transport or API error yields null or throws; a normal failure is an answer and is not retried.
-  const attempt = async () => { try { return { out: await agent(text, opts) } } catch (e) { return { err: e } } }
-  let got = await attempt()
-  if (got.err || got.out == null) { log(`${label}: agent died (${got.err ? got.err.message : 'no result'}), retrying once`); got = await attempt() }
+  const attempt = async (t) => { try { return { out: await agent(t, opts) } } catch (e) { return { err: e } } }
+  let got = await attempt(text)
+  if (got.err || got.out == null) {
+    log(`${label}: agent died (${got.err ? got.err.message : 'no result'}), retrying once`)
+    // A dead writer may have pushed or posted before it died; without this line the retry sees a finished branch and reports no change, which skips the check on that push.
+    got = await attempt(WRITERS.includes(role) ? `${text}\n\nRETRY: an earlier attempt of this task died and may have pushed commits or posted replies and comments. Read the branch and the existing threads and comments first. Do not repeat a reply or a comment. If the branch holds commits from that attempt, report changed or codeChanged as true for them.` : text)
+  }
   if (got.err) throw got.err
   const out = got.out
   if (pr && WRITERS.includes(role) && out && typeof out.worktree === 'string' && out.worktree.trim()) (worktreesOf[pr.id] = worktreesOf[pr.id] || new Set()).add(out.worktree.trim())

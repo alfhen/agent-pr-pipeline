@@ -1351,13 +1351,21 @@ await check('an agent that returns null is retried once and the retry result is 
   const t = flaky('implement:C1', ['null'])
   const out = await run({ ...base, prs: only('C1') }, t.fn, parallel, log)
   assert.equal(t.seen.length, 2)
-  assert.equal(out.prs[0].id, 'C1')
+  assert.equal(out.prs[0].ready, true)
 })
 await check('an agent that throws is retried once', async () => {
   calls = []; preflight = GOOD
   const t = flaky('implement:C1', ['throw'])
-  await run({ ...base, prs: only('C1') }, t.fn, parallel, log)
+  const out = await run({ ...base, prs: only('C1') }, t.fn, parallel, log)
   assert.equal(t.seen.length, 2)
+  assert.equal(out.prs[0].ready, true)
+})
+await check('the retry of a writer agent carries the retry line and a reader does not', async () => {
+  calls = []; preflight = GOOD
+  const prompts = []
+  const spy = (label) => async (p, o) => { if (o.label === label) { prompts.push(p); if (prompts.length === 1) return null } return agent(p, o) }
+  await run({ ...base, prs: only('C1') }, spy('implement:C1'), parallel, log)
+  assert.ok(!prompts[0].includes('RETRY:') && prompts[1].includes('RETRY:'))
 })
 await check('a second failure is not retried again and the step fails', async () => {
   calls = []; preflight = GOOD
