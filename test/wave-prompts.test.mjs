@@ -161,4 +161,5 @@ test('the plan review checks each Acceptance line against the plan decisions and
   assert.match(src, /passes unchanged/)
   assert.match(src, /start its title with \\`plan conflict:\\`/)
   assert.match(src, /return \\`planConflict\\`/)
+  assert.match(src, /stopOnConflict && pr.kind !== 'plan'/)
 })
