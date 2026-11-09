@@ -1366,6 +1366,7 @@ await check('the retry of a writer agent carries the retry line and a reader doe
   const spy = (label) => async (p, o) => { if (o.label === label) { prompts.push(p); if (prompts.length === 1) return null } return agent(p, o) }
   await run({ ...base, prs: only('C1') }, spy('implement:C1'), parallel, log)
   assert.ok(!prompts[0].includes('RETRY:') && prompts[1].includes('RETRY:'))
+  assert.ok(prompts[1].includes('in use by another worktree') && prompts[1].includes('-retry') && prompts[1].includes('HEAD:<branch>'))
 })
 await check('a second failure is not retried again and the step fails', async () => {
   calls = []; preflight = GOOD

@@ -285,7 +285,7 @@ const call = async (role, pr, prompt, label, extra) => {
   if (got.err || got.out == null) {
     log(`${label}: agent died (${got.err ? got.err.message : 'no result'}), retrying once`)
     // A dead writer may have pushed or posted before it died; without this line the retry sees a finished branch and reports no change, which skips the check on that push.
-    got = await attempt(WRITERS.includes(role) ? `${text}\n\nRETRY: an earlier attempt of this task died and may have pushed commits or posted replies and comments. Read the branch and the existing threads and comments first. Do not repeat a reply or a comment. If the branch holds commits from that attempt, report changed or codeChanged as true for them.` : text)
+    got = await attempt(WRITERS.includes(role) ? `${text}\n\nRETRY: an earlier attempt of this task died and may have pushed commits or posted replies and comments. Read the branch and the existing threads and comments first. Do not repeat a reply or a comment. If the branch holds commits from that attempt, report changed or codeChanged as true for them. The dead attempt's worktree may still hold a local branch. If git refuses a checkout because a local branch is in use by another worktree, check out a new local name with the suffix -retry from the same origin ref (origin/HEAD if the branch is not on origin) and push with git push origin HEAD:<branch>.` : text)
   }
   if (got.err) throw got.err
   const out = got.out
