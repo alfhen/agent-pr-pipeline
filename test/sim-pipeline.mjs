@@ -1842,14 +1842,14 @@ for (const [how, set] of [['fails', overlap.fail], ['cannot run', overlap.down]]
 // Minor pass: one capped fixer pass, a check of its commits, a revert when the check fails.
 const minorOf = (extra = {}) => f('minor', 'rename helper', { file: 'src/a.js', ...extra })
 // A hooked answer skips the fake's head tracking, which the bot status reads.
-const headed = r => { if (r.headSha) lastHead.C1 = r.headSha; return r }
-const passHook = (over = {}) => (p, o) => {
-  if (o.label === 'review:C1#1') return reviewOf([minorOf(), f('minor', 'unmarked nit', { file: 'src/b.js' }), f('minor', 'design nit', { file: 'src/c.js', fileIssue: true })])
-  if (o.label === 'minorfix:C1') return { changed: true, headSha: 'fixsha', fixed: [1], summary: 'renamed', ...over.fix }
-  if (o.label === 'minorreview:C1') return { ...reviewOf(over.findings || []), unconfirmed: over.unconfirmed || [] }
-  if (o.label === 'test:C1#minor1') return headed({ pass: over.testPass !== false, headSha: 'sha-minor', checks: [{ name: 'lint', pass: over.testPass !== false }] })
-  if (o.label.startsWith('minorrevert:C1') && over.revert) return headed(over.revert)
-  if (o.label.startsWith('minorrevert:C1')) return headed({ reverted: true, headSha: 'sha-revert', summary: 'reverted' })
+const headed = (r, id = 'C1') => { if (r.headSha) lastHead[id] = r.headSha; return r }
+const passHook = (over = {}, id = 'C1') => (p, o) => {
+  if (o.label === `review:${id}#1`) return reviewOf([minorOf(), f('minor', 'unmarked nit', { file: 'src/b.js' }), f('minor', 'design nit', { file: 'src/c.js', fileIssue: true })])
+  if (o.label === `minorfix:${id}`) return { changed: true, headSha: 'fixsha', fixed: [1], summary: 'renamed', ...over.fix }
+  if (o.label === `minorreview:${id}`) return { ...reviewOf(over.findings || []), unconfirmed: over.unconfirmed || [] }
+  if (o.label === `test:${id}#minor1`) return headed({ pass: over.testPass !== false, headSha: 'sha-minor', checks: [{ name: 'lint', pass: over.testPass !== false }] }, id)
+  if (o.label.startsWith(`minorrevert:${id}`) && over.revert) return headed(over.revert, id)
+  if (o.label.startsWith(`minorrevert:${id}`)) return headed({ reverted: true, headSha: 'sha-revert', summary: 'reverted' }, id)
   return over.extra ? over.extra(p, o) : undefined
 }
 const labelsOf = re => calls.filter(c => re.test(c.label)).map(c => c.label)
@@ -1961,6 +1961,27 @@ await check('minor pass: a fixer that dies after its push and two failed reverts
   assert.equal(x.C1.ready, true)
   assert.equal(x.C1.landMode, 'person')
   assert.equal(x.C1.land.split(':')[1], 'sha-dead')
+})
+await check('minor pass: after a failed revert the docs step is skipped and the PR is ready for a person', async () => {
+  const x = await hooked(only1('G1'), (p, o) => {
+    if (o.label.startsWith('test:G1#docs')) return { pass: false, checks: [{ name: 'lint', pass: false }] }
+    return passHook({ testPass: false, revert: { reverted: false } }, 'G1')(p, o)
+  })
+  assert.ok(!calls.some(c => /^docs/.test(c.label) || c.label.includes('#docs')))
+  assert.equal(x.G1.ready, true)
+  assert.equal(x.G1.landMode, 'person')
+  assert.ok(x.G1.untested.some(u => /^docs not updated/.test(u)))
+})
+await check('minor pass: after a failed revert a code-changing bot answer is not checked and does not stop the PR', async () => {
+  const x = await hooked(only1('B1'), (p, o) => {
+    if (o.label === 'botanswer:B1') return { codeChanged: true, headSha: 'sha-bot', replies: [], closesIssues: [], summary: 's' }
+    if (o.label.startsWith('test:B1#bots')) return { pass: false, checks: [{ name: 'lint', pass: false }] }
+    return passHook({ testPass: false, revert: { reverted: false } }, 'B1')(p, o)
+  })
+  assert.ok(!calls.some(c => c.label.startsWith('botreview:B1') || c.label.startsWith('test:B1#bots')))
+  assert.equal(x.B1.ready, true)
+  assert.equal(x.B1.landMode, 'person')
+  assert.ok(x.B1.untested.some(u => /^bot answer code not checked/.test(u)))
 })
 await check('minor pass: an answer without the unconfirmed field confirms no claim', async () => {
   const x = await hooked(only1('C1'), (p, o) => {

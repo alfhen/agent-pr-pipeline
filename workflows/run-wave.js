@@ -1058,7 +1058,7 @@ async function minorPass(pr, signedSha, history, minors) {
     }
     untestedFor(pr).pass.push('minor pass commits not checked and not reverted')
     log(`${pr.id} minor pass could not be reverted: ${why}`)
-    return { headSha: await branchHead(pr) || head || signedSha, fixed: [], report: { ran: true, kept: false, why: `${why}; the revert failed` } }
+    return { headSha: await branchHead(pr) || head || signedSha, fixed: [], report: { ran: true, kept: false, why: `${why}; the revert failed` }, revertFailed: true }
   }
   const fix = await call('minorFix', pr, minorFixPrompt(pr, candidates, signedSha, files), `minorfix:${pr.id}`, { schema: MINORFIX })
   if (!fix || !fix.changed) {
@@ -1160,7 +1160,7 @@ async function landFixCheck(pr, n, beforeSha, fixerSha, history, minors) {
   return check
 }
 
-async function bots(pr, n, headSha, issues, history, minors) {
+async function bots(pr, n, headSha, issues, history, minors, redHead = false) {
   if (!PLUGIN_ROOT) return { ok: false, reason: 'pluginRoot missing: the bot step needs it to run the status script', headSha }
   const wait = await call('botWait', pr, waitPrompt(pr, n), `botwait:${pr.id}`, { schema: WAIT })
   if (!wait) return { ok: false, reason: 'bot wait failed', headSha }
@@ -1174,6 +1174,10 @@ async function bots(pr, n, headSha, issues, history, minors) {
   const answer = await call('botAnswer', pr, answerPrompt(pr, n, issues, headSha), `botanswer:${pr.id}`, { schema: ANSWER })
   if (!answer) return { ok: false, reason: 'bot answer failed', headSha, wait }
   if (!answer.codeChanged) return { ok: true, headSha, wait, answer }
+  if (redHead) {
+    untestedFor(pr).pass.push('bot answer code not checked: the minor pass commits are still on the branch')
+    return { ok: true, headSha: answer.headSha || headSha, wait, answer, lateMinors: [] }
+  }
   const lateMinors = []
   const check = await botCheck(pr, headSha, answer, history, lateMinors)
   minors.push(...lateMinors)
@@ -1333,9 +1337,13 @@ async function runPRSteps(input) {
     pass = await minorPass(pr, loop.headSha, history, minors)
     loop.headSha = pass.headSha
   }
+  // Unchecked pass commits stay on the head, so a later test run on it fails for a reason no later agent can fix. Those steps
+  // are skipped and listed as untested, and a person merges.
+  const redHead = !!pass.revertFailed
 
   let docs = null
-  if (docsRuns(pr)) {
+  if (docsRuns(pr) && redHead) untestedFor(pr).pass.push('docs not updated: the minor pass commits are still on the branch')
+  else if (docsRuns(pr)) {
     const d = await docsStep(pr, loop.headSha, history, minors)
     if (!d.ok) return { id: pr.id, ready: false, reason: d.reason, history, lastFindings: d.lastFindings, docs: d.docs, architecture: loopState.reports, product: loopState.product }
     loop.headSha = d.headSha
@@ -1354,7 +1362,7 @@ async function runPRSteps(input) {
     if (!overlap || overlap.exitCode !== 0) log(`${pr.id} overlap check failed: ${overlap ? overlap.output.trim() : 'pipeline-io failed'}`)
   }
 
-  const b = await bots(pr, n, loop.headSha, opened.issuesCreated || [], history, minors)
+  const b = await bots(pr, n, loop.headSha, opened.issuesCreated || [], history, minors, redHead)
   if (!b.ok) return { id: pr.id, ready: false, reason: b.reason, history, prNumber: n, headSha: b.headSha, lastFindings: b.lastFindings }
   const { wait, answer } = b
   const headSha = b.headSha
