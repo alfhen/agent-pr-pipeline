@@ -1367,6 +1367,11 @@ await check('the retry of a writer agent carries the retry line and a reader doe
   await run({ ...base, prs: only('C1') }, spy('implement:C1'), parallel, log)
   assert.ok(!prompts[0].includes('RETRY:') && prompts[1].includes('RETRY:'))
   assert.ok(prompts[1].includes('in use by another worktree') && prompts[1].includes('-retry') && prompts[1].includes('HEAD:<branch>'))
+  prompts.length = 0
+  calls = []; preflight = GOOD
+  await run({ ...base, prs: only('C1') }, spy('review:C1#1'), parallel, log)
+  assert.equal(prompts.length, 2)
+  assert.ok(!prompts[1].includes('RETRY:'))
 })
 await check('a second failure is not retried again and the step fails', async () => {
   calls = []; preflight = GOOD
