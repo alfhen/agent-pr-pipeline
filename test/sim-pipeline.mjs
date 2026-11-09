@@ -2295,6 +2295,7 @@ await check('a plan conflict finding from the reviewer or the fixer stops the PR
   const seen = {}
   await hooked(only1('P1'), (p, o) => { if (o.label === 'review:P1#1') { seen.review = p; return reviewOf([f('blocker', 'E3 says the test passes unchanged but D2 changes it')]) } if (o.label === 'fix:P1#1') seen.fix = p })
   assert.doesNotMatch(seen.review, /plan conflict:/)
+  assert.match(seen.review, /Check each entry's Acceptance line against the plan's decisions/)
   assert.doesNotMatch(seen.fix, /planConflict/)
   assert.equal(fixCalls('P1').length >= 1, true)
   const pc = await hooked(only1('P1'), (p, o) => o.label === 'review:P1#1' ? reviewOf([f('blocker', 'Plan conflict: E3 vs D2')]) : o.label === 'fix:P1#1' ? { summary: 's', changed: true, planConflict: 'E3 and D2 disagree' } : undefined)
@@ -2310,4 +2311,7 @@ await check('a plan conflict finding from the reviewer or the fixer stops the PR
   await hooked(resumed, (p, o) => { if (o.label === 'fix:C1#0') seen.preFix = p })
   assert.ok(seen.preFix)
   assert.doesNotMatch(seen.preFix, /planConflict/)
+  const codeReview = {}
+  await hooked(only1('C1'), (p, o) => { if (o.label === 'review:C1#1') codeReview.p = p })
+  assert.doesNotMatch(codeReview.p, /Check each entry's Acceptance line/)
 })

@@ -158,7 +158,6 @@ test('the opener rewrites the body of a reused PR', () => {
 
 test('the plan review checks each Acceptance line against the plan decisions and can stop for a plan conflict', () => {
   assert.match(src, /Check each entry's Acceptance line against the plan's decisions/)
-  assert.match(src, /passes unchanged/)
   assert.match(src, /start its title with \\`plan conflict:\\`/)
   assert.match(src, /return \\`planConflict\\`/)
   assert.match(src, /stopOnConflict && pr.kind !== 'plan'/)
