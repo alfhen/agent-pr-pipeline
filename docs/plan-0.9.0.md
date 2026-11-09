@@ -290,7 +290,7 @@ Evals:
 Acceptance: `node test/sim-pipeline.mjs` passes; the E03b-1 case fails on E03a's `verifyOutcome`.
 
 **E06 Eval misses feed the evaluation.** Round cap 3. Touches: `scripts/ledger.sh` (the eval-miss rule in `put`, a new `miss` command, the `report` defect count), `workflows/run-wave.js` (`evaluatePrompt` only), `agents/evaluator.md`, `scripts/file-feedback.sh` (the duplicate check at the open-issue read only), `routine/cloud/collect.md` (step 3 only), `test/ledger.test.mjs`, `test/feedback.test.mjs`, `test/evaluator-ledger.test.mjs` (new), `test/routine-cloud-prompts.test.mjs` (one case for collect step 3).
-- Eval miss: a PR that signed off and then had code changed to answer a bot (`codeChangedByBots` true), or a defect that the main session traces to a merged PR later (`ledger.sh <repo> miss <pr number> <issue>`). `put` writes `evalMisses` in the record from the first rule, in the same run. The rule is in `ledger.sh` only.
+- Eval miss: a PR that signed off and then had code changed to answer a bot (`codeChangedByBots` true), or a defect that the main session traces to a merged PR later (`ledger.sh <repo> miss <pr number> <issue>`). `put` writes `evalMisses` in the record from the first rule, in the same run. The rule is in `ledger.sh` only, and `report` counts a PR with both once.
 - `evaluatePrompt` tells the evaluator: a ready PR with `codeChangedByBots` true is an eval miss; file it as an item for the evals writer, with what the bot found. It also gives the command `bash <pluginRoot>/scripts/ledger.sh <repo> report` for the numbers of earlier runs; if it fails, the evaluator says so and goes on.
 - `file-feedback.sh` and collect step 3 read open and closed `pipeline-feedback` issues. An open match is skipped as today. A closed match is filed with a line `Seen before in #<n> (closed)`.
 Invariants: an eval miss is counted in one place (`ledger.sh`); no item is skipped because of a closed issue.
@@ -370,7 +370,7 @@ The comparison (review rounds, tokens per merged PR, bot findings after sign-off
 
 ## Date estimate
 
-- Size: 8 PRs (7 entries and V01) plus this plan PR and the version PR. About 15 to 25 million subagent tokens without cache reads, and 1 to 2 days of waves.
+- Size: 8 PRs (7 entries and V01) plus this plan PR and the version PR. About 15 to 25 million subagent tokens without cache reads (a planning figure, not a ledger unit), and 1 to 2 days of waves.
 - Basis: a 3-PR wave took 62 minutes and 2.7M subagent tokens. These entries are larger (Opus reviews of a 1566-line file, caps of 3 and 4 rounds), so about 1.5M to 3M per PR, 2 to 6 land-conflict repairs at 5 to 20 minutes and 0.1M to 0.3M each, and about 1M for the plan PR.
 - Dates: plan PR reviewed and merged on 2026-11-10 or 2026-11-11; wave 1 on 2026-11-11; wave 2 on 2026-11-11 or 2026-11-12; wave 3, the dogfood run and the tag on 2026-11-12 or 2026-11-13. **Range: 2026-11-12 to 2026-11-14.**
 - It assumes: the maintainer merges each gated PR within about 4 hours in his day (every PR here is gated, so 10 merges); at most one entry stops for a decision; no wave waits for a cloud check; the dogfood run finds no blocker. Each stop for a decision adds about half a day. If E04 runs to its cap and stops, the tag moves to about 2026-11-17.
