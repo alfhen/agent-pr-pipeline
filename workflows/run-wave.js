@@ -961,6 +961,7 @@ async function landFor(pr, n, sha) {
 
 async function reviewLoop(pr, startRound, history, minors, loopState) {
   const { max, cap } = roundsFor(pr)
+  if (startRound > 1) log(`${pr.id} resume: this run does at most ${max} rounds (${startRound} to ${startRound + max - 1}), ${cap} counts rounds from the resume`)
   for (let round = startRound; round < startRound + max; round++) {
     const wantArch = archRuns(pr) && (round === startRound || loopState.archOpen || pr.kind === 'plan')
     const wantProduct = productRuns(pr) && round === startRound
@@ -1020,6 +1021,9 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
     if (pr.kind !== 'plan' && fix && fix.planConflict) return { signedOff: false, reason: 'needs human: plan conflict', conflict: fix.planConflict }
     if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
+    if (fix && fix.changed === false) {
+      return { signedOff: false, reason: `rounds exhausted: the fix changed nothing in round ${round}, ${round - startRound + 1} of ${max} used (${cap})`, lastFindings: blocking, lastTest: test }
+    }
     loopState.siblings = labelSiblings(fix && fix.siblings, blocking)
   }
 }

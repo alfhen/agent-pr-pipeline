@@ -2385,3 +2385,18 @@ await check('a plan conflict finding from the reviewer or the fixer stops the PR
   await hooked(only1('C1'), (p, o) => { if (o.label === 'review:C1#1') codeReview.p = p })
   assert.doesNotMatch(codeReview.p, /Check each entry's Acceptance line/)
 })
+await check('rounds: a fix that changed nothing stops the loop with the open findings and no second round', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : o.label.startsWith('fix:C1') ? { summary: 's', changed: false } : undefined)
+  assert.equal(x.C1.reason, 'rounds exhausted: the fix changed nothing in round 1, 1 of 4 used (maxRounds)')
+  assert.equal(x.C1.history.length, 1)
+  assert.equal(calls.filter(c => c.label.startsWith('review:C1')).length, 1)
+})
+await check('rounds: a resume with maxRounds 5 after 4 rounds logs its range and ends at round 9', async () => {
+  const rows = [1, 2, 3, 4].map(n => ({ round: n, tests: 'pass', blockersAndMajors: [] }))
+  const resumed = [{ ...only1('C1')[0], resume: { history: rows, minors: [], findings: [] } }]
+  const x = await hooked(resumed, (p, o) => o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : undefined, { maxRounds: 5 })
+  assert.ok(logs.some(m => /C1 resume: this run does at most 5 rounds \(5 to 9\)/.test(m)))
+  assert.ok(calls.some(c => c.label === 'review:C1#9'))
+  assert.ok(!calls.some(c => c.label === 'review:C1#10'))
+  assert.equal(x.C1.reason, 'rounds exhausted: 5 of 5 (maxRounds)')
+})
