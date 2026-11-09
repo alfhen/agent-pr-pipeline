@@ -1787,7 +1787,7 @@ await check('duplicates: same-severity findings keep both fixes, once each', asy
   assert.equal((prompt.match(/fix A/g) || []).length, 1)
   assert.equal((prompt.match(/Also: one/g) || []).length, 0)
 })
-await check('duplicates: a lower finding keeps its fix when the higher one has none, and a higher one appends the lower fix', async () => {
+await check('duplicates: a higher finding with a fix appends the lower finding fix', async () => {
   await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([
     f('major', 'y', { file: 'a.js', suggestedFix: 'low fix' }),
     f('blocker', 'y', { file: 'a.js', suggestedFix: 'high fix' })]) : undefined)
