@@ -222,6 +222,15 @@ test('put cuts a why with no sentence end at 500 characters', () => {
   assert.equal(rec.whyCut, true)
 })
 
+test('put keeps a why with many @ within 500 characters after the escape, with no active mention', () => {
+  for (const why of ['@'.repeat(300) + 'x'.repeat(300), 'a'.repeat(499) + '@' + 'b'.repeat(100), '@'.repeat(300)]) {
+    const rec = JSON.parse(putTriaged(setup({ issues: [issue(3)] }), '3', 'build', 'S', 'low', why).stdout)
+    assert.ok([...rec.why].length <= 500, String([...rec.why].length))
+    assert.doesNotMatch(rec.why, /@(?!\u200b)/)
+    assert.equal(rec.whyCut, true)
+  }
+})
+
 test('put stores a short why unchanged', () => {
   for (const why of ['x'.repeat(500), 'short one. ok']) {
     const r = putTriaged(setup({ issues: [issue(3)] }), '3', 'build', 'S', 'low', why)
@@ -2068,6 +2077,15 @@ test('put built refuses a result file that is not JSON for every pr value, befor
   for (const [pr, ready, code] of [['42', 'true', 'opened'], ['none', 'false', 'other']]) {
     const r = c_cput(s, 'built', '5', c_CRUN(1), pr, ready, code, f)
     assert.equal(r.status, 64, r.stderr); assert.deepEqual(r.calls, [])
+  }
+})
+
+test('put built tells JSON with the wrong shape from a file that is not JSON', () => {
+  const s = c_builtSetup()
+  for (const [text, want] of [['{"prs":"bad"}', /not a wave result/], ['{"prs":[1]}', /not a wave result/], ['"abc"', /not a wave result/], ['not json', /is not JSON/]]) {
+    const f = join(s.dir, 'shape.json'); writeFileSync(f, text)
+    const r = c_cput(s, 'built', '5', c_CRUN(1), 'none', 'false', 'other', f)
+    assert.equal(r.status, 64, r.stderr); assert.match(r.stderr, want); assert.deepEqual(r.calls, [])
   }
 })
 

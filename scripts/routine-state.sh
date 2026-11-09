@@ -43,9 +43,9 @@ SESSION_STEPS="build triage"
 
 # Shared by every path that stores a why. The cut counts code points. The escape keeps an @ from notifying anybody.
 WHY_JQ='def inert: gsub("@(?!\u200b)"; "@\u200b");
-def whycut: . as $w | ([$w | match("[.!?](?= |\\z)"; "g") | select(.offset < 500) | .offset + 1] | last // 500) as $end
-  | if ($w | length) > 500 then $w[:$end] else $w end;
-def withcut($w): if ($w | length) > 500 then . + {whyCut: true} else . end;'
+def whycut: inert | . as $w | ([$w | match("[.!?](?= |\\z)"; "g") | select(.offset < 500) | .offset + 1] | last // 500) as $end
+  | if ($w | length) > 500 then $w[:$end] | sub("@$"; "") else $w end;
+def withcut($w): if ($w | inert | length) > 500 then . + {whyCut: true} else . end;'
 REASON_CODES="opened triage-plan triage-decline rounds-exhausted needs-human other"
 
 die() { local code=$1; shift; echo "routine-state: $*" >&2; exit "$code"; }
@@ -325,7 +325,9 @@ cloud_validate() {
               case "$ready" in true|false) ;; *) die 64 "ready must be true or false" ;; esac
               reason_arg "$reason"
               [ -z "$result_file" ] || [ -f "$result_file" ] || die 64 "$result_file is not a file"
-              [ -z "$result_file" ] || jq -e '.prs[0].reason | true' "$result_file" >/dev/null 2>&1 || die 64 "$result_file is not JSON" ;;
+              [ -z "$result_file" ] || jq empty "$result_file" >/dev/null 2>&1 || die 64 "$result_file is not JSON"
+              [ -z "$result_file" ] || jq -e 'type == "object" and ((.prs // []) | type == "array" and all(.[]; type == "object"))' "$result_file" >/dev/null 2>&1 \
+                || die 64 "$result_file is JSON but not a wave result: prs must be a list of objects" ;;
             blocked)
               run_arg "$5"; run_id=$5; reason=$6
               reason_arg "$reason" ;;
