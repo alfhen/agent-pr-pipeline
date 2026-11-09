@@ -1025,11 +1025,20 @@ async function branchHead(pr) {
   return m ? m[1] : null
 }
 
-// Puts the branch back to the signed-off state with a new commit; two tries. Null when both fail.
+// The branch head, only when a script finds its tree equal to the signed-off one. The reverting agent's own sha is never trusted.
+async function restoredHead(pr, signedSha) {
+  const io = await ioCall(pr, `io:${pr.id}#minorsame`, 'gate-files.sh', `${REPO} --same ${signedSha} ${pr.branch}`)
+  const m = io && io.exitCode === 0 ? /^SAME (\S+)$/m.exec(io.output) : null
+  return m ? m[1] : null
+}
+
+// Puts the branch back to the signed-off state with a new commit; two tries. Null when both fail or the script finds a difference.
 async function minorRestore(pr, signedSha) {
   for (let attempt = 1; attempt <= 2; attempt++) {
     const rev = await call('minorRevert', pr, minorRevertPrompt(pr, signedSha, attempt - 1), `minorrevert:${pr.id}${attempt === 1 ? '' : '#2'}`, { schema: MINORREVERT })
-    if (rev && rev.reverted && rev.headSha) return rev
+    if (!rev || !rev.reverted) continue
+    const headSha = PLUGIN_ROOT ? await restoredHead(pr, signedSha) : null
+    if (headSha) return { ...rev, headSha }
   }
   return null
 }
@@ -1160,7 +1169,7 @@ async function landFixCheck(pr, n, beforeSha, fixerSha, history, minors) {
   return check
 }
 
-async function bots(pr, n, headSha, issues, history, minors, redHead = false) {
+async function bots(pr, n, headSha, issues, history, minors) {
   if (!PLUGIN_ROOT) return { ok: false, reason: 'pluginRoot missing: the bot step needs it to run the status script', headSha }
   const wait = await call('botWait', pr, waitPrompt(pr, n), `botwait:${pr.id}`, { schema: WAIT })
   if (!wait) return { ok: false, reason: 'bot wait failed', headSha }
@@ -1174,10 +1183,6 @@ async function bots(pr, n, headSha, issues, history, minors, redHead = false) {
   const answer = await call('botAnswer', pr, answerPrompt(pr, n, issues, headSha), `botanswer:${pr.id}`, { schema: ANSWER })
   if (!answer) return { ok: false, reason: 'bot answer failed', headSha, wait }
   if (!answer.codeChanged) return { ok: true, headSha, wait, answer }
-  if (redHead) {
-    untestedFor(pr).pass.push('bot answer code not checked: the minor pass commits are still on the branch')
-    return { ok: true, headSha: answer.headSha || headSha, wait, answer, lateMinors: [] }
-  }
   const lateMinors = []
   const check = await botCheck(pr, headSha, answer, history, lateMinors)
   minors.push(...lateMinors)
@@ -1362,7 +1367,8 @@ async function runPRSteps(input) {
     if (!overlap || overlap.exitCode !== 0) log(`${pr.id} overlap check failed: ${overlap ? overlap.output.trim() : 'pipeline-io failed'}`)
   }
 
-  const b = await bots(pr, n, loop.headSha, opened.issuesCreated || [], history, minors, redHead)
+  if (redHead) untestedFor(pr).pass.push('bots not waited for or answered: the minor pass commits are still on the branch')
+  const b = redHead ? { ok: true, headSha: loop.headSha, lateMinors: [] } : await bots(pr, n, loop.headSha, opened.issuesCreated || [], history, minors)
   if (!b.ok) return { id: pr.id, ready: false, reason: b.reason, history, prNumber: n, headSha: b.headSha, lastFindings: b.lastFindings }
   const { wait, answer } = b
   const headSha = b.headSha

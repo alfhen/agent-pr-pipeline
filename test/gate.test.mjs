@@ -496,6 +496,22 @@ test('gate --head: prints the branch head, and exits 1 when it cannot be read', 
   assert.equal(run(setup({ files: null }), 'gate-files.sh', ['o/r', '--head', 'feat/x']).code, 1)
 })
 
+test('gate --same: prints the head only when the branch tree equals the signed-off one', () => {
+  const signed = 'b'.repeat(40)
+  const head = 'a'.repeat(40)
+  const go = (cmp) => {
+    const s = setup({ files: null })
+    put(s.fx, `${P}__branches__feat__x.json`, { commit: { sha: head } })
+    if (cmp) put(s.fx, `${P}__compare__${signed}...feat__x.json`, cmp)
+    return run(s, 'gate-files.sh', ['o/r', '--same', signed, 'feat/x'])
+  }
+  const same = go({ status: 'ahead', files: [] })
+  assert.equal(same.code, 0)
+  assert.equal(same.out.trim(), `SAME ${head}`)
+  assert.equal(go({ status: 'ahead', files: [{ filename: 'src/a.js' }] }).code, 1)
+  assert.equal(go(null).code, 1)
+})
+
 test('plugin-repo: no other script parses the manifest repository', () => {
   const r = spawnSync('grep', ['-rlE', '\\.repository', join(root, 'scripts'), join(root, 'routine')], { encoding: 'utf8' })
   assert.deepEqual(r.stdout.split('\n').filter(Boolean).map((f) => f.slice(f.indexOf('scripts/'))), ['scripts/plugin-repo.sh'])

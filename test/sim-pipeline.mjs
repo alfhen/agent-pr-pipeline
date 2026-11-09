@@ -45,7 +45,7 @@ const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyD
 const landHead = {}
 const wt = o => '/wt/' + o.label.replace(/[:#]/g, '-')
 const overlap = { fail: new Set(), down: new Set() }
-const minorScope = { files: {}, down: new Set() }
+const minorScope = { files: {}, down: new Set(), differ: new Set() }
 let cleanupMode = 'ok'
 const cleanupAnswer = label => label.endsWith('init') ? { exitCode: 0, output: cleanupMode === 'refused' ? 'KEPT /x refused: shared temp folder' : 'MARKED /x' }
   : cleanupMode === 'down' ? null : cleanupMode === 'fail' ? { exitCode: 1, output: 'cleanup: boom' }
@@ -87,6 +87,9 @@ const agentRaw = async (prompt, o) => {
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#minorscope')) {
     return minorScope.down.has(id) ? null : { exitCode: 0, output: 'SCOPE ' + JSON.stringify(minorScope.files[id] || ['src/a.js', 'src/b.js', 'src/c.js']) }
+  }
+  if (o.label.startsWith('io:') && o.label.endsWith('#minorsame')) {
+    return minorScope.down.has(id) ? null : minorScope.differ.has(id) ? { exitCode: 1, output: 'branch tree differs from sha-' + id } : { exitCode: 0, output: 'SAME ' + (lastHead[id] || 'sha-' + id) }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#minorhead')) {
     return minorScope.down.has(id) ? null : { exitCode: 0, output: 'HEAD ' + (lastHead[id] || 'sha-' + id) }
@@ -1978,16 +1981,26 @@ await check('minor pass: after a failed revert the docs step is skipped and the 
   assert.equal(x.G1.landMode, 'person')
   assert.ok(x.G1.untested.some(u => /^docs not updated/.test(u)))
 })
-await check('minor pass: after a failed revert a code-changing bot answer is not checked and does not stop the PR', async () => {
+await check('minor pass: a revert the script finds different from the signed-off tree is a failed revert', async () => {
+  minorScope.differ.add('C1')
+  try {
+    const x = await hooked(only1('C1'), passHook({ testPass: false }))
+    assert.equal(labelsOf(/^minorrevert/).length, 2)
+    assert.equal(x.C1.ready, true)
+    assert.equal(x.C1.landMode, 'person')
+    assert.ok(x.C1.untested.includes('minor pass commits not checked and not reverted'))
+  } finally { minorScope.differ.delete('C1') }
+})
+await check('minor pass: after a failed revert the bots are not run and the PR is ready for a person', async () => {
   const x = await hooked(only1('B1'), (p, o) => {
     if (o.label === 'botanswer:B1') return { codeChanged: true, headSha: 'sha-bot', replies: [], closesIssues: [], summary: 's' }
     if (o.label.startsWith('test:B1#bots')) return { pass: false, checks: [{ name: 'lint', pass: false }] }
     return passHook({ testPass: false, revert: { reverted: false } }, 'B1')(p, o)
   })
-  assert.ok(!calls.some(c => c.label.startsWith('botreview:B1') || c.label.startsWith('test:B1#bots')))
+  assert.ok(!calls.some(c => c.label.startsWith('botwait:B1') || c.label.startsWith('botanswer:B1') || c.label.startsWith('botreview:B1') || c.label.startsWith('test:B1#bots')))
   assert.equal(x.B1.ready, true)
   assert.equal(x.B1.landMode, 'person')
-  assert.ok(x.B1.untested.some(u => /^bot answer code not checked/.test(u)))
+  assert.ok(x.B1.untested.some(u => /^bots not waited for or answered/.test(u)))
 })
 await check('minor pass: an answer without the unconfirmed field confirms no claim', async () => {
   const x = await hooked(only1('C1'), (p, o) => {

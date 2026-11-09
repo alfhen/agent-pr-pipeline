@@ -2,6 +2,9 @@
 # usage: gate-files.sh <owner/repo> <pr>
 #        gate-files.sh <owner/repo> --scope <branch>
 #        gate-files.sh <owner/repo> --head <branch>
+#        gate-files.sh <owner/repo> --same <sha> <branch>
+# --same prints "SAME <sha>", the branch head, only when the branch tree equals the tree of <sha>. It exits 1 when the
+# trees differ or cannot be read.
 # --head prints "HEAD <sha>", the branch head on GitHub. It exits 1 when that cannot be read.
 # --scope prints "SCOPE <json array>": the files the branch changes against the default branch that no gate and no
 # floor path matches. It exits 0, or 3 ("GATE ERROR") when the gates or the files cannot be read.
@@ -16,6 +19,18 @@ if [ "$pr" = "--head" ]; then
   sha=$(gh api "repos/$R/branches/$3" --jq .commit.sha 2>&1) || { echo "cannot read the branch head ($sha)"; exit 1; }
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "unexpected branch head: $sha"; exit 1; }
   echo "HEAD $sha"; exit 0
+fi
+if [ "$pr" = "--same" ]; then
+  [ -n "$3" ] && [ -n "$4" ] || { echo "usage: gate-files.sh <owner/repo> --same <sha> <branch>"; exit 2; }
+  [[ "$3" =~ ^[0-9a-f]{40}$ ]] || { echo "not a sha: $3"; exit 1; }
+  cmp=$(gh api "repos/$R/compare/$3...$4" --jq '[.status, (.files | length), (.files | length > 299)] | @tsv' 2>&1) || { echo "cannot compare ($cmp)"; exit 1; }
+  case $cmp in
+    identical$'\t'0$'\t'false|ahead$'\t'0$'\t'false) ;;
+    *) echo "branch tree differs from $3 ($cmp)"; exit 1 ;;
+  esac
+  sha=$(gh api "repos/$R/branches/$4" --jq .commit.sha 2>&1) || { echo "cannot read the branch head ($sha)"; exit 1; }
+  [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "unexpected branch head: $sha"; exit 1; }
+  echo "SAME $sha"; exit 0
 fi
 if [ "$pr" = "--scope" ]; then scope=$3; pr=$3; fi
 [ -n "$pr" ] || { echo "usage: gate-files.sh <owner/repo> <pr> | --scope <branch>"; exit 2; }
