@@ -117,7 +117,11 @@ test('the opener names its REST calls and edits the marked checklist comment', (
   assert.match(src, /const MINORS_MARKER = '<!-- pipeline:minors -->'/)
   assert.match(src, /starts with the line \\`\$\{MINORS_MARKER\}\\`/)
   assert.match(src, /gh api -X PATCH repos\/\$\{REPO\}\/issues\/comments\/<id> -F body=@<file>/)
-  assert.match(src, /gh api --paginate "repos\/\$\{REPO\}\/issues\?state=open&labels=\$\{LABEL\}&per_page=100"/)
+  assert.match(src, /gh api --paginate "repos\/\$\{REPO\}\/issues\?state=open&labels=\$\{LABEL\}&creator=<login>&per_page=100"/)
+  assert.match(src, /skip the lookup of open issues; otherwise list them/)
+  assert.match(src, /never read an issue by another author, and skip a finding/)
+  assert.match(src, /select\(\.user\.login == "<login>" and \(\.body \| startswith\("\$\{MINORS_MARKER\}"\)\)\) \| \.id/)
+  assert.match(src, /return blocked true with the reason "no login"/)
   assert.match(src, /gh api "repos\/\$\{REPO\}\/pulls\?head=\$\{REPO\.split\('\/'\)\[0\]\}:\$\{pr\.branch\}&state=open"/)
 })
 
