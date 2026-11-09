@@ -943,6 +943,13 @@ async function landFor(pr, n, sha) {
   return { land: `${pair}:auto`, landMode: 'auto', landWhy: verdict.why, safety }
 }
 
+// A scope stop pushes a row whose theme repeats the row before it. A resume after it starts with no themes, or it would stop again before the fixer runs.
+const resumeThemes = history => {
+  const norm = row => ((row || {}).themes || []).map(normTitle)
+  const last = norm(history[history.length - 1])
+  const before = norm(history[history.length - 2])
+  return last.some(t => before.includes(t)) ? [] : last
+}
 const scopeEscalation = themes => ({
   question: `Blockers or majors on the same theme came back in two rounds running (${themes.join('; ')}). What is the threat model, and which attacks are out of scope?`,
   options: ['Name the threat model and the attacks that are out of scope, then rerun the PR with that decision', 'Keep the plan decision as it is and accept the remaining risk', 'Change the plan so the weakness is handled another way'],
@@ -1384,7 +1391,7 @@ async function runPRSteps(input) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl }
   }
-  const loopState = { fixed: false, themes: ((history[history.length - 1] || {}).themes || []).map(normTitle), archOpen: false, siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
+  const loopState = { fixed: false, themes: resumeThemes(history), archOpen: false, siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
   let loop = await reviewLoop(pr, history.length + 1, history, minors, loopState)
   if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, escalation: loop.escalation, architecture: loopState.reports, product: loopState.product, ...rerunFix() }
 
