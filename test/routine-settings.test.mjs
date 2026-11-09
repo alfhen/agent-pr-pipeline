@@ -123,8 +123,9 @@ check('a typeLabels value that is a state label', { ...minimal, typeLabels: { bu
 check('a typeLabels value that is the routine label', { ...minimal, typeLabels: { feat: 'pipeline-routine' } }, /typeLabels values must not be a fixed label/)
 
 test('a null optional key counts as not set', () => {
-  const r = run(withRoutine({ ...minimal, trustedAuthors: null, typeLabels: null, limits: null }))
+  const r = run(withRoutine({ ...minimal, stage: null, trustedAuthors: null, triageFrom: null, skipLabels: null, typeLabels: null, feedbackRepo: null, collectFrom: null, limits: null }))
   assert.equal(r.status, 0, r.stderr)
+  assert.deepEqual(JSON.parse(r.stdout), JSON.parse(run(withRoutine(minimal)).stdout))
 })
 
 // Every run-wave.js argument is refused, allowed, or named here as left out on purpose.

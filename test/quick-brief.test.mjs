@@ -250,6 +250,7 @@ test('a stored brief that ends with a newline is read, kept and replaced like on
     const replaced = run(fixture, 'put', [], undefined, undefined, NEW)
     assert.equal(replaced.status, 0, fixture + replaced.stderr)
     assert.equal(replaced.calls.filter(l => l.startsWith('PATCH /repos/o/r/issues/comments/2 ')).length, 1, fixture)
+    assert.ok(replaced.calls.some(l => l.startsWith(`PATCH /repos/o/r/issues/comments/2 body=${markerOf(NEW)}`)), fixture)
     assert.equal(replaced.posts.length, 0)
   }
 })

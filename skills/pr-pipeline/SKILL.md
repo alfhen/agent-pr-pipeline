@@ -355,7 +355,7 @@ All paths are under `${CLAUDE_PLUGIN_ROOT}`.
 - `scripts/wait-bots.sh`: polls `bot-status.sh` once a minute for up to 9 minutes in one command, and prints the last status with `timedOut`.
 - `scripts/land-commits.sh`: prints the code a land fix added (its own commits and the combined diff of each merge), from a fresh clone.
 - `scripts/routine-state.sh`: the state of the triage routine: `init` opens the tracking issue, `next` names the work (`next --mode full` names the steps of a later full mode), `put triaged` stores a record, `put build-started` and `put blocked` store the build records. See `docs/routine.md`.
-- `scripts/cleanup.sh`: delete the pipeline's own clones and finished worktrees (`init`, `clones`, `worktrees`). It prints `REMOVED` or `KEPT` (`KEPT` also when a delete fails) and never fails a PR.
+- `scripts/cleanup.sh`: delete the pipeline's own clones and finished worktrees (`init`, `clones`, `worktrees`). It prints `REMOVED` or `KEPT` (`KEPT` also when a delete fails, and a failed delete may have removed part of the folder) and never fails a PR.
 - `scripts/check-syntax.sh`: runs `bash -n` on `scripts/*.sh`, `routine/*.sh` and `routine/bin/gh`. `AGENTS.md` and CI run it. It prints `SYNTAX <file>` or `MISSING <pattern>` and exits 1 on a failure.
 - `scripts/check-version.sh`: checks that the manifest version is semantic and, in a PR, higher than the latest tag.
 - `routine/`: the local triage routine, which runs at the installed minutes of each hour (runner, prompt, settings, read-only `gh` wrapper, installer). `docs/routine.md` describes it; 0.9.0 deletes it.

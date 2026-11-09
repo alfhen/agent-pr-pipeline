@@ -73,9 +73,10 @@ gate_of() { # repo -> prints "paused", "init needed" or "stage <n>"
   bash "$RS" "$1" gate 2>/dev/null || fail "cannot read the state of $1"
 }
 settings_of() { # repo -> prints the checked routine object, or null
-  local raw
+  local raw checked
   raw=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$1/contents/.github/pipeline.json") || fail "cannot read .github/pipeline.json in $1"
-  jq -c --arg form pipeline -f "$CONFIG" <<<"$raw" 2>/dev/null | jq -c '.routine' || fail "bad .github/pipeline.json in $1"
+  checked=$(jq -c --arg form pipeline -f "$CONFIG" <<<"$raw" 2>/dev/null) || fail "bad .github/pipeline.json in $1"
+  jq -c '.routine' <<<"$checked"
 }
 stop_unless_running() { # repo -> sets GSTAGE, or prints why not and exits 0
   local g

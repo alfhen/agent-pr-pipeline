@@ -490,6 +490,7 @@ const manualRefused = [
   ['an empty object title', { title: {}, detail: 'd' }],
   ['an array title', { title: ['x'], detail: 'd' }],
   ['an object detail', item('Bad field', { detail: { 'Seen in acme/widgets': 1 } })],
+  ['an object suggested change', item('Bad field', { suggestedChange: { 'Seen in acme/widgets': 1 } })],
   ['a number severity', item('Bad field', { severity: 3 })],
   ['a number evidence', item('Bad field', { evidence: 4512 })],
 ]
@@ -500,8 +501,10 @@ for (const [what, bad] of manualRefused) {
       const r = w.sh('file-feedback.sh', [w.file('m.json', [bad, item('Second item')]), '--denylist', w.file('md.json', ['acme', 'widgets']), '--repo', W.FB, '--source', W.SRC, ...flags])
       assert.equal(r.status, 2, r.stdout)
       assert.match(r.stdout, /^REFUSED item 0: a field is not a string$/m)
-      if (!flags.length) assert.equal(r.issuePosts.length, 1)
-      else assert.match(r.stdout, /WOULD FILE Second item/)
+      if (!flags.length) {
+        assert.equal(r.issuePosts.length, 1)
+        assert.match(r.issuePosts[0], / title=Second item /)
+      } else assert.deepEqual(r.stdout.match(/^WOULD FILE .*$/gm), [r.stdout.match(/^WOULD FILE Second item.*$/m)?.[0]])
     })
   }
 }
