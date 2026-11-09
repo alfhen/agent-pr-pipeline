@@ -191,6 +191,7 @@ for (const [name, args] of [
   ['a why with a newline', ['3', 'build', 'S', 'low', 'a\nb']],
   ['a why with a C1 control character', ['3', 'build', 'S', 'low', 'a\u0085b']],
   ['a why with DEL', ['3', 'build', 'S', 'low', 'a\u007fb']],
+  ['a long why with a C1 control character past the cut', ['3', 'build', 'S', 'low', 'x'.repeat(550) + '\u0085' + 'x'.repeat(50)]],
   ['an empty why',['3', 'build', 'S', 'low', '']],
   ['an issue that is not a number', ['3x', 'build', 'S', 'low', 'x']],
 ]) {
@@ -219,6 +220,15 @@ test('put cuts a why with no sentence end at 500 characters', () => {
   const rec = JSON.parse(r.stdout)
   assert.equal(rec.why, 'x'.repeat(500))
   assert.equal(rec.whyCut, true)
+})
+
+test('put keeps a why with many @ within 500 characters after the escape, with no active mention', () => {
+  for (const why of ['@'.repeat(300) + 'x'.repeat(300), 'a'.repeat(499) + '@' + 'b'.repeat(100), '@'.repeat(300)]) {
+    const rec = JSON.parse(putTriaged(setup({ issues: [issue(3)] }), '3', 'build', 'S', 'low', why).stdout)
+    assert.ok([...rec.why].length <= 500, String([...rec.why].length))
+    assert.doesNotMatch(rec.why, /@(?!\u200b)/)
+    assert.equal(rec.whyCut, true)
+  }
 })
 
 test('put stores a short why unchanged', () => {
@@ -266,6 +276,45 @@ test('put cuts at a sentence end at index 499 and never stores 501 characters fo
   const rec2 = JSON.parse(putTriaged(setup({ issues: [issue(3)] }), '3', 'build', 'S', 'low', at500).stdout)
   assert.equal(rec2.why, 'a'.repeat(500))
   assert.equal(rec2.whyCut, true)
+})
+
+test('put cuts at the last of "!", "?" and "." within 500 characters', () => {
+  const why = 'a'.repeat(100) + '! ' + 'b'.repeat(100) + '? ' + 'c'.repeat(600)
+  const rec = JSON.parse(putTriaged(setup({ issues: [issue(3)] }), '3', 'build', 'S', 'low', why).stdout)
+  assert.equal(rec.why, 'a'.repeat(100) + '! ' + 'b'.repeat(100) + '?')
+  const bang = 'a'.repeat(100) + '? ' + 'b'.repeat(100) + '! ' + 'c'.repeat(600)
+  assert.equal(JSON.parse(putTriaged(setup({ issues: [issue(3)] }), '3', 'build', 'S', 'low', bang).stdout).why, 'a'.repeat(100) + '? ' + 'b'.repeat(100) + '!')
+})
+
+test('put cuts at a sentence end after multibyte text, counting code points', () => {
+  const why = '\u00e9'.repeat(300) + '. ' + 'b'.repeat(300)
+  const rec = JSON.parse(putTriaged(setup({ issues: [issue(3)] }), '3', 'build', 'S', 'low', why).stdout)
+  assert.equal(rec.why, '\u00e9'.repeat(300) + '.')
+  assert.equal(rec.whyCut, true)
+})
+
+test('put stores an @ in the why inert in the record and in the decline comment', () => {
+  const r = putTriaged(setup({ issues: [issue(3)] }), '3', 'decline', 'S', 'low', 'ask @octocat and @alfhen/team')
+  assert.equal(r.status, 0, r.stderr)
+  assert.doesNotMatch(r.calls.join('\n'), /@[A-Za-z0-9]/)
+  assert.ok(r.writes.filter(w => w.includes('@\u200boctocat')).length >= 2, r.writes.join('\n'))
+})
+
+test('put posts a stored record\'s why inert in the decline comment', () => {
+  const s = setup({ issues: [issue(3)], records: [record(3, { decision: 'decline', why: 'ask @octocat' })] })
+  const r = putTriaged(s, '3', 'decline', 'S', 'low', 'ignored')
+  assert.equal(r.status, 0, r.stderr)
+  const post = r.writes.find(w => w.includes('declined 3 -->'))
+  assert.ok(post && post.includes('@\u200boctocat'), r.writes.join('\n'))
+  assert.doesNotMatch(post, /@[A-Za-z0-9]/)
+})
+
+test('put exits 2 and writes nothing when two trusted declined comments exist', () => {
+  const mark = '<!-- pipeline:routine declined 3 -->'
+  const s = setup({ issues: [issue(3)], issueComments: { 3: [comment('bot', `${mark}\none`), comment('bot', `${mark}\ntwo`)] } })
+  const r = putTriaged(s, '3', 'decline', 'S', 'low', 'out of scope')
+  assert.equal(r.status, 2, r.stderr)
+  assert.deepEqual(r.writes, [])
 })
 
 test('put posts the cut why as the decline comment', () => {
@@ -616,6 +665,19 @@ test('a build-started record that does not parse is skipped, listed in held, and
     assert.equal(out.step, 'idle', raw)
     assert.deepEqual(out.held, [{ issue: 4, why: 'bad build-started record' }])
   }
+})
+
+test('a build-started record whose run ends in a newline is held as bad, not read as a build', () => {
+  const s = fullSetup({ issues: [buildIssue(4)], records: [record(4), started(4, { run: RUN(2) + '\n' })] })
+  const out = step(nextFull(s))
+  assert.equal(out.step, 'idle')
+  assert.deepEqual(out.held, [{ issue: 4, why: 'bad build-started record' }])
+})
+
+test('a build-started run that ends in a newline does not count toward wavesPerDay', () => {
+  const config = { ...goodConfig, limits: { wavesPerDay: 2 } }
+  const w = { issues: [buildIssue(1)], records: [record(1), started(8, { run: RUN(1) }), started(9, { run: RUN(2) + '\n' })] }
+  assert.equal(step(nextFull(fullSetup(w, 'full', { config }))).step, 'build')
 })
 
 test('two trusted records for one key and a bad triaged record are held, not a failed next', () => {
@@ -1533,16 +1595,18 @@ test('put blocked exits 0 when the comment fails, and the record and labels stay
   const r = c_cput(s, 'blocked', '5', c_CRUN(1), 'other')
   assert.equal(r.status, 0, r.stderr)
   assert.match(r.stderr, /WARNING could not post the block comment/)
-  assert.ok(r.writes.some(w => w.startsWith('POST /repos/o/r/issues/100/comments')))
-  assert.ok(r.writes.some(w => w.startsWith('POST /repos/o/r/issues/5/comments')))
+  const at = re => r.writes.findIndex(w => re.test(w))
+  const label = at(/^POST \/repos\/o\/r\/issues\/5\/labels .*build-failed/), rec = at(/^POST \/repos\/o\/r\/issues\/100\/comments/), note = at(/^POST \/repos\/o\/r\/issues\/5\/comments/)
+  assert.ok(label >= 0 && rec >= 0 && note >= 0, r.writes.join('\n'))
+  assert.ok(rec < note && label < note, r.writes.join('\n'))
 })
 
 test('the block comment does not make the next next print revoke', () => {
   const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['building', 'maintainer-approved'] }), events: c_approved(c_T(5)), records: [c_triagedRec(5), c_startedRec(5, 1), c_builtRec(5, 1, { rec: { why: 'a reason' } })] }))
   c_doPut(s, 'blocked', '5', c_CRUN(1), 'other')
   assert.equal(c_commentsOn(s, 5).length, 1)
-  assert.ok(c_lines(c_cnext(s, 'cloud-build')).every(l => l.step !== 'revoke'))
-  assert.ok(c_lines(c_cnext(s, 'cloud-triage')).every(l => l.step !== 'revoke'))
+  assert.ok(c_ok(c_cnext(s, 'cloud-build')).every(l => l.step !== 'revoke'))
+  assert.ok(c_ok(c_cnext(s, 'cloud-triage')).every(l => l.step !== 'revoke'))
 })
 
 test('stage 0: put blocked posts no comment', () => {
@@ -1550,6 +1614,9 @@ test('stage 0: put blocked posts no comment', () => {
   const r = c_cput(s, 'blocked', '5', c_CRUN(1), 'triage-plan')
   assert.match(r.stdout, /^WOULD blocked/)
   assert.deepEqual(r.writes, [])
+  const live = csetup(c_withIssues({ issue: c_ci(5, { labels: ['building'] }), records: [c_triagedRec(5), c_startedRec(5, 1)] }))
+  const w = c_cput(live, 'blocked', '5', c_CRUN(1), 'triage-plan').writes
+  assert.equal(w.filter(l => /^POST \/repos\/o\/r\/issues\/5\/comments/.test(l)).length, 1, w.join('\n'))
 })
 
 test('a triage-plan block that is approved again still ends', () => {
@@ -1799,10 +1866,15 @@ test('next --mode full still prints the 0.7.0 line with the claude/ prefix', () 
 
 test('the cloud commands refuse a bad argument with exit 64 and no call', () => {
   const s = csetup({})
-  for (const a of [['issue-text', 'x'], ['list', 'x'], ['get', 'outbox', 'x'], ['put', 'revoke', '5', 'because'], ['put', 'env-stale', '0.8'], ['put', 'build-started', '5', c_CRUN(1), 'routine/issue-5', '1'], ['put', 'nothing', '1'], ['next', '--mode', 'cloud-build']]) {
+  for (const a of [['issue-text', 'x'], ['list', 'x'], ['get', 'outbox', 'x'], ['put', 'revoke', '5', 'because'], ['put', 'env-stale', '0.8'], ['put', 'build-started', '5', c_CRUN(1), 'routine/issue-5', '1'], ['put', 'built', '5', c_CRUN(1), '42', 'true', 'opened triage-plan'], ['put', 'blocked', '5', c_CRUN(1), 'opened triage-plan'], ['put', 'nothing', '1'], ['next', '--mode', 'cloud-build']]) {
     const r = run(s, 'o/r', ...a)
     assert.equal(r.status, 64, a.join(' ')); assert.deepEqual(r.calls, [])
   }
+})
+
+test('put triaged refuses a control character after the cut point with exit 64 and no call', () => {
+  const r = c_putT(csetup(c_withIssues(c_bare(5))), 5, 'build', 'S', 'low', 'bug', 'x'.repeat(550) + '\u0085' + 'x'.repeat(50))
+  assert.equal(r.status, 64, r.stderr); assert.deepEqual(r.calls, [])
 })
 
 test('build: an outsider comment older than the ready-to-build label does not block the build', () => {
@@ -1916,7 +1988,114 @@ test('records that carry the cloud session footer are read: put built, get outbo
 })
 
 test('a footer record whose second line is not JSON still counts as no data', () => {
-  const bad = c_cr('build-started', '5:1', null, { raw: 'not json' })
+  const json = JSON.stringify({ run: c_CRUN(1), branch: 'claude/issue-5', attempt: 1 })
+  const bad = c_cr('build-started', '5:1', null, { raw: `not json\n${json}` })
   const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['building'] }), records: [c_triagedRec(5), withFooter(bad)] }))
-  assert.equal(c_cput(s, 'built', '5', c_CRUN(1), '42', 'true', 'opened').status, 65)
+  const r = c_cput(s, 'built', '5', c_CRUN(1), '42', 'true', 'opened')
+  assert.equal(r.status, 65)
+  assert.match(r.stderr, /no build-started record/)
+})
+
+test('a run that lost the race for an attempt cannot write blocked or built for it', () => {
+  const winner = c_startedRec(5, 1, { run: c_CRUN(7), at: c_T(30) })
+  const loser = { ...c_startedRec(5, 1, { run: c_CRUN(1), at: c_T(31) }), id: winner.id + 1 }
+  const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['building'] }), records: [c_triagedRec(5), winner, loser] }))
+  for (const a of [['blocked', '5', c_CRUN(1), 'other'], ['built', '5', c_CRUN(1), '42', 'true', 'opened']]) {
+    const r = c_cput(s, ...a)
+    assert.equal(r.status, 65, r.stderr)
+    assert.match(r.stderr, /no build-started record/)
+    c_onlyReads(r)
+  }
+  assert.equal(c_cput(s, 'built', '5', c_CRUN(7), '42', 'true', 'opened').status, 0)
+})
+
+test('lost-race records do not count toward wavesPerDay', () => {
+  const settings = { routine: { ...c_ROUTINE, limits: { wavesPerDay: 3 } } }
+  const winner = c_startedRec(7, 1, { run: c_CRUN(3), at: c_T(40) })
+  const loser = { ...c_startedRec(7, 1, { run: c_CRUN(4), at: c_T(41) }), id: winner.id + 1 }
+  const s = csetup({ ...c_withIssues(c_builtIssue(5), { issue: c_ci(6), records: [c_startedRec(6, 1, { run: c_CRUN(2), at: c_T(35) })] }), settings })
+  s.w.records.push(winner, loser); s.sync()
+  assert.equal(c_buildStep(c_cnext(s, 'cloud-build')).step, 'build')
+  const held = csetup({ ...c_withIssues(c_builtIssue(5), { issue: c_ci(6), records: [c_startedRec(6, 1, { run: c_CRUN(2), at: c_T(35) }), c_startedRec(7, 1, { run: c_CRUN(3), at: c_T(40) }), c_startedRec(8, 1, { run: c_CRUN(4), at: c_T(41) })] }), settings })
+  assert.deepEqual(c_one(c_cnext(held, 'cloud-build')), { step: 'wait', heldBy: 'limits' })
+})
+
+test('a triage-plan block whose labels were not finished: pr-seen puts needs-plan, not build-failed', () => {
+  const blocked = c_cr('blocked', '5:1', { run: c_CRUN(1), reasonCode: 'triage-plan', attempt: 1 }, { at: c_T(40) })
+  const s = csetup(c_withIssues({ issue: c_ci(5, { labels: ['building', 'needs-approval'] }), records: [c_triagedRec(5), c_startedRec(5, 1), blocked] }))
+  assert.deepEqual(c_ok(c_cnext(s, 'cloud-build'))[0], { step: 'pr-seen', issue: 5 })
+  c_doPut(s, 'pr-seen', '5')
+  assert.deepEqual(c_labelsOf(s, 5), ['needs-plan'])
+})
+
+test('put blocked with triage-plan adds needs-plan before it removes building, and a failed add keeps building', () => {
+  const mk = () => c_blockSetup(['building'], [])
+  const r = c_cput(mk(), 'blocked', '5', c_CRUN(1), 'triage-plan')
+  assert.equal(r.status, 0, r.stderr)
+  const add = r.writes.findIndex(w => /^POST \/repos\/o\/r\/issues\/5\/labels .*needs-plan/.test(w))
+  const del = r.writes.findIndex(w => /^DELETE \/repos\/o\/r\/issues\/5\/labels\/building/.test(w))
+  assert.ok(add >= 0 && del > add, r.writes.join('\n'))
+  const s = mk()
+  writeFileSync(join(s.fx, `${fname('repos/o/r/issues/5/labels')}.POST.error`), 'HTTP 502')
+  const f = c_cput(s, 'blocked', '5', c_CRUN(1), 'triage-plan')
+  assert.equal(f.status, 3)
+  assert.ok(!f.writes.some(w => w.startsWith('DELETE')), f.writes.join('\n'))
+})
+
+test('put triaged stores an @ in the why inert in the record and the decline comment', () => {
+  const s = csetup(c_withIssues(c_bare(5)))
+  const r = c_putT(s, 5, 'decline', 'S', 'low', 'bug', 'ask @octocat')
+  assert.equal(r.status, 0, r.stderr)
+  assert.doesNotMatch(r.calls.join('\n'), /@[A-Za-z0-9]/)
+  assert.ok(r.writes.filter(w => w.includes('@\u200boctocat')).length >= 2, r.writes.join('\n'))
+})
+
+test('every reason code wave-result.sh prints is accepted by put built', () => {
+  const cases = [[true, 42, 'x'], [false, null, 'quick fix: plan. big'], [false, null, 'quick fix: decline. no'], [false, null, 'rounds exhausted: 4 of 4'], [false, null, 'needs human: pick'], [false, null, 'other']]
+  const seen = new Set()
+  for (const [ready, prNumber, reason] of cases) {
+    const s = c_builtSetup()
+    const inFile = join(s.dir, 'out.json'), outFile = join(s.dir, 'result.json')
+    writeFileSync(inFile, JSON.stringify({ result: { prs: [{ ready, ...(prNumber ? { prNumber } : {}), reason }] } }))
+    const w = spawnSync('bash', [join(root, 'scripts/wave-result.sh'), inFile, outFile], { encoding: 'utf8' })
+    assert.equal(w.status, 0, w.stderr)
+    const [prn, rdy, code] = w.stdout.trim().split(' ')
+    seen.add(code)
+    const r = c_cput(s, 'built', '5', c_CRUN(1), prn, rdy, code, outFile)
+    assert.equal(r.status, 0, `${code}: ${r.stderr}`)
+  }
+  const source = readFileSync(join(root, 'scripts/wave-result.sh'), 'utf8')
+  const block = source.slice(source.indexOf('(if $ready then'), source.indexOf('as $code'))
+  const printed = [...block.matchAll(/then "([a-z-]+)"|else "([a-z-]+)" end/g)].map(m => m[1] ?? m[2])
+  assert.deepEqual([...seen].sort(), [...new Set(printed)].sort())
+  assert.ok(seen.size >= 6)
+})
+
+test('put built refuses a result file that is not JSON for every pr value, before any call', () => {
+  const s = c_builtSetup()
+  const f = join(s.dir, 'bad.json'); writeFileSync(f, 'not json')
+  for (const [pr, ready, code] of [['42', 'true', 'opened'], ['none', 'false', 'other']]) {
+    const r = c_cput(s, 'built', '5', c_CRUN(1), pr, ready, code, f)
+    assert.equal(r.status, 64, r.stderr); assert.deepEqual(r.calls, [])
+  }
+})
+
+test('put built tells JSON with the wrong shape from a file that is not JSON', () => {
+  const s = c_builtSetup()
+  for (const [text, want] of [['{"prs":"bad"}', /not a wave result/], ['{"prs":[1]}', /not a wave result/], ['"abc"', /not a wave result/], ['not json', /is not JSON/]]) {
+    const f = join(s.dir, 'shape.json'); writeFileSync(f, text)
+    const r = c_cput(s, 'built', '5', c_CRUN(1), 'none', 'false', 'other', f)
+    assert.equal(r.status, 64, r.stderr); assert.match(r.stderr, want); assert.deepEqual(r.calls, [])
+  }
+})
+
+test('put feedback-outbox limits the file by bytes, not characters', () => {
+  const s = csetup({})
+  const box = text => ({ source: 'o/r', feedbackRepo: 'o/r', items: [{ text }], denylist: [], dropped: 0 })
+  const big = join(s.dir, 'big.json'), ok = join(s.dir, 'ok.json')
+  writeFileSync(big, JSON.stringify(box('\u00e9'.repeat(31000))))
+  writeFileSync(ok, JSON.stringify(box('\u00e9'.repeat(29000))))
+  const r = c_cput(s, 'feedback-outbox', c_CRUN(1), big)
+  assert.equal(r.status, 64, r.stderr); assert.deepEqual(r.calls, [])
+  assert.equal(c_cput(s, 'feedback-outbox', c_CRUN(1), ok).status, 0)
 })
