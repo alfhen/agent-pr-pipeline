@@ -972,6 +972,20 @@ await check('end facts: red CI on the head gives ready false with the failed che
   assert.equal(x.C1.land, `${x.C1.prNumber}:${x.C1.headSha}:auto`)
   assert.equal(x.C1.landMode, 'auto')
 })
+await check('end facts: a red CI or a moved head keeps the report fields of the opened PR', async () => {
+  const red = await landRun({ ciFail: ['C2'] }, only('C2'))
+  assert.equal(red.C2.ready, false)
+  assert.deepEqual(red.C2.lateMinors.map(f => f.title), ['late nit'])
+  assert.deepEqual(red.C2.issues, ['https://github.com/o/r/issues/21'])
+  assert.deepEqual(red.C2.closesIssues, [21])
+  assert.ok('docs' in red.C2 && red.C2.prUrl === 'u')
+  const odd = (p, o) => o.label === 'io:C2#endstatus' ? ioWrap(o.label, { exitCode: 0, output: JSON.stringify({ head: 'sha-other', approvedBy: [] }) }) : o.label === 'io:C2#endci' ? ioWrap(o.label, { exitCode: 0, output: JSON.stringify({ head: 'sha-other', state: 'success', failed: [] }) }) : agent(p, o)
+  calls = []
+  const moved = (await run({ ...base, prs: only('C2') }, odd, parallel, log)).prs[0]
+  assert.equal(moved.ready, false)
+  assert.deepEqual(moved.lateMinors.map(f => f.title), ['late nit'])
+  assert.deepEqual(moved.issues, ['https://github.com/o/r/issues/21'])
+})
 await check('end facts: pending CI is reported as pending and the PR stays ready', async () => {
   const x = await landRun({ ciPending: ['C1'] }, only('C1'))
   assert.equal(x.C1.ready, true)

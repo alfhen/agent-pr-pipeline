@@ -1461,18 +1461,19 @@ async function runPRSteps(input) {
   const sync = await syncUntested(pr, n, openedUntested)
   if (!sync.ok) return { id: pr.id, ready: false, reason: sync.reason, history, prNumber: n, headSha, untested: untestedOf(pr), ...rerunFix() }
   const end = await endFacts(pr, n, headSha)
-  if (!end.ok && !end.red) return { id: pr.id, ready: false, reason: end.reason, history, prNumber: n, headSha: end.head || headSha, ci: end.ci, approvedBy: end.approvedBy, untested: untestedOf(pr), ...rerunFix() }
-  const landing = await landFor(pr, n, end.head)
-  if (landing.landRefused) return { id: pr.id, ready: false, reason: landing.landWhy, history, prNumber: n, headSha: end.head, untested: untestedOf(pr), ...rerunFix() }
-  if (end.red) return { id: pr.id, ready: false, reason: end.reason, history, prNumber: n, headSha: end.head, ci: end.ci, approvedBy: end.approvedBy, ...landing, untested: untestedOf(pr), ...rerunFix() }
-  return {
-    id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl, headSha: end.head,
+  const landing = end.ok || end.red ? await landFor(pr, n, end.head) : {}
+  const result = {
+    id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl, headSha: end.head || headSha,
     ...landing, untested: untestedOf(pr), ci: end.ci,
     approvedBy: end.approvedBy || (wait && wait.approvedBy) || [], botNotes: wait && wait.notes,
     codeChangedByBots: !!(answer && answer.codeChanged), closesIssues: (answer && answer.closesIssues) || [], lateMinors: b.lateMinors || [],
     docs, minorPass: pass.report,
     triage, issues: opened.issuesCreated || [], rounds: history.length, history, ...rerunFix(), architecture: loopState.reports, product: loopState.product, qa: loopState.qa, implProblems: impl.problems || '',
   }
+  if (!end.ok && !end.red) return { ...result, ready: false, reason: end.reason }
+  if (landing.landRefused) return { ...result, ready: false, reason: landing.landWhy }
+  if (end.red) return { ...result, ready: false, reason: end.reason }
+  return result
 }
 
 if (cleanupReady) {
