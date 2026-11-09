@@ -1,6 +1,9 @@
 // Runs workflow/pr-pipeline.js against a fake agent() that returns schema-shaped answers.
 // Usage: node test/sim-pipeline.mjs (exits non-zero on the first failed check).
-import { readFileSync, readdirSync, existsSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, copyFileSync, rmSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 
@@ -46,7 +49,22 @@ const land = { gated: new Set(), person: new Set(), gateDown: new Set(), safetyD
 const landHead = {}
 const wt = o => '/wt/' + o.label.replace(/[:#]/g, '-')
 const overlap = { fail: new Set(), down: new Set() }
-const minorScope = { files: {}, down: new Set(), differ: new Set() }
+const minorScope = { files: {}, compare: {}, down: new Set(), differ: new Set() }
+// Runs the real scripts/gate-files.sh --scope against test/fake-gh, with the plugin repo as the repo (its floor is the widest).
+const realScope = changed => {
+  const dir = mkdtempSync(join(tmpdir(), 'sim-scope-'))
+  const bin = join(dir, 'bin'); const fx = join(dir, 'fx')
+  mkdirSync(bin); mkdirSync(fx)
+  copyFileSync(fileURLToPath(new URL('./fake-gh', import.meta.url)), join(bin, 'gh'))
+  spawnSync('chmod', ['755', join(bin, 'gh')])
+  const P = 'repos__alfhen__agent-pr-pipeline'
+  writeFileSync(join(fx, P + '.json'), JSON.stringify({ default_branch: 'main' }))
+  copyFileSync(fileURLToPath(new URL('./fixtures/gate/pipeline.json', import.meta.url)), join(fx, P + '__contents__.github__pipeline.json.json'))
+  writeFileSync(join(fx, P + '__compare__main...b1.json'), JSON.stringify({ files: changed.map(filename => ({ filename })) }))
+  const r = spawnSync('bash', [fileURLToPath(new URL('../scripts/gate-files.sh', import.meta.url)), 'alfhen/agent-pr-pipeline', '--scope', 'b1'], { encoding: 'utf8', env: { ...process.env, PATH: bin + ':' + process.env.PATH, FAKE_GH_FIXTURES: fx } })
+  rmSync(dir, { recursive: true, force: true })
+  return { exitCode: r.status, output: r.stdout + r.stderr }
+}
 let cleanupMode = 'ok'
 const cleanupAnswer = label => label.endsWith('init') ? (cleanupMode === 'initdown' ? null : cleanupMode === 'initfail' ? { exitCode: 1, output: 'cleanup: boom' } : { exitCode: 0, output: cleanupMode === 'refused' ? 'KEPT /x refused: shared temp folder' : 'MARKED /x' })
   : cleanupMode === 'down' ? null : cleanupMode === 'fail' ? { exitCode: 1, output: 'cleanup: boom' }
@@ -87,6 +105,7 @@ const agentRaw = async (prompt, o) => {
     return { exitCode: 0, output: land.landOutput.has(id) ? 'merge abc\n+resolved line\n' : '' }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#minorscope')) {
+    if (minorScope.compare[id]) return realScope(minorScope.compare[id])
     return minorScope.down.has(id) ? null : { exitCode: 0, output: 'SCOPE ' + JSON.stringify(minorScope.files[id] || ['src/a.js', 'src/b.js', 'src/c.js']) }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#minorsame')) {
@@ -2174,7 +2193,15 @@ const noPass = x => {
   assert.equal(x.C1.minorPass, null)
   assert.equal(x.C1.ready, true)
 }
-await check('minor pass: a minor in a file the PR does not change, or in a gated path, runs no fixer', async () => {
+await check('minor pass: a minor in a gated file the PR changes runs the pass, and one in a floor path does not', async () => {
+  minorScope.compare.C1 = ['scripts/gate-files.sh', 'AGENTS.md', 'src/a.js']
+  await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([minorOf({ file: 'scripts/gate-files.sh' })]) : passHook()(p, o))
+  assert.ok(calls.some(c => c.label === 'minorfix:C1'))
+  assert.match(calls.find(c => c.label === 'minorfix:C1').prompt, /only these files[^\n]*\["scripts\/gate-files\.sh","src\/a\.js"\]/)
+  noPass(await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([minorOf({ file: 'AGENTS.md' })]) : passHook()(p, o)))
+  delete minorScope.compare.C1
+})
+await check('minor pass: a minor in a file the PR does not change runs no fixer', async () => {
   minorScope.files.C1 = ['src/other.js']
   noPass(await hooked(only1('C1'), passHook()))
   delete minorScope.files.C1

@@ -6,8 +6,8 @@
 # --same prints "SAME <sha>", the branch head, only when the branch tree equals the tree of <sha>. It exits 1 when the
 # trees differ or cannot be read.
 # --head prints "HEAD <sha>", the branch head on GitHub. It exits 1 when that cannot be read.
-# --scope prints "SCOPE <json array>": the files the branch changes against the default branch that no gate and no
-# floor path matches. It exits 0, or 3 ("GATE ERROR") when the gates or the files cannot be read.
+# --scope prints "SCOPE <json array>": the files the branch changes against the default branch that the fixed floor
+# does not match. A gated file the branch already changes is listed; the plugin's code folders are not floor here. It exits 0, or 3 ("GATE ERROR") when the files cannot be read.
 # Exit 0 when no changed file of the PR matches a gate; exit 1 ("GATED") when one does; exit 3
 # ("GATE ERROR") when that cannot be told (fails closed); exit 2 on a usage error.
 # A fixed floor is gated on top of the settings, and no settings file removes it: .github, .claude folders,
@@ -39,16 +39,6 @@ gated() { echo "GATED #$pr: $*"; exit 1; }
 err() { echo "GATE ERROR #$pr: $*"; exit 3; }
 
 branch=$(gh api "repos/$R" --jq .default_branch 2>&1) || err "cannot read the default branch ($branch)"
-settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=$branch" 2>&1)
-if [ $? -ne 0 ]; then
-  case $settings in
-    *"HTTP 404"*) settings=$(cat "$here/../templates/pipeline.json" 2>/dev/null) || err "no settings file and no template" ;;
-    *) err "cannot read .github/pipeline.json ($settings)" ;;
-  esac
-fi
-gates=$(jq -c 'if (.gates | type) == "array" and all(.gates[]; type == "string") then .gates else error("gates") end' <<<"$settings" 2>/dev/null) \
-  || err "settings have no valid gates list"
-
 if [ -n "$scope" ]; then
   pages=$(gh api --paginate --slurp "repos/$R/compare/$branch...$scope?per_page=100" 2>&1) || err "cannot compare the branch ($pages)"
   list=$(jq -c 'if all(.[]; type == "object") then [.[] | .files // [] | .[]] else error("pages") end' <<<"$pages" 2>/dev/null) \
@@ -62,11 +52,7 @@ else
 fi
 
 floor='[".github/**","**/.claude","**/.claude/**","**/AGENTS.md","**/CLAUDE.md","**/CLAUDE.local.md","docs/goals.md"]'
-plugin=$(bash "$here/plugin-repo.sh" 2>/dev/null) || err "cannot read the plugin repository from the plugin manifest"
-if [ "$plugin" = "$(tr '[:upper:]' '[:lower:]' <<<"$R")" ]; then
-  floor=$(jq -c '. + ["agents/**","workflows/**","scripts/**","skills/**","routine/**","templates/**",".claude-plugin/**"]' <<<"$floor")
-fi
-
+scopefloor=$floor
 # matches <gates> [flags] [free]: the changed files a gate matches, joined; with "free", the files no gate matches, as a JSON array.
 matches() { jq -r --argjson gates "$1" --arg flags "${2:-}" --arg free "${3:-}" '
   def rx: (if endswith("/") then . + "**" else . end)
@@ -78,11 +64,24 @@ matches() { jq -r --argjson gates "$1" --arg flags "${2:-}" --arg free "${3:-}" 
   if $free == "" then [.[] | (.filename, (.previous_filename // empty))] | unique | map(select(hit)) | join(", ")
   else map(select([.filename, (.previous_filename // empty)] | any(hit) | not) | .filename) | unique | tojson end' <<<"$list"; }
 if [ -n "$scope" ]; then
-  free=$(matches "$gates" "" free) || err "cannot match the changed files"
-  list=$(jq -c --argjson f "$free" '[.[] | select(.filename as $n | $f | index($n))]' <<<"$list") || err "cannot match the changed files"
-  free=$(matches "$floor" i free) || err "cannot match the changed files"
+  free=$(matches "$scopefloor" i free) || err "cannot match the changed files"
   echo "SCOPE $free"; exit 0
 fi
+settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=$branch" 2>&1)
+if [ $? -ne 0 ]; then
+  case $settings in
+    *"HTTP 404"*) settings=$(cat "$here/../templates/pipeline.json" 2>/dev/null) || err "no settings file and no template" ;;
+    *) err "cannot read .github/pipeline.json ($settings)" ;;
+  esac
+fi
+gates=$(jq -c 'if (.gates | type) == "array" and all(.gates[]; type == "string") then .gates else error("gates") end' <<<"$settings" 2>/dev/null) \
+  || err "settings have no valid gates list"
+
+plugin=$(bash "$here/plugin-repo.sh" 2>/dev/null) || err "cannot read the plugin repository from the plugin manifest"
+if [ "$plugin" = "$(tr '[:upper:]' '[:lower:]' <<<"$R")" ]; then
+  floor=$(jq -c '. + ["agents/**","workflows/**","scripts/**","skills/**","routine/**","templates/**",".claude-plugin/**"]' <<<"$floor")
+fi
+
 hit=$(matches "$gates") || err "cannot match the changed files"
 [ -z "$hit" ] || gated "$hit"
 hit=$(matches "$floor" i) || err "cannot match the changed files"
