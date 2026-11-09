@@ -1882,6 +1882,17 @@ await check('minor pass: a minor in a PR file runs one fixer, a check of its dif
   assert.match(open, /Minor findings not fixed: \[[\s\S]*unmarked nit/)
   assert.doesNotMatch(open.split('Minor findings not fixed:')[1], /rename helper/)
 })
+await check('minor pass: a file with a line number or ./ prefix still matches the scope', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([minorOf({ file: './src/a.js:12' })]) : passHook()(p, o))
+  assert.ok(calls.some(c => c.label === 'minorfix:C1'))
+  assert.equal(x.C1.ready, true)
+})
+await check('minor pass: a skipImpl rerun or a resume runs no pass', async () => {
+  for (const extra of [{ skipImpl: true }, { resume: { history: [], minors: [minorOf()] } }]) {
+    await hooked(only1('C1').map(p => ({ ...p, ...extra })), passHook())
+    assert.ok(!calls.some(c => /^minor(fix|review|revert)/.test(c.label)), JSON.stringify(Object.keys(extra)))
+  }
+})
 await check('minor pass: a PR with no minor in a file runs no fixer', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('minor', 'no file')]) : undefined)
   assert.ok(!calls.some(c => /^minor(fix|review|revert)/.test(c.label) || c.label === 'test:C1#minor1'))
