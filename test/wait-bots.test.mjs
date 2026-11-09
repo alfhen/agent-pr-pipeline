@@ -20,6 +20,8 @@ const setup = (reviews) => {
   put(fx, `${P}__pulls__7.json`, { head: { sha: HEAD } })
   put(fx, `${P}__commits__${HEAD}__check-runs.json`, { check_runs: [] })
   put(fx, `${P}__pulls__7__comments.json`, [])
+  put(fx, `${P}__issues__7__comments.json`, [])
+  put(fx, 'user.json', { login: 'pipeline-bot-account' })
   reviews.forEach((r, i) => put(fx, `${P}__pulls__7__reviews.call${i + 1}.json`, r))
   return { dir, fx, log: join(dir, 'log') }
 }
@@ -92,4 +94,80 @@ test('fake-gh: a query is logged and its fixture wins over the plain one', () =>
   const log = readFileSync(s.log, 'utf8')
   assert.match(log, /^GET \/y\?ref=main$/m)
   assert.match(log, /^GET \/y$/m)
+})
+
+const OLD = 'b'.repeat(40)
+const status = (reviews, issueComments = []) => {
+  const s = setup([reviews])
+  put(s.fx, `${P}__issues__7__comments.json`, issueComments)
+  put(s.fx, 'user.json', { login: 'pipeline-bot-account' })
+  const r = spawnSync('bash', [join(root, 'scripts/bot-status.sh'), 'o/r', '7'], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${join(s.dir, 'bin')}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log },
+  })
+  assert.equal(r.status, 0, r.stderr)
+  return JSON.parse(r.stdout).reviewBodies
+}
+const rev = (body, commit = HEAD, login = 'coderabbitai[bot]') => ({ user: { login }, state: 'COMMENTED', commit_id: commit, submitted_at: '2026-01-01T00:00:00Z', body })
+
+test('reviewBodies counts a CodeRabbit body with an Outside diff range section', () => {
+  assert.equal(status([rev('Actionable comments posted: 0\n\n<details><summary>Outside diff range comments (1)</summary>x</details>')]), 1)
+})
+
+test('reviewBodies counts a CodeRabbit body with a Nitpick section', () => {
+  assert.equal(status([rev('Actionable comments posted: 0\n<summary>Nitpick comments (2)</summary>')]), 1)
+})
+
+test('reviewBodies counts a CodeRabbit body with a Duplicate comments section', () => {
+  assert.equal(status([rev('Actionable comments posted: 0\n<summary>Duplicate comments (1)</summary>')]), 1)
+})
+
+test('reviewBodies skips "Actionable comments posted: 0" and Gitar approval text', () => {
+  assert.equal(status([rev('**Actionable comments posted: 0**'), rev('Gitar has auto-approved this PR', HEAD, 'gitar-bot[bot]')]), 0)
+})
+
+test('reviewBodies skips empty bodies and bodies of only HTML comments', () => {
+  assert.equal(status([rev(''), rev(null), rev('  <!-- review_stack_entry -->\n ')]), 0)
+})
+
+test('reviewBodies skips a body on an older commit and a body from a person', () => {
+  assert.equal(status([rev('finding', OLD), rev('finding', HEAD, 'alice')]), 0)
+})
+
+test('reviewBodies counts an unknown text', () => {
+  assert.equal(status([rev('Something new we have never seen')]), 1)
+})
+
+const marker = (head = HEAD) => `<!-- pipeline-bot-answer head=${head} -->\nAnswered.`
+const answer = (login, body = marker(), association = 'NONE') => ({ user: { login }, author_association: association, body })
+const ME = 'pipeline-bot-account'
+
+test('reviewBodies is 0 when an answer comment for the head is by the running account', () => {
+  assert.equal(status([rev('Something new')], [answer(ME)]), 0)
+  assert.equal(status([rev('Something new')], [answer('someone', marker(), 'OWNER'), answer(ME)]), 0)
+})
+
+test('reviewBodies ignores an answer comment from another account, even an OWNER one, for another head, or without the marker at the start', () => {
+  assert.equal(status([rev('Something new')], [answer('someone', marker(), 'OWNER'), answer('other', marker(), 'COLLABORATOR')]), 1)
+  assert.equal(status([rev('Something new')], [answer(ME, marker(OLD))]), 1)
+  assert.equal(status([rev('Something new')], [answer(ME, `quoted ${marker()}`)]), 1)
+})
+
+test('reviewBodies is 0 when a rerun left two answer comments by the running account', () => {
+  assert.equal(status([rev('Something new')], [answer(ME), answer(ME)]), 0)
+})
+
+test('wait-bots keeps polling while a bot check run is still running, and the body then counts', () => {
+  const s = setup([[], [...approved], [...approved, rev('Outside diff range comments (1)')]])
+  const checks = (status_) => ({ check_runs: [{ name: 'CodeRabbit', status: status_, conclusion: null }] })
+  put(s.fx, `${P}__commits__${HEAD}__check-runs.call1.json`, checks('in_progress'))
+  put(s.fx, `${P}__commits__${HEAD}__check-runs.call2.json`, checks('in_progress'))
+  put(s.fx, `${P}__commits__${HEAD}__check-runs.call3.json`, checks('completed'))
+  const r = run(s, ['o/r', '7', '5'])
+  assert.equal(r.status, 0, r.stderr)
+  const out = JSON.parse(r.stdout)
+  assert.equal(out.timedOut, false)
+  assert.deepEqual(out.pending, [])
+  assert.equal(out.reviewBodies, 1)
+  assert.equal(reads(s), 3)
 })
