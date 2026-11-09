@@ -4,8 +4,9 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-export const root = new URL('../../../', import.meta.url).pathname
+export const root = fileURLToPath(new URL('../../../', import.meta.url))
 export const FB = 'alfhen/agent-pr-pipeline'
 export const SRC = 'acme/widgets'
 export const ME = 'alfhen'

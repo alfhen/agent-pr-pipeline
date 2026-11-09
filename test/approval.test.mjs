@@ -4,8 +4,9 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const root = new URL('../', import.meta.url).pathname
+const root = fileURLToPath(new URL('../', import.meta.url))
 const JQ = join(root, 'scripts/approval.jq')
 const fixture = (name) => readFileSync(join(root, 'test/fixtures/approval', `${name}.json`), 'utf8')
 const run = (input, { label = 'maintainer-approved', after = '' } = {}) => {
@@ -15,15 +16,21 @@ const run = (input, { label = 'maintainer-approved', after = '' } = {}) => {
 }
 const approval = (name, opts) => run(fixture(name), opts)
 
+const events = (name) => JSON.parse(fixture(name))
+const holds = (name, pred) => assert.ok(events(name).some((e) => e && typeof e === 'object' && pred(e)), `${name} holds the event the test is about`)
+const labeledBy = (login, label = 'maintainer-approved') => (e) => e.event === 'labeled' && e.label.name === label && e.actor.login === login
+
 test('the maintainer with no app mark counts', () => {
   assert.equal(approval('maintainer-null'), '2026-11-05T10:00:00Z')
 })
 
 test('the maintainer with the claude app mark does not count', () => {
+  holds('maintainer-claude', (e) => labeledBy('alfhen')(e) && e.performed_via_github_app.slug === 'claude')
   assert.equal(approval('maintainer-claude'), null)
 })
 
 test('another login does not count', () => {
+  holds('other-login', (e) => labeledBy('someone')(e) && e.performed_via_github_app === null)
   assert.equal(approval('other-login'), null)
 })
 
@@ -38,6 +45,8 @@ test('two good events give the newest', () => {
 })
 
 test('an unlabeled event never counts', () => {
+  holds('unlabeled-only', (e) => e.event === 'unlabeled' && e.label.name === 'maintainer-approved' && e.actor.login === 'alfhen')
+  assert.ok(!events('unlabeled-only').some((e) => e.event === 'labeled'))
   assert.equal(approval('unlabeled-only'), null)
 })
 
@@ -46,6 +55,9 @@ test('a malformed element is skipped', () => {
 })
 
 test('a labeled event by the maintainer, a removal, then a claude labeled event gives null', () => {
+  holds('removed-then-readded-by-claude', (e) => labeledBy('alfhen')(e) && e.performed_via_github_app === null)
+  holds('removed-then-readded-by-claude', (e) => e.event === 'unlabeled' && e.label.name === 'maintainer-approved')
+  holds('removed-then-readded-by-claude', (e) => labeledBy('alfhen')(e) && e.performed_via_github_app?.slug === 'claude')
   assert.equal(approval('removed-then-readded-by-claude'), null)
 })
 
@@ -62,6 +74,8 @@ test('the maintainer with an app mark other than claude does not count', () => {
 })
 
 test('a labeled event of another label is ignored', () => {
+  holds('other-label', (e) => labeledBy('alfhen', 'ready-to-build')(e) && e.performed_via_github_app === null)
+  assert.ok(!events('other-label').some((e) => e.label.name === 'maintainer-approved'))
   assert.equal(approval('other-label'), null)
   assert.equal(approval('other-label-after'), '2026-11-05T10:00:00Z')
   assert.equal(approval('other-label', { label: 'ready-to-build' }), '2026-11-05T10:00:00Z')

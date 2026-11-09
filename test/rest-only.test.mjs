@@ -4,11 +4,12 @@ import assert from 'node:assert/strict'
 import { readdirSync, readFileSync, statSync, mkdtempSync, cpSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const root = new URL('../', import.meta.url).pathname
+const root = fileURLToPath(new URL('../', import.meta.url))
 const FOLDERS = ['workflows', 'agents', 'scripts', 'routine', 'templates']
 const FORBIDDEN = /\bgh\s+(pr|issue|run|release|repo|label|search|workflow|project)\b|gh\s+api\s+graphql|--body-file/
-const BODY_FORM = /(?:pulls|issues|replies)\b[^\n]*?\s(-f|-F|--field|--raw-field)\s+body=/g
+const BODY_FORM = /(?:pulls|issues|replies)\b[^\n]*?\s(-f|-F|--field|--raw-field)\s+body=(\S)/g
 const PROMPT_FOLDERS = ['workflows', 'agents']
 
 const walk = (dir) => readdirSync(dir).flatMap((n) => {
@@ -27,7 +28,7 @@ const scan = (base) => {
       if (FORBIDDEN.test(line)) hits.push(`${rel}:${i + 1}: ${line.trim()}`)
       if (PROMPT_FOLDERS.includes(rel.split('/')[0])) {
         for (const m of line.matchAll(BODY_FORM)) {
-          if (m[1] !== '-F' || !/body=@/.test(line.slice(m.index))) hits.push(`${rel}:${i + 1}: body not from a file: ${line.trim()}`)
+          if (m[1] !== '-F' || m[2] !== '@') hits.push(`${rel}:${i + 1}: body not from a file: ${line.trim()}`)
         }
       }
     })
@@ -64,6 +65,12 @@ test('the old evaluator wording fails the scan', () => {
 
 test('an inline body on a pulls call in prompt text fails the scan', () => {
   const { hits } = scan(withLine('workflows/run-wave.js', '`gh api -X POST repos/o/r/pulls -f body=text`'))
+  assert.equal(hits.length, 1)
+  assert.match(hits[0], /body not from a file/)
+})
+
+test('an inline body is not cleared by a file body later on the same line', () => {
+  const { hits } = scan(withLine('workflows/run-wave.js', '`gh api repos/o/r/pulls/1 -F body=text` then `gh api repos/o/r/issues -F body=@f`'))
   assert.equal(hits.length, 1)
   assert.match(hits[0], /body not from a file/)
 })

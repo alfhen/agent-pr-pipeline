@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFi
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const root = new URL('../', import.meta.url).pathname
+const root = fileURLToPath(new URL('../', import.meta.url))
 const SCRIPT = join(root, 'scripts/file-feedback.sh')
 const REPO = 'alfhen/agent-pr-pipeline'
 const ISSUES = 'repos__alfhen__agent-pr-pipeline__issues'
@@ -217,6 +217,7 @@ test('a long slash-free entry matches inside longer forms, a bare short number d
 
 // ---- --auto, the outbox and the collect path (0.8.0) ----
 import * as W from './fixtures/feedback/world.mjs'
+import { fileURLToPath } from 'node:url'
 
 const R1 = W.runId(1)
 const ISSUE = W.autoIssue

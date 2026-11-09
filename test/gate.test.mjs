@@ -5,8 +5,9 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const root = new URL('../', import.meta.url).pathname
+const root = fileURLToPath(new URL('../', import.meta.url))
 const FX = join(root, 'test/fixtures/gate')
 const SHA = 'a'.repeat(40)
 const P = 'repos__o__r'
@@ -374,21 +375,27 @@ test('land-wave: a pending commit status is waited for, then reported as still r
   assert.equal(merges(r).length, 0)
 })
 
-const emptyGates = (s) => put(s.fx, `${P}__contents__.github__pipeline.json.json`, { gates: [] })
 const writeManifest = (dir, repository) => {
   mkdirSync(join(dir, '.claude-plugin'), { recursive: true })
   writeFileSync(join(dir, '.claude-plugin/plugin.json'), JSON.stringify(repository === undefined ? { name: 'x' } : { name: 'x', repository }))
 }
 const PLUGIN = 'https://github.com/alfhen/agent-pr-pipeline'
-const floorRun = (files, { repo = 'o/r', repository = PLUGIN } = {}) => {
+const floorRun = (files, { repo = 'o/r', repository = PLUGIN, gates = [] } = {}) => {
   const s = setup({ files: null, scripts: true })
   const rp = `repos__${repo.replace('/', '__')}`
   writeManifest(s.dir, repository === null ? undefined : repository)
   put(s.fx, `${rp}.json`, { default_branch: 'main' })
-  put(s.fx, `${rp}__contents__.github__pipeline.json.json`, { gates: [] })
+  put(s.fx, `${rp}__contents__.github__pipeline.json.json`, { gates })
   put(s.fx, `${rp}__pulls__7__files.1.json`, files)
   return run(s, 'gate-files.sh', [repo, '7'])
 }
+
+test('floor: settings that list other paths and leave out the floor still hold AGENTS.md', () => {
+  const r = floorRun([{ filename: 'AGENTS.md' }], { gates: ['src/**'] })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /^GATED #7: floor: AGENTS\.md/)
+  assert.equal(floorRun([{ filename: 'lib/x.ts' }], { gates: ['src/**'] }).code, 0)
+})
 
 test('floor: empty gates still hold .github/pipeline.json', () => {
   const r = floorRun([{ filename: '.github/pipeline.json' }])
@@ -544,6 +551,8 @@ test('gate --same: prints the head only when the branch tree equals the signed-o
 })
 
 test('plugin-repo: no other script parses the manifest repository', () => {
-  const r = spawnSync('grep', ['-rlE', '\\.repository', join(root, 'scripts'), join(root, 'routine')], { encoding: 'utf8' })
-  assert.deepEqual(r.stdout.split('\n').filter(Boolean).map((f) => f.slice(f.indexOf('scripts/'))), ['scripts/plugin-repo.sh'])
+  const readers = spawnSync('grep', ['-rl', 'plugin\\.json', join(root, 'scripts'), join(root, 'routine')], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean)
+  assert.ok(readers.length > 1, 'the scan found the scripts that read the manifest')
+  const hits = readers.filter((f) => /\.repository|\["repository"\]|getpath/.test(readFileSync(f, 'utf8')))
+  assert.deepEqual(hits.map((f) => f.slice(f.indexOf('scripts/'))), ['scripts/plugin-repo.sh'])
 })

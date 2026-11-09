@@ -5,8 +5,9 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, copyFileSync, chmodSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const root = new URL('../', import.meta.url).pathname
+const root = fileURLToPath(new URL('../', import.meta.url))
 for (const target of ['T01', '--all']) {
   test(`clones prints KEPT when a folder cannot be deleted (${target})`, () => {
     const t = build()
@@ -77,7 +78,7 @@ test('init refuses shared temp folders and unmarked folders that hold folders, a
   const t = build()
   for (const shared of ['/tmp', '/private/tmp'].filter(existsSync)) {
     const r = run(t, ['init', shared])
-    assert.match(r.out, /^KEPT .* refused/, shared)
+    assert.match(r.out, /refused: shared temp folder/, shared)
     assert.ok(!existsSync(join(shared, '.pipeline-tmp')), shared)
   }
   assert.match(run(t, ['init', t.tmp], { TMPDIR: t.tmp }).out, /^KEPT .* refused/)

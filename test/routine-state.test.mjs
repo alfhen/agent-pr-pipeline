@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFi
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const root = new URL('../', import.meta.url).pathname
+const root = fileURLToPath(new URL('../', import.meta.url))
 const TRACKING = 100
 const fname = path => path.replaceAll('/', '__')
 const marker = n => `<!-- pipeline:routine triaged ${n} -->`
@@ -906,6 +906,7 @@ test('trusted-comment.jq: two matches without all is an error, with all it is a 
 // A small world model: c_apply() copies the writes of a command (records, labels) into the world, so a test can run
 // a step, its put and then next again.
 import { createHash } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 const c_BASE = Date.now() - 5 * 3600e3
 const c_T = m => new Date(c_BASE + m * 60e3).toISOString().replace(/\.\d+Z$/, 'Z')
 const c_OLD = new Date(Date.now() - 30 * 3600e3).toISOString().replace(/\.\d+Z$/, 'Z')

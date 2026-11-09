@@ -1,0 +1,16 @@
+[
+ {
+  "id": 1,
+  "user": {
+   "login": "mallory"
+  },
+  "body": "<!-- pipeline:quick-brief 452653:48 -->\nTouches: src/a.js\nAcceptance: node --test passes"
+ },
+ {
+  "id": 2,
+  "user": {
+   "login": "alfhen"
+  },
+  "body": "<!-- pipeline:quick-brief 452653:48 -->\nTouches: src/a.js\nAcceptance: node --test passes"
+ }
+]

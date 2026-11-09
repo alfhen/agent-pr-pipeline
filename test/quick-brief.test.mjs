@@ -5,8 +5,9 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const root = new URL('../', import.meta.url).pathname
+const root = fileURLToPath(new URL('../', import.meta.url))
 const SCRIPT = join(root, 'scripts/quick-brief.sh')
 const ENTRY = 'Touches: src/a.js\nAcceptance: node --test passes'
 
@@ -182,6 +183,20 @@ test('put never touches a marker comment by another account', () => {
   assert.equal(r.status, 0, r.stderr)
   assert.equal(r.posts.length, 1)
   assert.equal(r.calls.filter(l => l.startsWith('PATCH ')).length, 0)
+})
+
+test('put patches the comment of the trusted account when another account has a comment with the same body', () => {
+  const fixture = JSON.parse(readFileSync(join(root, 'test/fixtures/quick-brief/same-body-other-account/repos__o__r__issues__5__comments.1.json'), 'utf8'))
+  assert.equal(fixture[0].body, fixture[1].body)
+  assert.notEqual(fixture[0].user.login, fixture[1].user.login)
+  const same = run('same-body-other-account')
+  assert.equal(same.status, 0, same.stderr)
+  assert.equal(same.stdout.trim(), ENTRY)
+  const r = run('same-body-other-account', 'put', [], undefined, undefined, NEW)
+  assert.equal(r.status, 0, r.stderr)
+  const writes = r.calls.filter(l => !l.startsWith('GET '))
+  assert.equal(writes.length, 1, writes.join('\n'))
+  assert.match(writes[0], /^PATCH \/repos\/o\/r\/issues\/comments\/2 /)
 })
 
 test('get exits 4 for an edited brief and reads a 0.4 marker and a sum marker', () => {

@@ -104,12 +104,17 @@ export function findForbidden(src) {
     if (tok.type !== 'ident' || is(t(k, -1), 'punct', '.')) continue
     if (tok.value === 'Date' || tok.value === 'Math') {
       const bad = tok.value === 'Date' ? 'now' : 'random'
-      if (is(t(k, 1), 'punct', '.') && is(t(k, 2), 'ident', bad)) hit(tok.line, `${tok.value}.${bad}`)
+      const chain = is(t(k, 1), 'punct', '?') && is(t(k, 2), 'punct', '.') ? 2 : is(t(k, 1), 'punct', '.') ? 1 : 0
+      if (chain && is(t(k, chain + 1), 'ident', bad)) hit(tok.line, `${tok.value}.${bad}`)
+      else if (chain && is(t(k, chain + 1), 'punct', '[') && is(t(k, chain + 2), 'string', bad) && is(t(k, chain + 3), 'punct', ']')) hit(tok.line, `${tok.value}['${bad}']`)
       else if (is(t(k, 1), 'punct', '[') && is(t(k, 2), 'string', bad) && is(t(k, 3), 'punct', ']')) hit(tok.line, `${tok.value}['${bad}']`)
     }
-    if (tok.value === 'new' && is(t(k, 1), 'ident', 'Date')) {
-      const open = is(t(k, 2), 'punct', '(')
-      if (!open || is(t(k, 3), 'punct', ')')) hit(tok.line, 'new Date without an argument')
+    if (tok.value === 'new') {
+      const wrapped = is(t(k, 1), 'punct', '(') && is(t(k, 2), 'ident', 'Date') && is(t(k, 3), 'punct', ')')
+      if (wrapped || is(t(k, 1), 'ident', 'Date')) {
+        const at = k + (wrapped ? 4 : 2)
+        if (!is(t(k, at - k), 'punct', '(') || is(t(k, at - k + 1), 'punct', ')')) hit(tok.line, 'new Date without an argument')
+      }
     }
   }
   return hits
@@ -138,14 +143,26 @@ export function preconditions(src, { anchors = true, regexWithBacktick = true } 
 const scan = s => findForbidden(s).map(h => h.line)
 
 test('refuses each listed form, with its line number', () => {
-  for (const s of ['const t = Date.now', "Date['now']()", 'new Date', 'new Date( )', 'new Date(/* x */)', 'x = Math.random', "Math['random']()", 'Date.now()', 'Math.random()', 'new Date\n']) {
+  for (const s of ['const t = Date.now', "Date['now']()", 'new Date', 'new Date( )', 'new Date(/* x */)', 'x = Math.random', "Math['random']()", 'Date.now()', 'Math.random()', 'new Date\n',
+    'Date?.now()', 'Math?.random()', "Date?.['now']()", "Math?.['random']()", 'new (Date)()', 'new (Date)', 'new Date ()', 'new (Date) ( )']) {
     assert.deepEqual(scan(`\n${s}`), [2], s)
   }
 })
 
 test('allows comments, prompt text, strings and new Date(argument)', () => {
-  for (const s of ['// Date.now()', '/* Math.random() */', '`Date.now()`', "'Date[\"now\"]'", '"new Date()"', 'new Date(ms)', 'new Date(0)', 'x.Date.now', 'const d = Date.UTC(1)']) {
+  for (const s of ['// Date.now()', '/* Math.random() */', '`Date.now()`', "'Date[\"now\"]'", '"new Date()"', 'new Date(ms)', 'new Date(0)', 'x.Date.now', 'const d = Date.UTC(1)', 'new (Date)(ms)', 'x?.Date?.now', '`Date?.now()`']) {
+    assert.match(s, /\b(Date|Math)\b/, `${s} holds the text the scan looks for`)
     assert.deepEqual(scan(s), [], s)
+  }
+  for (const s of ['// Date.now()', '/* Math.random() */', '`Date.now()`', "'Date[\"now\"]'", '"new Date()"', 'x.Date.now']) {
+    assert.match(s, /Date\.now|Date\[|Math\.random|new Date\(\)/, `${s} holds the forbidden text`)
+  }
+})
+
+test('a regex literal after any punctuator or keyword that cannot end a value does not open a template', () => {
+  for (const s of ['f = x => /`/.test(x)', 'a = b + /`/.source', 'a = b - /`/.source', 'a = b * /`/.source', 'a = b < /`/.source', 'a = b > /`/.source',
+    'a = typeof /`/', 'switch (x) { case /`/: }', 'a = b ? /`/ : c', 'for (const r of /`/g) {}', 'a = await /`/', 'a = !/`/.test(x)']) {
+    assert.deepEqual(scan(`${s}\nDate.now()`), [s.split('\n').length + 1], s)
   }
 })
 
