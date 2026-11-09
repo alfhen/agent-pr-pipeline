@@ -41,6 +41,13 @@ guard=$(cd "$here/../.." 2>/dev/null && pwd -P || true)
 TRUSTED="$here/trusted-comment.jq"
 SESSION_STEPS="build triage"
 
+# Shared by every path that stores a why. The cut counts code points. The escape keeps an @ from notifying anybody.
+WHY_JQ='def inert: gsub("@(?!\u200b)"; "@\u200b");
+def whycut: . as $w | ([$w | match("[.!?](?= |\\z)"; "g") | select(.offset < 500) | .offset + 1] | last // 500) as $end
+  | if ($w | length) > 500 then $w[:$end] else $w end;
+def withcut($w): if ($w | length) > 500 then . + {whyCut: true} else . end;'
+REASON_CODES="opened triage-plan triage-decline rounds-exhausted needs-human other"
+
 die() { local code=$1; shift; echo "routine-state: $*" >&2; exit "$code"; }
 usage() { die 64 "usage: routine-state.sh <owner/repo> init|next [--mode observe|triage|full]|put triaged|build-started|blocked ..."; }
 
@@ -135,7 +142,6 @@ fi
 CONFIG="$here/../routine/config.jq"
 APPROVAL="$here/approval.jq"
 RUN_RE='^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$'
-STATE_LABELS="ready-to-build needs-approval declined building build-failed needs-plan needs-maintainer"
 routine_cfg=null; stage=0; tracking=""; GATE=""; maintainer=""; tcomments="[]"; recs="[]"
 
 read -r -d '' PLAN_JQ <<'JQ'
@@ -250,7 +256,8 @@ def hasl($l): .L | index($l) != null;
      revoke: ($revoke | map({issue: .n, cause: .reason})),
      eligible: ($eligible | map(.n)),
      prseen: ($prseen | map(.n)),
-     prseenFailed: ($prseen | map(select(.hasPr | not) | select(.ended)) | map(.n)),
+     prseenFailed: ($prseen | map(select(.hasPr | not) | select(.ended) | select(.lb.rec.reasonCode != "triage-plan")) | map(.n)),
+     prseenPlan: ($prseen | map(select(.hasPr | not) | select(.ended) | select(.lb.rec.reasonCode == "triage-plan")) | map(.n)),
      block: ($block | map({issue: .n})),
      exhausted: ($exhausted | map(.n)),
      needsPlan: ($needsPlan | map({issue: .n, key: "\(.n):\(.A)"})),
@@ -268,6 +275,7 @@ utc_stamp() { date -u +%Y%m%dT%H%M%SZ; }
 text_hash() { jq -j '(.title // "") + "\n" + (.body // "")' <<<"$1" | sha256; }
 
 num_arg() { [[ $1 =~ ^[1-9][0-9]{0,8}$ ]] || die 64 "the issue must be a number"; }
+reason_arg() { case " $REASON_CODES " in *" $1 "*) ;; *) die 64 "bad reason code" ;; esac; }
 run_arg() { [[ $1 =~ $RUN_RE ]] || die 64 "the run must look like 20261105T120000Z-0a1b2c3d"; }
 
 # Every argument is checked here, before any call to GitHub.
@@ -289,7 +297,7 @@ cloud_validate() {
             and (.items | type == "array" and all(.[]; type == "object"))
             and (.denylist | type == "array" and all(.[]; type == "string"))
             and (.dropped | type == "number" or type == "array")
-            and (tojson | length) <= 60000' "$ofile" >/dev/null 2>&1 || die 64 "the outbox file must hold exactly source, feedbackRepo, items, denylist and dropped, and fit in one comment" ;;
+            and (tojson | utf8bytelength) <= 60000' "$ofile" >/dev/null 2>&1 || die 64 "the outbox file must hold exactly source, feedbackRepo, items, denylist and dropped, and fit in one comment" ;;
         feedback-filed)
           run_arg "$4"; counts=$5
           jq -e 'type == "object" and ((keys | sort) == ["filed", "refused", "seenAgain"]) and all(.[]; type == "number" and . == floor and . >= 0)' <<<"$counts" >/dev/null 2>&1 \
@@ -315,11 +323,12 @@ cloud_validate() {
               run_arg "$5"; run_id=$5; pr=$6; ready=$7; reason=$8; result_file=${9:-}
               [[ $pr =~ ^([1-9][0-9]{0,8}|none)$ ]] || die 64 "pr must be a number or none"
               case "$ready" in true|false) ;; *) die 64 "ready must be true or false" ;; esac
-              case "$reason" in opened|triage-plan|triage-decline|rounds-exhausted|needs-human|other) ;; *) die 64 "bad reason code" ;; esac
-              [ -z "$result_file" ] || [ -f "$result_file" ] || die 64 "$result_file is not a file" ;;
+              reason_arg "$reason"
+              [ -z "$result_file" ] || [ -f "$result_file" ] || die 64 "$result_file is not a file"
+              [ -z "$result_file" ] || jq -e '.prs[0].reason | true' "$result_file" >/dev/null 2>&1 || die 64 "$result_file is not JSON" ;;
             blocked)
               run_arg "$5"; run_id=$5; reason=$6
-              case "$reason" in opened|triage-plan|triage-decline|rounds-exhausted|needs-human|other) ;; *) die 64 "bad reason code" ;; esac ;;
+              reason_arg "$reason" ;;
           esac ;;
       esac ;;
   esac
@@ -520,8 +529,9 @@ issue_prelude() { # mode
 
 in_plan() { jq -e --argjson n "$issue" --arg c "${cause:-}" --argjson a "${attempt:-0}" "$1" <<<"$plan_json" >/dev/null; }
 
-started_key() { # issue run -> the key of its build-started record, or nothing
-  jq -r --argjson n "$1" --arg r "$2" '[.[] | select(.kind == "build-started" and .n == $n and .rec.run == $r)][0].key // empty' <<<"$recs"
+started_key() { # issue run -> the key of its build-started record, or nothing; a run that lost the race for a key has none
+  jq -r --argjson n "$1" --arg r "$2" '[.[] | select(.kind == "build-started" and .n == $n)] as $b
+    | [$b[] | select(.rec.run == $r) | select(.key as $k | ($b | map(select(.key == $k))[0].rec.run) == $r)][0].key // empty' <<<"$recs"
 }
 
 do_needs_plan() { # issue key
@@ -573,11 +583,9 @@ put_triaged() {
   epoch=$(jq -r .f.epoch <<<"$plan_json")
   key="$issue:$epoch"
   refuse_dup triaged "$key"
-  # The cut is done in jq so it counts code points and never splits a multibyte character.
-  rec=$(jq -nc --arg d "$decision" --arg s "$size" --arg r "$risk" --arg t "$itype" --arg w "$why" '
-    ([$w | match("[.!?](?= |\\z)"; "g") | select(.offset < 500) | .offset + 1] | last // 500) as $end
-    | {decision: $d, size: $s, risk: $r, type: $t, why: (if ($w | length) > 500 then $w[:$end] else $w end)}
-    | if ($w | length) > 500 then . + {whyCut: true} else . end
+  rec=$(jq -nc --arg d "$decision" --arg s "$size" --arg r "$risk" --arg t "$itype" --arg w "$why" "$WHY_JQ"'
+    {decision: $d, size: $s, risk: $r, type: $t, why: ($w | whycut | inert)}
+    | withcut($w)
     | if .decision == "build" and (.size == "L" or .risk == "high") then . + {decision: "plan", triagerDecision: "build"} else . end')
   final=$(jq -r .decision <<<"$rec")
   # The labels go first: a failure after them leaves an issue that triage lists again, never one that no step reads.
@@ -588,7 +596,7 @@ put_triaged() {
       add_labels "$issue" declined "$tlabel" "size:$size"
       remove_labels "$issue" needs-approval
       write_record triaged "$key" "$rec"
-      mark="Declined by the triage routine: $(jq -r .why <<<"$rec")"
+      mark="Declined by the triage routine: $(jq -r "$WHY_JQ"'.why | inert' <<<"$rec")"
       gh api --method POST "repos/$repo/issues/$issue/comments" -f body="$mark" >/dev/null || die 3 "could not post the decline reason" ;;
     build)
       add_labels "$issue" ready-to-build "$tlabel" "size:$size"
@@ -643,13 +651,11 @@ put_built() {
   if [ "$pr" = none ] && [ -n "$result_file" ]; then
     why=$(jq -r '.prs[0].reason // "" | if type == "string" then . else "" end' "$result_file") || die 64 "$result_file is not JSON"
   fi
-  # One line, cut at a sentence end or 500 characters, as the why of a triaged record. The cut counts code points.
-  rec=$(jq -nc --arg r "$run_id" --arg p "$pr" --arg d "$ready" --arg c "$reason" --arg w "$why" '
+  rec=$(jq -nc --arg r "$run_id" --arg p "$pr" --arg d "$ready" --arg c "$reason" --arg w "$why" "$WHY_JQ"'
     ($w | gsub("\\p{Cc}"; " ") | gsub("\\s+"; " ") | sub("^ "; "") | sub(" $"; "")) as $w
-    | ([$w | match("[.!?](?= |\\z)"; "g") | select(.offset < 500) | .offset + 1] | last // 500) as $end
     | {run: $r, pr: (if $p == "none" then "none" else ($p | tonumber) end), ready: ($d == "true"), reasonCode: $c}
-    | if $w != "" then . + {why: ((if ($w | length) > 500 then $w[:$end] else $w end) | gsub("@(?!​)"; "@​"))} else . end
-    | if ($w | length) > 500 then . + {whyCut: true} else . end')
+    | if $w != "" then . + {why: ($w | whycut | inert)} else . end
+    | withcut($w)')
   write_record built "$key" "$rec"
   echo "ok built $issue"
 }
@@ -663,8 +669,7 @@ blocked_comment() { # issue reasonCode why -> prints the comment body
     needs-human) first="The build routine stopped and opened no PR. A step needs a person to decide." ;;
     *) first="The build routine stopped and opened no PR." ;;
   esac
-  # A zero-width space after each @ keeps the text from notifying anybody.
-  jq -rn --arg f "$first" --arg w "$3" '$f + (if $w == "" then "" else "\n" + ($w | gsub("@(?!​)"; "@​")) end)'
+  jq -rn --arg f "$first" --arg w "$3" "$WHY_JQ"'$f + (if $w == "" then "" else "\n" + ($w | inert) end)'
 }
 
 put_blocked() {
@@ -678,9 +683,10 @@ put_blocked() {
   write_record blocked "$key" "$(jq -nc --arg r "$run_id" --arg c "$reason" --argjson a "${key#*:}" '{run: $r, reasonCode: $c, attempt: $a}')"
   bid=$REC_ID
   # triage-plan gets needs-plan, not build-failed; $exhausted reads the reason code of this record instead.
-  [ "$reason" = triage-plan ] || add_labels "$issue" build-failed
+  # needs-plan goes on before the other labels come off, so a failure in between never leaves the issue with no state label.
+  if [ "$reason" = triage-plan ]; then do_needs_plan "$issue" "$issue:$bid"; else add_labels "$issue" build-failed; fi
   remove_labels "$issue" building ready-to-build maintainer-approved
-  if [ "$reason" = triage-plan ]; then do_needs_plan "$issue" "$issue:$bid"; else echo "NOTICE blocked $repo $issue $run_id $reason"; fi
+  [ "$reason" = triage-plan ] || echo "NOTICE blocked $repo $issue $run_id $reason"
   why=$(jq -r --arg k "$key" '[.[] | select(.kind == "built" and .key == $k)] | last | .rec.why // "" | if type == "string" then . else "" end' <<<"$recs")
   body=$(blocked_comment "$issue" "$reason" "$why")
   gh api --method POST "repos/$repo/issues/$issue/comments" -f body="$body" >/dev/null \
@@ -701,6 +707,10 @@ put_pr_seen() {
   in_plan 'any(.prseen[]; . == $n)' || die 65 "issue $issue has no building label or no PR from its branch"
   would pr-seen "$issue"
   if jq -e --argjson n "$issue" 'any(.prseenFailed[]; . == $n)' <<<"$plan_json" >/dev/null; then add_labels "$issue" build-failed; fi
+  if jq -e --argjson n "$issue" 'any(.prseenPlan[]; . == $n)' <<<"$plan_json" >/dev/null; then
+    add_labels "$issue" needs-plan
+    remove_labels "$issue" needs-approval
+  fi
   remove_labels "$issue" building
   echo "ok pr-seen $issue"
 }
@@ -1043,11 +1053,9 @@ case "$cmd" in
     stored=1
     if [ -z "$rec" ]; then
       stored=0
-      # The cut is done in jq so it counts code points and never splits a multibyte character.
-      rec=$(jq -nc --arg d "$decision" --arg s "$size" --arg r "$risk" --arg w "$why" '
-        ([$w | match("[.!?](?= |\\z)"; "g") | select(.offset < 500) | .offset + 1] | last // 500) as $end
-        | {decision: $d, size: $s, risk: $r, why: (if ($w | length) > 500 then $w[:$end] else $w end)}
-        | if ($w | length) > 500 then . + {whyCut: true} else . end
+      rec=$(jq -nc --arg d "$decision" --arg s "$size" --arg r "$risk" --arg w "$why" "$WHY_JQ"'
+        {decision: $d, size: $s, risk: $r, why: ($w | whycut | inert)}
+        | withcut($w)
         | if .decision == "build" and (.size == "L" or .risk == "high") then . + {decision: "plan", triagerDecision: "build"} else . end')
     fi
     final=$(jq -r .decision <<<"$rec")
@@ -1056,9 +1064,10 @@ case "$cmd" in
       decline)
         mark="<!-- pipeline:routine declined $issue -->"
         own=$(pages "repos/$repo/issues/$issue/comments") || exit $?
-        if [ "$(trusted "$own" "$mark")" = null ]; then
+        declined=$(trusted "$own" "$mark") || exit $?
+        if [ "$declined" = null ]; then
           gh api --method POST "repos/$repo/issues/$issue/comments" -f body="$mark
-$(jq -r .why <<<"$rec")" >/dev/null || die 3 "could not post the decline reason"
+$(jq -r "$WHY_JQ"'.why | inert' <<<"$rec")" >/dev/null || die 3 "could not post the decline reason"
         fi ;;
       build|plan)
         label=routine-$final
