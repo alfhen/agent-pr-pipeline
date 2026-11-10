@@ -37,7 +37,7 @@ test('template has ciChecks', () => {
 test('E03b-4 and E03b-7: the break check pushes nothing, restores the clone and treats added and changed files differently', () => {
   assert.match(body, /Never push, and never touch the branch/);
   assert.match(body, /then restore the clone/);
-  assert.match(body, /Reset a file the PR changes with `git checkout origin\/HEAD -- <file>`/);
+  assert.match(body, /Reset a file the PR changes with `git checkout \$\(git merge-base origin\/HEAD HEAD\) -- <file>`/);
   assert.match(body, /Delete a file the PR adds, because it is not on `origin\/HEAD`/);
 });
 

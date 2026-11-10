@@ -217,16 +217,16 @@ const testOutcome = (pr, test) => {
 }
 const evalListOf = pr => Array.isArray(pr.evals) ? pr.evals : pr.evals && Array.isArray(pr.evals.evals) ? pr.evals.evals : []
 const verifies = pr => evalListOf(pr).length > 0
+const BREAK_KINDS = ['behaviour', 'error path']
 // Repo policy, read once per PR from the default branch. The PR cannot set it, so a `ci` result needs a name the repo trusts.
 const ciChecksState = {}
 // The only place that reads a verifier's answer. Its own `pass` is ignored, like the tester's. An eval id with no result, or a `ci`
 // result that names no check from ciChecks, is no result. A missing id counts in `failed` of the history row, because it did not pass.
-const BREAK_KINDS = ['behaviour', 'error path']
 const verifyOutcome = (pr, verify) => {
   const base = testOutcome(pr, verify)
   const trusted = ciChecksState[pr.id] || []
   const byId = new Map()
-  for (const r of verify.evals || []) if (!byId.has(r.id) || r.result === 'fail') byId.set(r.id, r)
+  for (const r of verify.evals || []) if (!byId.has(r.id) || r.result === 'fail' || (r.breakCheck === 'passes-without-change' && byId.get(r.id).result === 'pass')) byId.set(r.id, r)
   const findings = []
   const passed = []; const failed = []; const ci = []; const covered = []
   for (const e of evalListOf(pr)) {
@@ -694,7 +694,7 @@ Task: verify the branch from a clean clone. Run every check below, then each eva
 2. Run in order: ${fastText}. Then run ${ownE2e}.
 ${relatedStep}${RELATED_TESTS ? 4 : 3}. Run the check of each eval, in order, and compare the result with what it says must be true. An eval is a fixed requirement: you cannot change, drop or reword it.
 ${RELATED_TESTS ? 5 : 4}. You may add up to 3 checks of your own that the builder did not see, and report each in \`extra\`.
-${BREAK_CHECK ? `${RELATED_TESTS ? 6 : 5}. Break check. Only when no eval failed and none has no result (a ci result is allowed): for each eval of kind behaviour or error path with the result pass, find the test that ran its check (set \`test\`), take the change out of the files that are not tests in your clone, run the test, and restore the clone. Reset a file the PR changes with \`git checkout origin/HEAD -- <file>\`. Delete a file the PR adds, because it is not on origin/HEAD. Push nothing. Set \`breakCheck\` to fails-without-change only when the test fails on its own assertion (a result comparison). A load, import, missing-file, syntax or exit-127 error is not that: set not-run and give the reason in \`breakWhy\`. Set passes-without-change when the test still passes. Set not-applicable for kinds regression, quality bar, size limit, time bound and reference. Set not-run, with the reason, when you cannot map the eval to a test. A ci eval gets no break check.\n` : ''}Return ${returnChecks}, \`evals\`: one row per eval id with result pass, fail or ci, the evidence (the output that shows it) and, for ci, \`ciCheck\`: the name of the CI check that covers it, used only when the sandbox refused the command${BREAK_CHECK ? `, and \`test\`, \`breakCheck\` and \`breakWhy\` from the break check` : ''}, and \`extra\`: your own checks with name, pass and evidence.
+${BREAK_CHECK ? `${RELATED_TESTS ? 6 : 5}. Break check. Only when no eval failed and none has no result (a ci result is allowed): for each eval of kind behaviour or error path with the result pass, find the test that ran its check (set \`test\`), take the change out of the files that are not tests in your clone, run the test, and restore the clone. Reset a file the PR changes with \`git checkout $(git merge-base origin/HEAD HEAD) -- <file>\`, so only the PR's change comes out. Delete a file the PR adds, because it is not on origin/HEAD. Push nothing. Set \`breakCheck\` to fails-without-change only when the test fails on its own assertion (a result comparison). A load, import, missing-file, syntax or exit-127 error is not that: set not-run and give the reason in \`breakWhy\`. Set passes-without-change when the test still passes. Set not-applicable for kinds regression, quality bar, size limit, time bound and reference. Set not-run, with the reason, when you cannot map the eval to a test. A ci eval gets no break check.\n` : ''}Return ${returnChecks}, \`evals\`: one row per eval id with result pass, fail or ci, the evidence (the output that shows it) and, for ci, \`ciCheck\`: the name of the CI check that covers it, used only when the sandbox refused the command${BREAK_CHECK ? `, and \`test\`, \`breakCheck\` and \`breakWhy\` from the break check` : ''}, and \`extra\`: your own checks with name, pass and evidence.
 
 Evals (every id needs a result):
 ${evalListOf(pr).map(e => `Eval ${e.id} [${e.kind}] ${e.statement}\n  Check: ${e.check}${e.test ? `\n  Test: ${e.test}` : ''}`).join('\n')}

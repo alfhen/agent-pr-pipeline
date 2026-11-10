@@ -1986,7 +1986,7 @@ await check('E03b-2 and E03b-7 and E03b-10: the verify prompt asks for the break
   const pr = calls.find(c => c.label === 'verify:C1#1').prompt
   assert.match(pr, /Break check\. Only when no eval failed and none has no result \(a ci result is allowed\)/)
   assert.match(pr, /kind behaviour or error path with the result pass/)
-  assert.match(pr, /git checkout origin\/HEAD -- <file>/)
+  assert.match(pr, /git checkout \$\(git merge-base origin\/HEAD HEAD\) -- <file>/)
   assert.match(pr, /Delete a file the PR adds, because it is not on origin\/HEAD/)
   assert.match(pr, /A load, import, missing-file, syntax or exit-127 error is not that: set not-run/)
 })
@@ -2009,7 +2009,7 @@ await check('E03b-12: a pass behaviour or error path eval with no breakCheck is 
   assert.deepEqual(x.C1.untested, ['X-1 (break check not run)'])
   assert.notEqual(x.C1.landMode, 'auto')
 })
-await check('E03b-3 and E03b-9 and E03b-10: not-run with a reason is untested, not a pass and not a major', async () => {
+await check('E03b-3 and E03b-7 and E03b-9 and E03b-10: not-run with a reason is untested, not a pass and not a major', async () => {
   const nr = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'not-run', breakWhy: 'exit 127: file missing' }, { id: 'X-2', result: 'pass', breakCheck: 'not-run', breakWhy: 'no test maps to this eval' }] })
   const x = await hooked(withEvals('C1'), verifyHook({ 1: nr }))
   assert.equal(x.C1.history.length, 1)
@@ -2027,6 +2027,15 @@ await check('E03b-5: breakCheck false gives the E03a prompt and results', async 
   assert.equal(x.C1.ready, true)
   assert.deepEqual(x.C1.untested, [])
   assert.deepEqual(x.C1.history[0].evals, { passed: ['X-1', 'X-2'], failed: [], ci: [] })
+  const stale = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'passes-without-change' }, { id: 'X-2', result: 'pass' }] })
+  const y = await hooked(withEvals('C1'), verifyHook({ 1: stale }), { breakCheck: false })
+  assert.equal(y.C1.ready, true)
+  assert.deepEqual(y.C1.history[0].blockersAndMajors, [])
+})
+await check('E03b: a duplicate pass row cannot hide passes-without-change', async () => {
+  const dup = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-1', result: 'pass', breakCheck: 'passes-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: dup }))
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [test]: eval X-1: the test passes without the change'])
 })
 await check('E03b-8: a regression eval with not-applicable is neither a major nor untested, and a missing breakCheck on it is ignored', async () => {
   const evs = [EVS[0], EVS[1], { id: 'X-3', kind: 'regression', statement: 's', check: 'c' }, { id: 'X-4', kind: 'quality bar', statement: 's', check: 'c' }]
