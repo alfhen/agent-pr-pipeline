@@ -1069,7 +1069,9 @@ const IO_EXIT = /^pipeline-io: exit (\d+)\s*$/
 // the agent's own report; the output is the text between the begin line and that line. A missing line is a failed call (exitCode -1).
 // A large-form answer gives { file } only to a caller that can read the file (opts.large); every other caller fails closed.
 const IO_LARGE = /^pipeline-io: large output, \d+ bytes, saved at (\S+)\s*$/
-const IO_TOO_LARGE = 'pipeline-io: output too large to hand on'
+// io.sh only writes TMP/io-large.XXXXXX. A looser check lets a path such as TMP/../x reach the land reviewer's read.
+const IO_LARGE_NAME = /^io-large\.[A-Za-z0-9]+$/
+const IO_TOO_LARGE ='pipeline-io: output too large to hand on'
 const readIo = (text, { large = false } = {}) => {
   const lines = String(text).split('\n')
   let end = lines.length - 1
@@ -1082,7 +1084,7 @@ const readIo = (text, { large = false } = {}) => {
   const body = lines.slice(begin + 1, end)
   const hit = body.length === 1 && IO_LARGE.exec(body[0])
   const claimsLarge = body.some(l => l.startsWith('pipeline-io: large output'))
-  if (!hit || !hit[1].startsWith(`${TMP}/`)) {
+  if (!hit || !hit[1].startsWith(`${TMP}/`) || !IO_LARGE_NAME.test(hit[1].slice(TMP.length + 1))) {
     return claimsLarge ? { exitCode: -1, output: `${IO_TOO_LARGE}: the saved file is not in the run tmp folder` } : { exitCode, output: body.join('\n') }
   }
   return large ? { exitCode, output: '', file: hit[1] } : { exitCode: -1, output: IO_TOO_LARGE }

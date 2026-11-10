@@ -1193,6 +1193,21 @@ await check('K04: a large-form answer takes its exit code only from its last exi
   assert.equal(b.ready, false)
   assert.ok(!calls.some(c => /^landreview:LK4/.test(c.label)))
 })
+await check('K04: a large-form path that leaves the run tmp folder or is not an io-large file is refused and never reaches the reviewer', async () => {
+  const real = realIo(100000)
+  assert.match(real, /pipeline-io: large output/)
+  const file = /saved at (\S+)/.exec(real)[1]
+  const bad = [`${largeTmp}/../../home/u/.ssh/id_rsa`, `${largeTmp}/other.txt`, `${largeTmp}/sub/io-large.abc123`]
+  for (const [i, p] of bad.entries()) {
+    const answer = real.replace(file, p)
+    assert.ok(answer.includes(p) && /pipeline-io: exit 0\n$/.test(answer))
+    const x = await largeLand(answer, `LP${i}`)
+    assert.equal(x.ready, false)
+    assert.match(x.reason, /^land-fix check failed:/)
+    assert.ok(!calls.some(c => c.prompt.includes(p)), p)
+    assert.ok(!calls.some(c => new RegExp(`^landreview:LP${i}`).test(c.label)))
+  }
+})
 await check('K04: a step that needs the output inline stops with a too-large reason on the large form or the notice', async () => {
   const large = realIo(100000)
   assert.match(large, /pipeline-io: large output/)
