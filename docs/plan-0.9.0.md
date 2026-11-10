@@ -388,7 +388,7 @@ The comparison (review rounds, tokens per merged PR, bot findings after sign-off
 - Size: 8 PRs (7 entries and V01) plus this plan PR and the version PR. About 15 to 25 million subagent tokens without cache reads (a planning figure, not a ledger unit), and 1 to 2 days of waves.
 - Basis: a 3-PR wave took 62 minutes and 2.7M subagent tokens. These entries are larger (Opus reviews of a 1566-line file, caps of 3 and 4 rounds), so about 1.5M to 3M per PR, 2 to 6 land-conflict repairs at 5 to 20 minutes and 0.1M to 0.3M each, and about 1M for the plan PR.
 - Dates: plan PR reviewed and merged on 2026-11-10 or 2026-11-11; wave 1 on 2026-11-11; wave 2 on 2026-11-11 or 2026-11-12; wave 3, the dogfood run and the tag on 2026-11-12 or 2026-11-13. **Range: 2026-11-12 to 2026-11-14.**
-- It assumes: the maintainer merges each gated PR within about 4 hours in his day (every PR here is gated, so 10 merges); at most one entry stops for a decision; no wave waits for a cloud check; the dogfood run finds no blocker. Each stop for a decision adds about half a day. If E04 runs to its cap and stops, the tag moves to about 2026-11-17.
+- It assumes: the maintainer merges each gated PR within about 4 hours of the working day (every PR here is gated, so 10 merges); at most one entry stops for a decision; no wave waits for a cloud check; the dogfood run finds no blocker. Each stop for a decision adds about half a day. If E04 runs to its cap and stops, the tag moves to about 2026-11-17.
 
 ## Maintainer decisions
 
