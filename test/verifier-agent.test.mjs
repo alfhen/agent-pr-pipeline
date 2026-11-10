@@ -52,3 +52,7 @@ test('E03b-8 and E03b-9: kinds that pass by design are not-applicable, an unmapp
   assert.match(body, /cannot map the eval to a test/);
   assert.match(body, /A `ci` eval gets no break check/);
 });
+
+test('F659: a tests-only branch gets not-applicable and no break check', () => {
+  assert.match(body, /a script found that every file the PR changes is a test[^.]*`not-applicable`[^.]*`tests only: no change to take out`/);
+});
