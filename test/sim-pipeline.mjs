@@ -1922,10 +1922,13 @@ await check('E03a-8: a later verifier round replaces the evals bucket', async ()
 })
 await check('E01-1 the open prompt gives the last result of each eval from the history rows and the verifier', async () => {
   const given = [ev('C1-1', 'behaviour'), ev('C1-2', 'error path'), ev('C1-3', 'regression')]
-  const row = (round, evals) => ({ round, testPass: true, failingChecks: [], blockersAndMajors: [], evals })
-  const history = [row(1, { passed: ['C1-1', 'C1-3'], failed: ['C1-2'], ci: [] }), row(2, { passed: ['C1-1'], failed: ['C1-2'], ci: [] })]
-  const answer = vres({ evals: [{ id: 'C1-1', result: 'pass', evidence: 'ok' }, { id: 'C1-2', result: 'pass', evidence: 'ok' }, { id: 'C1-3', result: 'pass', evidence: 'ok' }] })
-  await hooked(only1('C1').map(p => ({ ...p, evals: given, resume: { history } })), verifyHook({ 3: answer }))
+  const verdict = second => vres({ evals: [{ id: 'C1-1', result: 'pass', evidence: 'ok' }, { id: 'C1-2', result: second, evidence: 'x' }, { id: 'C1-3', result: 'pass', evidence: 'ok' }] })
+  const minor = (p, o) => /^review:C1#\d+$/.test(o.label) ? reviewOf([f('minor', 'rename helper', { file: 'src/a.js' })])
+    : o.label === 'minorfix:C1' ? { changed: true, headSha: 'fixsha', fixed: [1], summary: 'renamed' }
+    : o.label === 'minorreview:C1' ? { ...reviewOf([]), unconfirmed: [] }
+    : o.label === 'test:C1#minor1' ? { pass: true, headSha: 'sha-minor', checks: [{ name: 'lint', pass: true }] } : undefined
+  await hooked(only1('C1').map(p => ({ ...p, evals: given })), verifyHook({ 1: verdict('fail'), 2: verdict('pass') }, minor))
+  assert.ok(calls.some(c => c.label === 'test:C1#minor1'), 'the minor pass adds a newest row with no evals')
   const open = calls.find(c => c.label === 'open:C1').prompt
   const rows = JSON.parse(/Eval rows: (\[.*\])/.exec(open)[1])
   assert.deepEqual(rows.map(r => r.result), ['pass', 'pass', 'pass'])
