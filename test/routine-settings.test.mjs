@@ -132,7 +132,7 @@ test('a null optional key counts as not set', () => {
 
 // Every run-wave.js argument is refused, allowed, or named here as left out on purpose.
 const runtimeOnly = ['resumeFromRunId']
-const leftOut =['docsUpdate', 'milestone', 'minorLabel', 'securitySkill', 'planRounds', 'docsRounds', 'botCheckRounds', 'productReview', 'architectureReview']
+const leftOut =['docsUpdate', 'milestone', 'minorLabel', 'securitySkill', 'planRounds', 'docsRounds', 'botCheckRounds', 'productReview', 'architectureReview', 'evals', 'evalsRounds']
 test('the waveArgs lists of config.jq match the arguments of run-wave.js', () => {
   const jq = readFileSync(`${root}routine/config.jq`, 'utf8')
   const list = name => JSON.parse(jq.match(new RegExp(`def ${name}: (\\[.*?\\]);`))[1])

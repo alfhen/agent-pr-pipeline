@@ -64,10 +64,18 @@ flowchart LR
 
 ### Wave 1
 
-**A01 <Title> (#<n>).** Touches: `<file>`, `<file>`, `<test file>`, `<doc page the change affects>`, `CHANGELOG.md` (the A01 marker).
+**A01 <Title> (#<n>).** Round cap <n>. Touches: `<file>`, `<file>`, `<test file>`, `<doc page the change affects>`, `CHANGELOG.md` (the A01 marker).
 - <What changes, in concrete terms: functions, messages, field names.>
 - <Edge cases and what the output says in each.>
 Invariants: <optional; required for an entry that adds a check (a gate, a guard, a refusal or a trust rule). One sentence per property that must hold for every input.>
+Algorithm: <yes when the entry adds or changes an algorithm; leave the line out otherwise. An algorithm entry needs a time bound, a size limit and a reference eval (a slow, simple version of the same function, compared on generated inputs), or a written reason for the reference.>
+Evals:
+
+| Id | Kind | What must be true | How to check |
+| --- | --- | --- | --- |
+| A01-1 | behaviour | <one plain sentence a person can read> | <the command or steps, with the expected result> |
+| A01-2 | error path | <what happens on bad input> | <the command or steps> |
+
 Regression test: <the unit and e2e tests, with fixture inputs>.
 Acceptance: <the command that passes>, and <the test> fails on the old code because <reason>.
 QA: <optional. What a person would try by hand: commands, inputs, combinations with existing options. Leave it out for refactors and internal changes.>
