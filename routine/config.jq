@@ -36,7 +36,7 @@ def routineCheck:
   | if ($tl | type) != "object" then badp("typeLabels must be an object")
     elif (($tl | keys) - typeNames | length) > 0 then badp("unknown typeLabels key " + (($tl | keys) - typeNames)[0])
     elif any($tl[]; type != "string" or . == "") then badp("typeLabels values must be label names")
-    elif any($tl[]; IN(fixedLabels[]) or . == "pipeline-routine") then badp("typeLabels values must not be a fixed label") else . end
+    elif any($tl[]; IN(fixedLabels[]) or . == "pipeline-routine" or . == "pipeline-ledger") then badp("typeLabels values must not be a fixed label") else . end
   | opt("feedbackRepo"; routineDefaults.feedbackRepo) as $fr
   | if ($fr | repo | not) then badp("feedbackRepo must be owner/repo") else . end
   | opt("collectFrom"; []) as $cf
@@ -55,7 +55,7 @@ def routineCheck:
   | if ($l | has("buildHours")) and ($l.buildHours | int(1; 48) | not) then badp("buildHours must be an integer from 1 to 48") else . end
   | if ($l | has("feedbackItems")) and ($l.feedbackItems | int(0; 3) | not) then badp("feedbackItems must be an integer from 0 to 3") else . end
   | {stage: $stage, pipelineVersion: .pipelineVersion, maintainer: $m,
-     trustedAuthors: (([$m] + $ta) | uniq), triageFrom: $tf, skipLabels: (($sl + ["pipeline-routine"]) | uniq),
+     trustedAuthors: (([$m] + $ta) | uniq), triageFrom: $tf, skipLabels: (($sl + ["pipeline-routine", "pipeline-ledger"]) | uniq),
      typeLabels: (routineDefaults.typeLabels + $tl), feedbackRepo: $fr, collectFrom: $cf, waveArgs: $w, limits: (cloudLimits + $l)};
 
 if input_filename == null and . == null then {limits: defaults, routine: routineDefaults, labels: fixedLabels}
