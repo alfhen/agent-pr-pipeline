@@ -3,7 +3,7 @@
 ## Status (2026-11-10)
 
 - Written from the direction plan of 2026-11-09 ("Release 1: evidence"). Checked against `main` at e8f47ac (0.8.5) and against GitHub on 2026-11-10. Nothing is built.
-- Release 1 of the direction plan is this release, 0.9.0. Decision Q1 asks the maintainer to name release 2 0.10.0.
+- Release 1 of the direction plan is this release, 0.9.0. Release 2 is 0.10.0 (Q1).
 - E07 shipped in #611, except its ledger part, which is in L01. E05 is dropped (Findings, "E05 is done").
 - The builder session reports to the assessment session when this plan PR opens, at the end of each wave, when a PR stops for the second time, and when the release is cut.
 
@@ -398,6 +398,8 @@ The comparison (review rounds, tokens per merged PR, bot findings after sign-off
 - It assumes: the maintainer merges each gated PR within about 4 hours of the working day (every PR here is gated, so 10 merges); at most one entry stops for a decision; no wave waits for a cloud check; the dogfood run finds no blocker. Each stop for a decision adds about half a day. If E04 runs to its cap and stops, the tag moves to about 2026-11-17.
 
 ## Maintainer decisions
+
+Decided by the maintainer on 2026-11-10: Q1 (a), Q2 (a), Q3 (b), Q4 (a), Q5 (a), each as recommended.
 
 **Q1. Version names.** `docs/cloud-routines.md` (stage table), `docs/cloud-routines.md` line 292, `docs/routine.md` line 3, the `routine/` line of the SKILL.md "Files" list, and `docs/plan-0.8.0.md` (D8, D9, D10, "Later releases" and "Out of scope") promise stage 2 work, the plan step, minor batches and the deletion of the local runner "in 0.9.0". This release is 0.9.0 and has none of that.
 - (a) Release 2 is 0.10.0, release 3 is 0.11.0. V01 changes the four places in the current docs. `docs/plan-0.8.0.md` stays as a record.
