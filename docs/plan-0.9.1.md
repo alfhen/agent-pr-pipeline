@@ -64,7 +64,7 @@ Goal 8 asks that work on the pipeline's own output is a limited share of each re
 - Entries: **8 of 8** correct the pipeline's own output. There is no new capability.
 - Issues the entries close: **9 of 9** are fixes of pipeline output.
 
-This is right for a shakedown. Its job is to show that 0.9.0 can judge a wave of real PRs, and a fault it finds must be easy to see. A small correction has a clear right answer, so the evals, the verifier and the break check are tested on work where a wrong verdict is plain. New capability would mix two questions: is the new code right, and is the judge right. The corrections also come from 0.9.0's own runs, so each one makes the next run's numbers more true. The share goes back down in 0.10.0, which is new capability (release 2).
+All 8 entries are corrections because this release is the shakedown the maintainer asked for (D9); the product-fit review reads the share as decided. This is right for a shakedown. Its job is to show that 0.9.0 can judge a wave of real PRs, and a fault it finds must be easy to see. A small correction has a clear right answer, so the evals, the verifier and the break check are tested on work where a wrong verdict is plain. New capability would mix two questions: is the new code right, and is the judge right. The corrections also come from 0.9.0's own runs, so each one makes the next run's numbers more true. The share goes back down in 0.10.0, which is new capability (release 2).
 
 ## Order and waves
 
@@ -111,7 +111,12 @@ Wave 1 is the D9 wave. Wave 2 runs on the same `pluginRoot` and is judged by the
 - Q630 runs as `quick: { issue: 630 }` in wave 1. The writer of a quick fix reads the issue, not this plan, so before the wave the main session posts Q630's Evals table as a comment on #630 from the maintainer's account. Comments by that account count as part of the issue.
 - Every entry except Q630 touches a gated path (`.github/pipeline.json`), so the maintainer merges those PRs, and `merge-safety` does not run for them. Q630 touches only `test/sim-pipeline.mjs`, and `test/**` is not gated, so `merge-safety` runs for Q630. This tests one more path of 0.9.0. The main session lands Q630 with `:auto` only when merge-safety says `safe`; an agent merge of this test-only PR is accepted and recorded in the shakedown record.
 - After each wave: `token-report.sh --json`, then `ledger.sh put` for the run (SKILL.md Step 4). After wave 2: `ledger.sh report --since v0.9.0`.
+- Before the 0.9.1 tag: one live run on `alfhen/pipeline-dogfood` from a clone of `main`, with the same four criteria as the 0.9.0 live run (a list written before the build, a result for every eval id in the PR body, a break check that ran, a ledger record with tokens by role). K01 changes the bot round, so the run aims for a PR where a bot answer changes code, and then also shows a verifier call on the new head with a result for every eval id. If no bot asks for a code change in the run, the main session says so in the shakedown report, and K01 is proven by its sim cases and by the first bot code change in the 0.9.1 waves, whose result must show the verifier re-check.
 - The builder session reports to the assessment session when this plan PR opens, at the end of each wave, when a PR stops for the second time, and when the release is cut.
+
+### Shakedown report
+
+At the end of wave 1 the builder session sends one report: one row per PR with the four criteria (list before the build, a result for every eval id, the break check ran, a ledger record with tokens by role), every pipeline fault that needed a fix by hand, and the comparison below from `ledger.sh report`. The 2026-11-09 wave had three land repairs. The report is what decides whether the Tagreeve waves start.
 
 ### Comparison
 
@@ -119,7 +124,7 @@ Reported in plain words from `ledger.sh report` and `token-report.sh`, beside tw
 
 | Wave | PRs | Subagent tokens without cache reads | Wall time | Rounds | Stops |
 | --- | --- | --- | --- | --- | --- |
-| 0.8.4, 2026-11-09 | 3 | 2.71M in all (about 0.9M per PR) | 62 minutes | 3, 6, 3 | not counted |
+| 0.8.4, 2026-11-09 | 3 | 2.71M in all (about 0.9M per PR) | 62 minutes | 3, 6, 3 | not counted; 3 land repairs |
 | 0.9.0 wave 1 | 3 | 1.84M per PR | not compared | not compared | every entry stopped once |
 | 0.9.1 wave 1 | 6 | from the ledger | from transcripts | from the ledger | from the ledger |
 
@@ -188,7 +193,8 @@ Evals:
 | K02-1 | behaviour | A verifier answer with break-check results gives a history row that holds each id under its result. | Sim: answers with one `fails-without-change`, one `not-run` and one `not-applicable`; the row lists each id once, under its own result. |
 | K02-2 | behaviour | The PR result holds the same break-check results, also when the PR ends not ready after sign-off. | Sim: the same answers and a bot status that fails; the result has `ready: false` and the break-check results. |
 | K02-3 | behaviour | `ledger.sh put` copies the break-check results into the record's `evals`. | `test/ledger-break-check.test.mjs`: `put --dry-run` on an output file with break-check results; the record holds each id under its result. |
-| K02-4 | error path | An output file with no break-check data gives a record with none, and `put` exits 0. | The same test file: an output file from the tester path; exit 0 and no break-check ids in the record. |
+| K02-4 | regression | An output file with no break-check data gives a record with none, and `put` exits 0. This holds on main by design. | The same test file: an output file from the tester path; exit 0 and no break-check ids in the record. |
+| K02-6 | error path | A verifier answer with one valid break-check result and one unknown result value gives a history row that holds only the valid id under its result. | Sim: the row lists the valid id and leaves the unknown one out; on main the row has no break-check data, so the case fails there. |
 | K02-5 | regression | With `breakCheck: false`, history rows and results have no break-check data. | Sim: the E03b-5 setup; no row and no result has break-check data. |
 
 Acceptance: `node --test test/ledger-break-check.test.mjs` and `node test/sim-pipeline.mjs` pass; K02-1 and K02-3 fail on `main` because the row has only passed, failed and ci, and `put` copies only those.
@@ -222,7 +228,7 @@ Evals:
 | Id | Kind | What must be true | How to check |
 | --- | --- | --- | --- |
 | K04-1 | size limit | Output one byte over the limit takes the large-output path, and output at the limit comes back inline. | `test/io-large.test.mjs`: stub scripts that print exactly the limit and one byte more; check both forms. |
-| K04-2 | behaviour | For output over the limit, io.sh prints the begin line and the exit line with the script's exit code, and the full output can be read back byte for byte. | The same test file: a stub that prints 100 KB and exits 3; the exit line says 3, and the full text read back equals the stub's output. |
+| K04-2 | behaviour | For output over the limit, io.sh's own stdout stays under the limit, it prints the begin line and the exit line with the script's exit code, and the full output comes back byte for byte through the path it names. | The same test file: a stub that prints 100 KB and exits 3; the exit line says 3, and the full text read back equals the stub's output. |
 | K04-3 | behaviour | A land-fix check whose `land-commits.sh` output is over the limit still runs the tester (or verifier) and the land reviewer, and the reviewer gets the full output. | Sim: the io answer for `landcommits1` in the large form; a `landreview:` call runs and its prompt gives the full output or the path to it. |
 | K04-4 | error path | An io answer with no exit line that holds the "too large to return inline" notice gives a reason that says the output was too large. | Sim: that answer for an io call; the reason holds `too large` and not `no exit line`. |
 | K04-5 | regression | Small outputs and the existing io cases do not change. | `node --test test/io.test.mjs` and the existing pipeline-io sim cases pass unchanged. |
