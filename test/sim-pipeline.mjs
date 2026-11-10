@@ -1736,6 +1736,9 @@ await check('#602: a rerun on a different head does not sign off', async () => {
   const failing = { pass: false, headSha: 'sha-C1', checks: [ck('unit', { pass: false })] }
   const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? failing : o.label === 'test:C1#1r' ? { pass: true, headSha: 'sha-new', checks: [ck('unit')] } : o.label === 'fix:C1#1' ? { summary: 'none', changed: false } : undefined)
   assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /the fix changed nothing in round 1/)
+  assert.ok(!calls.some(c => c.label === 'docs:C1' || c.label === 'open:C1'))
+  assert.equal(x.C1.history.at(-1).round, '1r')
 })
 await check('E03a: the verify prompt holds the related-tests step and the acceptance definition', async () => {
   await hooked(withEvals('C1'), verifyHook({}))
