@@ -224,11 +224,23 @@ const TESTS_ONLY_LINE_RULE = `This PR adds tests only. In a new PR body, put thi
 // Set from the branch's changed files, read by a script on every verifier round, never from the verifier's word. The last round decides;
 // the opener and the result then say the PR adds tests only.
 const testsOnlyState = {}
+// Per PR: the break-check results of the last verifier round that gave any. A later round without them leaves it alone.
+const breakCheckState = {}
 const TEST_FILE = new RegExp(`${E2E_PATTERN}|(^|/)(tests?|__tests__)/|\\.(test|spec)\\.[cm]?[jt]sx?$`)
 // Repo policy, read once per PR from the default branch. The PR cannot set it, so a `ci` result needs a name the repo trusts.
 const ciChecksState = {}
 // The only place that reads a verifier's answer. Its own `pass` is ignored, like the tester's. An eval id with no result, or a `ci`
 // result that names no check from ciChecks, is no result. A missing id counts in `failed` of the history row, because it did not pass.
+const BREAK_GROUPS = { 'fails-without-change': 'fails', 'passes-without-change': 'passes', 'not-run': 'notRun', 'not-applicable': 'notApplicable' }
+const breakCheckOf = (pr, byId) => {
+  const out = { fails: [], passes: [], notRun: [], notApplicable: [] }
+  for (const e of evalListOf(pr)) {
+    const r = byId.get(e.id)
+    const g = r && r.result === 'pass' ? BREAK_GROUPS[r.breakCheck] : undefined
+    if (g) out[g].push(e.id)
+  }
+  return Object.values(out).some(a => a.length) ? out : null
+}
 const verifyOutcome = (pr, verify) => {
   const base = testOutcome(pr, verify)
   const trusted = ciChecksState[pr.id] || []
@@ -268,7 +280,9 @@ const verifyOutcome = (pr, verify) => {
     if (!x.pass) findings.push({ via: 'extra check', severity: 'major', title: `extra check failed: ${x.name}`, detail: x.evidence || '' })
   }
   untestedFor(pr).evals = covered
-  return { ...base, ...(testsOnly ? { testsOnly: true } : {}), findings: base.findings.concat(findings), pass: base.pass && findings.length === 0, evals: { passed, failed, ci } }
+  const breakCheck = asked && BREAK_CHECK && !testsOnly ? breakCheckOf(pr, byId) : null
+  if (breakCheck) breakCheckState[pr.id] = breakCheck
+  return { ...base, ...(breakCheck ? { breakCheck } : {}), ...(testsOnly ? { testsOnly: true } : {}), findings: base.findings.concat(findings), pass: base.pass && findings.length === 0, evals: { passed, failed, ci } }
 }
 const checkOutcome = (pr, result) => verifies(pr) ? verifyOutcome(pr, result) : testOutcome(pr, result)
 // Per PR: the refused checks of the last test round, the QA scenarios that did not run, the minor pass state no agent could confirm, and the evals a CI check covers.
@@ -282,6 +296,7 @@ const historyRow = (round, outcome, blocking, conflicts) => ({
   round, testPass: outcome.pass, failingChecks: outcome.failed.map(c => c.name), blockersAndMajors: blocking.map(findingLine),
   ...(themesOf(blocking).length ? { themes: themesOf(blocking) } : {}),
   ...(outcome.evals ? { evals: outcome.evals } : {}),
+  ...(outcome.breakCheck ? { breakCheck: outcome.breakCheck } : {}),
   ...(outcome.notRun.length ? { notRun: outcome.notRun } : {}),
   ...(outcome.related ? { relatedTests: outcome.related } : {}),
   ...(conflicts ? { severityConflicts: conflicts } : {}),
@@ -1908,7 +1923,7 @@ async function runPRSteps(input) {
   const minors = (pr.resume ? pr.resume.minors || [] : []).concat(quickMinors)
   let impl = { problems: '' }
   let rerunFixChanged
-  const evalsOut = () => ({ ...(testsOnlyState[pr.id] ? { testsOnly: true } : {}), ...(pr.evals ? { evals: pr.evals, evalsMeta: pr.evalsMeta, evalDisputes: pr.evalDisputes, ...carriedOut([], pr.deviations) } : carriedOut([], pr.deviations)) })
+  const evalsOut = () => ({ ...(testsOnlyState[pr.id] ? { testsOnly: true } : {}), ...(breakCheckState[pr.id] ? { breakCheck: breakCheckState[pr.id] } : {}), ...(pr.evals ? { evals: pr.evals, evalsMeta: pr.evalsMeta, evalDisputes: pr.evalDisputes, ...carriedOut([], pr.deviations) } : carriedOut([], pr.deviations)) })
   const rerunFix = () => rerunFixChanged === undefined ? {} : { rerunFixChanged }
   const decisionFindings = (pr.skipImpl || pr.resume) && (pr.architectureDecision || pr.productDecision)
     ? [{ severity: 'major', title: 'Apply the maintainer decision', detail: `Apply the maintainer decision given in the brief to the branch. If the branch already follows it, change nothing.${pr.architectureDecision ? ` Architecture decision: ${pr.architectureDecision}` : ''}${pr.productDecision ? ` Product decision: ${pr.productDecision}` : ''}` }]
