@@ -67,3 +67,9 @@ test('F652-1 the writer prompt and agent file name what is not an eval', () => {
   }
   assert.match(agentFile, /the notes still reach the opener/)
 })
+
+test('F659: the writer marks behaviour that already holds as regression, in the agent and the task prompt', () => {
+  assert.match(agentFile, /already holds on the default branch, give its evals kind `regression`/);
+  const sim = readFileSync(new URL('../workflows/run-wave.js', import.meta.url), 'utf8');
+  assert.match(sim, /already holds on the default branch, give those evals kind regression/);
+});

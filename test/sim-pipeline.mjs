@@ -2064,6 +2064,22 @@ await check('E03b-8: a regression eval with not-applicable is neither a major no
   assert.deepEqual(x.C1.untested, [])
   assert.deepEqual(x.C1.history[0].evals.passed, ['X-1', 'X-2', 'X-3', 'X-4'])
 })
+await check('F659: a tests-only branch gets no break-check major, no untested item, and signs off', async () => {
+  const to = vres({ testsOnly: true, evals: [{ id: 'X-1', result: 'pass', breakCheck: 'not-applicable', breakWhy: 'tests only: no change to take out' }, { id: 'X-2', result: 'pass', breakCheck: 'not-applicable', breakWhy: 'tests only: no change to take out' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: to }))
+  assert.equal(x.C1.history.length, 1)
+  assert.deepEqual(x.C1.untested, [])
+  assert.deepEqual(x.C1.history[0].evals.passed, ['X-1', 'X-2'])
+  assert.equal(x.C1.ready, true)
+  assert.equal(x.C1.testsOnly, true)
+  assert.match(calls.find(c => c.label === 'open:C1').prompt, /adds tests only/)
+})
+await check('F659: without testsOnly the break check still applies', async () => {
+  const no = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'passes-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: no }))
+  assert.equal(x.C1.history[0].evals.failed.includes('X-1'), true)
+  assert.equal(x.C1.testsOnly, undefined)
+})
 await check('severity: a review major titled [minor] x is one major line, a conflict and a clean title for the fixer', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)
   assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [review]: x'])
