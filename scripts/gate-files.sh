@@ -1,11 +1,14 @@
 #!/bin/bash
 # usage: gate-files.sh <owner/repo> <pr>
 #        gate-files.sh <owner/repo> --scope <branch>
+#        gate-files.sh <owner/repo> --changed <branch>
 #        gate-files.sh <owner/repo> --head <branch>
 #        gate-files.sh <owner/repo> --same <sha> <branch>
 #        gate-files.sh <owner/repo> --ci-checks
 # --ci-checks prints "CICHECKS <json array>": the top-level ciChecks of .github/pipeline.json on the default branch, ["ci"] when the
 # file or the key is missing. It exits 3 ("GATE ERROR") when the file or the value cannot be read.
+# --changed prints "CHANGED <json array>": every file the branch changes against the default branch, deleted and renamed-from paths included,
+# floor paths too. It exits 0, or 3 ("GATE ERROR") when the files cannot be read.
 # --same prints "SAME <sha>", the branch head, only when the branch tree equals the tree of <sha>. It exits 1 when the
 # trees differ or cannot be read.
 # --head prints "HEAD <sha>", the branch head on GitHub. It exits 1 when that cannot be read.
@@ -48,7 +51,9 @@ if [ "$pr" = "--same" ]; then
   esac
   echo "SAME $sha"; exit 0
 fi
+changed=
 if [ "$pr" = "--scope" ]; then scope=$3; pr=$3; fi
+if [ "$pr" = "--changed" ]; then scope=$3; changed=1; pr=$3; fi
 [ -n "$pr" ] || { echo "usage: gate-files.sh <owner/repo> <pr> | --scope <branch>"; exit 2; }
 here=$(dirname "$0")
 gated() { echo "GATED #$pr: $*"; exit 1; }
@@ -79,6 +84,9 @@ matches() { jq -r --argjson gates "$1" --arg flags "${2:-}" --arg free "${3:-}" 
   def hit: . as $f | any($gates[]; . as $g | $f | test($g | rx; $flags));
   if $free == "" then [.[] | (.filename, (.previous_filename // empty))] | unique | map(select(hit)) | join(", ")
   else map(select([.filename, (.previous_filename // empty)] | any(hit) | not) | .filename) | unique | tojson end' <<<"$list"; }
+if [ -n "$changed" ]; then
+  echo "CHANGED $(jq -c '[.[] | (.filename, (.previous_filename // empty))] | unique' <<<"$list")"; exit 0
+fi
 if [ -n "$scope" ]; then
   free=$(matches "$scopefloor" i free) || err "cannot match the changed files"
   echo "SCOPE $free"; exit 0

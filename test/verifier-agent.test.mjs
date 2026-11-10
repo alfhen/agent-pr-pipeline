@@ -54,5 +54,5 @@ test('E03b-8 and E03b-9: kinds that pass by design are not-applicable, an unmapp
 });
 
 test('F659: a tests-only branch gets not-applicable and no break check', () => {
-  assert.match(body, /When every one is a test file[^.]*set `testsOnly` true[^.]*`not-applicable`[^.]*`tests only: no change to take out`/);
+  assert.match(body, /a script found that every file the PR changes is a test[^.]*`not-applicable`[^.]*`tests only: no change to take out`/);
 });

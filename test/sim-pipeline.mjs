@@ -73,6 +73,7 @@ const cleanupAnswer = label => label.endsWith('init') ? (cleanupMode === 'initdo
   : cleanupMode === 'down' ? null : cleanupMode === 'fail' ? { exitCode: 1, output: 'cleanup: boom' }
   : { exitCode: 0, output: /(clones|all)$/.test(label) ? 'REMOVED /x/test-1' : '' }
 // What the fake pipeline-io answers for gate-files.sh --ci-checks.
+const changedFiles = { files: {}, down: new Set() }
 const ciAnswer = { names: ['ci'], down: new Set() }
 const lastHead = {}
 const checkedHead = {}
@@ -115,6 +116,11 @@ const agentRaw = async (prompt, o) => {
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#cichecks')) {
     return ciAnswer.down.has(id) ? { exitCode: 3, output: 'GATE ERROR: cannot read .github/pipeline.json' } : { exitCode: 0, output: 'CICHECKS ' + JSON.stringify(ciAnswer.names) }
+  }
+  if (o.label.startsWith('io:') && /#changed\w*$/.test(o.label)) {
+    const set = changedFiles.files[id]
+    const files = typeof set === 'function' ? set(o.label) : set || ['src/a.js', 'test/a.test.js']
+    return changedFiles.down.has(id) ? null : { exitCode: 0, output: 'CHANGED ' + JSON.stringify(files) }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#minorscope')) {
     if (minorScope.compare[id]) return realScope(minorScope.compare[id])
@@ -562,7 +568,7 @@ await check('E01-9 the default path runs writer, evals check, implementer, verif
   try { await simulate({ ...defaults, prs: [C1PR] }) } finally { evalsPlan.writer = () => null }
   const steps = evalLabels('C1').map(l => l.split(':')[0])
   const first = step => steps.indexOf(step)
-  assert.deepEqual(steps.slice(0, 6), ['evals', 'evalsarch', 'implement', 'io', 'verify', 'review'])
+  assert.deepEqual(steps.slice(0, 7), ['evals', 'evalsarch', 'implement', 'io', 'io', 'verify', 'review'])
   assert.ok(first('arch') < first('docs') && first('docs') < first('open') && first('open') < first('botwait'))
 })
 await check('E01-5 a resumed PR whose evals check stops keeps its history, findings and list', async () => {
@@ -2064,22 +2070,51 @@ await check('E03b-8: a regression eval with not-applicable is neither a major no
   assert.deepEqual(x.C1.untested, [])
   assert.deepEqual(x.C1.history[0].evals.passed, ['X-1', 'X-2', 'X-3', 'X-4'])
 })
-await check('F659: a tests-only branch gets no break-check major, no untested item, and signs off', async () => {
-  const to = vres({ testsOnly: true, evals: [{ id: 'X-1', result: 'pass', breakCheck: 'not-applicable', breakWhy: 'tests only: no change to take out' }, { id: 'X-2', result: 'pass', breakCheck: 'not-applicable', breakWhy: 'tests only: no change to take out' }] })
-  const x = await hooked(withEvals('C1'), verifyHook({ 1: to }))
+const ROWS_PWC = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'passes-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'passes-without-change' }] })
+const withChanged = async (files, fn) => {
+  changedFiles.files.C1 = files
+  try { await fn() } finally { delete changedFiles.files.C1; changedFiles.down.delete('C1') }
+}
+await check('F659: code finds a tests-only branch, gives no break-check major or untested item, tells the verifier, and signs off', () => withChanged(['test/a.test.mjs', 'src/x.e2e.test.ts'], async () => {
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: ROWS_PWC }))
   assert.equal(x.C1.history.length, 1)
   assert.deepEqual(x.C1.untested, [])
   assert.deepEqual(x.C1.history[0].evals.passed, ['X-1', 'X-2'])
   assert.equal(x.C1.ready, true)
   assert.equal(x.C1.testsOnly, true)
-  assert.match(calls.find(c => c.label === 'open:C1').prompt, /adds tests only/)
-})
-await check('F659: without testsOnly the break check still applies', async () => {
-  const no = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'passes-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
-  const x = await hooked(withEvals('C1'), verifyHook({ 1: no }))
+  assert.match(calls.find(c => c.label === 'io:C1#changed1').prompt, /gate-files\.sh o\/r --changed b1/)
+  assert.match(calls.find(c => c.label === 'verify:C1#1').prompt, /A script found that every file the PR changes is a test[^.]*not-applicable[^.]*`tests only: no change to take out`/)
+  const open = calls.find(c => c.label === 'open:C1').prompt
+  assert.ok(open.includes('"Tests only: the reported behaviour already holds on the default branch, this PR adds tests only, and the break check could not prove those tests can fail."'))
+  assert.match(open, /near the top, before the other sections/)
+}))
+await check('F659: the verifier cannot claim tests only; a non-test file keeps the break check and the verify prompt has no tests-only text', () => withChanged(['test/a.test.mjs', 'src/a.js'], async () => {
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: { ...ROWS_PWC, testsOnly: true } }))
   assert.equal(x.C1.history[0].evals.failed.includes('X-1'), true)
   assert.equal(x.C1.testsOnly, undefined)
+  assert.doesNotMatch(calls.find(c => c.label === 'verify:C1#1').prompt, /A script found/)
+  assert.doesNotMatch(calls.find(c => c.label === 'open:C1').prompt, /adds tests only/)
+}))
+await check('F659: an unreadable or empty changed-file list keeps the break check', async () => {
+  for (const mode of ['down', 'empty']) {
+    if (mode === 'down') changedFiles.down.add('C1')
+    await withChanged(mode === 'empty' ? [] : undefined, async () => {
+      if (mode === 'down') changedFiles.down.add('C1')
+      const x = await hooked(withEvals('C1'), verifyHook({ 1: ROWS_PWC }))
+      assert.equal(x.C1.history[0].evals.failed.includes('X-1'), true)
+      assert.equal(x.C1.testsOnly, undefined)
+    })
+  }
 })
+await check('F659: the last verifier round decides tests only', () => withChanged(l => /#changed1$/.test(l) ? ['test/a.test.mjs'] : ['test/a.test.mjs', 'src/a.js'], async () => {
+  const fail = vres({ evals: [{ id: 'X-1', result: 'fail', evidence: 'bad' }, { id: 'X-2', result: 'pass', breakCheck: 'not-applicable' }] })
+  const ok = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: fail, 2: ok }))
+  assert.equal(x.C1.history.length, 2)
+  assert.equal(x.C1.ready, true)
+  assert.equal(x.C1.testsOnly, undefined)
+  assert.doesNotMatch(calls.find(c => c.label === 'open:C1').prompt, /adds tests only/)
+}))
 await check('severity: a review major titled [minor] x is one major line, a conflict and a clean title for the fixer', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)
   assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [review]: x'])

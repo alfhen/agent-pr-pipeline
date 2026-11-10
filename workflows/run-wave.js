@@ -219,8 +219,12 @@ const evalListOf = pr => Array.isArray(pr.evals) ? pr.evals : pr.evals && Array.
 const verifies = pr => evalListOf(pr).length > 0
 const BREAK_KINDS = ['behaviour', 'error path']
 const TESTS_ONLY_WHY = 'tests only: no change to take out'
-// Set when the verifier reports that every changed file is a test; the opener and the result then say the PR adds tests only.
+const TESTS_ONLY_LINE = 'Tests only: the reported behaviour already holds on the default branch, this PR adds tests only, and the break check could not prove those tests can fail.'
+const TESTS_ONLY_LINE_RULE = `This PR adds tests only. In a new PR body, put this exact line near the top, before the other sections: "${TESTS_ONLY_LINE}" For a PR that is already open, set that line near the top of the body when it is missing; it is part of what you may change.`
+// Set from the branch's changed files, read by a script on every verifier round, never from the verifier's word. The last round decides;
+// the opener and the result then say the PR adds tests only.
 const testsOnlyState = {}
+const TEST_FILE = new RegExp(`${E2E_PATTERN}|(^|/)(tests?|__tests__)/|\\.(test|spec)\\.[cm]?[jt]sx?$`)
 // Repo policy, read once per PR from the default branch. The PR cannot set it, so a `ci` result needs a name the repo trusts.
 const ciChecksState = {}
 // The only place that reads a verifier's answer. Its own `pass` is ignored, like the tester's. An eval id with no result, or a `ci`
@@ -246,8 +250,7 @@ const verifyOutcome = (pr, verify) => {
   }
   // Only a round with every eval answered and none failed asked for the break check, so only then does a missing answer count as not-run.
   const asked = BREAK_CHECK && failed.length === 0
-  const testsOnly = BREAK_CHECK && verify.testsOnly === true
-  if (testsOnly) testsOnlyState[pr.id] = true
+  const testsOnly = BREAK_CHECK && testsOnlyState[pr.id] === true
   if (BREAK_CHECK && !testsOnly) {
     for (const e of evalListOf(pr)) {
       const r = byId.get(e.id)
@@ -433,7 +436,6 @@ const VERIFY = {
   type: 'object',
   properties: {
     ...TEST.properties,
-    testsOnly: { type: 'boolean' },
     evals: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, result: { type: 'string', enum: ['pass', 'fail', 'ci'] }, evidence: { type: 'string' }, ciCheck: { type: 'string' }, test: { type: 'string' }, breakCheck: { type: 'string', enum: ['fails-without-change', 'passes-without-change', 'not-applicable', 'not-run'] }, breakWhy: { type: 'string' } }, required: ['id', 'result'] } },
     extra: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, pass: { type: 'boolean' }, evidence: { type: 'string' } }, required: ['name', 'pass'] } },
   },
@@ -721,14 +723,14 @@ ${relatedStep}Return ${returnChecks}.
 
 ${prBlock(pr)}`
 
-const verifyPrompt = (pr, round) => `${ctx(pr)}
+const verifyPrompt = (pr, round, testsOnly) => `${ctx(pr)}
 
 Task: verify the branch from a clean clone. Run every check below, then each eval.
 1. \`rm -rf ${TMP}/verify-${pr.id}-r${round} && git clone --branch ${pr.branch} https://github.com/${REPO}.git ${TMP}/verify-${pr.id}-r${round}\` and cd there.
 2. Run in order: ${fastText}. Then run ${ownE2e}.
 ${relatedStep}${RELATED_TESTS ? 4 : 3}. Run the check of each eval, in order, and compare the result with what it says must be true. An eval is a fixed requirement: you cannot change, drop or reword it.
 ${RELATED_TESTS ? 5 : 4}. You may add up to 3 checks of your own that the builder did not see, and report each in \`extra\`.
-${BREAK_CHECK ? `${RELATED_TESTS ? 6 : 5}. Break check. Only when no eval failed and none has no result (a ci result is allowed): for each eval of kind behaviour or error path with the result pass, find the test that ran its check (set \`test\`), take the change out of the files that are not tests in your clone, run the test, and restore the clone. Reset a file the PR changes with \`git checkout $(git merge-base origin/HEAD HEAD) -- <file>\`, so only the PR's change comes out. Delete a file the PR adds, because it is not on origin/HEAD. Push nothing. Set \`breakCheck\` to fails-without-change only when the test fails on its own assertion (a result comparison). A load, import, missing-file, syntax or exit-127 error is not that: set not-run and give the reason in \`breakWhy\`. Set passes-without-change when the test still passes. Set not-applicable for kinds regression, quality bar, size limit, time bound and reference. Set not-run, with the reason, when you cannot map the eval to a test. A ci eval gets no break check. First list the files the PR changes (\`git diff --name-only --diff-filter=d $(git merge-base origin/HEAD HEAD) HEAD\`). When every one is a test file, there is no change to take out: set \`testsOnly\` true, set \`breakCheck\` not-applicable with the \`breakWhy\` \`${TESTS_ONLY_WHY}\` for every eval, and run no break check.\n` : ''}Return ${returnChecks}, \`evals\`: one row per eval id with result pass, fail or ci, the evidence (the output that shows it) and, for ci, \`ciCheck\`: the name of the CI check that covers it, used only when the sandbox refused the command${BREAK_CHECK ? `, and \`test\`, \`breakCheck\` and \`breakWhy\` from the break check` : ''}, and \`extra\`: your own checks with name, pass and evidence.
+${BREAK_CHECK ? `${RELATED_TESTS ? 6 : 5}. Break check. Only when no eval failed and none has no result (a ci result is allowed): for each eval of kind behaviour or error path with the result pass, find the test that ran its check (set \`test\`), take the change out of the files that are not tests in your clone, run the test, and restore the clone. Reset a file the PR changes with \`git checkout $(git merge-base origin/HEAD HEAD) -- <file>\`, so only the PR's change comes out. Delete a file the PR adds, because it is not on origin/HEAD. Push nothing. Set \`breakCheck\` to fails-without-change only when the test fails on its own assertion (a result comparison). A load, import, missing-file, syntax or exit-127 error is not that: set not-run and give the reason in \`breakWhy\`. Set passes-without-change when the test still passes. Set not-applicable for kinds regression, quality bar, size limit, time bound and reference. Set not-run, with the reason, when you cannot map the eval to a test. A ci eval gets no break check. ${testsOnly ? `A script found that every file the PR changes is a test, so there is no change to take out: set \`breakCheck\` not-applicable with the \`breakWhy\` \`${TESTS_ONLY_WHY}\` for every eval, and run no break check.` : ''}\n` : ''}Return ${returnChecks}, \`evals\`: one row per eval id with result pass, fail or ci, the evidence (the output that shows it) and, for ci, \`ciCheck\`: the name of the CI check that covers it, used only when the sandbox refused the command${BREAK_CHECK ? `, and \`test\`, \`breakCheck\` and \`breakWhy\` from the break check` : ''}, and \`extra\`: your own checks with name, pass and evidence.
 
 Evals (every id needs a result):
 ${evalListOf(pr).map(e => `Eval ${e.id} [${e.kind}] ${e.statement}\n  Check: ${e.check}${e.test ? `\n  Test: ${e.test}` : ''}`).join('\n')}
@@ -908,7 +910,7 @@ If a permission check denies a command, stop: return blocked true, blockedReason
 
 ${prBlock(pr)}
 
-${testsOnlyState[pr.id] ? 'This PR adds tests only. Say so in the PR body.\n' : ''}Review history: ${JSON.stringify(rounds)}
+${testsOnlyState[pr.id] ? `${TESTS_ONLY_LINE_RULE}\n` : ''}Review history: ${JSON.stringify(rounds)}
 Architecture, product and docs: ${JSON.stringify(arch || [])}
 Untested items: ${JSON.stringify(untested)}
 Minors fixed in the minor pass: ${JSON.stringify(fixed.map(m => ({ title: m.title, file: m.file })), null, 1)}
@@ -1249,9 +1251,21 @@ async function settleReviewEvals(pr, round, findings) {
   return open.map(w => w.f)
 }
 
-const checkCall = (pr, round) => verifies(pr)
-  ? call('verify', pr, verifyPrompt(pr, round), `verify:${pr.id}#${round}`, { schema: VERIFY })
-  : call('test', pr, testPrompt(pr, round), `test:${pr.id}#${round}`, { schema: TEST })
+// True only when a script reads the branch's changed files and every one is a test. Unreadable or empty means the normal break check.
+async function testsOnlyBranch(pr, round) {
+  if (!BREAK_CHECK || !PLUGIN_ROOT) return false
+  const io = await ioCall(pr, `io:${pr.id}#changed${round}`, 'gate-files.sh', `${REPO} --changed ${pr.branch}`)
+  const m = io && io.exitCode === 0 ? /^CHANGED (\[.*\])$/m.exec(io.output) : null
+  let files = null
+  try { files = m ? JSON.parse(m[1]) : null } catch (e) { files = null }
+  return Array.isArray(files) && files.length > 0 && files.every(f => typeof f === 'string' && TEST_FILE.test(f))
+}
+async function checkCall(pr, round) {
+  if (!verifies(pr)) return call('test', pr, testPrompt(pr, round), `test:${pr.id}#${round}`, { schema: TEST })
+  const testsOnly = await testsOnlyBranch(pr, round)
+  testsOnlyState[pr.id] = testsOnly
+  return call('verify', pr, verifyPrompt(pr, round, testsOnly), `verify:${pr.id}#${round}`, { schema: VERIFY })
+}
 
 async function reviewLoop(pr, startRound, history, minors, loopState) {
   const { max, cap } = roundsFor(pr)

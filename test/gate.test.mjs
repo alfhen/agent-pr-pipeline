@@ -540,6 +540,19 @@ test('gate --scope: a branch that cannot be compared fails closed', () => {
   assert.match(r.out, /GATE ERROR/)
 })
 
+test('gate --changed: lists every changed file, floor and renamed-from paths included', () => {
+  const s = setup({ files: null, settings: 'error' })
+  put(s.fx, `${P}__compare__main...feat__x.json`, { files: [{ filename: 'test/a.test.mjs' }, { filename: 'AGENTS.md' }, { filename: 'new/b.js', previous_filename: 'src/old.js' }] })
+  const r = run(s, 'gate-files.sh', ['o/r', '--changed', 'feat/x'])
+  assert.equal(r.code, 0)
+  assert.deepEqual(JSON.parse(r.out.trim().replace(/^CHANGED /, '')), ['AGENTS.md', 'new/b.js', 'src/old.js', 'test/a.test.mjs'])
+})
+
+test('gate --changed: a branch that cannot be compared fails closed', () => {
+  const r = run(setup({ files: null }), 'gate-files.sh', ['o/r', '--changed', 'feat/x'])
+  assert.equal(r.code, 3)
+})
+
 test('gate --head: prints the branch head, and exits 1 when it cannot be read', () => {
   const sha = 'a'.repeat(40)
   const s = setup({ files: null })
