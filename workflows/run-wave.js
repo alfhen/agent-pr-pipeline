@@ -1889,6 +1889,7 @@ async function runPRSteps(input) {
     const stopped = (reason, more) => { stopMark(history, reason); return { id: pr.id, prNumber: n, ready: false, reason, history, ...listOut, ...more } }
     if (given && !listOk) return stopped('land fix: the evals option is not a list of evals')
     if (!PLUGIN_ROOT) return stopped('pluginRoot missing: the land-fix check needs it to run land-commits.sh')
+    if (listOk) ciChecksState[pr.id] = await ciChecksOf(pr)
     const was = await readHead(pr, n, 'landhead')
     if (was.fail) return stopped(was.fail)
     const before = was.head

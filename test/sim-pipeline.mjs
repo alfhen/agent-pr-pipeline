@@ -318,7 +318,7 @@ const k01Verifier = decide => (o, prompt, id) => {
   const m = /#((?:bots|land)\d+)$/.exec(o.label)
   if (!m) return undefined
   const head = m[1].startsWith('land') ? landHead[id].padEnd(40, 'c') : `sha-${id}-${m[1]}`
-  return { pass: true, headSha: head, checks: [{ name: 'lint', pass: true }], evals: k01Ids(prompt).flatMap(e => { const res = decide(m[1], e.id); return res ? [{ id: e.id, result: res, evidence: 'seen', breakCheck: /^(behaviour|error path)$/.test(e.kind) ? 'fails-without-change' : 'not-applicable' }] : [] }) }
+  return { pass: true, headSha: head, checks: [{ name: 'lint', pass: true }], evals: k01Ids(prompt).flatMap(e => { const res = decide(m[1], e.id); return res ? [{ id: e.id, result: res, evidence: 'seen', ...(res === 'ci' ? { ciCheck: 'ci' } : {}), breakCheck: /^(behaviour|error path)$/.test(e.kind) ? 'fails-without-change' : 'not-applicable' }] : [] }) }
 }
 const k01Run = async (prs, { decide, land: cfg = {}, extra = {}, hook } = {}) => {
   for (const [k, ids] of Object.entries(cfg)) land[k] = new Set(ids)
@@ -419,6 +419,19 @@ await check('K01: a land-fix run returns the list it was given, ready or stopped
   assert.equal(second.LA.ready, true)
   const bare = await k01LandRun(null)
   assert.ok(!('evals' in bare.LA))
+})
+await check('K01: in a land-fix run an eval covered by a trusted CI check does not stop the land-fix check', async () => {
+  const x = await k01LandRun(k01List('LA'), {}, (round, id) => id === 'LA-2' ? 'ci' : 'pass')
+  assert.equal(x.LA.ready, true)
+  assert.ok(calls.some(c => c.label === 'io:LA#cichecks'))
+  assert.ok(x.LA.untested.some(u => u.includes('LA-2 (covered by CI check ci)')))
+  assert.deepEqual(k01Labels(/^fix:LA#land/), [])
+})
+await check('K01: in a land-fix run a bot answer that changed code and a CI-covered eval still let the PR be ready', async () => {
+  const x = await k01Run([k01Land('LA', { evals: k01List('LA') })], { decide: (round, id) => id === 'LA-2' ? 'ci' : 'pass', land: { threads: ['LA'] } })
+  assert.equal(x.LA.ready, true)
+  assert.ok(calls.some(c => c.label === 'verify:LA#bots1'))
+  assert.deepEqual(k01Labels(/^fix:LA#bots/), [])
 })
 await check('K01: a malformed evals option stops a land-fix run instead of falling back to the tester', async () => {
   const x = await k01LandRun([{ id: 'LA-1' }])
