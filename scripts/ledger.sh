@@ -250,8 +250,8 @@ case "$cmd" in
       merged=$(merged_prs "$sincedate") || exit $?
       merged=$(jq -c 'map({number, mergedAt})' <<<"$merged") || die 3 "unexpected pull request list"
       facts='{}'
-      for n in $(jq -r '.[].number' <<<"$merged"); do
-        jq -e --argjson n "$n" 'any(.[]; .pr.number == $n)' <<<"$records" >/dev/null || continue
+      todo=$(jq -r --slurpfile r <(printf '%s' "$records") '($r[0] | map(.pr.number | numbers)) as $have | .[].number | select(IN($have[]))' <<<"$merged") || die 3 "unexpected pull request list"
+      for n in $todo; do
         f=$(github_facts "$n") || exit $?
         facts=$(jq -c --arg n "$n" --argjson f "$f" '. + {($n): $f}' <<<"$facts")
       done
