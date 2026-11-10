@@ -1170,13 +1170,8 @@ async function landFor(pr, n, sha) {
   return { land: `${pair}:auto`, landMode: 'auto', landWhy: verdict.why, safety }
 }
 
-// The current segment is the rows after the last stop marker, and only rounds count. A stop leaves a marked row, so a resume starts a new segment.
-const segmentOf = history => {
-  let from = 0
-  history.forEach((row, i) => { if (row && row.stop) from = i + 1 })
-  return history.slice(from).filter(row => row && Number.isInteger(row.round))
-}
-const resumeThemes = history => [...new Set(segmentOf(history).flatMap(row => (row.themes || []).map(normTitle)))]
+// The current segment is the rounds of this run. A resume starts a new segment, whether or not the earlier history has stop markers (0.8.x results have none).
+const segmentOf = (history, startRound) => history.filter(row => row && Number.isInteger(row.round) && row.round >= startRound)
 const SECURITY_THEME = /secur|vulnerab|exploit|attack|bypass|inject|traversal|escap|leak|privacy|secret|credential|auth|permission|sanitiz|spoof|forg|poison/i
 const scopeEscalation = themes => SECURITY_THEME.test(themes.join(' ')) ? {
   question: `Blockers or majors on the same theme came back in a later round (${themes.join('; ')}). What is the threat model, and which attacks are out of scope?`,
@@ -1333,7 +1328,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     loopState.themes = [...new Set(loopState.themes.concat(themesOf(blocking).map(normTitle)))]
     if (repeated.length) return halt('needs human: scope', { lastFindings: blocking, escalation: scopeEscalation(repeated) })
     if (round === startRound + max - 1) return halt(capReason(pr, outcome, blocking, max, cap), { lastFindings: blocking, lastTest: test })
-    const seg = segmentOf(history)
+    const seg = segmentOf(history, startRound)
     if (seg.length >= 3 && !progressOf(seg[seg.length - 2], seg[seg.length - 1]) && !progressOf(seg[seg.length - 3], seg[seg.length - 2])) {
       return halt(noProgressReason(seg), { lastFindings: blocking, lastTest: test })
     }
@@ -1901,7 +1896,7 @@ async function runPRSteps(input) {
     await settleDisputes(pr, impl.disputes, 'implementer')
   }
   if (verifies(pr)) ciChecksState[pr.id] = await ciChecksOf(pr)
-  const loopState = { fixed: false, reviewed: false, themes: resumeThemes(history), siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
+  const loopState = { fixed: false, reviewed: false, themes: [], siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
   let loop = await reviewLoop(pr, history.length + 1, history, minors, loopState)
   if (!loop.signedOff) return marked({ id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, ...(loop.fixSummary ? { fixSummary: loop.fixSummary } : {}), escalation: loop.escalation, conflict: loop.conflict, architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
 

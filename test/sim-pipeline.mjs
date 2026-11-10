@@ -1946,6 +1946,7 @@ await check('#602: the checks failing again stop the PR with "checks failed twic
   const x = await hooked(only1('C1'), (p, o) => /^test:C1#1r?$/.test(o.label) ? failing : o.label === 'fix:C1#1' ? { summary: 'nothing to fix', changed: false } : undefined)
   assert.equal(x.C1.ready, false)
   assert.equal(x.C1.reason, 'checks failed twice: unit')
+  assert.equal(x.C1.history[x.C1.history.length - 1].stop, 'checks failed twice: unit')
   assert.equal(calls.filter(c => c.label === 'test:C1#1r').length, 1)
   assert.ok(!calls.some(c => c.label === 'test:C1#2'))
 })
@@ -2327,13 +2328,13 @@ await check('scope: an open architecture major runs the architecture review agai
   assert.equal(x.C1.ready, false)
   assert.equal(x.C1.reason, 'needs human: scope')
 })
-await check('scope: a theme from the last resumed history row counts as the previous round', async () => {
+await check('scope: a theme from an earlier history row does not count at a resume', async () => {
   const x = await hooked([{ id: 'C1', title: 't', branch: 'b1', resume: { history: [{ round: 1, themes: ['bypass of the path check'] }], minors: [], findings: [] } }], (p, o) => o.label === 'review:C1#2' ? reviewOf([f('major', 'again', { theme: 'Bypass of the path check' })]) : undefined)
-  assert.equal(x.C1.reason, 'needs human: scope')
-  assert.ok(!calls.some(c => c.label === 'fix:C1#2'))
+  assert.notEqual(x.C1.reason, 'needs human: scope')
+  assert.ok(calls.some(c => c.label === 'fix:C1#2'))
 })
 await check('scope: a resume after a scope stop runs the fixer in its first round', async () => {
-  const x = await hooked([{ id: 'C1', title: 't', branch: 'b1', resume: { history: [{ round: 1, themes: ['bypass of the path check'] }, { round: 2, themes: ['Bypass of the path check'], stop: 'needs human: scope' }], minors: [], findings: [] } }], (p, o) => o.label === 'review:C1#3' ? reviewOf([f('major', 'again', { theme: 'Bypass of the path check' })]) : undefined)
+  const x = await hooked([{ id: 'C1', title: 't', branch: 'b1', resume: { history: [{ round: 1, themes: ['bypass of the path check'] }, { round: 2, themes: ['Bypass of the path check'] }], minors: [], findings: [] } }], (p, o) => o.label === 'review:C1#3' ? reviewOf([f('major', 'again', { theme: 'Bypass of the path check' })]) : undefined)
   assert.notEqual(x.C1.reason, 'needs human: scope')
   assert.ok(calls.some(c => c.label === 'fix:C1#3'))
 })
@@ -2471,6 +2472,7 @@ for (const [what, answer] of [['pass true with no checks', { pass: true, checks:
     const x = await hooked(only1('C1'), tested('C1', answer))
     assert.equal(x.C1.ready, false)
     assert.equal(x.C1.reason, 'tests did not run')
+    assert.equal(x.C1.history[x.C1.history.length - 1].stop, 'tests did not run')
     assert.equal(fixCalls('C1').length, 0)
     assert.ok(!calls.some(c => /^(open|docs):C1/.test(c.label)))
   })
@@ -3149,7 +3151,7 @@ await check('rounds: a fix that changed nothing stops the loop with the open fin
   assert.equal(calls.filter(c => c.label.startsWith('review:C1')).length, 1)
 })
 await check('rounds: a resume with maxRounds 5 after 4 rounds logs its range and ends at round 9', async () => {
-  const rows = [1, 2, 3, 4].map(n => ({ round: n, tests: 'pass', blockersAndMajors: [], ...(n === 4 ? { stop: 'rounds exhausted: 4 of 4 (maxRounds)' } : {}) }))
+  const rows = [1, 2, 3, 4].map(n => ({ round: n, tests: 'pass', blockersAndMajors: [] }))
   const resumed = [{ ...only1('C1')[0], resume: { history: rows, minors: [], findings: [] } }]
   const x = await hooked(resumed, moves('C1'), { maxRounds: 5 })
   assert.ok(logs.some(m => /C1 resume: this run does at most 5 rounds \(5 to 9\)/.test(m)))
@@ -3261,6 +3263,14 @@ await check('E04-5: two rounds in a row with no progress stop the PR, and one ro
   const z = await hooked(only1('C1'), (p, o) => o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : o.label.startsWith('fix:C1') ? { summary: 'wrong', changed: false } : undefined)
   assert.match(z.C1.reason, /^no progress: the fix changed nothing in round 1/)
   assert.equal(z.C1.history[0].stop, z.C1.reason)
+})
+await check('E04-5b: a fixed eval is progress, and the same failed evals in rounds 1 to 3 stop the PR', async () => {
+  const failing = (...ids) => vres({ pass: false, evals: EVS.map(e => ({ id: e.id, result: ids.includes(e.id) ? 'fail' : 'pass', evidence: 'x', breakCheck: 'fails-without-change' })) })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: failing('X-1'), 2: failing('X-2'), 3: failing('X-2') }))
+  assert.ok(!/^no progress/.test(x.C1.reason || ''))
+  assert.ok(called('verify:C1#4'))
+  const y = await hooked(withEvals('C1'), verifyHook({ 1: failing('X-2'), 2: failing('X-2'), 3: failing('X-2') }))
+  assert.match(y.C1.reason, /^no progress: rounds 2 and 3 /)
 })
 await check('E04-6: a plan conflict stop leaves no themes and a marker, and a resume runs a fix round', async () => {
   const x = await hooked(only1('C1'), at('review', 'C1', { 1: reviewOf([f('blocker', 'plan conflict: E3 vs D2', { theme: 'limit' })]) }))
