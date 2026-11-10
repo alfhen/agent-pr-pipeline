@@ -212,7 +212,7 @@ case "$cmd" in
     if [ -n "$issue" ]; then existing=$(records_json raw) || exit $?; fi
     merged=$(merged_prs) || exit $?
     need_user
-    todo=$(jq -c --slurpfile e <(printf '%s' "$existing") '[.[] | select(.number as $n | any($e[0][]; .pr.number == $n) | not)]' <<<"$merged") || die 3 "could not list the PRs without a record"
+    todo=$(jq -c --slurpfile e <(printf '%s' "$existing") '[.[] | select(.number as $n | any($e[0][]; .pr.number == $n and (.kind != "miss" and .kind != "hand")) | not)]' <<<"$merged") || die 3 "could not list the PRs without a record"
     while IFS= read -r p; do
       [ -n "$p" ] || continue
       n=$(jq -r .number <<<"$p")

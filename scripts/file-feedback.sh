@@ -8,12 +8,13 @@
 # (under 4 characters, or a common word such as docs or README.md), which matches as a whole word: it needs a
 # non-alphanumeric neighbour on each side where it ends in a letter or digit. So a bare PR number "123" does
 # not catch "PR123"; add "#123". The source owner and name follow the same rule; the source owner/name and URL
-# always match as substrings. A title that already has an open pipeline-feedback issue is skipped. A title that matches only a closed one is filed with a line "Seen before in #<n> (closed)".
+# always match as substrings. A title that already has an open pipeline-feedback issue is skipped. A title that
+# matches only a closed one is filed with a line "Seen before in #<n> (closed)".
 # Exit: 0 all done, 1 error, 2 at least one item refused. Uses gh api REST calls only.
 #
 # --auto (0.8.0) adds the quality bar (evidence, suggestedChange and a known severity), the limits in the settings of
 # --repo (feedbackItems per call; feedbackPerDay new issues in 24 hours, over that an item is HELD), and a body that
-# ends with <!-- pipeline:auto-filed --> and "Source: this repo" or "Source: another repo". Forms of the collect path:
+# ends with <!-- pipeline:auto-filed --> and "Source: this repo" or "Source: another repo"; a "Seen before" line can follow. Forms of the collect path:
 #   --auto --outbox <source repo> <run> [--dups <file>] --repo <feedbackRepo>
 #       files the open outbox <run> of <source repo>, whole or not at all, then records feedback-filed
 #   --auto --dups <file> <feedback.json> ...   <file> is a list of { item, issue }: one "Seen again" comment on that open issue
@@ -206,7 +207,8 @@ fi
 # Fail closed: without the list of open issues, a duplicate could be filed.
 open=$(gh api --paginate --slurp "repos/$repo/issues?state=open&labels=pipeline-feedback&per_page=100") || { echo "cannot list open issues in $repo"; exit 1; }
 titles=$(jq -c '[add // [] | .[] | select(has("pull_request") | not) | .title | ascii_downcase | gsub("^\\s+|\\s+$"; "")]' <<<"$open") || exit 1
-closed=$(gh api --paginate --slurp "repos/$repo/issues?state=closed&labels=pipeline-feedback&per_page=100") || { echo "cannot list closed issues in $repo"; exit 1; }
+# The closed list only adds a line, so a failed read does not hold the filing.
+closed=$(gh api --paginate --slurp "repos/$repo/issues?state=closed&labels=pipeline-feedback&per_page=100") || { echo "cannot list closed issues in $repo: no Seen before lines"; closed='[]'; }
 closed_map=$(jq -c '[add // [] | .[] | select(has("pull_request") | not) | {key: (.title | ascii_downcase | gsub("^\\s+|\\s+$"; "")), n: .number}] | sort_by(.n) | map({(.key): .n}) | add // {}' <<<"$closed") || exit 1
 seen_before() { jq -r --arg k "$1" '.[$k] // empty | "Seen before in #\(.) (closed)"' <<<"$closed_map"; }
 

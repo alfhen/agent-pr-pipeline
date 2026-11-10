@@ -326,7 +326,7 @@ test('L01 build step 9 writes the cloud ledger record after the token report, wi
 })
 
 test('E06-4 collect reads closed feedback issues but never lists a closed one as a duplicate', () => {
-  assert.match(prompts.collect, /Read the closed ones too, with `state=closed`/)
+  assert.match(prompts.collect, /Do not use this list for closed issues/)
   assert.match(prompts.collect, /A closed issue is never a duplicate/)
   assert.match(prompts.collect, /`Seen before in #<n> \(closed\)`/)
 })

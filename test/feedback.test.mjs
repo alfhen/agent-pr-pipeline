@@ -585,16 +585,17 @@ test('E06-4 an item that matches a closed issue is filed with the link, and an o
   for (const t of ['Brand new', 'A closed pull request']) assert.ok(!r.posts.find(p => p.includes(`title=${t}`)).includes('Seen before'))
 })
 
-test('E06-4 a dry run prints the Seen before line, and a failed closed read files nothing', () => {
+test('E06-4 a dry run prints the Seen before line, and a failed closed read still files, without the line', () => {
   const w = withStates([item('Seen once')], [], [{ title: 'Seen once', number: 8 }])
   const r = w.run('--dry-run')
   assert.match(r.stdout, /WOULD FILE Seen once \[pipeline-feedback\] in [^\n]*\nSeen before in #8 \(closed\)/)
   assert.equal(r.posts.length, 0)
   rmSync(join(w.dir, 'fx', `${ISSUES}@state=closed&labels=pipeline-feedback&per_page=100.json`))
   const f = w.run()
-  assert.equal(f.status, 1)
+  assert.equal(f.status, 0)
   assert.match(f.stdout, /cannot list closed issues/)
-  assert.equal(f.posts.length, 0)
+  assert.equal(f.posts.length, 1)
+  assert.ok(!f.posts[0].includes('Seen before'))
 })
 
 test('E06-6 with no closed match the posts carry no Seen before line', () => {

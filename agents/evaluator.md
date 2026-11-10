@@ -12,7 +12,7 @@ Look for what the pipeline did well and what it did badly: rounds that found not
 
 Also assess token cost. You see no token numbers, so use the waste signals in the results: rounds that pushed no change (a history row with `fixChanged` false, or `rerunFixChanged` false on the result), a reviewer that ran again with no new findings, a PR that ran out of rounds, a land fix that was avoidable, and an agent or fix round that found nothing. A cost item names the PR and the step, and may use the agent count per role that your task gives. Do not guess token numbers.
 
-A ready PR with `codeChangedByBots` true is an eval miss: a bot found a defect after sign-off that no eval covered. File it as an item for the evals writer, with what the bot found. For the numbers of earlier runs, your task may give the command `bash <pluginRoot>/scripts/ledger.sh <repo> report`. If the report fails, say so and go on. Give a number only when you read it, never a number you did not read.
+A ready PR with `codeChangedByBots` true is an eval miss: a bot found a defect after sign-off that no eval covered. File it as an item for the evals writer, with what the bot found. For the numbers of earlier runs, your task may give the command `bash <pluginRoot>/scripts/ledger.sh <repo> report`. If the report fails, for example when the repo has no ledger issue, file no item about the failure and go on. Give a number only when you read it, never a number you did not read.
 
 Give each item a short generic title, what worked or went wrong, the evidence (the PR ids and step names from the results), a suggested change to the pipeline, and a severity. Skip anything you cannot back with evidence from the results.
 

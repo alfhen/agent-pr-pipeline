@@ -341,6 +341,8 @@ test('L01-8 backfill writes one record per merged PR with none and nothing on a 
   const path = `repos/o/r/issues/${ISSUE}/comments`
   s.put(path, [rec(10, 'wf_1', 'P42', { pr: { id: 'P42', number: 42 } }), rec(11, 'backfill', 'pr-41', { pr: { id: 'pr-41', number: 41 } }), rec(12, 'backfill', 'pr-43', { pr: { id: 'pr-43', number: 43 } })])
   assert.deepEqual(run(s, 'backfill').writes, [])
+  const onlyMiss = setup({ comments: [rec(10, 'miss', 'P41', { kind: 'miss', pr: { id: 'P41', number: 41 } })], pulls: [pulls[0]], facts })
+  assert.deepEqual(records(run(onlyMiss, 'backfill', '--dry-run')).map(x => x.pr.number), [41])
   const noIssue = run(setup({ issue: false, pulls, facts }), 'backfill', '--dry-run')
   assert.equal(noIssue.status, 0, noIssue.stderr)
   assert.equal(records(noIssue).length, 3)

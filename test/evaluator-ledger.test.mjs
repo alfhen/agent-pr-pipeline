@@ -37,8 +37,8 @@ test('E06-3 the evaluator agent file names eval misses and the report command', 
 })
 
 test('E06-5 a failed ledger read does not stop the evaluation and no number is made up', () => {
-  assert.match(withRoot, /If it fails, say so in your answer and go on: give no number you did not read/)
-  assert.match(agentFile, /If the report fails, say so and go on/)
+  assert.match(withRoot, /If it fails, for example when the repo has no ledger issue, give no number of earlier runs and file no item about the failure/)
+  assert.match(agentFile, /If the report fails, for example when the repo has no ledger issue, file no item about the failure/)
   assert.match(agentFile, /never a number you did not read/)
 })
 
