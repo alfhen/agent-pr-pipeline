@@ -77,3 +77,19 @@ test('#635 a scope stop asks for a threat model only for a security theme', asyn
   assert.doesNotMatch(JSON.stringify(plain.result.escalation), /threat model/)
   assert.match(plain.result.escalation.options[0], /resume\.designRules/)
 })
+
+test('#635 a theme that only contains a security stem is not a security theme', async () => {
+  const stuck = theme => label => label === 'review:X1#1' || label === 'review:X1#2' ? [{ severity: 'major', title: label, detail: 'd', theme }] : []
+  for (const theme of ['forgotten cleanup of the temp dir', 'authoring of the help text', 'memory leak in the poller']) {
+    const out = await capture({ ...base }, stuck(theme), { evals: false })
+    assert.equal(out.result.reason, 'needs human: scope', theme)
+    assert.doesNotMatch(JSON.stringify(out.result.escalation), /threat model/, theme)
+  }
+})
+
+test('a stop row in the resume history does not count as a round', async () => {
+  const history = [{ round: 1, blockersAndMajors: 1 }, { round: 'stop', stop: 'rounds exhausted' }]
+  const out = await capture({ ...base, resume: { history, minors: [], findings: [], evals: LIST } }, label => label === 'review:X1#2' ? [] : [finding('x')])
+  assert.ok(out.prompts['review:X1#2'], 'the next round is 2')
+  assert.equal(out.prompts['review:X1#3'], undefined)
+})

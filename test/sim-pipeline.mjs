@@ -3364,7 +3364,7 @@ await check('E04-17: a stop that pushes no row gets a marker row with no themes,
     const x = await hooked(only1(id), chain(at('review', id, { 1: themed('x1', 'gap') }), hook))
     assert.equal(x[id].reason, reason)
     assert.deepEqual(x[id].history.at(-1), { round: 'stop', stop: reason })
-    const n = x[id].history.length + 1
+    const n = x[id].history.filter(row => row.round !== 'stop').length + 1
     const y = await hooked(resumeFrom(id, x), at('review', id, { [n]: themed('again', 'Gap') }))
     assert.ok(called(`fix:${id}#${n}`), reason)
     assert.notEqual(y[id].reason, 'needs human: scope', reason)
@@ -3372,8 +3372,8 @@ await check('E04-17: a stop that pushes no row gets a marker row with no themes,
   const x = await hooked(only1('C1'), chain(at('review', 'C1', { 1: themed('x1', 'gap') }), at('arch', 'C1', { 2: { verdict: 'escalate', summary: 's', newConcepts: [], escalation: { question: 'q', options: ['a'], recommendation: 'a' } } })))
   assert.equal(x.C1.reason, 'needs human: architecture')
   assert.deepEqual(x.C1.history.at(-1), { round: 'stop', stop: 'needs human: architecture' })
-  const y = await hooked(resumeFrom('C1', x, { pr: { architectureDecision: 'use A' } }), at('review', 'C1', { 3: themed('x3', 'Gap') }))
-  assert.ok(called('fix:C1#2') && called('fix:C1#3'))
+  const y = await hooked(resumeFrom('C1', x, { pr: { architectureDecision: 'use A' } }), at('review', 'C1', { 2: themed('x3', 'Gap') }))
+  assert.ok(called('fix:C1#1') && called('fix:C1#2'))
   assert.notEqual(y.C1.reason, 'needs human: scope')
 })
 await check('E04-10: a reviewer eval with a repeated id, no check or a kind outside the seven is not added', async () => {

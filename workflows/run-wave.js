@@ -1172,7 +1172,7 @@ async function landFor(pr, n, sha) {
 
 // The current segment is the rounds of this run. A resume starts a new segment, whether or not the earlier history has stop markers (0.8.x results have none).
 const segmentOf = (history, startRound) => history.filter(row => row && Number.isInteger(row.round) && row.round >= startRound)
-const SECURITY_THEME = /secur|vulnerab|exploit|attack|bypass|inject|traversal|escap|leak|privacy|secret|credential|auth|permission|sanitiz|spoof|forg|poison/i
+const SECURITY_THEME = /\b(secur|vulnerab|exploit|attack|bypass|inject|traversal|privacy|secret|credential|authent|authori[sz]|permission|sanitiz|spoof|forger|poison|escalat)/i
 const scopeEscalation = themes => SECURITY_THEME.test(themes.join(' ')) ? {
   question: `Blockers or majors on the same theme came back in a later round (${themes.join('; ')}). What is the threat model, and which attacks are out of scope?`,
   options: ['Name the threat model and the attacks that are out of scope, then rerun the PR with that decision', 'Keep the plan decision as it is and accept the remaining risk', 'Change the plan so the weakness is handled another way'],
@@ -1828,6 +1828,7 @@ async function settleDisputes(pr, disputes, from) {
 }
 
 // A stop that pushed no row still closes the segment: the row carries the reason and no themes, so a resume starts clean.
+const roundsIn = history => history.filter(row => !(row && row.round === 'stop')).length
 const stopMark = (history, reason) => {
   const last = history[history.length - 1]
   if (last && !last.stop) history.push({ round: 'stop', stop: reason })
@@ -1891,7 +1892,7 @@ async function runPRSteps(input) {
   pr = { ...pr, deviations: resumedDeviations(pr) }
   if (written.evals) pr = { ...pr, evals: written.evals, evalsMeta: written.meta, evalDisputes: resumedDisputes(pr) }
   if (preFindings.length) {
-    const decisionFix = await call('fix', pr, fixPrompt(pr, null, preFindings, history.length), `fix:${pr.id}#${history.length}`, { schema: FIX })
+    const decisionFix = await call('fix', pr, fixPrompt(pr, null, preFindings, roundsIn(history)), `fix:${pr.id}#${roundsIn(history)}`, { schema: FIX })
     if (decisionFix && typeof decisionFix.changed === 'boolean') rerunFixChanged = decisionFix.changed
   } else if (!pr.skipImpl && !pr.resume) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
@@ -1902,7 +1903,7 @@ async function runPRSteps(input) {
   }
   if (verifies(pr)) ciChecksState[pr.id] = await ciChecksOf(pr)
   const loopState = { fixed: false, reviewed: false, themes: [], siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
-  let loop = await reviewLoop(pr, history.length + 1, history, minors, loopState)
+  let loop = await reviewLoop(pr, roundsIn(history) + 1, history, minors, loopState)
   if (!loop.signedOff) return marked({ id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, ...(loop.fixSummary ? { fixSummary: loop.fixSummary } : {}), escalation: loop.escalation, conflict: loop.conflict, architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
 
   let pass = { fixed: [], report: null }
@@ -1950,7 +1951,7 @@ async function runPRSteps(input) {
     approvedBy: end.approvedBy || (wait && wait.approvedBy) || [], botNotes: wait && wait.notes,
     codeChangedByBots: !!(answer && answer.codeChanged), closesIssues: (answer && answer.closesIssues) || [], lateMinors: b.lateMinors || [],
     docs, minorPass: pass.report,
-    triage, issues: opened.issuesCreated || [], rounds: history.length, history, ...rerunFix(), ...evalsOut(), architecture: loopState.reports, product: loopState.product, qa: loopState.qa, implProblems: impl.problems || '',
+    triage, issues: opened.issuesCreated || [], rounds: roundsIn(history), history, ...rerunFix(), ...evalsOut(), architecture: loopState.reports, product: loopState.product, qa: loopState.qa, implProblems: impl.problems || '',
   }
   if (!end.ok && !end.red) return marked({ ...result, ready: false, reason: end.reason })
   if (landing.landRefused) return marked({ ...result, ready: false, reason: landing.landWhy })
