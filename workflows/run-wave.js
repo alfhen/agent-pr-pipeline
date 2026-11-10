@@ -1260,11 +1260,11 @@ async function testsOnlyBranch(pr, round) {
   try { files = m ? JSON.parse(m[1]) : null } catch (e) { files = null }
   return Array.isArray(files) && files.length > 0 && files.every(f => typeof f === 'string' && TEST_FILE.test(f))
 }
-async function checkCall(pr, round) {
-  if (!verifies(pr)) return call('test', pr, testPrompt(pr, round), `test:${pr.id}#${round}`, { schema: TEST })
+async function checkCall(pr, round, opts = {}) {
+  if (!verifies(pr)) return call('test', pr, testPrompt(pr, round), `test:${pr.id}#${round}`, { ...opts, schema: TEST })
   const testsOnly = await testsOnlyBranch(pr, round)
   testsOnlyState[pr.id] = testsOnly
-  return call('verify', pr, verifyPrompt(pr, round, testsOnly), `verify:${pr.id}#${round}`, { schema: VERIFY })
+  return call('verify', pr, verifyPrompt(pr, round, testsOnly), `verify:${pr.id}#${round}`, { ...opts, schema: VERIFY })
 }
 
 async function reviewLoop(pr, startRound, history, minors, loopState) {
@@ -1537,11 +1537,11 @@ async function checkNewCode(pr, { tag, label, role, what, reviewPrompt }, histor
     const prompt = await reviewPrompt(round, prior, siblings)
     if (typeof prompt !== 'string') return { ok: false, reason: prompt.fail }
     const [test, review] = await parallel([
-      () => call('test', pr, testPrompt(pr, `${tag}${round}`), `test:${pr.id}#${tag}${round}`, { phase: ROLES[role].phase, schema: TEST }),
+      () => checkCall(pr, `${tag}${round}`, { phase: ROLES[role].phase }),
       () => call(role, pr, prompt, `${label}:${pr.id}#${round}`, { schema: REVIEW }),
     ])
     if (!test || !review) return { ok: false, reason: `${what} failed to run` }
-    const outcome = testOutcome(pr, test)
+    const outcome = checkOutcome(pr, test)
     noteTest(pr, outcome)
     if (outcome.nothingRan) return { ok: false, reason: `${what}: tests did not run` }
     const split = splitFindings([[review.findings.concat(failedInvariants(review)), what], [outcome.findings, 'test']])
@@ -1552,7 +1552,8 @@ async function checkNewCode(pr, { tag, label, role, what, reviewPrompt }, histor
     log(`${pr.id} ${what} ${round}: tests ${outcome.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (outcome.pass && blocking.length === 0) return { ok: true, headSha: test.headSha || review.headSha }
     if (round === BOT_CHECK_ROUNDS) {
-      row.stop = exhausted(`${what}: `, BOT_CHECK_ROUNDS, BOT_CHECK_ROUNDS, 'botCheckRounds')
+      const open = outcome.evals ? outcome.evals.failed : []
+      row.stop = exhausted(`${what}: `, BOT_CHECK_ROUNDS, BOT_CHECK_ROUNDS, 'botCheckRounds') + (open.length ? `; evals not passed: ${open.join(', ')}` : '')
       return { ok: false, reason: row.stop, lastFindings: blocking }
     }
     prior = blocking
@@ -1863,6 +1864,8 @@ const stopMark = (history, reason) => {
   const last = history[history.length - 1]
   if (last && !last.stop) history.push({ round: 'stop', stop: reason })
 }
+// The list of an earlier result is already accepted; a malformed one must stop the run, not fall back to the tester.
+const landListOk = list => Array.isArray(list) && list.length > 0 && new Set(list.map(e => e && e.id)).size === list.length && list.every(e => e && reasonOf(e.id) && EVAL_KINDS.includes(e.kind) && reasonOf(e.statement) && reasonOf(e.check))
 async function runPRSteps(input) {
   let pr = input
   let quickMinors = []
@@ -1879,7 +1882,12 @@ async function runPRSteps(input) {
     const n = pr.prNumber
     const history = []
     const lateMinors = []
-    const stopped = (reason, more) => { stopMark(history, reason); return { id: pr.id, prNumber: n, ready: false, reason, history, ...more } }
+    const given = givenEvals(pr, rawEvals)
+    const listOk = !!given && landListOk(given.list)
+    if (listOk) pr = { ...pr, evals: given.list, evalsMeta: given.meta }
+    const listOut = listOk ? { evals: given.list } : {}
+    const stopped = (reason, more) => { stopMark(history, reason); return { id: pr.id, prNumber: n, ready: false, reason, history, ...listOut, ...more } }
+    if (given && !listOk) return stopped('land fix: the evals option is not a list of evals')
     if (!PLUGIN_ROOT) return stopped('pluginRoot missing: the land-fix check needs it to run land-commits.sh')
     const was = await readHead(pr, n, 'landhead')
     if (was.fail) return stopped(was.fail)
@@ -1898,7 +1906,7 @@ async function runPRSteps(input) {
     if (landing.landRefused) return stopped(landing.landWhy, { headSha: end.head, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     if (end.red) return stopped(end.reason, { headSha: end.head, ci: end.ci, approvedBy: end.approvedBy, ...landing, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     return {
-      id: pr.id, prNumber: n, ready: true, headSha: end.head, ...landing, untested: untestedOf(pr), notes: r.notes,
+      id: pr.id, prNumber: n, ready: true, headSha: end.head, ...listOut, ...landing, untested: untestedOf(pr), notes: r.notes,
       ci: end.ci, approvedBy: end.approvedBy || b.wait.approvedBy || [], botNotes: b.wait.notes, codeChangedByBots: !!(b.answer && b.answer.codeChanged),
       lateMinors, history,
     }

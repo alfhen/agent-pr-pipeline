@@ -20,6 +20,7 @@ let calls = []
 let preflight
 let failWait = false
 let redactor = 'ok'
+let verifyFake = null
 const ITEMS = [
   { title: 'Bot wait reports pending', detail: 'd', evidence: 'C1 botwait', suggestedChange: 'c', severity: 'major' },
   { title: 'Docs step has no timeout', detail: 'd', evidence: 'e', suggestedChange: 'c', severity: 'minor' },
@@ -178,6 +179,7 @@ const agentRaw = async (prompt, o) => {
   if (o.label.startsWith('implement')) return { pushed: true, branch: 'b', summary: 's', acceptanceTestPassed: true, worktree: wt(o) }
   if (o.label.startsWith('fix:')) return { summary: 's', worktree: wt(o), siblings: id === 'B1' ? [{ finding: 'the new regex anchor', checked: ['other anchors'], fixed: [] }] : [] }
   const round = o.label.split('#')[1] || ''
+  if (o.label.startsWith('verify') && verifyFake) { const x = verifyFake(o, prompt, id); if (x) return x }
   if (o.label.startsWith('verify')) return { pass: true, headSha: 'sha-' + id, checks: [{ name: 'lint', pass: true }], evals: [...prompt.matchAll(/^Eval (\S+) \[([^\]]*)\]/gm)].map(m => ({ id: m[1], result: 'pass', evidence: 'ok', breakCheck: /^(behaviour|error path)$/.test(m[2]) ? 'fails-without-change' : 'not-applicable' })) }
   if (o.label.startsWith('test')) return { pass: true, headSha: /^land/.test(round) && !land.testMoved.has(id) ? landHead[id].padEnd(40, 'c') : 'sha-' + id + (/^(docs|bots|land)/.test(round) ? '-' + round : ''), checks: [{ name: 'lint', pass: true }] }
   if (o.label.startsWith('landreview')) return { summary: 's', findings: land.landBad.has(id) || (land.landBadOnce.has(id) && round === '1') ? [{ severity: 'major', title: 'the resolution drops the new flag', detail: 'd' }] : [{ severity: 'minor', title: 'land nit', detail: 'd' }] }
@@ -303,6 +305,147 @@ await check('a bot answer in words only needs no check', () => {
   assert.equal(r.W1.ready, true)
   assert.ok(!mainCalls.some(c => /^(botreview|test):W1#bots/.test(c.label)))
   assert.equal(r.W1.land.split(':')[1], 'sha-W1')
+})
+
+// K01: the evals run again on the head a bot answer or a land fix changed.
+const k01Ev = (id, kind) => ({ id, kind, statement: `${id} must hold`, check: `run ${id}; expect ok` })
+const k01List = pid => [k01Ev(`${pid}-1`, 'behaviour'), k01Ev(`${pid}-2`, 'error path')]
+const k01Pr = (id, extra = {}) => ({ ...PRS.find(p => p.id === id), evals: k01List(id), ...extra })
+const k01Land = (id, extra = {}) => ({ id, title: 't', branch: 'b-' + id, landFix: true, prNumber: 8, ...extra })
+const k01Ids = prompt => [...prompt.matchAll(/^Eval (\S+) \[([^\]]*)\]/gm)].map(m => ({ id: m[1], kind: m[2] }))
+// decide(round, evalId) gives pass, fail or null (no row); rounds are bots1, land1, ...
+const k01Verifier = decide => (o, prompt, id) => {
+  const m = /#((?:bots|land)\d+)$/.exec(o.label)
+  if (!m) return undefined
+  const head = m[1].startsWith('land') ? landHead[id].padEnd(40, 'c') : `sha-${id}-${m[1]}`
+  return { pass: true, headSha: head, checks: [{ name: 'lint', pass: true }], evals: k01Ids(prompt).flatMap(e => { const res = decide(m[1], e.id); return res ? [{ id: e.id, result: res, evidence: 'seen', breakCheck: /^(behaviour|error path)$/.test(e.kind) ? 'fails-without-change' : 'not-applicable' }] : [] }) }
+}
+const k01Run = async (prs, { decide, land: cfg = {}, extra = {}, hook } = {}) => {
+  for (const [k, ids] of Object.entries(cfg)) land[k] = new Set(ids)
+  verifyFake = decide ? k01Verifier(decide) : null
+  try {
+    if (!hook) return await simulate({ ...base, ...extra, prs })
+    calls = []; cleanupCalls = []; versionCalls = []; timeline = []; logs = []; preflight = GOOD
+    const out = await run({ ...base, ...extra, prs }, async (p, o) => { const h = hook(p, o); if (h === undefined) return agent(p, o); calls.push({ label: o.label, model: o.model, prompt: p }); return h }, parallel, log)
+    return Object.fromEntries(out.prs.map(x => [x.id, x]))
+  } finally { verifyFake = null; for (const k of Object.keys(land)) land[k] = new Set() }
+}
+const k01Labels = re => calls.map(c => c.label).filter(l => re.test(l))
+const allPass = () => 'pass'
+await check('K01: a bot answer that changed code gets a verifier call on the new head, no tester, and the diff reviewer', async () => {
+  const x = await k01Run([k01Pr('C1')], { decide: allPass, land: { threads: ['C1'] } })
+  assert.equal(x.C1.ready, true)
+  const v = calls.find(c => c.label === 'verify:C1#bots1')
+  assert.ok(v)
+  assert.deepEqual(k01Ids(v.prompt).map(e => e.id), ['C1-1', 'C1-2'])
+  assert.match(v.prompt, /Eval C1-1 \[behaviour\]/)
+  assert.deepEqual(k01Labels(/^test:C1#bots/), [])
+  assert.ok(calls.some(c => c.label === 'botreview:C1#1'))
+})
+await check('K01: an eval that fails on the bot head stops the PR after the fix round, naming the eval', async () => {
+  const x = await k01Run([k01Pr('C1')], { decide: (round, id) => id === 'C1-1' ? 'fail' : 'pass', land: { threads: ['C1'] } })
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /C1-1/)
+  assert.deepEqual(k01Labels(/^verify:C1#bots/), ['verify:C1#bots1', 'verify:C1#bots2'])
+  assert.deepEqual(k01Labels(/^fix:C1#bots/), ['fix:C1#bots1'])
+  assert.match(calls.find(c => c.label === 'fix:C1#bots1').prompt, /C1-1/)
+  assert.deepEqual(k01Labels(/^test:C1#bots/), [])
+})
+await check('K01: every eval passing on the bot head makes the PR ready on that head, with the results in the history row', async () => {
+  const x = await k01Run([k01Pr('C1')], { decide: allPass, land: { threads: ['C1'] } })
+  assert.equal(x.C1.ready, true)
+  const row = x.C1.history.find(h => h.round === 'bots1')
+  assert.deepEqual(row.evals.passed, ['C1-1', 'C1-2'])
+  assert.deepEqual(row.evals.failed, [])
+  assert.equal(x.C1.land.split(':')[1], 'sha-C1-bots1')
+})
+await check('K01: an eval id with no result on the bot head counts as not passed', async () => {
+  const x = await k01Run([k01Pr('C1')], { decide: (round, id) => id === 'C1-1' ? 'pass' : null, land: { threads: ['C1'] } })
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /C1-2/)
+  assert.deepEqual(x.C1.history.find(h => h.round === 'bots1').evals.failed, ['C1-2'])
+})
+await check('K01: an eval that fails in the first bot round and passes after the fix lets the PR be ready on the fixed head', async () => {
+  const x = await k01Run([k01Pr('C1')], { decide: (round, id) => round === 'bots1' && id === 'C1-1' ? 'fail' : 'pass', land: { threads: ['C1'] } })
+  assert.equal(x.C1.ready, true)
+  assert.deepEqual(k01Labels(/^fix:C1#bots/), ['fix:C1#bots1'])
+  assert.equal(x.C1.land.split(':')[1], 'sha-C1-bots2')
+})
+await check('K01: a bot answer that changed no code starts no bot-check round on a PR with a list', async () => {
+  const x = await k01Run([k01Pr('W1')], { decide: allPass })
+  assert.equal(x.W1.ready, true)
+  assert.ok(calls.some(c => c.label === 'botanswer:W1'))
+  assert.deepEqual(k01Labels(/^(verify|test):W1#bots|^botreview:W1/), [])
+})
+const k01LandRun = (list, cfg = {}, decide = allPass, id = 'LA') => k01Run([k01Land(id, list ? { evals: list } : {})], { decide, land: { landOutput: [id], ...cfg } })
+await check('K01: a land fix with the evals option gets a verifier call on the land head, no tester, and the diff reviewer', async () => {
+  const x = await k01LandRun(k01List('LA'))
+  assert.equal(x.LA.ready, true)
+  assert.deepEqual(k01Ids(calls.find(c => c.label === 'verify:LA#land1').prompt).map(e => e.id), ['LA-1', 'LA-2'])
+  assert.deepEqual(k01Labels(/^test:LA#land/), [])
+  assert.ok(calls.some(c => c.label === 'landreview:LA#1'))
+})
+await check('K01: a land fix without the evals option keeps the tester', async () => {
+  const x = await k01LandRun(null)
+  assert.equal(x.LA.ready, true)
+  assert.ok(calls.some(c => c.label === 'test:LA#land1') && calls.some(c => c.label === 'landreview:LA#1'))
+  assert.deepEqual(k01Labels(/^verify:LA/), [])
+})
+await check('K01: the bot answer after a land-fix check is verified too, when the evals option is given', async () => {
+  const x = await k01LandRun(k01List('LA'), { threads: ['LA'] })
+  assert.equal(x.LA.ready, true)
+  assert.deepEqual(k01Ids(calls.find(c => c.label === 'verify:LA#bots1').prompt).map(e => e.id), ['LA-1', 'LA-2'])
+  assert.deepEqual(k01Labels(/^test:LA#bots/), [])
+  assert.ok(calls.some(c => c.label === 'botreview:LA#1'))
+})
+await check('K01: an eval that fails on the land head stops the PR before the bot wait, naming the eval', async () => {
+  const x = await k01LandRun(k01List('LA'), {}, (round, id) => id === 'LA-1' ? 'fail' : 'pass')
+  assert.equal(x.LA.ready, false)
+  assert.match(x.LA.reason, /LA-1/)
+  assert.deepEqual(k01Labels(/^(verify|fix):LA#land/), ['verify:LA#land1', 'fix:LA#land1', 'verify:LA#land2'])
+  assert.deepEqual(k01Labels(/^botwait:LA/), [])
+  assert.deepEqual(x.LA.evals.map(e => e.id), ['LA-1', 'LA-2'])
+})
+await check('K01: a land-fix run returns the list it was given, ready or stopped, and a second run can pass it on', async () => {
+  const list = k01List('LA')
+  const ok = await k01LandRun(list)
+  assert.deepEqual(ok.LA.evals, list)
+  const notReady = await k01Run([k01Land('LA', { evals: list })], { land: { landOutput: ['LA'] }, hook: (p, o) => o.label === 'landfix:LA' ? { readyToMerge: false, headSha: 'abc', notes: 'n' } : undefined })
+  assert.equal(notReady.LA.reason, 'land fix not ready')
+  assert.deepEqual(notReady.LA.evals, list)
+  const second = await k01LandRun(ok.LA.evals)
+  assert.deepEqual(k01Ids(calls.find(c => c.label === 'verify:LA#land1').prompt).map(e => e.id), ['LA-1', 'LA-2'])
+  assert.deepEqual(k01Labels(/^test:LA#land/), [])
+  assert.equal(second.LA.ready, true)
+  const bare = await k01LandRun(null)
+  assert.ok(!('evals' in bare.LA))
+})
+await check('K01: a malformed evals option stops a land-fix run instead of falling back to the tester', async () => {
+  const x = await k01LandRun([{ id: 'LA-1' }])
+  assert.equal(x.LA.ready, false)
+  assert.match(x.LA.reason, /evals option/)
+  assert.deepEqual(k01Labels(/^(test|verify):LA/), [])
+})
+await check('K01: the docs check and the minor pass keep the tester, and a land fix never runs the evals writer', async () => {
+  const x = await k01Run([k01Pr('G1')], { decide: allPass })
+  assert.equal(x.G1.ready, true)
+  assert.ok(calls.some(c => c.label === 'test:G1#docs1'))
+  assert.deepEqual(k01Labels(/^verify:G1#docs/), [])
+  const minor = { severity: 'minor', title: 'rename helper', detail: 'd', file: 'src/a.js' }
+  const y = await k01Run([k01Pr('C1')], { decide: allPass, hook: (p, o) => {
+    if (o.label === 'review:C1#1') return { summary: 's', findings: [minor] }
+    if (o.label === 'minorfix:C1') return { changed: true, headSha: 'fixsha', fixed: [1], summary: 'renamed' }
+    if (o.label === 'minorreview:C1') return { summary: 's', findings: [], unconfirmed: [] }
+    if (o.label === 'test:C1#minor1') return { pass: true, headSha: 'sha-minor', checks: [{ name: 'lint', pass: true }] }
+    return undefined
+  } })
+  assert.ok(calls.some(c => c.label === 'minorfix:C1'), 'the minor pass did not run')
+  assert.ok(calls.some(c => c.label === 'test:C1#minor1'))
+  assert.deepEqual(k01Labels(/^verify:C1#minor/), [])
+  for (const withList of [true, false]) {
+    await k01Run([k01Land('LA', withList ? { evals: k01List('LA') } : {})], { decide: allPass, land: { landOutput: ['LA'] }, extra: { evals: true } })
+    assert.deepEqual(k01Labels(/^evals/), [])
+  }
 })
 await check('docs PR skips architecture and uses the docs reviewer', () => {
   assert.equal(r.D1.ready, true)
