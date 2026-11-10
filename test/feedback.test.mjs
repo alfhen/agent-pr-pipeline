@@ -602,3 +602,30 @@ test('E06-6 with no closed match the posts carry no Seen before line', () => {
   assert.equal(r.posts.length, 1)
   assert.ok(!r.posts[0].includes('Seen before'))
 })
+
+const autoStates = (open, closed) => {
+  const w = W.world()
+  const q = s => join(w.dir, 'fx', `repos__${W.FB.replaceAll('/', '__')}__issues@state=${s}&labels=pipeline-feedback&per_page=100.json`)
+  writeFileSync(q('open'), JSON.stringify(open)); writeFileSync(q('closed'), JSON.stringify(closed))
+  return w
+}
+
+test('E06-4 --auto files an item that matches a closed issue with the Seen before line, and a dry run prints it', () => {
+  const closed = [W.fbIssue(7, 'Seen once', { state: 'closed' })]
+  const r = autoStates([], closed).auto([item('Seen once'), item('Brand new')], ['acme', 'widgets'])
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(r.issuePosts.length, 2, r.stdout)
+  assert.match(r.issuePosts.find(p => p.includes('title=Seen once')), /Seen before in #7 \(closed\)/)
+  assert.ok(!r.issuePosts.find(p => p.includes('title=Brand new')).includes('Seen before'))
+  const d = autoStates([], closed).auto([item('Seen once')], ['acme', 'widgets'], '--dry-run')
+  assert.match(d.stdout, /WOULD file Seen once\nSeen before in #7 \(closed\)/)
+  assert.equal(d.issuePosts.length, 0)
+})
+
+test('E06-4 --dups naming a closed issue does not skip the item: it is filed as an issue', () => {
+  const w = autoStates([W.fbIssue(8, 'Another open one')], [W.fbIssue(7, 'Closed one', { state: 'closed' })])
+  const r = w.auto([item('Brand new problem')], ['acme', 'widgets'], '--dups', w.file('dups.json', [{ item: 0, issue: 7 }]))
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(r.comments.length, 0, r.stdout)
+  assert.equal(r.issuePosts.length, 1, r.stdout)
+})
