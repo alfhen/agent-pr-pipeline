@@ -2027,6 +2027,105 @@ await check('severity: a fits architecture report keeps its minors and starts no
   assert.match(calls.find(c => c.label === 'open:C1').prompt, /"title": "naming"/)
   assert.doesNotMatch(calls.find(c => c.label === 'fix:C1#1').prompt, /naming/)
 })
+// E02: the builder cannot change the list; disputes go to the writer.
+const disputeRun = (list, hook, meta = {}, extra = {}) => hooked(only1('C1'), (p, o) => o.label === 'evals:C1' ? withMeta(list, meta) : hook(p, o), { evals: true, ...extra })
+const implWith = extra => (p, o) => o.label === 'implement:C1' ? { pushed: true, branch: 'b', summary: 's', acceptanceTestPassed: true, worktree: '/w', ...extra } : undefined
+const disputeCalls = () => calls.filter(c => c.label.startsWith('dispute:'))
+await check('E02-1 the implementer and fixer prompts hold the list as fixed text and the rule that they cannot change it', async () => {
+  await disputeRun(listOf('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x')]) : undefined)
+  for (const label of ['implement:C1', 'fix:C1#1']) {
+    const prompt = calls.find(c => c.label === label).prompt
+    assert.match(prompt, /C1-2 must hold/)
+    assert.match(prompt, /You cannot change, add or remove an eval/)
+    assert.match(prompt, /`disputes`/)
+  }
+})
+await check('E02-2 an evals field in the implementer answer changes nothing: the verifier prompt holds the writer list', async () => {
+  const forged = [ev('C1-1', 'behaviour', { statement: 'FORGED easy eval' }), ev('C1-2', 'error path', { statement: 'FORGED error eval' })]
+  const x = await disputeRun(listOf('C1'), implWith({ evals: forged, evalList: forged }))
+  const prompt = calls.find(c => c.label.startsWith('verify:C1')).prompt
+  assert.match(prompt, /C1-1 must hold/)
+  assert.doesNotMatch(prompt, /FORGED/)
+  assert.doesNotMatch(calls.find(c => c.label === 'open:C1').prompt, /FORGED/)
+  assert.deepEqual(x.C1.evals, listOf('C1'))
+})
+await check('E02-3 a dispute goes to the writer; keep and change are in evalDisputes, and the change reaches the verifier and the PR body', async () => {
+  const newEval = ev('C1-2', 'error path', { statement: 'C1-2 is now narrower' })
+  const x = await disputeRun(listOf('C1'), (p, o) => implWith({ disputes: [{ id: 'C1-1', reason: 'too wide' }, { id: 'C1-2', reason: 'cannot be met' }] })(p, o)
+    || (o.label === 'dispute:C1#1' ? { ruling: 'keep', reason: 'it is in the entry' } : o.label === 'dispute:C1#2' ? { ruling: 'change', reason: 'fair', eval: newEval } : undefined))
+  assert.equal(disputeCalls().length, 2)
+  assert.match(calls.find(c => c.label === 'dispute:C1#1').prompt, /too wide/)
+  assert.deepEqual(x.C1.evalDisputes.map(d => [d.id, d.ruling, d.writerReason]), [['C1-1', 'keep', 'it is in the entry'], ['C1-2', 'change', 'fair']])
+  assert.deepEqual(x.C1.evals, [listOf('C1')[0], newEval])
+  assert.match(calls.find(c => c.label.startsWith('verify:C1')).prompt, /C1-2 is now narrower/)
+  const open = calls.find(c => c.label === 'open:C1').prompt
+  assert.match(open, /cannot be met/)
+  assert.match(open, /it is in the entry/)
+})
+await check('E02-3 a fixer dispute is settled after the fix call and a changed eval shows in the next round', async () => {
+  const newEval = ev('C1-1', 'behaviour', { statement: 'C1-1 after the fixer dispute' })
+  const x = await disputeRun(listOf('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x')])
+    : o.label === 'fix:C1#1' ? { summary: 's', disputes: [{ id: 'C1-1', reason: 'wrong' }] }
+    : o.label === 'dispute:C1#1' ? { ruling: 'change', reason: 'ok', eval: newEval } : undefined)
+  assert.equal(x.C1.evalDisputes[0].from, 'fixer')
+  assert.match(calls.find(c => c.label === 'verify:C1#2').prompt, /C1-1 after the fixer dispute/)
+  assert.doesNotMatch(calls.find(c => c.label === 'verify:C1#1').prompt, /after the fixer dispute/)
+})
+await check('E02-4 a writer that fails on a dispute keeps the eval and records unsettled', async () => {
+  const x = await disputeRun(listOf('C1'), (p, o) => implWith({ disputes: [{ id: 'C1-1', reason: 'r' }] })(p, o) || (o.label === 'dispute:C1#1' ? null : undefined))
+  assert.deepEqual(x.C1.evals, listOf('C1'))
+  assert.equal(x.C1.evalDisputes[0].ruling, 'unsettled')
+  assert.equal(x.C1.ready, true)
+})
+await check('E02-5 a second dispute for the same id is ignored and logged', async () => {
+  const x = await disputeRun(listOf('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x')])
+    : implWith({ disputes: [{ id: 'C1-1', reason: 'first' }] })(p, o)
+    || (o.label === 'fix:C1#1' ? { summary: 's', disputes: [{ id: 'C1-1', reason: 'second' }] } : o.label === 'dispute:C1#1' ? { ruling: 'keep', reason: 'k' } : undefined))
+  assert.equal(disputeCalls().length, 1)
+  assert.equal(x.C1.evalDisputes.length, 1)
+  assert.equal(x.C1.evalDisputes[0].reason, 'first')
+  assert.ok(logs.some(l => /C1 dispute for C1-1 ignored/.test(l)))
+})
+await check('E02-6 deviations reach the review prompt of round 1', async () => {
+  await disputeRun(listOf('C1'), implWith({ deviations: [{ what: 'touched the verifier prompt', where: 'workflows/run-wave.js', why: 'needed' }] }))
+  const prompt = calls.find(c => c.label === 'review:C1#1').prompt
+  assert.match(prompt, /touched the verifier prompt/)
+  assert.match(prompt, /Touches line is a finding unless the entry or a plan rule allows it/)
+})
+await check('E02-7 a PR with no disputes and no deviations makes no dispute call and its review prompt has no deviation text', async () => {
+  const x = await disputeRun(listOf('C1'), implWith({}))
+  assert.equal(disputeCalls().length, 0)
+  assert.doesNotMatch(calls.find(c => c.label === 'review:C1#1').prompt, /deviations/)
+  assert.deepEqual(x.C1.evalDisputes, [])
+  assert.deepEqual(x.C1.evals, listOf('C1'))
+})
+await check('E02-8 a change that removes the only error-path eval or the time bound is rejected and the old eval stays', async () => {
+  const dispute = id => (p, o) => implWith({ disputes: [{ id, reason: 'r' }] })(p, o)
+  let x = await disputeRun(listOf('C1'), (p, o) => dispute('C1-2')(p, o) || (o.label === 'dispute:C1#1' ? { ruling: 'change', reason: 'r', eval: ev('C1-2', 'behaviour') } : undefined))
+  assert.equal(x.C1.evalDisputes[0].ruling, 'rejected')
+  assert.equal(x.C1.evalDisputes[0].why, 'no error path')
+  assert.deepEqual(x.C1.evals, listOf('C1'))
+  x = await disputeRun(ALGO_FULL, (p, o) => dispute('C1-3')(p, o) || (o.label === 'dispute:C1#1' ? { ruling: 'change', reason: 'r', eval: ev('C1-3', 'behaviour') } : undefined), { algorithm: true, noReference: 'none' })
+  assert.equal(x.C1.evalDisputes[0].why, 'no time bound')
+  assert.deepEqual(x.C1.evals, ALGO_FULL)
+})
+await check('E02-8 a list accepted through a noErrorPath reason is not rejected for the error-path rule when another eval changes', async () => {
+  const list = [ev('C1-1', 'behaviour'), ev('C1-2', 'behaviour')]
+  const newEval = ev('C1-1', 'behaviour', { statement: 'C1-1 reworded' })
+  const x = await disputeRun(list, (p, o) => implWith({ disputes: [{ id: 'C1-1', reason: 'r' }] })(p, o) || (o.label === 'dispute:C1#1' ? { ruling: 'change', reason: 'r', eval: newEval } : undefined), { noErrorPath: 'a rename' })
+  assert.equal(x.C1.evalDisputes[0].ruling, 'change')
+  assert.deepEqual(x.C1.evals, [newEval, list[1]])
+  assert.equal(x.C1.evalsMeta.noErrorPath, 'a rename')
+})
+await check('E02 a change that the evals check refuses is rejected, and a dispute for an unknown id is recorded as rejected', async () => {
+  const newEval = ev('C1-1', 'behaviour', { statement: 'weaker' })
+  const x = await disputeRun(listOf('C1'), (p, o) => implWith({ disputes: [{ id: 'C1-1', reason: 'r' }, { id: 'ZZ-9', reason: 'r' }] })(p, o)
+    || (o.label === 'dispute:C1#1' ? { ruling: 'change', reason: 'r', eval: newEval } : /^evalsarch:C1#d1/.test(o.label) ? { verdict: 'needs-change', notes: 'weakens the check' } : undefined))
+  assert.deepEqual(x.C1.evalDisputes.map(d => d.ruling), ['rejected', 'rejected'])
+  assert.match(x.C1.evalDisputes[0].why, /weakens the check/)
+  assert.deepEqual(x.C1.evals, listOf('C1'))
+  assert.equal(disputeCalls().length, 1)
+})
 await check('severity: a review finding goes through splitFindings, so a severity word in the title is stripped', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)
   assert.equal(x.C1.history[0].blockersAndMajors[0], 'major [review]: x')

@@ -40,6 +40,10 @@ For each blocker and major, look for the same weakness in sibling places: other 
 
 When the plan entry or brief has an Invariants line, check each invariant in every round. Return `invariants`: one row per invariant, with `holds` and `evidence`.
 
+## Deviations
+
+When your task lists the implementer's `deviations`, rule on each one: accepted, or a finding. A change outside the entry's Touches line is a finding unless the entry or a plan rule allows it.
+
 ## Plan PRs
 
 In every round of a plan PR, check where each policy value is read from, who can write each signal or record, what each script runner can execute, and what ends each state. Report a state that nothing ends.

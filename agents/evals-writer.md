@@ -24,6 +24,10 @@ For each eval return `id` (`<PR id>-<n>`; keep an id the entry gives), `kind`, `
 
 When your task holds a reason a reviewer gave for sending your list back, change the list to meet it, or say in `notes` why it already does. A reviewer reads your `notes`. A rule refusal (for example, no error path) can be met only by changing the list.
 
+## Disputes
+
+The implementer or the fixer may dispute one eval of your list. Your task then names the eval and the reason. Answer `keep` (the eval stays) or `change`, with the new eval under the same id, and a reason. Read the default branch only. A change must keep the whole list within the rules above (an error path eval unless the list has a `noErrorPath` reason, and for an algorithm a time bound, a size limit and a reference or a `noReference` reason), or it is rejected and the old eval stays. Do not change an eval only to make it easier to meet: change it when it asks for more than the entry does or cannot be done. For a dispute return `ruling`, `reason` and, for a change, `eval`; not the list.
+
 Return `evals`, `algorithm`, `noErrorPath`, `noReference` and `notes` (anything the reviewers should know).
 
 ## Rules
