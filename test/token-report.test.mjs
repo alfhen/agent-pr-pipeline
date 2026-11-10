@@ -42,7 +42,8 @@ test('a per-role table sums input, cache write, cache read and output', () => {
   assert.equal(r.status, 0, r.stderr)
   assert.match(r.stdout, /^reviewer \| 2 \| 6 \| 60 \| 600 \| 21 \| 222$/m)
   assert.match(r.stdout, /^tester \| 1 \| 4 \| 40 \| 400 \| 11 \| 444$/m)
-  assert.match(r.stdout, /top roles: reviewer 687, tester 455/)
+  assert.match(r.stdout, /^top roles \(weighted\): reviewer 246, tester 149$/m)
+  assert.match(r.stdout, /^transcripts: 3 agents, 1142 tokens \(cache reads included\)$/m)
 })
 
 test('a duplicate message id counts once', () => {
@@ -71,7 +72,7 @@ test('a PR above twice the wave median is flagged, and the feedback item holds n
   const fb = join(dir, 'fb.json')
   const r = run(outFile, folder, '--feedback', fb)
   assert.equal(r.status, 0, r.stderr)
-  assert.match(r.stdout, /^FLAG P4: 1000 tokens/m)
+  assert.match(r.stdout, /^FLAG P4: 5000 weighted tokens/m)
   assert.doesNotMatch(r.stdout, /FLAG P[123]:/)
   const items = JSON.parse(readFileSync(fb, 'utf8'))
   assert.equal(items.length, 1)
@@ -84,7 +85,7 @@ test('a PR is taken from the meta description, and wave and goals labels are no 
   const noPr = (label, n) => ({ role: 'pipeline-io', desc: label, lines: [first(null), msg(label, [0, 0, 0, n])] })
   const { outFile, folder } = setup([pr('P1', 100), pr('P2', 110), pr('P3', 120), pr('P4', 1000), noPr('io:wave#version', 5000), noPr('preflight:goals', 5000)])
   const r = run(outFile, folder)
-  assert.match(r.stdout, /^FLAG P4: 1000 tokens/m)
+  assert.match(r.stdout, /^FLAG P4: 5000 weighted tokens/m)
   assert.doesNotMatch(r.stdout, /FLAG (wave|goals)/)
 })
 
@@ -114,4 +115,57 @@ test('a truncated line keeps the valid usage, marks the report incomplete and fl
   assert.match(r.stdout, /^fixer \| 3 \| 1002 /m)
   assert.match(r.stdout, /incomplete, 1 file/)
   assert.doesNotMatch(r.stdout, /^FLAG /m)
+})
+
+test('L01-5 #556: the transcript total is labelled, and a PR flag follows the weighted figure, not cache reads', () => {
+  const pr = (id, u) => ({ role: 'implementer', lines: [first(id), msg(id, u)] })
+  const { outFile, folder } = setup([pr('A', [0, 0, 100000, 10]), pr('B', [0, 0, 0, 4000]), pr('C', [0, 0, 0, 1000]), pr('D', [0, 0, 0, 1000])])
+  const r = run(outFile, folder)
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stdout, /^transcripts: 4 agents, 106010 tokens \(cache reads included\)$/m)
+  assert.match(r.stdout, /^weighted per PR: C 5000, D 5000, A 10050, B 20000$/m)
+  assert.match(r.stdout, /^FLAG B: 20000 weighted tokens/m)
+  assert.doesNotMatch(r.stdout, /^FLAG A:/m)
+})
+
+const stamped = (line, timestamp) => ({ ...line, timestamp })
+
+test('L01-13 --json: noCacheRead is input + cache write + output, raw adds cache reads, and wall minutes span the timestamps', () => {
+  const { outFile, folder, dir } = setup([
+    { role: 'implementer', desc: 'implement:P1#1', lines: [stamped(first('P1'), '2026-11-10T10:00:00.500Z'), stamped(msg('m1', [10, 20, 400, 5]), '2026-11-10T10:05:00.000Z')] },
+    { role: 'tester', desc: 'test:P1#1', lines: [stamped(first('P1'), '2026-11-10T10:08:00.000Z'), stamped(msg('m2', [1, 2, 30, 4]), '2026-11-10T10:12:30.000Z')] },
+  ])
+  const json = join(dir, 'tokens.json')
+  const r = run(outFile, folder, '--json', json)
+  assert.equal(r.status, 0, r.stderr)
+  const t = JSON.parse(readFileSync(json, 'utf8'))
+  assert.equal(t.comparable, true)
+  assert.deepEqual(t.totals, { totalTokens: 12345, agentCount: 2 })
+  const p = t.prs.find(x => x.id === 'P1')
+  assert.deepEqual(p.byRole.implementer, { input: 10, cacheWrite: 20, cacheRead: 400, output: 5 })
+  assert.equal(p.raw, 10 + 20 + 400 + 5 + 1 + 2 + 30 + 4)
+  assert.equal(p.noCacheRead, 10 + 20 + 5 + 1 + 2 + 4)
+  assert.equal(p.weighted, Math.round(11 + 430 * 0.1 + 22 * 1.25 + 9 * 5))
+  assert.equal(p.agents, 2)
+  assert.equal(p.wallMinutes, 12.5)
+})
+
+test('L01-6 --json: the minor pass cost counts minorfix, minorreview and test #minor1 agents only', () => {
+  const a = (role, desc, out) => ({ role, desc, lines: [first('P1'), msg(desc, [0, 0, 0, out])] })
+  const { outFile, folder, dir } = setup([
+    a('implementer', 'implement:P1#1', 1000), a('minor-fixer', 'minorfix:P1#1', 10), a('reviewer', 'minorreview:P1#1', 20),
+    a('tester', 'test:P1#minor1', 30), a('tester', 'test:P1#2', 400),
+  ])
+  const json = join(dir, 'tokens.json')
+  assert.equal(run(outFile, folder, '--json', json).status, 0)
+  const p = JSON.parse(readFileSync(json, 'utf8')).prs[0]
+  assert.deepEqual(p.minorPass, { agents: 3, weighted: 300 })
+  assert.equal(p.weighted, (1000 + 10 + 20 + 30 + 400) * 5)
+})
+
+test('--json with no transcript folder writes the totals with comparable false', () => {
+  const { outFile, dir } = setup([])
+  const json = join(dir, 'tokens.json')
+  assert.equal(run(outFile, join(dir, 'nope'), '--json', json).status, 0)
+  assert.deepEqual(JSON.parse(readFileSync(json, 'utf8')), { comparable: false, totals: { totalTokens: 12345, agentCount: 0 }, prs: [] })
 })
