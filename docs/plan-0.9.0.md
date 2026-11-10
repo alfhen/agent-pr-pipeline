@@ -66,7 +66,7 @@ Summary: the writer sets the evals, the implementer builds against them, the ver
 
 - One eval is `{ id, kind, statement, check, test }`. `id` is `<PR id>-<n>` (for example `E01-3`). `kind` is one of `behaviour`, `error path`, `regression`, `quality bar`, `size limit`, `time bound`, `reference`. `statement` is one plain sentence a person can read. `check` is the command or steps, with the expected result. `test` (optional) names the test file or test that runs the check. The writer sets it only when the plan entry names a test. The verifier fills it from what it ran, and the break check (E03b) uses it.
 - The list lives in the workflow's memory for the run, in every later agent's brief (`prBlock`), in the PR body under "Evals" with the last result of each id, in the result (`evals`) and in the ledger. It is never a file on the branch. So no agent after the writer can edit it. It changes only through a dispute that the writer settles (E02) or a new eval from the reviewer (E04).
-- A rerun gets the list back through `resume.evals` (copied from the earlier result, as `history` is today). `prs[].evals` gives a list by hand and skips the writer. Both take `{ evals, noErrorPath, noReference, algorithm }`; a bare array means `noErrorPath` and `algorithm` are unset. The result carries the accepted rule inputs as `evalsMeta: { noErrorPath, noReference, algorithm }` next to `evals`, so a resume copies both. An `Evals:` table in a plan entry is input to the writer (E01), never the list itself.
+- A rerun gets the list back through `resume.evals` (copied from the earlier result, as `history` is today). `prs[].evals` gives a list by hand and skips the writer. Both take `{ evals, noErrorPath, noReference, algorithm }`; a bare array means `noErrorPath`, `noReference` and `algorithm` are unset. The result carries the accepted rule inputs as `evalsMeta: { noErrorPath, noReference, algorithm }` next to `evals`, so a resume copies the list and all three inputs. An `Evals:` table in a plan entry is input to the writer (E01), never the list itself.
 - Plan and docs PRs get no list. A PR with no list (a resume of a PR built before 0.9.0, or `evals: false`) runs the tester path as today. The writer never runs for a resume or a `skipImpl` PR (E01).
 
 ### Verifier results and sign-off
@@ -147,7 +147,7 @@ Summary: the ledger, the writer and the verifier first; then the rules that buil
 | Argument | Type | Default | Entry | What it does |
 | --- | --- | --- | --- | --- |
 | `evals` | boolean | `true` | E01 | `false` turns the writer off for the wave. |
-| `evalsRounds` | number | `2` | E01 | Writer attempts after a refusal or an evals check that asks for changes. |
+| `evalsRounds` | number | `2` | E01 | Writer attempts in all, the first one included, when a refusal or an evals check asks for changes. |
 | `steps.evals` | `{ model, effort }` | `opus`, `high` | E01 | Model of the writer. |
 | `prs[].evals` | eval list, or `{ evals, noErrorPath, noReference, algorithm }` | none | E01 | A given list. No writer call. |
 | `prs[].algorithm` | boolean | `false` | E01 | The entry adds or changes an algorithm (the plan entry says `Algorithm: yes`). The writer can also set it. |
@@ -189,7 +189,8 @@ Evals:
 
 | Id | Kind | What must be true | How to check |
 | --- | --- | --- | --- |
-| L01-1 | behaviour | `ledger.sh report --since <tag>` prints the four numbers for the PRs merged after that tag. | `test/ledger.test.mjs` with `test/fake-gh`: four records with known values; the medians and counts match. |
+| L01-1 | behaviour | `ledger.sh report --since <tag>` prints the median and mean weighted tokens, the median and mean tokens without cache reads, the median rounds and the share with 4 or more rounds for the PRs merged after that tag. | `test/ledger.test.mjs` with `test/fake-gh`: four records with known values; each median, mean and count matches. |
+| L01-13 | behaviour | A record's `tokens.noCacheRead` is input + cache write + output, and `raw` also includes cache reads. | `token-report.sh --json` on a fixture with non-zero cache reads, then `put --dry-run`: both sums match the fixture. |
 | L01-2 | behaviour | A PR that stalls (ready false, no PR number) gets a record. | `put` on an output file with a stalled PR: the posted body has `"number": null` and the reason. |
 | L01-3 | behaviour | A new session reads every record from GitHub alone. | `list` over two pages of comments prints each record once; a record by another login is left out. |
 | L01-4 | behaviour | A local record has tokens by role and the weighted figure; a cloud record has totals with `comparable: false`. | `token-report.sh --json` on a transcript fixture, then `put`; `put --cloud` on an output file alone. |
@@ -221,7 +222,7 @@ Evals:
 | E01-2 | error path | A list with no error-path eval and no reason is refused; after `evalsRounds` the PR stops with `evals refused: no error path`. | Sim: the writer returns behaviour evals only, twice. |
 | E01-3 | behaviour | An algorithm entry needs a time bound, a size limit and a reference (or a `noReference` reason). | Sim: `algorithm: true`; a list with a size limit and a reference but no time bound gives no `implement:` call; a list with a time bound and a size limit, no reference and no reason gives none; the same list with a `noReference` reason gives one, and the full list gives one. |
 | E01-4 | behaviour | A `needs-change` from the evals check goes back to the writer once, with the notes. | Sim: the second writer prompt holds the notes. |
-| E01-5 | behaviour | `prs[].evals` or `resume.evals` skips the writer but not `evalsVerdict`. | Sim: no `evals:` call; the given list is in the implementer prompt. A given list with no error-path eval and no reason stops with `evals refused: no error path`. A resumed `{ evals, noErrorPath }` with a reason and no error-path eval is accepted, and a resumed `{ algorithm: true }` list with no time bound is refused. A resume or a `skipImpl` PR with no list: no `evals:` call, a `test:` call and no `verify:` call, and the history and settled evals are not replaced. |
+| E01-5 | behaviour | `prs[].evals` or `resume.evals` skips the writer but not `evalsVerdict`. | Sim: no `evals:` call; the given list is in the implementer prompt. A given list with no error-path eval and no reason stops with `evals refused: no error path`. A resumed `{ evals, noErrorPath }` with a reason and no error-path eval is accepted, a resumed `{ algorithm: true, noReference }` list with a time bound and a size limit and no reference eval is accepted, and a resumed `{ algorithm: true }` list with no time bound is refused. A resume or a `skipImpl` PR with no list: no `evals:` call, a `test:` call and no `verify:` call, and the history and settled evals are not replaced. |
 | E01-6 | regression | `evals: false` runs as before. The default is `evals: true`, so the existing sim cases keep their expected values only because `base` and `quickBase` set `evals: false`. | The existing sim cases pass with no change to their expected values, with `evals: false` in `base` and `quickBase`. E01's own cases pass `evals: true`. |
 | E01-10 | behaviour | Plan and docs PRs get no writer. | Sim with `evals: true` and a code PR, a plan PR and a docs PR: one `evals:` call, for the code PR only. The case fails when the kind rule is removed from `writeEvals`. |
 | E01-9 | behaviour | The default path (no `evals` argument) runs writer, evals check, implementer, tester or verifier, reviewers, bots, minor pass and docs in order. | Sim: one case with default args; the call list and `STEP_OF` order match. |
@@ -279,7 +280,7 @@ Evals:
 
 Acceptance: `node test/sim-pipeline.mjs` and `node --test test/build-against-evals.test.mjs` pass; the E02-2 case fails when the loop takes a list from the implementer's answer.
 
-**E03b Break-the-change check.** Round cap 3. Touches: `workflows/run-wave.js` (`verifyPrompt`; `VERIFY` (`breakCheck` per result); `verifyOutcome`; `BREAK_CHECK` after `CI_CHECKS`), `agents/verifier.md` (the break-check section), `test/verifier-agent.test.mjs`, `test/sim-pipeline.mjs` (cases after the last E03a case).
+**E03b Break-the-change check.** Round cap 3. Touches: `workflows/run-wave.js` (`verifyPrompt`; `VERIFY` (`breakCheck` per result); `verifyOutcome`; `BREAK_CHECK` after `EVALS_ROUNDS`), `agents/verifier.md` (the break-check section), `test/verifier-agent.test.mjs`, `test/sim-pipeline.mjs` (cases after the last E03a case).
 - In a round where no eval failed and none has no result (a `ci` result is allowed), for each eval of kind `behaviour` or `error path` with the result `pass`, the verifier maps the eval to the test that ran its check (and fills `test`), removes the change from the files that are not tests in its clone, runs the test, and restores the clone. A file the PR changes is reset with `git checkout origin/HEAD -- <file>`; a file the PR adds is deleted, because it is not on `origin/HEAD`. `fails-without-change` counts only when the test fails on its own assertion (a result comparison). A load, import, missing-file, syntax or exit-127 error is not that: the result is `not-run` with the reason, and the item goes to untested. It returns `breakCheck`: `fails-without-change`, `passes-without-change`, `not-applicable` (kinds `regression`, `quality bar`, `size limit`, `time bound`, `reference`: they pass with and without the change by design) or `not-run` (with why). An eval that it cannot map to a test is `not-run`.
 - `verifyOutcome` turns `passes-without-change` into a major `eval <id>: the test passes without the change`. `not-run` goes to the `evals` bucket of the untested list, so no eval of kind `behaviour` or `error path` is skipped without a trace. `not-applicable` is neither a pass nor a major. An eval with the result `ci` has no local test, so it gets no break check; its item stays on the untested list. `breakCheck: false` skips the step.
 - The verifier pushes nothing; the check happens only in its clone.
@@ -297,7 +298,7 @@ Evals:
 | E03b-10 | error path | A test that fails only because the added file is missing (load, import, exit 127) is `not-run`, not `fails-without-change`. | Prompt test: the agent file and `verifyPrompt` name the rule and the error kinds. Sim: a `not-run` result with that reason is in `untested`. |
 | E03b-8 | behaviour | A `regression` eval gets `not-applicable`, which is not a major. | Sim. |
 | E03b-9 | error path | An eval of kind `behaviour` or `error path` that the verifier cannot map to a test is `not-run` and untested. | Sim: `not-run` is in `untested`. |
-| E03b-6 | break check | The E03b-1 test fails when `verifyOutcome` ignores `breakCheck`. | The verifier removes the rule and runs the test. |
+| E03b-6 | regression | The E03b-1 test fails when `verifyOutcome` ignores `breakCheck`. | The verifier removes the rule and runs the test. |
 
 Acceptance: `node test/sim-pipeline.mjs` passes; the E03b-1 case fails on E03a's `verifyOutcome`.
 
@@ -362,7 +363,7 @@ Evals:
 
 | Id | Kind | What must be true | How to check |
 | --- | --- | --- | --- |
-| V01-1 | behaviour | No current doc promises stage 2 or the local runner deletion in 0.9.0. | `test/skill-notes.test.mjs`: it reads each of the four files, asserts that the file is not empty and that a line has `0.10.0` or `release 2`, and that no line pairs `0.9.0` with `stage 2`, `2 to 4`, `local runner` or `deletes`. |
+| V01-1 | behaviour | No current doc promises stage 2 or the local runner deletion in 0.9.0. | `test/skill-notes.test.mjs`: it reads each of the three doc files (four places), asserts that the file is not empty and that a line has `0.10.0` or `release 2`, and that no line pairs `0.9.0` with `stage 2`, `2 to 4`, `local runner` or `deletes`. |
 | V01-2 | regression | `docs/plan-0.8.0.md` is not changed. | The diff against the default branch is not empty and does not list the file. |
 | V01-3 | behaviour | The stage table names release 2 by its version. | `test/skill-notes.test.mjs`. |
 
