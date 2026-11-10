@@ -88,7 +88,7 @@ need_issue() { find_issue; [ -n "$issue" ] || die 65 "no ledger issue in $repo: 
 # Parses the trusted ledger comments into records. With $1 = raw, a run and PR id that has several records keeps all of them.
 PARSE='
 [.[] | objects
-  | select((.user | objects | .login) == $user and (.body | type) == "string" and (.body as $b | any($t[]; . == $b)))
+  | select((.user | objects | .login) == $user and (.body | type) == "string")
   | (.body | capture("^<!-- pipeline:ledger v1 (?<run>[^ ]+) (?<pr>[^ ]+) -->\\s*\\n```json\\n(?<json>.*)\\n```\\s*$"; "s")?) as $h
   | (.id) as $id
   | ($h.json | try fromjson catch null) as $r
@@ -97,10 +97,9 @@ PARSE='
 | sort_by(.commentId)
 | if $raw == "1" then . else unique_by(._key) end'
 records_json() {
-  local comments trusted
+  local comments
   comments=$(pages "repos/$repo/issues/$issue/comments") || die 3 "cannot read the ledger comments"
-  trusted=$(jq -c --arg prefix "$PREFIX" --arg user "$user" --arg all 1 -f "$TRUSTED" <<<"$comments") || die 3 "cannot read the trusted comments"
-  jq -c --argjson t "$trusted" --arg user "$user" --arg raw "${1:-}" "$PARSE" <<<"$comments" || die 3 "cannot parse the ledger comments"
+  jq -c --arg user "$user" --arg raw "${1:-}" "$PARSE" <<<"$comments" || die 3 "cannot parse the ledger comments"
 }
 
 post_record() { # <run> <pr id> <record json>: prints the new comment id
@@ -178,7 +177,7 @@ case "$cmd" in
     [ -n "$recs" ] || exit 0
     if [ "$dry" = 1 ]; then find_issue; else need_issue; fi
     existing='[]'
-    [ -n "$issue" ] && existing=$(records_json raw)
+    if [ -n "$issue" ]; then existing=$(records_json raw) || exit $?; fi
     while IFS= read -r rec; do
       id=$(jq -r .pr.id <<<"$rec")
       if jq -e --arg run "$run_id" --arg id "$id" 'any(.[]; .run == $run and .pr.id == $id)' <<<"$existing" >/dev/null; then
@@ -202,16 +201,16 @@ case "$cmd" in
   backfill)
     if [ "$dry" = 1 ]; then find_issue; else need_issue; fi
     existing='[]'
-    [ -n "$issue" ] && existing=$(records_json raw)
-    merged=$(merged_prs)
+    if [ -n "$issue" ]; then existing=$(records_json raw) || exit $?; fi
+    merged=$(merged_prs) || exit $?
     need_user
-    todo=$(jq -c --argjson e "$existing" '[.[] | select(.number as $n | any($e[]; .pr.number == $n) | not)]' <<<"$merged")
+    todo=$(jq -c --slurpfile e <(printf '%s' "$existing") '[.[] | select(.number as $n | any($e[0][]; .pr.number == $n) | not)]' <<<"$merged") || die 3 "could not list the PRs without a record"
     while IFS= read -r p; do
       [ -n "$p" ] || continue
       n=$(jq -r .number <<<"$p")
       facts=$(github_facts "$n") || exit $?
       rec=$(jq -nc --arg repo "$repo" --argjson p "$p" --argjson f "$facts" '
-        first(($p.body | capture("(?i)(?<n>[0-9]+)(?: review)? rounds?\\b")), ($p.body | capture("(?i)\\brounds?:\\s*(?<n>[0-9]+)")), {n: null}) as $m
+        first(($p.body | capture("(?i)\\bno blockers or majors after round (?<n>[0-9]+)")), ($p.body | capture("(?i)(?<n>[0-9]+)(?: review)? rounds?\\b")), ($p.body | capture("(?i)\\brounds?:\\s*(?<n>[0-9]+)")), {n: null}) as $m
         | {v: 1, repo: $repo, run: "backfill", pluginVersion: null, kind: "backfill", pr: {id: "pr-\($p.number)", number: $p.number},
            ready: true, reason: null, rounds: ($m.n | if . == null then null else tonumber end), evals: null, minorPass: null,
            codeChangedByBots: null, evalMisses: [], tokens: null, github: $f}') || die 3 "could not build the record of #$n"
@@ -247,6 +246,7 @@ case "$cmd" in
       need_issue
       records=$(records_json) || exit $?
       merged=$(merged_prs "$sincedate") || exit $?
+      merged=$(jq -c 'map({number, mergedAt})' <<<"$merged") || die 3 "unexpected pull request list"
       facts='{}'
       for n in $(jq -r '.[].number' <<<"$merged"); do
         jq -e --argjson n "$n" 'any(.[]; .pr.number == $n)' <<<"$records" >/dev/null || continue
@@ -254,13 +254,18 @@ case "$cmd" in
         facts=$(jq -c --arg n "$n" --argjson f "$f" '. + {($n): $f}' <<<"$facts")
       done
     fi
-    jq -nr --argjson records "$records" --argjson merged "$merged" --argjson facts "$facts" --arg since "$since" '
+    jq -nr --slurpfile records <(printf '%s' "$records") --slurpfile merged <(printf '%s' "$merged") --slurpfile facts <(printf '%s' "$facts") --arg since "$since" '
       def median: sort | if length == 0 then null elif length % 2 == 1 then .[(length - 1) / 2] else (.[length / 2 - 1] + .[length / 2]) / 2 end;
       def mean: if length == 0 then null else add / length end;
       def num: if . == null then "n/a" else ((. * 10 | round) / 10 | tostring) end;
-      ($merged | map(.number)) as $mn
-      | ($records | map(select(.pr.number != null) | {(.pr.id | tostring): .pr.number}) | add // {}) as $idnum
-      | [$records[] | . + {gkey: (if .pr.number != null then .pr.number else $idnum[.pr.id | tostring] end)} | select(.gkey != null and (.gkey | IN($mn[])))]
+      $records[0] as $records | $merged[0] as $merged | $facts[0] as $facts
+      | ($merged | map(.number)) as $mn
+      | ($records | map(select(.pr.number != null))) as $numbered
+      | [$records[] | . as $r
+          | . + {gkey: (if .pr.number != null then .pr.number
+                        else ([$numbered[] | select(.pr.id == $r.pr.id and .repo == $r.repo and .commentId > $r.commentId)] | min_by(.commentId) | .pr.number) end)}] as $joined
+      | ($joined | map(select(.gkey == null)) | length) as $unjoined
+      | [$joined[] | select(.gkey != null and (.gkey | IN($mn[])))]
       | group_by(.gkey)
       | map(. as $g | ($facts[$g[0].gkey | tostring] // {}) as $f | {
           weighted: ([$g[].tokens.weighted | numbers] | if length > 0 then add else null end),
@@ -285,5 +290,6 @@ case "$cmd" in
         "Land fixes: \([$rows[].landFixes] | add // 0) records on \([$rows[] | select(.landFixes > 0)] | length) PRs, counted apart from defects.",
         "Hand fixes: \([$rows[].hands[] | select(. == "code")] | length) by code, \([$rows[].hands[] | select(. == "process")] | length) by process.",
         "Bot threads: \([$rows[].botThreads] | add // 0) in all.",
+        "Records left out because no later record of the PR has a number: \($unjoined).",
         "Records with no tokens: \([$rows[] | select(.weighted == null)] | length) of \($n) PRs."' || die 3 "could not build the report" ;;
 esac

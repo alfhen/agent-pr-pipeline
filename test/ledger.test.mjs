@@ -143,6 +143,21 @@ test('L01-7 with no ledger issue put exits 65 and posts nothing, and a failed ca
   assert.equal(run(u, 'put', tmp(u, 'out.json', wave), '--run', 'wf_1').status, 3)
 })
 
+test('L01-7 a failed read of the ledger comments or the pull list exits 3 and writes nothing', () => {
+  const cpath = fname(`repos/o/r/issues/${ISSUE}/comments`)
+  const failed = (file, args) => {
+    const s = setup({ pulls: [mergedPr(41, '2026-10-01T00:00:00Z')], facts: { 41: {} } })
+    writeFileSync(join(s.fx, file), 'HTTP 502')
+    const a = args(s)
+    const r = run(s, ...a)
+    assert.equal(r.status, 3, `${a[0]}: ${r.stderr}`)
+    assert.deepEqual(r.writes, [])
+  }
+  failed(`${cpath}.GET.error`, s => ['put', tmp(s, 'out.json', wave), '--run', 'wf_1'])
+  failed(`${cpath}.GET.error`, () => ['backfill'])
+  failed(`${fname('repos/o/r/pulls')}.GET.error`, () => ['backfill'])
+})
+
 test('L01-7 init makes the issue only when there is none', () => {
   const s = setup({ issue: false })
   writeFileSync(join(s.fx, 'repos__o__r__issues.POST.json'), JSON.stringify({ number: 11 }))
@@ -245,6 +260,34 @@ test('L01-9 report counts a PR once over its records, a defect once, land fixes 
   assert.match(r.stdout, /^Records with no tokens: 1 of 2 PRs\.$/m)
 })
 
+test('L01-9 a stalled record joins only the next numbered record of its plan id, even when the id repeats', () => {
+  const comments = [
+    rec(10, 'wf_1', 'V01', { pr: { id: 'V01', number: 30 }, rounds: 2 }),
+    rec(11, 'wf_2', 'V01', { pr: { id: 'V01', number: null }, reason: 'needs human: scope', rounds: 1, tokens: tok(70) }),
+    rec(12, 'wf_3', 'V01', { pr: { id: 'V01', number: 50 }, rounds: 3, tokens: tok(30) }),
+    rec(13, 'wf_4', 'V01', { pr: { id: 'V01', number: null }, reason: 'needs human: scope', rounds: 1, tokens: tok(5) }),
+  ]
+  const s = setup({ comments, pulls: [mergedPr(30, '2026-10-01T00:00:00Z'), mergedPr(50, '2026-11-01T00:00:00Z')], facts: { 30: {}, 50: {} } })
+  const r = run(s, 'report')
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stdout, /^Weighted tokens per merged PR: median 100, mean 100, over 1 PRs with tokens\.$/m)
+  assert.match(r.stdout, /^Maintainer touches per PR: 0\.5, 1 in all\.$/m)
+  assert.match(r.stdout, /^Records left out because no later record of the PR has a number: 1\.$/m)
+})
+
+test('L01-9 report, list and put work with a ledger and a pull list over 200 KB', () => {
+  const big = 'x'.repeat(3000)
+  const comments = Array.from({ length: 120 }, (_, i) => rec(100 + i, `wf_${i}`, `P${i}`, { pr: { id: `P${i}`, number: 1000 + i }, rounds: 1, tokens: tok(10), note: big }))
+  const pulls = Array.from({ length: 120 }, (_, i) => mergedPr(1000 + i, '2026-11-01T00:00:00Z', big))
+  const facts = Object.fromEntries(pulls.map(p => [p.number, {}]))
+  const s = setup({ comments, pulls, facts })
+  const r = run(s, 'report')
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stdout, /^Report over 120 merged PRs\.$/m)
+  assert.equal(run(s, 'list').status, 0)
+  assert.equal(run(s, 'put', tmp(s, 'out.json', wave), '--run', 'wf_new').status, 0)
+})
+
 test('L01-9 only the four stop reasons and a person merge count as touches', () => {
   const reasons = ['needs human: scope', 'no progress: the fix changed nothing in round 1', 'rounds exhausted: the fix changed nothing in round 1', 'checks failed twice: lint', 'rounds exhausted: 4 of 4']
   const nums = [51, 52, 53, 54, 55]
@@ -271,7 +314,7 @@ test('L01-10 hand records a hand fix and report prints the counts by kind', () =
 })
 
 test('L01-8 backfill writes one record per merged PR with none and nothing on a second run', () => {
-  const pulls = [mergedPr(41, '2026-10-01T00:00:00Z', 'Tested. It took 3 review rounds.'), mergedPr(42, '2026-10-02T00:00:00Z', 'Closes #1'), mergedPr(43, '2026-10-03T00:00:00Z', 'Review rounds: 2')]
+  const pulls = [mergedPr(41, '2026-10-01T00:00:00Z', 'Tested.\nReview: no blockers or majors after round 3.'), mergedPr(42, '2026-10-02T00:00:00Z', 'Closes #1'), mergedPr(43, '2026-10-03T00:00:00Z', 'Review rounds: 2')]
   const facts = { 41: { mode: 'auto', threads: 2 }, 42: { mode: 'person' }, 43: {} }
   const s = setup({ comments: [rec(10, 'wf_1', 'P42', { pr: { id: 'P42', number: 42 } })], pulls, facts })
   const dry = run(s, 'backfill', '--dry-run')
