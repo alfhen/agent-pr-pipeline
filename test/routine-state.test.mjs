@@ -1314,6 +1314,13 @@ test('an issue below triageFrom, with a skip label or declined is never listed',
   assert.deepEqual(c_one(c_cnext(s)), { step: 'triage', issues: [6] })
 })
 
+test('L01-12 an open issue labelled pipeline-ledger is never triaged, with or without skipLabels in the settings', () => {
+  for (const routine of [c_ROUTINE, { ...c_ROUTINE, skipLabels: ['wontfix'] }]) {
+    const s = csetup({ ...c_withIssues(c_bare(3, { labels: ['pipeline-ledger'] }), c_bare(4)), settings: { routine } })
+    assert.deepEqual(c_one(c_cnext(s)), { step: 'triage', issues: [4] })
+  }
+})
+
 test('triage keeps to triagePerRun and triagePerDay and skips an issue whose triage failed', () => {
   const s = csetup({ ...c_withIssues(...[1, 2, 3, 4, 5, 6, 7].map(n => c_bare(n, { created: c_T(n) }))), settings: { routine: { ...c_ROUTINE, limits: { triagePerRun: 3 } } } })
   assert.deepEqual(c_one(c_cnext(s)), { step: 'triage', issues: [1, 2, 3] })

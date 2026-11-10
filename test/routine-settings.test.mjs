@@ -25,7 +25,7 @@ test('a full good file prints the routine with defaults filled', () => {
   const out = JSON.parse(r.stdout).routine
   assert.equal(out.stage, 1)
   assert.deepEqual(out.trustedAuthors, ['alfhen', 'helper'])
-  assert.deepEqual(out.skipLabels, ['wontfix', 'pipeline-routine'])
+  assert.deepEqual(out.skipLabels, ['wontfix', 'pipeline-routine', 'pipeline-ledger'])
   assert.deepEqual(out.typeLabels, { bug: 'type:bug', feat: 'feat', docs: 'docs', chore: 'chore', test: 'test' })
   assert.deepEqual(out.limits, { openPRs: 5, wavesPerDay: 2, buildAttempts: 2, buildHours: 12, triagePerRun: 5, triagePerDay: 20, feedbackItems: 3, feedbackPerDay: 6 })
   assert.deepEqual(out.collectFrom, ['alfhen/tagreeve'])
@@ -36,7 +36,7 @@ test('a minimal routine gets every default', () => {
   assert.equal(out.stage, 0)
   assert.equal(out.triageFrom, 1)
   assert.deepEqual(out.trustedAuthors, ['alfhen'])
-  assert.deepEqual(out.skipLabels, ['review-minor', 'pipeline-routine'])
+  assert.deepEqual(out.skipLabels, ['review-minor', 'pipeline-routine', 'pipeline-ledger'])
   assert.equal(out.feedbackRepo, 'alfhen/agent-pr-pipeline')
   assert.equal(out.limits.triagePerDay, 20)
 })
@@ -122,6 +122,7 @@ for (const f of ['stage', 'trustedAuthors', 'triageFrom', 'skipLabels', 'typeLab
 }
 check('a typeLabels value that is a state label', { ...minimal, typeLabels: { bug: 'ready-to-build' } }, /typeLabels values must not be a fixed label/)
 check('a typeLabels value that is the routine label', { ...minimal, typeLabels: { feat: 'pipeline-routine' } }, /typeLabels values must not be a fixed label/)
+check('L01-12 a typeLabels value that is the ledger label', { ...minimal, typeLabels: { feat: 'pipeline-ledger' } }, /typeLabels values must not be a fixed label/)
 
 test('a null optional key counts as not set', () => {
   const r = run(withRoutine({ ...minimal, stage: null, trustedAuthors: null, triageFrom: null, skipLabels: null, typeLabels: null, feedbackRepo: null, collectFrom: null, limits: null }))

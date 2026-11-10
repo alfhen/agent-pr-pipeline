@@ -316,6 +316,15 @@ test('the triager treats the block comment as a report, with the same first sent
   assert.ok(read('agents/triager.md').includes(`start with \`${sentence}\``))
 })
 
+test('L01 build step 9 writes the cloud ledger record after the token report, with the run id from next, and goes on after a failure', () => {
+  const b = prompts.build
+  const step = b.slice(b.indexOf('   9. '), b.indexOf('A run does the work'))
+  assert.match(step, /scripts\/ledger\.sh <repo> put <output-file> --run <run> --cloud/)
+  assert.ok(step.indexOf('token-report.sh') < step.indexOf('ledger.sh'))
+  assert.match(step, /If it exits non-zero, log that and go on\.\s*$/)
+  assert.match(usageOf('ledger.sh'), /ledger\.sh <owner\/repo> put <workflow output file> --run <id> \[--tokens <file>\] \[--cloud\]/)
+})
+
 test('the docs say one run handles every step up to the limit', () => {
   assert.match(read('docs/cloud-routines.md'), /One run handles every step up to a limit of 20 passes/)
   assert.match(read('docs/cloud-routines.md'), /copies `run-wave\.js` from `pluginRoot` to `\.git\/apl\/run-wave\.js`/)
