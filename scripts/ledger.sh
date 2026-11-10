@@ -292,7 +292,7 @@ case "$cmd" in
           weighted: ([$g[].tokens.weighted | numbers] | if length > 0 then add else null end),
           noCache: ([$g[].tokens.noCacheRead | numbers] | if length > 0 then add else null end),
           rounds: ([$g[] | select(.kind != "land-fix" and .kind != "hand" and .kind != "miss") | .rounds | numbers] | if length > 0 then max else null end),
-          touches: (([$g[] | .reason | strings | select(test("^(needs human:|no progress:|rounds exhausted: the fix changed nothing|checks failed twice:)"))] | length) + (if $f.mergeMode == "person" then 1 else 0 end)),
+          touches: (([$g[] | .reason | strings | select(test("^(needs human:|no progress:|rounds exhausted: the fix changed nothing|checks failed twice:|head moved:|head unknown:)"))] | length) + (if $f.mergeMode == "person" then 1 else 0 end)),
           miss: any($g[]; (.evalMisses | arrays | length) > 0),
           defect: any($g[]; .codeChangedByBots == true or ((.evalMisses | arrays | length) > 0)),
           landFixes: ([$g[] | select(.kind == "land-fix")] | length),

@@ -1391,8 +1391,9 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
       noteTest(pr, second)
       history.push(historyRow(`${round}r`, second, second.findings, 0))
       if (second.nothingRan) return halt('tests did not run')
-      const sameHead = !!(again.headSha && test.headSha) && (again.headSha.startsWith(test.headSha) || test.headSha.startsWith(again.headSha))
-      if (second.pass && !sameHead) return halt(stop.reason, stop)
+      if (!again.headSha || !test.headSha) return halt(`head unknown: a check call reported no head (first run ${test.headSha || 'none'}, rerun ${again.headSha || 'none'}), so the rerun cannot show that the failure was flaky`, { ...stop, lastTest: again })
+      const sameHead = again.headSha.startsWith(test.headSha) || test.headSha.startsWith(again.headSha)
+      if (!sameHead) return halt(`head moved: the checks ran on ${test.headSha} and then on ${again.headSha}, so the rerun cannot show that the failure was flaky`, { ...stop, lastTest: again })
       if (second.pass && evalMode && !ran) {
         // No reviewer has seen this head: the next round's verifier passes and the reviewers run.
         if (round === startRound + max - 1) return halt(`no reviewer round: the checks passed on the rerun in the last round, ${max} of ${max} used (${cap})`, stop)
