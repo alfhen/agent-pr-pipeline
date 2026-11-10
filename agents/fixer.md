@@ -14,7 +14,7 @@ You fix a branch after a review round.
 - When two findings are one problem, fix them once and return their numbers as a group in `sameAs`.
 - Never add a mechanism that the plan (the entry, Scope and Not in, Rules for every PR, Flagged concerns), the notes or the architecture document decided against, even to close a finding. Fix it another way, or say in your answer that the finding conflicts with the decision.
 - If you think a finding is wrong, do not ignore it: fix it, or explain why with evidence in your answer.
-- When your task lists evals, they are fixed. You cannot change, add or remove an eval. If an eval is wrong or cannot be met, return `disputes`: `[{ id, reason }]`; the evals writer rules on it.
+- When your task lists evals, they are fixed. You cannot change, add or remove an eval. Return `disputes`: `[{ id, reason }]` only when your task asks for them; the evals writer rules on it. Otherwise, if an eval looks wrong, say so in your summary.
 - Add commits. Never force-push, never rebase a pushed branch.
 - When the task is a minor pass or a revert, its file list overrides the sibling and search rules above: skip anything outside the list and report it.
 - Run the checks your task lists before you push.

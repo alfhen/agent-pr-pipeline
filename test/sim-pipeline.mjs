@@ -2154,7 +2154,20 @@ await check('E02-3 only the review loop fixer is told to return disputes; a bots
   const bots = calls.find(c => c.label === 'fix:B1#bots1')
   assert.ok(bots, 'a bots fix call ran')
   assert.match(bots.prompt, /You cannot change, add or remove an eval/)
-  assert.doesNotMatch(bots.prompt, /`disputes`/)
+  assert.doesNotMatch(bots.prompt, /return `disputes`: \[/)
+  assert.match(bots.prompt, /Disputes are not taken/)
+})
+await check('E02-3 minor fix, minor revert and land-fix prompts say disputes are not taken', async () => {
+  for (const name of ['minorFixPrompt', 'minorRevertPrompt', 'landFixPrompt']) {
+    const start = src.indexOf(`const ${name} =`)
+    assert.ok(start >= 0, name)
+    assert.match(src.slice(start, src.indexOf('\nconst ', start + 10)), /noDisputesText\(pr\)/, name)
+  }
+})
+await check('E02-6 deviations reach the round 1 review prompt when evals are off', async () => {
+  await hooked(only1('C1'), implWith({ deviations: [{ what: 'touched the verifier prompt', where: 'workflows/run-wave.js', why: 'needed' }] }))
+  assert.match(calls.find(c => c.label === 'implement:C1').prompt, /`deviations`/)
+  assert.match(calls.find(c => c.label === 'review:C1#1').prompt, /touched the verifier prompt/)
 })
 await check('E02-4 a writer that fails on a dispute keeps the eval and records unsettled', async () => {
   const x = await disputeRun(listOf('C1'), (p, o) => implWith({ disputes: [{ id: 'C1-1', reason: 'r' }] })(p, o) || (o.label === 'dispute:C1#1' ? null : undefined))

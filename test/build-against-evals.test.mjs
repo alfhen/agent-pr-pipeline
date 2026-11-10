@@ -45,6 +45,10 @@ test('E02-1 the fixer prompt holds the list and the same rule, with no deviation
   assert.doesNotMatch(prompts['fix:X1#1'], /`deviations`/)
 })
 
+test('E02-1 the fixer agent file asks for disputes only when the task does', () => {
+  assert.match(read('agents/fixer.md'), /only when your task asks for them/)
+})
+
 test('E02-1 the implementer and fixer agent files say the list is fixed and name disputes', () => {
   for (const file of ['agents/implementer.md', 'agents/fixer.md']) {
     const body = read(file)

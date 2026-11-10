@@ -648,7 +648,14 @@ const prBlock = pr => `PR: ${pr.id} - ${pr.title}\nBranch: ${pr.branch}\nKind: $
 const cloneTo = (dir, pr) => `\`rm -rf ${TMP}/${dir} && git clone https://github.com/${REPO}.git ${TMP}/${dir} && cd ${TMP}/${dir} && git checkout ${pr.branch}\``
 const freshBranch = (prefix, pr, n) => `\`git fetch origin && git checkout -B ${prefix}-${pr.id}-r${n} origin/${pr.branch}\` (a new local name, because another worktree may hold ${pr.branch}). Push with \`git push origin HEAD:${pr.branch}\`.`
 
-const fixedEvalsText = (pr, deviations, disputes = true) => pr.evals ? `\nThe evals in the PR block are fixed. Build until you believe every one passes. You cannot change, add or remove an eval, and an eval in your answer is ignored. ${disputes ? ' If an eval is wrong or cannot be met, build the rest and return \`disputes\`: [{ id, reason }]. The evals writer rules on each dispute.' : ''}${deviations ? ' When you change something against the entry\'s Touches line, its Acceptance line or a named plan rule, return it in `deviations`: [{ what, where, why }].' : ''}\n` : ''
+const NO_DISPUTES = ' Disputes are not taken in this task: do not return `disputes`; if an eval looks wrong, say so in your summary.'
+const noDisputesText = pr => pr.evals ? `\nThe evals in the PR block are fixed. You cannot change, add or remove an eval.${NO_DISPUTES}\n` : ''
+const DEVIATIONS_TEXT = 'When you change something against the entry\'s Touches line, its Acceptance line or a named plan rule, return it in `deviations`: [{ what, where, why }].'
+const fixedEvalsText = (pr, deviations, disputes = true) => {
+  const dev = deviations ? DEVIATIONS_TEXT : ''
+  if (!pr.evals) return dev ? `\n${dev}\n` : ''
+  return `\nThe evals in the PR block are fixed. Build until you believe every one passes. You cannot change, add or remove an eval, and an eval in your answer is ignored.${disputes ? ' If an eval is wrong or cannot be met, build the rest and return \`disputes\`: [{ id, reason }]. The evals writer rules on each dispute.' : NO_DISPUTES}${dev ? ` ${dev}` : ''}\n`
+}
 const implPrompt = pr => `${ctx(pr)}
 
 Task: implement this PR.
@@ -786,8 +793,7 @@ Task: fix minor findings in one pass. This is the only minor pass of this PR: no
 2. You may change only these files, which the PR already changes: ${JSON.stringify(files)}. Some may be gated paths: the maintainer merges a PR that changes one, so editing it adds no way to merge. Fix a finding only when its file is on that list. Change no other file, and never a path under .github, a .claude folder, AGENTS.md, CLAUDE.md, CLAUDE.local.md or docs/goals.md. Skip a finding that needs a change outside the list.
 3. Skip a finding that needs a design choice: more than one fix would be right, or the fix changes behaviour the plan entry names. Fix only what is plain.
 4. Checks: ${fastText}, and ${ownE2e}.
-5. Commit and push. If you fix no finding, push nothing and return changed false.
-Return changed, headSha (\`git rev-parse HEAD\` after your push), fixed (the numbers of the findings you fixed), skipped (the number and why, for each finding you left), a short summary, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
+5. Commit and push. If you fix no finding, push nothing and return changed false.${noDisputesText(pr)}Return changed, headSha (\`git rev-parse HEAD\` after your push), fixed (the numbers of the findings you fixed), skipped (the number and why, for each finding you left), a short summary, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}
 
@@ -813,7 +819,7 @@ const minorRevertPrompt = (pr, signedSha, attempt) => `${ctx(pr)}
 Task: drop the minor pass of ${pr.branch}. Its check failed, so the branch goes back to the state that passed review, with a new commit.
 1. You are in a fresh git worktree. ${freshBranch('minorrevert', pr, attempt)}
 2. If \`git rev-list ${signedSha}..HEAD\` prints nothing, the branch has no commit after the signed-off state: push nothing. Otherwise revert every commit added after ${signedSha}: \`git revert --no-edit ${signedSha}..HEAD\` (add \`-m 1\` for a merge commit). Never force-push and never rebase.
-3. Check that \`git diff --quiet ${signedSha} HEAD\` succeeds, so the tree equals the signed-off state. Push when you added a commit.
+3. Check that \`git diff --quiet ${signedSha} HEAD\` succeeds, so the tree equals the signed-off state. Push when you added a commit.${noDisputesText(pr)}
 Return reverted (true only when the tree equals ${signedSha} and the branch on GitHub holds it), headSha (\`git rev-parse HEAD\` after your push), a short summary, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}`
@@ -984,7 +990,7 @@ Task: bring PR #${pr.prNumber} (${pr.branch}) to a mergeable state with green CI
 1. You are in a fresh git worktree. ${freshBranch('land', pr, 0)}
 2. Conflict: \`git merge origin/HEAD\`, then ${fastText}, and ${ownE2e}.
 3. CI: find the failed run ids with \`gh api "repos/${REPO}/actions/runs?head_sha=<head>" --jq '.workflow_runs[] | select(.conclusion == "failure") | .id'\` (<head> is the output of \`git rev-parse HEAD\` after your push), then list the failed jobs of a run with \`gh api repos/${REPO}/actions/runs/<run>/jobs\`, then read a job's log with \`gh api repos/${REPO}/actions/jobs/<job>/logs\`; rerun a flaky network failure with \`gh api -X POST repos/${REPO}/actions/runs/<run>/rerun-failed-jobs\`.
-4. Wait: \`bash ${PLUGIN_ROOT}/scripts/wait-ci.sh ${REPO} ${pr.prNumber} 9\`, with the Bash tool's timeout set to 600000 ms. It prints one JSON line with head, state (pending, success or failure), failed and timedOut. While timedOut is true, run it again, at most 3 calls in all. If it is still timedOut, return readyToMerge false and say so in notes.
+4. Wait: \`bash ${PLUGIN_ROOT}/scripts/wait-ci.sh ${REPO} ${pr.prNumber} 9\`, with the Bash tool's timeout set to 600000 ms. It prints one JSON line with head, state (pending, success or failure), failed and timedOut. While timedOut is true, run it again, at most 3 calls in all. If it is still timedOut, return readyToMerge false and say so in notes.${noDisputesText(pr)}
 Return readyToMerge, headSha, notes and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}`
@@ -1774,10 +1780,8 @@ async function runPRSteps(input) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (impl && !impl.pushed && pr.evals) await settleDisputes(pr, impl.disputes, 'implementer')
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl, ...evalsOut() }
-    if (pr.evals) {
-      pr.deviations = (Array.isArray(impl.deviations) ? impl.deviations : []).filter(d => d && reasonOf(d.what))
-      await settleDisputes(pr, impl.disputes, 'implementer')
-    }
+    pr.deviations = (Array.isArray(impl.deviations) ? impl.deviations : []).filter(d => d && reasonOf(d.what))
+    await settleDisputes(pr, impl.disputes, 'implementer')
   }
   if (verifies(pr)) ciChecksState[pr.id] = await ciChecksOf(pr)
   const loopState = { fixed: false, themes: resumeThemes(history), archOpen: false, siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
