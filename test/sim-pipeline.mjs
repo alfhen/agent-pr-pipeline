@@ -1732,6 +1732,18 @@ await check('#602: a fix that changed something gets no rerun', async () => {
   await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? { pass: false, headSha: 'sha-C1', checks: [ck('unit', { pass: false })] } : undefined)
   assert.ok(!calls.some(c => c.label === 'test:C1#1r'))
 })
+await check('#602: a rerun on a different head does not sign off', async () => {
+  const failing = { pass: false, headSha: 'sha-C1', checks: [ck('unit', { pass: false })] }
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? failing : o.label === 'test:C1#1r' ? { pass: true, headSha: 'sha-new', checks: [ck('unit')] } : o.label === 'fix:C1#1' ? { summary: 'none', changed: false } : undefined)
+  assert.equal(x.C1.ready, false)
+})
+await check('E03a: the verify prompt holds the related-tests step and the acceptance definition', async () => {
+  await hooked(withEvals('C1'), verifyHook({}))
+  const pr = calls.find(c => c.label === 'verify:C1#1').prompt
+  assert.match(pr, /import or name the modules the PR touches/)
+  assert.match(pr, /`declared` is true when the entry has an Acceptance line/)
+  assert.match(pr, /or for a file or project you could not run/)
+})
 await check('#602: the rule holds on the verifier path, with the label verify:<id>#<n>r', async () => {
   const failing = vres({ pass: false, checks: [ck('unit', { pass: false })] })
   const ok = await hooked(withEvals('C1'), verifyHook({ 1: failing }, (p, o) => o.label === 'fix:C1#1' ? { summary: 'none', changed: false } : undefined))

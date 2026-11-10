@@ -595,23 +595,27 @@ Return pushed, branch, headSha, a short summary, whether the acceptance test pas
 ${prBlock(pr)}`
 
 const relatedStep = RELATED_TESTS ? `3. Then run the e2e and docs test files that import or name the modules the PR touches and are not in that list. Find them with a search (\`git grep -l -E\` for each touched module's file name and exported names, over every tracked test file in the repo, such as \`*.test.*\` and \`*.spec.*\` files in any folder, and the paths the test config's projects include, docs folders too). Run at most ${RELATED_MAX}, the files that import a touched module directly first, and name the files you left out in the check, because CI runs them. Never run the whole suite. For each file, read the repo's test config and package scripts to find the command and test project that own it (for example \`--project <name>\` in a vitest workspace), also when that project is left out of the default test command, and name the command in the check. Do not use \`${E2E_COMMAND}\` for a file outside its project. Report a file or project you could not select, or one the environment cannot run (for example a missing browser), as a check with \`refused\`: true, never as passed or failed. Name each extra file in the check, and say which test projects you ran.\n` : ''
+const refusedText = '`refused`: true for a command that a permission check denied, or for a file or project you could not run, so it did not run'
+const acceptanceText = '`acceptance`: `declared` is true when the entry has an Acceptance line that names a runnable test, and `check` is the name of the check that runs it'
+const relatedText = RELATED_TESTS ? ', and `related`: the files you ran in step 3 and the test projects you ran them in (empty lists when the search found nothing)' : ''
+const returnChecks = `pass, headSha, one entry per check with the failing log excerpt (${refusedText}), ${acceptanceText}${relatedText}`
 const testPrompt = (pr, round) => `${ctx(pr)}
 
 Task: test the branch from a clean clone.
 1. \`rm -rf ${TMP}/test-${pr.id}-r${round} && git clone --branch ${pr.branch} https://github.com/${REPO}.git ${TMP}/test-${pr.id}-r${round}\` and cd there.
 2. Run in order: ${fastText}. Then run ${ownE2e}.
-${relatedStep}Return pass, headSha, one entry per check with the failing log excerpt (\`refused\`: true for a command that a permission check denied, or for a file or project you could not run, so it did not run), \`acceptance\`: \`declared\` is true when the entry has an Acceptance line that names a runnable test, and \`check\` is the name of the check that runs it${RELATED_TESTS ? ', and `related`: the files you ran in step 3 and the test projects you ran them in (empty lists when the search found nothing)' : ''}.
+${relatedStep}Return ${returnChecks}.
 
 ${prBlock(pr)}`
 
 const verifyPrompt = (pr, round) => `${ctx(pr)}
 
-Task: verify the branch from a clean clone. Run every check the tester runs, then each eval below.
+Task: verify the branch from a clean clone. Run every check below, then each eval.
 1. \`rm -rf ${TMP}/verify-${pr.id}-r${round} && git clone --branch ${pr.branch} https://github.com/${REPO}.git ${TMP}/verify-${pr.id}-r${round}\` and cd there.
 2. Run in order: ${fastText}. Then run ${ownE2e}.
-3. Run the check of each eval, in order, and compare the result with what it says must be true. An eval is a fixed requirement: you cannot change, drop or reword it.
-4. You may add up to 3 checks of your own that the builder did not see, and report each in \`extra\`.
-Return pass, headSha, one entry per check as the tester does (\`refused\`: true for a command that a permission check denied, so it did not run), \`acceptance\` as the tester does, \`evals\`: one row per eval id with result pass, fail or ci, the evidence (the output that shows it) and, for ci, \`ciCheck\`: the name of the CI check that covers it, used only when the sandbox refused the command, and \`extra\`: your own checks with name, pass and evidence.
+${relatedStep}${RELATED_TESTS ? 4 : 3}. Run the check of each eval, in order, and compare the result with what it says must be true. An eval is a fixed requirement: you cannot change, drop or reword it.
+${RELATED_TESTS ? 5 : 4}. You may add up to 3 checks of your own that the builder did not see, and report each in \`extra\`.
+Return ${returnChecks}, \`evals\`: one row per eval id with result pass, fail or ci, the evidence (the output that shows it) and, for ci, \`ciCheck\`: the name of the CI check that covers it, used only when the sandbox refused the command, and \`extra\`: your own checks with name, pass and evidence.
 
 Evals (every id needs a result):
 ${evalListOf(pr).map(e => `Eval ${e.id} [${e.kind}] ${e.statement}\n  Check: ${e.check}${e.test ? `\n  Test: ${e.test}` : ''}`).join('\n')}
@@ -1141,6 +1145,8 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
       noteTest(pr, second)
       history.push(historyRow(`${round}r`, second, second.findings, 0))
       if (second.nothingRan) return { signedOff: false, reason: 'tests did not run' }
+      const sameHead = !!(again.headSha && test.headSha) && (again.headSha.startsWith(test.headSha) || test.headSha.startsWith(again.headSha))
+      if (second.pass && !sameHead) return stop
       if (second.pass) return { signedOff: true, headSha: again.headSha || test.headSha || review.headSha }
       if (second.failed.length) return { ...stop, reason: `checks failed twice: ${second.failed.map(c => c.name).join(', ')}`, lastTest: again }
       return { ...stop, lastFindings: second.findings, lastTest: again }

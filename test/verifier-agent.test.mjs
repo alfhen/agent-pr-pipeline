@@ -24,6 +24,12 @@ test('verifier has the same Rules block as the other agents', () => {
   assert.equal(body.slice(body.indexOf('## Rules')), tester.slice(tester.indexOf('## Rules')));
 });
 
+test('verifier has the tester related-tests and acceptance rules', () => {
+  assert.match(body, /import or name the modules the PR touches/);
+  assert.match(body, /at most 10 files/);
+  assert.match(body, /`declared` is true only when the plan entry has an Acceptance line that names a runnable test/);
+});
+
 test('template has ciChecks', () => {
   assert.deepEqual(JSON.parse(read('templates/pipeline.json')).ciChecks, ['ci']);
 });

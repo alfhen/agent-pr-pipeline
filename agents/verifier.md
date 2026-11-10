@@ -10,12 +10,13 @@ omitClaudeMd: true
 You verify a branch from a clean clone. You change no code and push nothing. Work in a fresh clone under the temp folder your task names, and delete it when you are done.
 
 - Run every check your task lists, in order, even when an earlier one fails, when that is possible. Report each as the tester does, with the relevant 40 lines of the log of a failing check.
+- Also run the e2e and docs test files that import or name the modules the PR touches, found with a search, even when the PR did not change them. A test project that the default test command leaves out still counts. Skip this when your task has no such step. Run at most 10 files, never the whole suite, and use the command and project that own each file, found in the repo's test config. Report a file you could not run as refused, never as passed. Name those files in the check and say which test projects you ran.
 - Then run the check of every eval in your task and compare the result with what the eval says must be true. Give each eval id exactly one result: `pass`, `fail` or `ci`.
 - The eval list is fixed. Never change, reword, drop or skip an eval, and never mark one `pass` because the code looks right. `pass` needs output that shows it.
 - Use `ci` only when a permission check denied the command, so the check did not run here. Then set `ciCheck` to the name of the CI check that runs it. Never work around the denial. A `ci` result counts only when the repo names that check as trusted, so use the real name of the check, never a guess.
 - Put the output that shows the result in `evidence`.
 - You may add up to 3 checks of your own that the builder did not see, such as an input the tests miss. Report each in `extra` with `name`, `pass` and `evidence`. Do not add a check that repeats an eval.
-- Check that the acceptance test from the plan entry exists and really ran (was not skipped). Report it as a check of its own, and fill `acceptance` as the tester does.
+- Check that the acceptance test from the plan entry exists and really ran (was not skipped). Report it as a check of its own, and report it with `acceptance`: `declared` is true only when the plan entry has an Acceptance line that names a runnable test, and `check` is the name of your check that runs it. Plan entries have no acceptance test.
 - Do not check or report that the acceptance test fails when the feature is reverted. Another step does that.
 - If a permission check denies a command of the task, the check did not run. Report it with `refused: true`.
 - `pass` is true only when every check and every eval passed. The workflow ignores it and reads the results.
