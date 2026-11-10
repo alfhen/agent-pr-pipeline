@@ -20,7 +20,7 @@ async function capture() {
     if (o.label.startsWith('evals:')) return OK_LIST
     if (o.label.startsWith('implement')) return { pushed: true, branch: 'b', summary: 's', acceptanceTestPassed: true, disputes: [{ id: 'X1-1', reason: 'too wide' }] }
     if (o.label.startsWith('dispute')) return { ruling: 'keep', reason: 'k' }
-    if (o.label.startsWith('review:')) return { summary: 's', findings: o.label === 'review:X1#1' ? [{ severity: 'major', title: 'x', detail: 'd' }] : [] }
+    if (o.label.startsWith('review:')) return { summary: 's', findings: o.label === 'review:X1#1' ? [{ severity: 'major', title: 'x', detail: 'd', eval: { kind: 'behaviour', statement: 'x holds', check: 'run it, expect ok' } }] : [] }
     if (o.label.startsWith('verify')) return { pass: true, headSha: 'sha', checks: [{ name: 'lint', pass: true }], evals: [{ id: 'X1-1', result: 'pass' }, { id: 'X1-2', result: 'pass' }] }
     if (o.label.startsWith('arch:')) return { verdict: 'fits', summary: 's', newConcepts: [] }
     if (o.label.startsWith('fix:')) return { summary: 's', changed: true }

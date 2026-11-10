@@ -190,7 +190,7 @@ test('the architecture prompt escalates a fixer commit against a decided item fr
 })
 
 test('a repeated theme stops the PR with needs human: scope', () => {
-  assert.match(src, /reason: 'needs human: scope'/)
+  assert.match(src, /halt\('needs human: scope'/)
   assert.match(src, /What is the threat model, and which attacks are out of scope\?/)
 })
 
