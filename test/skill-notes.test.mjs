@@ -74,3 +74,16 @@ test('docs say entries of one wave can share a file when they edit different par
   }
   assert.match(step1, /names the function or section for a shared file/)
 })
+
+test('docs name release 2 as 0.10.0 and do not promise stage 2 or the runner deletion in 0.9.0', () => {
+  for (const f of ['../docs/cloud-routines.md', '../docs/routine.md', '../skills/pr-pipeline/SKILL.md']) {
+    const lines = readFileSync(new URL(f, import.meta.url), 'utf8').split('\n')
+    assert.ok(lines.length > 1, f)
+    assert.ok(lines.some((l) => /0\.10\.0|release 2/i.test(l)), f)
+    for (const l of lines) {
+      if (l.includes('0.9.0')) assert.doesNotMatch(l, /stage 2|2 to 4|local runner|deletes/i, `${f}: ${l}`)
+    }
+  }
+  const text = readFileSync(new URL('../docs/cloud-routines.md', import.meta.url), 'utf8')
+  assert.match(text.split('\n').find((l) => l.startsWith('| 2 to 4 |')), /Release 2 \(0\.10\.0\)/)
+})

@@ -67,7 +67,7 @@ The fixed labels are `ready-to-build`, `needs-approval`, `maintainer-approved`, 
 | --- | --- | --- |
 | 0 | Run the code steps, write nothing to GitHub, start no agent and no wave, send no notice, and print what they would do (`would-triage`, `would-build`, `WOULD <action>`). | 0.8.0 |
 | 1 | Triage, build, open PRs and file feedback. The maintainer merges every PR. | 0.8.0 |
-| 2 to 4 | Later releases. | 0.9.0 and 0.10.0 |
+| 2 to 4 | Later releases. | Release 2 (0.10.0), or later |
 
 In 0.8.0 `config.jq` refuses a stage above 1 with `stage <n> needs a later release`. At stage 0 no record is written, so the limits that count records see zero. For that reason stage 0 starts no triager and no wave.
 
@@ -289,4 +289,4 @@ After 0.8.0 is released:
 3. For 7 days compare the cloud lines (`would-triage`, `would-build`, `WOULD`) with the local routine's choices.
 4. Run `launchctl bootout` for the local job, delete its plist, and set stage 1 in a PR.
 
-The collect routine follows this repo's stage, so the outboxes of dogfood wait during the 7 days. When stage 1 starts, outboxes older than 7 days are dropped. Local issues that have a `triaged` record and the label `routine-build` are picked up by `adopt`. 0.9.0 deletes the local runner code.
+The collect routine follows this repo's stage, so the outboxes of dogfood wait during the 7 days. When stage 1 starts, outboxes older than 7 days are dropped. Local issues that have a `triaged` record and the label `routine-build` are picked up by `adopt`. Release 2 (0.10.0) deletes the local runner code.
