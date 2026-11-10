@@ -770,14 +770,14 @@ const numbered = findings => {
   return [...groups].map(([file, items]) => `File ${file}:\n${JSON.stringify(items, null, 1)}`).join('\n')
 }
 // findings come from mergeDuplicates, so their order is the order of the numbers.
-const fixPrompt = (pr, outcome, findings, round, sweep, stopOnConflict = false) => `${ctx(pr)}
+const fixPrompt = (pr, outcome, findings, round, sweep, stopOnConflict = false, allowDisputes = false) => `${ctx(pr)}
 
 Task: fix the branch after review round ${round}.
 1. You are in a fresh git worktree. ${freshBranch('fix', pr, round)}
 2. For each finding, list every sibling place with the same weakness and fix them in the same round. For a plan, list the other entries and states each edit touches.
 ${stopOnConflict && pr.kind !== 'plan' ? `3. If a fix would need a change outside the Touches line, or would break an Acceptance line (for example, editing a test the entry says passes unchanged), change nothing and return \`planConflict\`: one sentence that names the two plan statements that disagree.
 ` : ''}${stopOnConflict && pr.kind !== 'plan' ? '4' : '3'}. Checks: ${fastText}, and ${ownE2e}.
-${fixedEvalsText(pr, false, stopOnConflict)}Return a short summary of each fix, any finding you disagree with and why, \`siblings\` (per finding number: the places you checked and the places you fixed), \`sameAs\` (groups of finding numbers that you fixed as one), changed (true when you pushed a commit, false when you pushed nothing), and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
+${fixedEvalsText(pr, false, allowDisputes)}Return a short summary of each fix, any finding you disagree with and why, \`siblings\` (per finding number: the places you checked and the places you fixed), \`sameAs\` (groups of finding numbers that you fixed as one), changed (true when you pushed a commit, false when you pushed nothing), and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}
 
@@ -793,7 +793,7 @@ Task: fix minor findings in one pass. This is the only minor pass of this PR: no
 2. You may change only these files, which the PR already changes: ${JSON.stringify(files)}. Some may be gated paths: the maintainer merges a PR that changes one, so editing it adds no way to merge. Fix a finding only when its file is on that list. Change no other file, and never a path under .github, a .claude folder, AGENTS.md, CLAUDE.md, CLAUDE.local.md or docs/goals.md. Skip a finding that needs a change outside the list.
 3. Skip a finding that needs a design choice: more than one fix would be right, or the fix changes behaviour the plan entry names. Fix only what is plain.
 4. Checks: ${fastText}, and ${ownE2e}.
-5. Commit and push. If you fix no finding, push nothing and return changed false.${noDisputesText(pr)}Return changed, headSha (\`git rev-parse HEAD\` after your push), fixed (the numbers of the findings you fixed), skipped (the number and why, for each finding you left), a short summary, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
+5. Commit and push. If you fix no finding, push nothing and return changed false.${noDisputesText(pr) || '\n'}Return changed, headSha (\`git rev-parse HEAD\` after your push), fixed (the numbers of the findings you fixed), skipped (the number and why, for each finding you left), a short summary, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}
 
@@ -1243,7 +1243,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     loopState.themes = themesOf(blocking).map(normTitle)
     if (repeated.length) return { signedOff: false, reason: 'needs human: scope', lastFindings: blocking, escalation: scopeEscalation(repeated) }
     if (round === startRound + max - 1) return { signedOff: false, reason: exhausted('', max, max, cap), lastFindings: blocking, lastTest: test }
-    const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, round, review.sweep, true), `fix:${pr.id}#${round}`, { schema: FIX })
+    const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, round, review.sweep, true, true), `fix:${pr.id}#${round}`, { schema: FIX })
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
     if (fix) await settleDisputes(pr, fix.disputes, 'fixer')
     if (pr.kind !== 'plan' && fix && fix.planConflict) return { signedOff: false, reason: 'needs human: plan conflict', conflict: fix.planConflict }

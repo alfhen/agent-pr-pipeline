@@ -2194,6 +2194,17 @@ await check('E02-3 minor fix, minor revert and land-fix prompts say disputes are
     assert.match(src.slice(start, src.indexOf('\nconst ', start + 10)), /noDisputesText\(pr\)/, name)
   }
 })
+await check('E02-3 the minor fix prompt keeps a line break before Return when evals are off', async () => {
+  const start = src.indexOf('const minorFixPrompt =')
+  assert.match(src.slice(start, src.indexOf('\nconst ', start + 10)), /noDisputesText\(pr\) \|\| '\\n'\}Return changed/)
+})
+await check('E02-3 fixPrompt takes disputes from its own allowDisputes parameter, not stopOnConflict', async () => {
+  const start = src.indexOf('const fixPrompt =')
+  const body = src.slice(start, src.indexOf('\nconst ', start + 10))
+  assert.match(body, /allowDisputes = false/)
+  assert.match(body, /fixedEvalsText\(pr, false, allowDisputes\)/)
+  assert.match(src, /review\.sweep, true, true\), `fix:\$\{pr\.id\}#\$\{round\}`/)
+})
 await check('E02-6 deviations reach the round 1 review prompt when evals are off', async () => {
   await hooked(only1('C1'), implWith({ deviations: [{ what: 'touched the verifier prompt', where: 'workflows/run-wave.js', why: 'needed' }] }))
   assert.match(calls.find(c => c.label === 'implement:C1').prompt, /`deviations`/)
