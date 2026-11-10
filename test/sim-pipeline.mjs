@@ -1193,6 +1193,23 @@ await check('end facts: the bots, the CI state and the call come from the script
   assert.ok(x.C2.land.startsWith(`${x.C2.prNumber}:${x.C2.headSha}`))
   assert.match(calls.find(c => c.label === 'io:C2#endci').prompt, /io\.sh wait-ci\.sh o\/r \d+ 1/)
 })
+await check('end facts: retry notes before the JSON line of the CI read still give the CI state', async () => {
+  const notes = 'wait-ci: cannot read check runs, try 1 of 3 failed, trying again in 2s\n' + JSON.stringify({ head: endHead('C2'), state: 'success', failed: [], timedOut: false })
+  const odd = (p, o) => o.label === 'io:C2#endci' ? ioWrap(o.label, { exitCode: 0, output: notes }) : agent(p, o)
+  calls = []
+  const x = (await run({ ...base, prs: only('C2') }, odd, parallel, log)).prs[0]
+  assert.equal(x.ready, true)
+  assert.deepEqual(x.ci, { state: 'success', failed: [] })
+})
+await check('end facts: a CI read that failed after its last try is not ready and the reason holds the try count', async () => {
+  const out = 'wait-ci: cannot read check runs, try 1 of 3 failed, trying again in 2s\nwait-ci: cannot read check runs, gave up after 3 tries'
+  const odd = (p, o) => o.label === 'io:C2#endci' ? ioWrap(o.label, { exitCode: 3, output: out }) : agent(p, o)
+  calls = []
+  const x = (await run({ ...base, prs: only('C2') }, odd, parallel, log)).prs[0]
+  assert.equal(x.ready, false)
+  assert.match(x.reason, /^final facts: cannot read the CI state/)
+  assert.match(x.reason, /3 tries/)
+})
 await check('end facts: red CI on the head gives ready false with the failed checks', async () => {
   const x = await landRun({ ciFail: ['C1'] }, only('C1'))
   assert.equal(x.C1.ready, false)
