@@ -1834,6 +1834,7 @@ await check('E03a: with evals the verifier replaces the tester, gets the eval li
   assert.match(v.prompt, /^Eval X-2 \[error path\]/m)
   assert.equal(v.prompt.match(/the flag works/g).length, 1)
   assert.ok(!v.prompt.includes('the list is settled'))
+  assert.match(calls.find(c => c.label === 'review:C1#1').prompt, /the list is settled/)
   assert.ok(!calls.some(c => c.label === 'test:C1#1'))
   assert.equal(calls.filter(c => c.label === 'io:C1#cichecks').length, 1)
   const y = await hooked(withEvals('C1', { evals: EVS, noErrorPath: true }), () => undefined)
