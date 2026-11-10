@@ -341,6 +341,8 @@ test('L01-8 backfill writes one record per merged PR with none and nothing on a 
   const path = `repos/o/r/issues/${ISSUE}/comments`
   s.put(path, [rec(10, 'wf_1', 'P42', { pr: { id: 'P42', number: 42 } }), rec(11, 'backfill', 'pr-41', { pr: { id: 'pr-41', number: 41 } }), rec(12, 'backfill', 'pr-43', { pr: { id: 'pr-43', number: 43 } })])
   assert.deepEqual(run(s, 'backfill').writes, [])
+  const onlyMiss = setup({ comments: [rec(10, 'miss', 'P41', { kind: 'miss', pr: { id: 'P41', number: 41 } })], pulls: [pulls[0]], facts })
+  assert.deepEqual(records(run(onlyMiss, 'backfill', '--dry-run')).map(x => x.pr.number), [41])
   const noIssue = run(setup({ issue: false, pulls, facts }), 'backfill', '--dry-run')
   assert.equal(noIssue.status, 0, noIssue.stderr)
   assert.equal(records(noIssue).length, 3)
@@ -362,4 +364,39 @@ test('list, report and hand with no ledger issue exit 65', () => {
   for (const args of [['list'], ['report'], ['hand', '1', 'code']]) assert.equal(run(setup({ issue: false }), ...args).status, 65)
   assert.equal(run(setup(), 'bogus').status, 64)
   assert.equal(run(setup(), 'put').status, 64)
+})
+
+test('E06-1 put writes an eval miss for a ready PR with codeChangedByBots, in the same run, and none otherwise', () => {
+  const s = setup()
+  const out = (id, o) => tmp(s, `out-${id}.json`, { result: { prs: [{ id, ready: true, prNumber: 42, history: [{ round: 1 }], ...o }] } })
+  const miss = records(run(s, 'put', out('A', { codeChangedByBots: true }), '--run', 'wf_1', '--dry-run'))[0]
+  assert.deepEqual(miss.evalMisses, [{ source: 'bot' }])
+  assert.equal(records(run(s, 'put', out('B', { codeChangedByBots: false }), '--run', 'wf_1', '--dry-run'))[0].evalMisses.length, 0)
+  assert.equal(records(run(s, 'put', out('C', { codeChangedByBots: true, ready: false }), '--run', 'wf_1', '--dry-run'))[0].evalMisses.length, 0)
+  const given = records(run(s, 'put', out('D', { codeChangedByBots: true, evalMisses: [{ source: 'bot' }] }), '--run', 'wf_1', '--dry-run'))[0]
+  assert.equal(given.evalMisses.length, 1)
+})
+
+test('E06-2 miss records a later defect and report counts the PR once with a bot miss as well', () => {
+  const s = setup()
+  const r = run(s, 'miss', '42', '77')
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.writes[0], /^POST \/repos\/o\/r\/issues\/7\/comments body=<!-- pipeline:ledger v1 miss-\d+-77 #42 -->\\n```json\\n.*"kind":"miss".*"evalMisses":\[\{"source":"later","issue":77\}\]/)
+  assert.equal(run(s, 'miss', '42').status, 64)
+  assert.equal(run(s, 'miss', '42', 'x').status, 64)
+  assert.equal(run(s, 'miss', '42', '1234567890123456789').status, 64)
+  assert.equal(run(s, 'miss', '0042', '77').status, 64)
+  assert.equal(run(setup({ issue: false }), 'miss', '42', '77').status, 65)
+  const missRec = (id, n, i) => rec(id, `miss-${id}-${i}`, `#${n}`, { kind: 'miss', pr: { id: `#${n}`, number: n }, rounds: null, evalMisses: [{ source: 'later', issue: i }] })
+  const comments = [
+    rec(10, 'wf_1', 'P42', { pr: { id: 'P42', number: 42 }, rounds: 2, codeChangedByBots: true, evalMisses: [{ source: 'bot' }] }),
+    rec(11, 'wf_1', 'P43', { pr: { id: 'P43', number: 43 }, rounds: 1 }),
+    rec(12, 'wf_1', 'P44', { pr: { id: 'P44', number: 44 }, rounds: 1 }),
+    missRec(20, 42, 77), missRec(21, 43, 78),
+  ]
+  const t = setup({ comments, pulls: [42, 43, 44].map(n => mergedPr(n, '2026-11-02T00:00:00Z')), facts: { 42: {}, 43: {}, 44: {} } })
+  const rep = run(t, 'report').stdout
+  assert.match(rep, /^Defects found after sign-off: 2 PRs\.$/m)
+  assert.match(rep, /^Eval misses: 2 PRs\.$/m)
+  assert.match(rep, /^Rounds per merged PR: median 1, over 3 PRs/m)
 })
