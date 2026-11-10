@@ -54,7 +54,6 @@ const MILESTONE_JQ = MILESTONE_TITLE.replace(/["\\]/g, '\\$&').replace(/'/g, "'\
 const MILESTONE_STEP = A.milestone ? `\nFirst read the milestone number: \`gh api --paginate 'repos/${REPO}/milestones?per_page=100' --jq '.[] | select(.title == "${MILESTONE_JQ}") | .number'\`. If it prints nothing, stop and return blocked true with blockedReason "${MILESTONE_MISSING}".` : ''
 const STEPS = Object.assign({
   evals: { model: 'opus', effort: 'high' },
-  dispute: { model: 'opus', effort: 'high' },
   impl: { model: 'sonnet', effort: 'medium' },
   test: { model: 'sonnet', effort: 'low' },
   verify: { model: 'sonnet', effort: 'medium' },
@@ -288,7 +287,7 @@ const decided = pr => (pr.architectureDecision ? `\nArchitecture decision by the
 const AGENT_PREFIX = A.agentPrefix === undefined ? 'agent-pr-pipeline:' : A.agentPrefix
 const ROLES = {
   evals: { agent: 'evals-writer', phase: 'Evals', clone: true, skills: null },
-  dispute: { agent: 'evals-writer', phase: 'Evals', clone: true, skills: null },
+  dispute: { agent: 'evals-writer', phase: 'Evals', model: 'evals', clone: true, skills: null },
   evalsArch: { agent: 'arch-reviewer', phase: 'Evals', model: 'arch', clone: true, skills: null },
   evalsProduct: { agent: 'product-reviewer', phase: 'Evals', model: 'product', clone: true, skills: null },
   impl: { agent: 'implementer', phase: 'Implement', isolation: 'worktree' },
@@ -632,7 +631,7 @@ const prBlock = pr => `PR: ${pr.id} - ${pr.title}\nBranch: ${pr.branch}\nKind: $
 const cloneTo = (dir, pr) => `\`rm -rf ${TMP}/${dir} && git clone https://github.com/${REPO}.git ${TMP}/${dir} && cd ${TMP}/${dir} && git checkout ${pr.branch}\``
 const freshBranch = (prefix, pr, n) => `\`git fetch origin && git checkout -B ${prefix}-${pr.id}-r${n} origin/${pr.branch}\` (a new local name, because another worktree may hold ${pr.branch}). Push with \`git push origin HEAD:${pr.branch}\`.`
 
-const fixedEvalsText = (pr, deviations) => pr.evals ? `\nThe evals in the PR block are fixed. Build until you believe every one passes. You cannot change, add or remove an eval, and an eval in your answer is ignored. If an eval is wrong or cannot be met, build the rest and return \`disputes\`: [{ id, reason }]. The evals writer rules on each dispute.${deviations ? ' When you change something against the entry\'s Touches line, its Acceptance line or a named plan rule, return it in `deviations`: [{ what, where, why }].' : ''}\n` : ''
+const fixedEvalsText = (pr, deviations, disputes = true) => pr.evals ? `\nThe evals in the PR block are fixed. Build until you believe every one passes. You cannot change, add or remove an eval, and an eval in your answer is ignored. ${disputes ? ' If an eval is wrong or cannot be met, build the rest and return \`disputes\`: [{ id, reason }]. The evals writer rules on each dispute.' : ''}${deviations ? ' When you change something against the entry\'s Touches line, its Acceptance line or a named plan rule, return it in `deviations`: [{ what, where, why }].' : ''}\n` : ''
 const implPrompt = pr => `${ctx(pr)}
 
 Task: implement this PR.
@@ -754,7 +753,7 @@ Task: fix the branch after review round ${round}.
 2. For each finding, list every sibling place with the same weakness and fix them in the same round. For a plan, list the other entries and states each edit touches.
 ${stopOnConflict && pr.kind !== 'plan' ? `3. If a fix would need a change outside the Touches line, or would break an Acceptance line (for example, editing a test the entry says passes unchanged), change nothing and return \`planConflict\`: one sentence that names the two plan statements that disagree.
 ` : ''}${stopOnConflict && pr.kind !== 'plan' ? '4' : '3'}. Checks: ${fastText}, and ${ownE2e}.
-${fixedEvalsText(pr, false)}Return a short summary of each fix, any finding you disagree with and why, \`siblings\` (per finding number: the places you checked and the places you fixed), \`sameAs\` (groups of finding numbers that you fixed as one), changed (true when you pushed a commit, false when you pushed nothing), and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
+${fixedEvalsText(pr, false, stopOnConflict)}Return a short summary of each fix, any finding you disagree with and why, \`siblings\` (per finding number: the places you checked and the places you fixed), \`sameAs\` (groups of finding numbers that you fixed as one), changed (true when you pushed a commit, false when you pushed nothing), and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}
 
@@ -1753,6 +1752,7 @@ async function runPRSteps(input) {
     if (decisionFix && typeof decisionFix.changed === 'boolean') rerunFixChanged = decisionFix.changed
   } else if (!pr.skipImpl && !pr.resume) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
+    if (impl && !impl.pushed && pr.evals) await settleDisputes(pr, impl.disputes, 'implementer')
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl, ...evalsOut() }
     if (pr.evals) {
       pr.deviations = (Array.isArray(impl.deviations) ? impl.deviations : []).filter(d => d && reasonOf(d.what))

@@ -2071,6 +2071,19 @@ await check('E02-3 a fixer dispute is settled after the fix call and a changed e
   assert.match(calls.find(c => c.label === 'verify:C1#2').prompt, /C1-1 after the fixer dispute/)
   assert.doesNotMatch(calls.find(c => c.label === 'verify:C1#1').prompt, /after the fixer dispute/)
 })
+await check('E02-3 a dispute from an implementer that did not push is settled and recorded', async () => {
+  const x = await disputeRun(listOf('C1'), (p, o) => implWith({ pushed: false, disputes: [{ id: 'C1-1', reason: 'cannot be met' }] })(p, o) || (o.label === 'dispute:C1#1' ? { ruling: 'keep', reason: 'k' } : undefined))
+  assert.equal(x.C1.reason, 'implementation not pushed')
+  assert.equal(x.C1.evalDisputes.length, 1)
+  assert.equal(x.C1.evalDisputes[0].ruling, 'keep')
+})
+await check('E02-3 only the review loop fixer is told to return disputes; a bots fix prompt is not', async () => {
+  await hooked(only1('B1'), (p, o) => o.label === 'evals:B1' ? withMeta(listOf('B1')) : o.label === 'botreview:B1#1' ? reviewOf([f('major', 'x')]) : undefined, { evals: true })
+  const bots = calls.find(c => c.label === 'fix:B1#bots1')
+  assert.ok(bots, 'a bots fix call ran')
+  assert.match(bots.prompt, /You cannot change, add or remove an eval/)
+  assert.doesNotMatch(bots.prompt, /`disputes`/)
+})
 await check('E02-4 a writer that fails on a dispute keeps the eval and records unsettled', async () => {
   const x = await disputeRun(listOf('C1'), (p, o) => implWith({ disputes: [{ id: 'C1-1', reason: 'r' }] })(p, o) || (o.label === 'dispute:C1#1' ? null : undefined))
   assert.deepEqual(x.C1.evals, listOf('C1'))
