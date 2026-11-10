@@ -1157,7 +1157,7 @@ await check('K04: a land-fix check with a large land-commits.sh output reviews i
   const at = l => labels.indexOf(l)
   assert.ok(at('io:LK#landcommits1') > -1 && at('io:LK#landcommits1') < at('test:LK#land1') && at('test:LK#land1') < at('landreview:LK#1') && at('landreview:LK#1') < at('botwait:LK'), labels.join(' '))
   const io = calls.find(c => c.label === 'io:LK#landcommits1')
-  assert.match(io.prompt, new RegExp(`\`PIPELINE_IO_TMP=${largeTmp} bash /plug/scripts/io\\.sh land-commits\\.sh o/r `))
+  assert.match(io.prompt, new RegExp(`\`PIPELINE_IO_TMP='${largeTmp}' bash /plug/scripts/io\\.sh land-commits\\.sh o/r `))
   const rev = calls.find(c => c.label === 'landreview:LK#1').prompt
   const file = /saved at (\S+)/.exec(answer)[1]
   assert.ok(file.startsWith(largeTmp))
@@ -1185,7 +1185,7 @@ await check('K04: a large-form answer takes its exit code only from its last exi
   assert.ok(!a.reason.includes(/saved at (\S+)/.exec(withLine)[1]), a.reason)
   assert.match(a.reason, /exit 3/)
   assert.ok(!calls.some(c => /^landreview:LK3/.test(c.label)))
-  assert.match(calls.find(c => c.label === 'io:LK3#landcommits1').prompt, new RegExp(`PIPELINE_IO_TMP=${largeTmp} bash /plug/scripts/io\\.sh land-commits\\.sh`))
+  assert.match(calls.find(c => c.label === 'io:LK3#landcommits1').prompt, new RegExp(`PIPELINE_IO_TMP='${largeTmp}' bash /plug/scripts/io\\.sh land-commits\\.sh`))
   const bare = withLine.replace(/pipeline-io: exit 3\n$/, '')
   assert.match(bare, /pipeline-io: large output/)
   assert.ok(!/pipeline-io: exit/.test(bare))
@@ -1228,6 +1228,21 @@ await check('K04: io prompts tell the agent to return the large form or the noti
   const c = calls.find(c => c.label === 'io:QK2#get')
   assert.match(c.prompt, /too large to return inline/)
   assert.match(c.prompt, /do not read the saved file/)
+})
+await check('K04: a run tmp folder with a space is quoted in the io command and its saved file still reaches the reviewer', async () => {
+  const spaced = `${largeTmp}/run tmp`
+  const answer = `pipeline-io: begin\npipeline-io: large output, 100000 bytes, saved at ${spaced}/io-large.abc123\npipeline-io: exit 0\n`
+  land.landOutput.add('LK4')
+  try {
+    const x = (await runWith({ ...base, tmp: spaced, prs: [{ id: 'LK4', title: 't', branch: 'b-LK4', landFix: true, prNumber: 8 }] }, async (p, o) => {
+      const out = await agent(p, o)
+      return o.label === 'io:LK4#landcommits1' ? { exitCode: 0, output: answer, raw: true } : out
+    })).prs[0]
+    assert.doesNotMatch(x.reason || '', /^land-fix check failed/)
+    assert.ok(calls.find(c => c.label === 'io:LK4#landcommits1').prompt.includes(`PIPELINE_IO_TMP='${spaced}' bash /plug/scripts/io.sh`))
+    assert.ok(calls.find(c => c.label === 'landreview:LK4#1').prompt.includes(`${spaced}/io-large.abc123`))
+  } finally { land.landOutput.delete('LK4') }
+  rmSync(largeTmp, { recursive: true, force: true })
 })
 await check('quick: the overlap check stops the later of two quick PRs that share a path, after both briefs are posted and before any build', async () => {
   TRIAGES.QO1 = triage('build', 'M', 'medium', { entry: { touches: 'src/x.js', acceptance: 'a' } })

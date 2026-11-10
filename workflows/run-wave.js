@@ -1068,7 +1068,7 @@ const IO_EXIT = /^pipeline-io: exit (\d+)\s*$/
 // The only reader of a pipeline-io answer. The exit code comes from the last exit line that scripts/io.sh printed, never from
 // the agent's own report; the output is the text between the begin line and that line. A missing line is a failed call (exitCode -1).
 // A large-form answer gives { file } only to a caller that can read the file (opts.large); every other caller fails closed.
-const IO_LARGE = /^pipeline-io: large output, \d+ bytes, saved at (\S+)\s*$/
+const IO_LARGE = /^pipeline-io: large output, \d+ bytes, saved at (.+?)\s*$/
 // io.sh only writes TMP/io-large.XXXXXX. A looser check lets a path such as TMP/../x reach the land reviewer's read.
 const IO_LARGE_NAME = /^io-large\.[A-Za-z0-9]+$/
 const IO_TOO_LARGE ='pipeline-io: output too large to hand on'
@@ -1093,7 +1093,7 @@ const fenceFor = text => '`'.repeat(Math.max(3, ...(text.match(/`+/g) || []).map
 // The only place that builds a pipeline-io command. opts: { phase, role, large, write: { path, text } }.
 // With write, the agent first writes the text to the path (the Write tool), then runs the command.
 async function ioCall(pr, label, script, args, opts = {}) {
-  const command = `PIPELINE_IO_TMP=${TMP} bash ${PLUGIN_ROOT}/scripts/io.sh ${script} ${args}`
+  const command = `PIPELINE_IO_TMP=${shq(TMP)} bash ${PLUGIN_ROOT}/scripts/io.sh ${script} ${args}`
   const fence = opts.write ? fenceFor(opts.write.text) : ''
   const prompt = `Task: ${opts.write ? 'write one file, run one command' : 'run one command'} and return everything it printed, exactly as printed.
 Plugin folder: ${PLUGIN_ROOT}. Run scripts only from this folder, never from a clone of ${REPO}.
