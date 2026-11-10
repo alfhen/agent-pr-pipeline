@@ -2165,6 +2165,20 @@ await check('E02-3 a resume keeps the disputes and deviations of the earlier run
   assert.match(calls.find(c => c.label === 'open:C1').prompt, /cannot be met/)
   assert.match(calls.find(c => c.label === 'review:C1#1').prompt, /touched the helper/)
 })
+await check('E02-3 a resume with evals off keeps the earlier deviations: they reach the review and the result', async () => {
+  const dev = { what: 'touched the helper', where: 'a.js', why: 'needed' }
+  const x = await hooked([{ ...C1PR, resume: { history: [], deviations: [dev] } }], () => undefined)
+  assert.deepEqual(x.C1.deviations, [dev])
+  assert.match(calls.find(c => c.label === 'review:C1#1').prompt, /touched the helper/)
+})
+await check('E02-3 a resume that stops at the evals check returns the earlier disputes and deviations unchanged', async () => {
+  const earlier = { id: 'C1-1', from: 'implementer', reason: 'cannot be met', ruling: 'keep', writerReason: 'fine' }
+  const dev = { what: 'touched the helper', where: 'a.js', why: 'needed' }
+  const x = await evalsRun([{ ...C1PR, resume: { history: [], evals: { evals: [ev('C1-1', 'behaviour')] }, evalDisputes: [earlier], deviations: [dev] } }], noWriter)
+  assert.match(x.C1.reason, /^evals refused/)
+  assert.deepEqual(x.C1.evalDisputes, [earlier])
+  assert.deepEqual(x.C1.deviations, [dev])
+})
 await check('E02-3 only the review loop fixer is told to return disputes; a bots fix prompt is not', async () => {
   await hooked(only1('B1'), (p, o) => o.label === 'evals:B1' ? withMeta(listOf('B1')) : o.label === 'botreview:B1#1' ? reviewOf([f('major', 'x')]) : undefined, { evals: true })
   const bots = calls.find(c => c.label === 'fix:B1#bots1')

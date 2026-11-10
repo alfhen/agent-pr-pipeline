@@ -1637,6 +1637,9 @@ const givenEvals = (pr, raw) => {
 
 // A resumed run keeps the disputes and deviations of the earlier run: the one-dispute-per-id rule and the PR body depend on them.
 const resumedList = (pr, key, keep) => pr.resume && Array.isArray(pr.resume[key]) ? pr.resume[key].filter(keep) : []
+const resumedDisputes = pr => resumedList(pr, 'evalDisputes', d => d && typeof d.id === 'string')
+const resumedDeviations = pr => resumedList(pr, 'deviations', d => d && reasonOf(d.what))
+const carriedOut = (disputes, deviations) => ({ ...(disputes && disputes.length ? { evalDisputes: disputes } : {}), ...(deviations && deviations.length ? { deviations } : {}) })
 
 async function checkEvals(pr, list, meta, round, writerNotes) {
   const [arch, product] = await parallel([
@@ -1698,7 +1701,7 @@ async function settleDisputes(pr, disputes, from) {
   if (!pr.evals || !Array.isArray(disputes)) return
   for (const raw of disputes) {
     const id = raw && reasonOf(raw.id)
-    if (!id) continue
+    if (!id) { log(`${pr.id} dispute without an id ignored`); continue }
     if (pr.evalDisputes.some(d => d.id === id)) { log(`${pr.id} dispute for ${id} ignored: one dispute for each eval`); continue }
     const record = { id, from, reason: reasonOf(raw.reason) }
     pr.evalDisputes.push(record)
@@ -1764,7 +1767,7 @@ async function runPRSteps(input) {
   const minors = (pr.resume ? pr.resume.minors || [] : []).concat(quickMinors)
   let impl = { problems: '' }
   let rerunFixChanged
-  const evalsOut = () => pr.evals ? { evals: pr.evals, evalsMeta: pr.evalsMeta, evalDisputes: pr.evalDisputes, deviations: pr.deviations } : {}
+  const evalsOut = () => pr.evals ? { evals: pr.evals, evalsMeta: pr.evalsMeta, evalDisputes: pr.evalDisputes, ...carriedOut([], pr.deviations) } : carriedOut([], pr.deviations)
   const rerunFix = () => rerunFixChanged === undefined ? {} : { rerunFixChanged }
   const decisionFindings = (pr.skipImpl || pr.resume) && (pr.architectureDecision || pr.productDecision)
     ? [{ severity: 'major', title: 'Apply the maintainer decision', detail: `Apply the maintainer decision given in the brief to the branch. If the branch already follows it, change nothing.${pr.architectureDecision ? ` Architecture decision: ${pr.architectureDecision}` : ''}${pr.productDecision ? ` Product decision: ${pr.productDecision}` : ''}` }]
@@ -1773,9 +1776,10 @@ async function runPRSteps(input) {
   const written = await writeEvals(pr, rawEvals)
   if (written.stop) {
     const given = givenEvals(pr, rawEvals)
-    return { id: pr.id, ready: false, reason: written.stop, history, ...(pr.resume && pr.resume.findings ? { lastFindings: pr.resume.findings } : {}), ...(given ? { evals: given.list, evalsMeta: given.meta } : {}) }
+    return { id: pr.id, ready: false, reason: written.stop, history, ...(pr.resume && pr.resume.findings ? { lastFindings: pr.resume.findings } : {}), ...(given ? { evals: given.list, evalsMeta: given.meta } : {}), ...carriedOut(resumedDisputes(pr), resumedDeviations(pr)) }
   }
-  if (written.evals) pr = { ...pr, evals: written.evals, evalsMeta: written.meta, evalDisputes: resumedList(pr, 'evalDisputes', d => d && typeof d.id === 'string'), deviations: resumedList(pr, 'deviations', d => d && reasonOf(d.what)) }
+  pr = { ...pr, deviations: resumedDeviations(pr) }
+  if (written.evals) pr = { ...pr, evals: written.evals, evalsMeta: written.meta, evalDisputes: resumedDisputes(pr) }
   if (preFindings.length) {
     const decisionFix = await call('fix', pr, fixPrompt(pr, null, preFindings, history.length), `fix:${pr.id}#${history.length}`, { schema: FIX })
     if (decisionFix && typeof decisionFix.changed === 'boolean') rerunFixChanged = decisionFix.changed
