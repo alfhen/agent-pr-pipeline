@@ -1991,11 +1991,16 @@ await check('E03b-2 and E03b-7 and E03b-10: the verify prompt asks for the break
   assert.match(pr, /A load, import, missing-file, syntax or exit-127 error is not that: set not-run/)
 })
 await check('E03b-11: a ci result next to a pass behaviour eval keeps the break check; the ci item stays untested', async () => {
-  const mixed = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'ci', ciCheck: 'ci' }] })
+  const mixed = vres({ evals: [{ id: 'X-1', result: 'pass' }, { id: 'X-2', result: 'ci', ciCheck: 'ci' }] })
   const x = await hooked(withEvals('C1'), verifyHook({ 1: mixed }))
   assert.match(calls.find(c => c.label === 'verify:C1#1').prompt, /Break check\./)
   assert.equal(x.C1.history.length, 1)
-  assert.deepEqual(x.C1.untested, ['X-2 (covered by CI check ci)'])
+  assert.deepEqual([...x.C1.untested].sort(), ['X-1 (break check not run)', 'X-2 (covered by CI check ci)'])
+})
+await check('E03b: not-applicable on a behaviour eval is untested, not skipped', async () => {
+  const na = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'not-applicable' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: na }))
+  assert.deepEqual(x.C1.untested, ['X-1 (break check not run: not-applicable is not valid for kind behaviour)'])
 })
 await check('E03b-12: a pass behaviour or error path eval with no breakCheck is not-run and untested', async () => {
   const none = vres({ evals: [{ id: 'X-1', result: 'pass' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
@@ -2010,11 +2015,10 @@ await check('E03b-3 and E03b-9 and E03b-10: not-run with a reason is untested, n
   assert.equal(x.C1.history.length, 1)
   assert.deepEqual(x.C1.untested, ['X-1 (break check not run: exit 127: file missing)', 'X-2 (break check not run: no test maps to this eval)'])
 })
-await check('E03b: a round with a failed eval does not count a missing breakCheck', async () => {
+await check('E03b: a round with a failed eval is not a break check major', async () => {
   const failing = vres({ evals: [{ id: 'X-1', result: 'fail', evidence: 'x' }, { id: 'X-2', result: 'pass' }] })
   const x = await hooked(withEvals('C1'), verifyHook({ 1: failing }))
   assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [test]: eval X-1 failed: x'])
-  assert.deepEqual(x.C1.untested, [])
 })
 await check('E03b-5: breakCheck false gives the E03a prompt and results', async () => {
   const plain = vres({ evals: EVS.map(e => ({ id: e.id, result: 'pass', evidence: 'ok' })) })

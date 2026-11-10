@@ -250,8 +250,9 @@ const verifyOutcome = (pr, verify) => {
       if (r.breakCheck === 'passes-without-change') {
         passed.splice(passed.indexOf(e.id), 1); failed.push(e.id)
         findings.push({ severity: 'major', title: `eval ${e.id}: the test passes without the change`, detail: `Eval ${e.id} (${e.statement}) passed, but its test${r.test ? ` ${r.test}` : ''} also passes with the change removed, so it proves nothing. Make the test fail without the change.${r.breakWhy ? ` Evidence: ${r.breakWhy}` : ''}` })
-      } else if (asked && r.breakCheck !== 'fails-without-change' && r.breakCheck !== 'not-applicable') {
-        covered.push(`${e.id} (break check not run${r.breakCheck === 'not-run' && r.breakWhy ? `: ${r.breakWhy}` : ''})`)
+      } else if (asked && r.breakCheck !== 'fails-without-change') {
+        const why = r.breakCheck === 'not-run' ? r.breakWhy : r.breakCheck === 'not-applicable' ? `not-applicable is not valid for kind ${e.kind}` : ''
+        covered.push(`${e.id} (break check not run${why ? `: ${why}` : ''})`)
       }
     }
   }
