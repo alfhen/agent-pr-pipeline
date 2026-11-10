@@ -22,7 +22,7 @@ For each eval return `id` (`<PR id>-<n>`; keep an id the entry gives), `kind`, `
 - When the entry adds or changes an algorithm (its `Algorithm:` line says yes, or the task says so, or you see it), set `algorithm` true and add a `time bound` eval, a `size limit` eval and a `reference` eval. The reference is a slow, simple version of the same function, compared with it on generated inputs; it catches a wrong result such as a wrong cap, which a fixed example does not. When no simple version exists, say why in `noReference` and leave the reference eval out.
 - Do not write an eval for what the entry does not ask for. Do not weaken a row of the entry's table.
 
-When your task holds a reason a reviewer gave for sending your list back, change the list to meet it, or say in `notes` why it already does.
+When your task holds a reason a reviewer gave for sending your list back, change the list to meet it, or say in `notes` why it already does. A reviewer reads your `notes`. A rule refusal (for example, no error path) can be met only by changing the list.
 
 Return `evals`, `algorithm`, `noErrorPath`, `noReference` and `notes` (anything the reviewers should know).
 

@@ -570,6 +570,28 @@ await check('E01-9 the default path runs writer, evals check, implementer, teste
   assert.deepEqual(steps.slice(0, 6), ['evals', 'evalsarch', 'implement', 'test', 'review', 'arch'])
   assert.ok(first('arch') < first('docs') && first('docs') < first('open') && first('open') < first('botwait'))
 })
+await check('E01-5 a resumed PR whose evals check stops keeps its history, findings and list', async () => {
+  const history = [{ round: 1, testPass: true, failingChecks: [], blockersAndMajors: [] }]
+  const findings = [{ severity: 'major', title: 'f', detail: 'd' }]
+  const x = await evalsRun([{ ...C1PR, resume: { history, findings, evals: { evals: [ev('C1-1', 'behaviour')] } } }], noWriter)
+  assert.equal(x.C1.reason, 'evals refused: no error path')
+  assert.deepEqual(x.C1.history, history)
+  assert.deepEqual(x.C1.lastFindings, findings)
+  assert.deepEqual(x.C1.evals, [ev('C1-1', 'behaviour')])
+})
+await check('E01-4 a quick PR with an object-form list builds, and its triage prompt shows no unaccepted list', async () => {
+  const given = { evals: listOf('QS'), noErrorPath: 'x' }
+  const x = await evalsRun([{ id: 'QS', quick: { issue: 40 }, branch: 'fix/QS', evals: given }], noWriter)
+  assert.ok(!/quick setup failed/.test(x.QS.reason || ''))
+  assert.ok(calls.some(c => c.label === 'implement:QS'))
+  assert.ok(!/Evals \(/.test(calls.find(c => c.label === 'triage:QS').prompt))
+})
+await check('E01-2 the writer notes reach the evals check on a later attempt', async () => {
+  let n = 0
+  const x = await evalsRun([C1PR], () => withMeta(listOf('C1'), { notes: 'covered by C1-2' }), () => (++n === 1 ? { verdict: 'needs-change', notes: 'gap' } : { verdict: 'ok', notes: '' }))
+  assert.ok(!evalsStop(x.C1))
+  assert.match(calls.find(c => c.label === 'evalsarch:C1#2').prompt, /covered by C1-2/)
+})
 await check('E01-6 evals false turns the writer and the check off, also for a given list', async () => {
   const x = await evalsRun([{ ...C1PR, evals: listOf('C1') }], noWriter, okCheck, { evals: false })
   assert.ok(!evalLabels('C1').some(l => /^evals/.test(l)))
