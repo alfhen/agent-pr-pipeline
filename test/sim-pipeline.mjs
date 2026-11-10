@@ -172,7 +172,7 @@ const agentRaw = async (prompt, o) => {
   if (o.label.startsWith('implement')) return { pushed: true, branch: 'b', summary: 's', acceptanceTestPassed: true, worktree: wt(o) }
   if (o.label.startsWith('fix:')) return { summary: 's', worktree: wt(o), siblings: id === 'B1' ? [{ finding: 'the new regex anchor', checked: ['other anchors'], fixed: [] }] : [] }
   const round = o.label.split('#')[1] || ''
-  if (o.label.startsWith('verify')) return { pass: true, headSha: 'sha-' + id, checks: [{ name: 'lint', pass: true }], evals: [...prompt.matchAll(/^Eval (\S+) \[/gm)].map(m => ({ id: m[1], result: 'pass', evidence: 'ok' })) }
+  if (o.label.startsWith('verify')) return { pass: true, headSha: 'sha-' + id, checks: [{ name: 'lint', pass: true }], evals: [...prompt.matchAll(/^Eval (\S+) \[([^\]]*)\]/gm)].map(m => ({ id: m[1], result: 'pass', evidence: 'ok', breakCheck: /^(behaviour|error path)$/.test(m[2]) ? 'fails-without-change' : 'not-applicable' })) }
   if (o.label.startsWith('test')) return { pass: true, headSha: /^land/.test(round) && !land.testMoved.has(id) ? landHead[id].padEnd(40, 'c') : 'sha-' + id + (/^(docs|bots|land)/.test(round) ? '-' + round : ''), checks: [{ name: 'lint', pass: true }] }
   if (o.label.startsWith('landreview')) return { summary: 's', findings: land.landBad.has(id) || (land.landBadOnce.has(id) && round === '1') ? [{ severity: 'major', title: 'the resolution drops the new flag', detail: 'd' }] : [{ severity: 'minor', title: 'land nit', detail: 'd' }] }
   if (o.label.startsWith('botreview')) return { summary: 's', findings: id === 'B1' && round === '1' ? [{ severity: 'major', title: 'the new regex anchor rejects valid input', detail: 'd' }, { severity: 'minor', title: 'round one nit', detail: 'd' }] : [{ severity: 'minor', title: 'late nit', detail: 'd' }], invariants: id === 'B1' && round === '1' ? [{ text: 'the gate refuses an unknown path', holds: false, evidence: 'it accepts one' }] : [], sweep: [] }
@@ -1818,7 +1818,7 @@ await check('a decision rerun that stops at open still reports rerunFixChanged',
 const ck = (name, extra = {}) => ({ name, pass: true, ...extra })
 const EVS = [{ id: 'X-1', kind: 'behaviour', statement: 'the flag works', check: 'run it, expect 0' }, { id: 'X-2', kind: 'error path', statement: 'bad input is refused', check: 'run it with bad input, expect 2' }]
 const withEvals = (id, evals = EVS) => only1(id).map(p => ({ ...p, evals }))
-const vres = (extra = {}) => ({ pass: true, headSha: 'sha-C1', checks: [ck('lint')], evals: EVS.map(e => ({ id: e.id, result: 'pass', evidence: 'ok' })), ...extra })
+const vres = (extra = {}) => ({ pass: true, headSha: 'sha-C1', checks: [ck('lint')], evals: EVS.map(e => ({ id: e.id, result: 'pass', evidence: 'ok', breakCheck: 'fails-without-change' })), ...extra })
 const verifyHook = (answers, rest) => (p, o) => { const m = /^verify:C1#(\d+)$/.exec(o.label); if (m && answers[m[1]]) return answers[m[1]]; return rest ? rest(p, o) : undefined }
 await check('E03a-7: a PR without evals calls the tester, never the verifier, and reads no ciChecks', () => {
   assert.ok(mainCalls.some(c => c.label.startsWith('test:C1')))
@@ -1839,7 +1839,7 @@ await check('E03a: with evals the verifier replaces the tester, gets the eval li
   assert.equal(y.C1.ready, true)
 })
 await check('E03a-1: an eval id with no result refuses sign-off and the fixer gets "eval <id> has no result"', async () => {
-  const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ evals: [{ id: 'X-1', result: 'pass', evidence: 'ok' }] }) }))
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ evals: [{ id: 'X-1', result: 'pass', evidence: 'ok', breakCheck: 'fails-without-change' }] }) }))
   assert.equal(x.C1.history[0].testPass, false)
   assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [test]: eval X-2 has no result'])
   assert.match(fixCalls('C1')[0].prompt, /eval X-2 has no result/)
@@ -1856,7 +1856,7 @@ await check('E03a-2 and E03a-5: a fail result refuses sign-off even when the ver
   assert.equal(never.C1.ready, false)
 })
 await check('E03a-3: a ci result needs a name from ciChecks; without one it is no result, with one it counts and is untested', async () => {
-  const ci = n => vres({ evals: [{ id: 'X-1', result: 'pass', evidence: 'ok' }, { id: 'X-2', result: 'ci', ciCheck: n }] })
+  const ci = n => vres({ evals: [{ id: 'X-1', result: 'pass', evidence: 'ok', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'ci', ciCheck: n }] })
   const unnamed = await hooked(withEvals('C1'), verifyHook({ 1: ci('other') }))
   assert.deepEqual(unnamed.C1.history[0].blockersAndMajors, ['major [test]: eval X-2 has no result'])
   assert.deepEqual(unnamed.C1.history[0].evals, { passed: ['X-1'], failed: ['X-2'], ci: [] })
@@ -1871,13 +1871,13 @@ await check('E03a-3: a ci result needs a name from ciChecks; without one it is n
 await check('E03a-9: a failed ciChecks read gives [] and a ci result counts as no result', async () => {
   ciAnswer.down.add('C1')
   try {
-    const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ evals: [{ id: 'X-1', result: 'pass' }, { id: 'X-2', result: 'ci', ciCheck: 'ci' }] }) }))
+    const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'ci', ciCheck: 'ci' }] }) }))
     assert.equal(x.C1.history[0].testPass, false)
     assert.match(x.C1.history[0].blockersAndMajors[0], /eval X-2 has no result/)
   } finally { ciAnswer.down.delete('C1') }
   ciAnswer.names = ['e2e']
   try {
-    const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ evals: [{ id: 'X-1', result: 'pass' }, { id: 'X-2', result: 'ci', ciCheck: 'ci' }] }) }))
+    const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'ci', ciCheck: 'ci' }] }) }))
     assert.equal(x.C1.history[0].testPass, false)
   } finally { ciAnswer.names = ['ci'] }
 })
@@ -1895,7 +1895,7 @@ await check('E03a-6: the history row has the eval ids by result', async () => {
   assert.equal(y.C1.history[0].evals, undefined)
 })
 await check('E03a-8: a ci item stays untested after a docs step whose tester round is clean', async () => {
-  const x = await hooked(withEvals('G1'), (p, o) => o.label === 'verify:G1#1' ? vres({ headSha: 'sha-G1', evals: [{ id: 'X-1', result: 'pass' }, { id: 'X-2', result: 'ci', ciCheck: 'ci' }] }) : undefined)
+  const x = await hooked(withEvals('G1'), (p, o) => o.label === 'verify:G1#1' ? vres({ headSha: 'sha-G1', evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'ci', ciCheck: 'ci' }] }) : undefined)
   assert.ok(calls.some(c => c.label === 'test:G1#docs1'))
   assert.ok(x.G1.history.some(h => h.round === 'docs1' && !h.notRun))
   assert.deepEqual(x.G1.untested, ['X-2 (covered by CI check ci)'])
@@ -1972,6 +1972,65 @@ await check('#602: the rule holds on the verifier path, with the label verify:<i
   assert.equal(ok.C1.ready, true)
   const twice = await hooked(withEvals('C1'), (p, o) => /^verify:C1#1r?$/.test(o.label) ? failing : o.label === 'fix:C1#1' ? { summary: 'none', changed: false } : undefined)
   assert.equal(twice.C1.reason, 'checks failed twice: unit')
+})
+await check('E03b-1 and E03b-6: passes-without-change is a failed eval and a major, and the fixer gets it', async () => {
+  const bad = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'passes-without-change', test: 'test/x.test.mjs' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: bad }))
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [test]: eval X-1: the test passes without the change'])
+  assert.deepEqual(x.C1.history[0].evals, { passed: ['X-2'], failed: ['X-1'], ci: [] })
+  assert.equal(x.C1.history[0].testPass, false)
+  assert.match(fixCalls('C1')[0].prompt, /passes without the change/)
+})
+await check('E03b-2 and E03b-7 and E03b-10: the verify prompt asks for the break check, with both file steps and the error kinds', async () => {
+  await hooked(withEvals('C1'), verifyHook({}))
+  const pr = calls.find(c => c.label === 'verify:C1#1').prompt
+  assert.match(pr, /Break check\. Only when no eval failed and none has no result \(a ci result is allowed\)/)
+  assert.match(pr, /kind behaviour or error path with the result pass/)
+  assert.match(pr, /git checkout origin\/HEAD -- <file>/)
+  assert.match(pr, /Delete a file the PR adds, because it is not on origin\/HEAD/)
+  assert.match(pr, /A load, import, missing-file, syntax or exit-127 error is not that: set not-run/)
+})
+await check('E03b-11: a ci result next to a pass behaviour eval keeps the break check; the ci item stays untested', async () => {
+  const mixed = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'ci', ciCheck: 'ci' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: mixed }))
+  assert.match(calls.find(c => c.label === 'verify:C1#1').prompt, /Break check\./)
+  assert.equal(x.C1.history.length, 1)
+  assert.deepEqual(x.C1.untested, ['X-2 (covered by CI check ci)'])
+})
+await check('E03b-12: a pass behaviour or error path eval with no breakCheck is not-run and untested', async () => {
+  const none = vres({ evals: [{ id: 'X-1', result: 'pass' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: none }))
+  assert.deepEqual(x.C1.history[0].evals, { passed: ['X-1', 'X-2'], failed: [], ci: [] })
+  assert.deepEqual(x.C1.untested, ['X-1 (break check not run)'])
+  assert.notEqual(x.C1.landMode, 'auto')
+})
+await check('E03b-3 and E03b-9 and E03b-10: not-run with a reason is untested, not a pass and not a major', async () => {
+  const nr = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'not-run', breakWhy: 'exit 127: file missing' }, { id: 'X-2', result: 'pass', breakCheck: 'not-run', breakWhy: 'no test maps to this eval' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: nr }))
+  assert.equal(x.C1.history.length, 1)
+  assert.deepEqual(x.C1.untested, ['X-1 (break check not run: exit 127: file missing)', 'X-2 (break check not run: no test maps to this eval)'])
+})
+await check('E03b: a round with a failed eval does not count a missing breakCheck', async () => {
+  const failing = vres({ evals: [{ id: 'X-1', result: 'fail', evidence: 'x' }, { id: 'X-2', result: 'pass' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: failing }))
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [test]: eval X-1 failed: x'])
+  assert.deepEqual(x.C1.untested, [])
+})
+await check('E03b-5: breakCheck false gives the E03a prompt and results', async () => {
+  const plain = vres({ evals: EVS.map(e => ({ id: e.id, result: 'pass', evidence: 'ok' })) })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: plain }), { breakCheck: false })
+  assert.doesNotMatch(calls.find(c => c.label === 'verify:C1#1').prompt, /Break check|breakCheck/)
+  assert.equal(x.C1.ready, true)
+  assert.deepEqual(x.C1.untested, [])
+  assert.deepEqual(x.C1.history[0].evals, { passed: ['X-1', 'X-2'], failed: [], ci: [] })
+})
+await check('E03b-8: a regression eval with not-applicable is neither a major nor untested, and a missing breakCheck on it is ignored', async () => {
+  const evs = [EVS[0], EVS[1], { id: 'X-3', kind: 'regression', statement: 's', check: 'c' }, { id: 'X-4', kind: 'quality bar', statement: 's', check: 'c' }]
+  const ans = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-3', result: 'pass', breakCheck: 'not-applicable' }, { id: 'X-4', result: 'pass' }] })
+  const x = await hooked(withEvals('C1', evs), verifyHook({ 1: ans }))
+  assert.equal(x.C1.history.length, 1)
+  assert.deepEqual(x.C1.untested, [])
+  assert.deepEqual(x.C1.history[0].evals.passed, ['X-1', 'X-2', 'X-3', 'X-4'])
 })
 await check('severity: a review major titled [minor] x is one major line, a conflict and a clean title for the fixer', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)
