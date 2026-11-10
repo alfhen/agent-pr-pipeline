@@ -66,7 +66,7 @@ while IFS= read -r f; do
        cacheWrite: ([$u[] | .cache_creation_input_tokens // 0] | add // 0),
        cacheRead: ([$u[] | .cache_read_input_tokens // 0] | add // 0),
        output: ([$u[] | .output_tokens // 0] | add // 0),
-       messages: ($u | length)}' >> "$rows" 2>/dev/null || echo "token-report: skipped unreadable $f" >&2
+       messages: ($u | length)}' >> "$rows" 2>/dev/null || { echo "token-report: skipped unreadable $f" >&2; bad=$((bad + 1)); }
 done < <(find "$dir" -maxdepth 1 -name 'agent-*.jsonl' | sort)
 
 if [ ! -s "$rows" ]; then echo "transcripts: no agent files in the folder, totals only"; exit 0; fi

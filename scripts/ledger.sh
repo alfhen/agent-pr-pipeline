@@ -10,7 +10,8 @@
 # each PR of each run: a first line "<!-- pipeline:ledger v1 <run> <pr id> -->" and one fenced JSON record. A record counts
 # only when scripts/trusted-comment.jq accepts it. Nothing but init makes the issue, so no repo gets one by itself.
 # <run> is the run's wf_<id> for a local run, and the routine run id that `next` printed for a cloud run (--cloud).
-# --tokens is the file that token-report.sh --json wrote. A cloud record, and a local one whose tokens file is not comparable,
+# A cloud or totals record with no waveTotal is from before this split and has the wave total in raw and agents.
+# --tokens is the file that token-report.sh --json wrote.A cloud record, and a local one whose tokens file is not comparable,
 # keep the wave totals in tokens.waveTotal and tokens.waveAgents, so no PR record claims them as its own raw or agents. put writes one record per PR in the result, ready or not, and
 # writes nothing for a run and PR that has a record. list prints one JSON line per record: when two records have one run
 # and PR id, only the one with the lowest comment id counts, here and in report. put deletes its own record when it is
