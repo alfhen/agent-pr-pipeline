@@ -1190,7 +1190,8 @@ const scopeEscalation = themes => SECURITY_THEME.test(themes.join(' ')) ? {
 // Progress of one round against the round before it. Two rounds in a row without it stop the PR.
 const progressOf = (prev, row) => {
   const goneFrom = (before, now) => (before || []).some(x => !(now || []).includes(x))
-  return goneFrom(prev.evals && prev.evals.failed, row.evals && row.evals.failed)
+  return prev.listChanged
+    || goneFrom(prev.evals && prev.evals.failed, row.evals && row.evals.failed)
     || (row.failingChecks || []).length < (prev.failingChecks || []).length
     || goneFrom((prev.themes || []).map(normTitle), (row.themes || []).map(normTitle))
 }
@@ -1341,6 +1342,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
       delete row.themes
       return halt('needs human: plan conflict', { conflict: fix.planConflict })
     }
+    if (listChanged) row.listChanged = true
     if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
     if (fix && fix.changed === false && !listChanged) {
       const stop = { signedOff: false, reason: `no progress: the fix changed nothing in round ${round}, ${round - startRound + 1} of ${max} used (${cap})`, lastFindings: blocking, lastTest: test, fixSummary: fix.summary }

@@ -3451,6 +3451,16 @@ await check('F652-3 a failing eval and a fixer dispute with no push go to the wr
   assert.doesNotMatch(String(x.C1.reason), /no progress/)
   assert.equal(x.C1.evalDisputes[0].ruling, 'change')
 })
+await check('F652-3 two accepted list changes in a row count as progress, so round 3 runs its fixer', async () => {
+  const fails = ids => ({ ...failingC11, evals: ids.map(id => ({ id, result: 'fail', evidence: 'x' })) })
+  const change = id => ({ ruling: 'change', reason: 'not checkable', eval: ev(id, id === 'C1-2' ? 'error path' : 'behaviour', { statement: `${id} checkable from the branch` }) })
+  const dispute = id => ({ summary: 'nothing to change', changed: false, disputes: [{ id, reason: 'no code change can satisfy it' }] })
+  await disputeRun(listOf('C1'), (p, o) => o.label === 'verify:C1#1' ? fails(['C1-1'])
+    : /^verify:C1#\d$/.test(o.label) ? fails(['C1-1', 'C1-2'])
+    : o.label === 'fix:C1#1' ? dispute('C1-1') : o.label === 'fix:C1#2' ? dispute('C1-2')
+    : o.label === 'dispute:C1#1' ? change('C1-1') : o.label === 'dispute:C1#2' ? change('C1-2') : undefined)
+  assert.ok(calls.some(c => c.label === 'fix:C1#3'), calls.map(c => c.label).join(' '))
+})
 await check('F652-3 a kept dispute with no push still stops with no progress', async () => {
   const x = await disputeRun(listOf('C1'), disputeFlow({ ruling: 'keep', reason: 'k' }))
   assert.equal(x.C1.ready, false)
