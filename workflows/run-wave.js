@@ -661,6 +661,7 @@ const fixedEvalsText = (pr, deviations, disputes = true) => {
   if (!pr.evals) return dev ? `\n${dev}\n` : ''
   return `\nThe evals in the PR block are fixed. Build until you believe every one passes. You cannot change, add or remove an eval, and an eval in your answer is ignored.${disputes ? ' If an eval is wrong or cannot be met, build the rest and return \`disputes\`: [{ id, reason }]. The evals writer rules on each dispute.' : NO_DISPUTES}${dev ? ` ${dev}` : ''}\n`
 }
+const UNMEETABLE_EVAL_TEXT = 'When no change to the code can make a failing eval pass, because what it names does not exist on the branch (the PR body or title, a label, a bot comment, CI, a merge, a release), return a dispute for that eval. Pushing nothing and returning no dispute is the wrong answer.'
 const implPrompt = pr => `${ctx(pr)}
 
 Task: implement this PR.
@@ -682,6 +683,7 @@ Task: write the evals for this PR. Nothing is built yet.
 1. Clone the default branch: ${evalsClone(`evals-${pr.id}`, pr)} and cd there. Read the default branch only; never read or check out a PR branch.
 2. Read ${GOALS}, ${SPEC ? `${SPEC}, ` : ''}${ref(pr)} (the entry of this PR, with its Touches, Acceptance, QA, Invariants, Round cap and Algorithm lines, and its Evals table when it has one) and the code the entry touches.
 3. Write the list as your instructions say. An Evals table in the entry is input: keep or improve each row under its id and add the rows it lacks.
+4. Each eval must be checkable from a clean clone of the branch, before the PR is open. Leave out what is not: the PR body or title, Closes lines, labels, bot comments or approvals, CI results, a merge, a release and any other pipeline step after the build. Notes that name such a thing still reach the opener, so they need no eval.
 Return evals, algorithm, noErrorPath, noReference and notes.
 
 ${evalsBlock(pr)}${last ? `\n\nThis is attempt ${attempt}. Your last list was sent back: ${last.reason}\nYour last list:\n${JSON.stringify(last.evals, null, 1)}\n${last.rule ? 'A rule decides this, so the list itself must change; notes cannot change it.' : 'Change the list to meet this, or say in notes why it already does.'}` : ''}`
@@ -783,7 +785,7 @@ Task: fix the branch after review round ${round}.
 2. For each finding, list every sibling place with the same weakness and fix them in the same round. For a plan, list the other entries and states each edit touches.
 ${stopOnConflict && pr.kind !== 'plan' ? `3. If a fix would need a change outside the Touches line, or would break an Acceptance line (for example, editing a test the entry says passes unchanged), change nothing and return \`planConflict\`: one sentence that names the two plan statements that disagree.
 ` : ''}${stopOnConflict && pr.kind !== 'plan' ? '4' : '3'}. Checks: ${fastText}, and ${ownE2e}.
-${fixedEvalsText(pr, false, allowDisputes)}${designRulesText(pr)}Return a short summary of each fix, any finding you disagree with and why, \`siblings\` (per finding number: the places you checked and the places you fixed), \`sameAs\` (groups of finding numbers that you fixed as one), changed (true when you pushed a commit, false when you pushed nothing), and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
+${fixedEvalsText(pr, false, allowDisputes)}${allowDisputes && pr.evals ? `${UNMEETABLE_EVAL_TEXT}\n` : ''}${designRulesText(pr)}Return a short summary of each fix, any finding you disagree with and why, \`siblings\` (per finding number: the places you checked and the places you fixed), \`sameAs\` (groups of finding numbers that you fixed as one), changed (true when you pushed a commit, false when you pushed nothing), and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}
 
@@ -1334,13 +1336,15 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     }
     const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, round, review && review.sweep, true, true), `fix:${pr.id}#${round}`, { schema: FIX })
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
+    const evalsBefore = pr.evals
     if (fix) await settleDisputes(pr, fix.disputes, 'fixer')
+    const listChanged = pr.evals !== evalsBefore
     if (pr.kind !== 'plan' && fix && fix.planConflict) {
       delete row.themes
       return halt('needs human: plan conflict', { conflict: fix.planConflict })
     }
     if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
-    if (fix && fix.changed === false) {
+    if (fix && fix.changed === false && !listChanged) {
       const stop = { signedOff: false, reason: `no progress: the fix changed nothing in round ${round}, ${round - startRound + 1} of ${max} used (${cap})`, lastFindings: blocking, lastTest: test, fixSummary: fix.summary }
       if (blocking.length > 0) return halt(stop.reason, stop)
       // Only failing checks are left and the head is the same, so the failure may be a flaky check: run the checks once more.
@@ -1362,7 +1366,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
       return halt(stop.reason, { ...stop, lastFindings: second.findings, lastTest: again })
     }
     loopState.siblings = labelSiblings(fix && fix.siblings, blocking)
-    loopState.fixed = !fix || fix.changed !== false
+    loopState.fixed = !fix || fix.changed !== false || listChanged
   }
 }
 
@@ -1704,6 +1708,7 @@ async function runPR(input) {
   return result
 }
 
+const PR_TEXT = /\b(?:PR|pull request)\s+(?:body|title|description)\b|\bcloses?\s+#\d+|\bcloses line\b/i
 const evalsRuns = pr => pr.kind !== 'plan' && pr.kind !== 'docs'
 const reasonOf = v => typeof v === 'string' ? v.trim() : ''
 const metaOf = (x, pr) => ({ noErrorPath: reasonOf(x && x.noErrorPath), noReference: reasonOf(x && x.noReference), algorithm: !!((x && x.algorithm) || pr.algorithm) })
@@ -1720,6 +1725,7 @@ function evalsVerdict(list, pr, meta) {
     if (!EVAL_KINDS.includes(e.kind)) return `eval ${e.id} has no valid kind`
     if (!reasonOf(e.statement)) return `eval ${e.id} has no statement`
     if (!reasonOf(e.check)) return `eval ${e.id} has no check`
+    if (PR_TEXT.test(`${e.statement}\n${e.check}`)) return `eval ${e.id} checks the PR, not the code`
   }
   const has = kind => list.some(e => e.kind === kind)
   if (!has('error path') && !reasonOf(m.noErrorPath)) return 'no error path'

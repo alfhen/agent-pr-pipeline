@@ -3411,3 +3411,48 @@ await check('E04-8: resume.designRules reach the verifier, the reviewer and the 
   await run(null)
   for (const label of ['verify:C1#1', 'review:C1#1', 'fix:C1#1']) assert.doesNotMatch(promptOf(label), /Rules a person set/, label)
 })
+
+// F652: an eval must be checkable from a clean clone; the fixer disputes one no code change can meet.
+const prEval = ev('C1-3', 'behaviour', { statement: 'PR body has `Closes #55` on its own line', check: 'read the PR body; expect the line' })
+const PR_REFUSAL = 'evals refused: eval C1-3 checks the PR, not the code'
+await check('F652-2 a writer list with a PR body eval is refused with the reason, and the second attempt without it reaches the verifier', async () => {
+  const x = await evalsRun([C1PR], o => withMeta(o.label === 'evals:C1' ? listOf('C1').concat(prEval) : listOf('C1')))
+  assert.equal(x.C1.ready, true)
+  assert.deepEqual(evalLabels('C1').filter(l => l.startsWith('evals:')), ['evals:C1', 'evals:C1#w2'])
+  assert.ok(calls.find(c => c.label === 'evals:C1#w2').prompt.includes(PR_REFUSAL.replace('evals refused: ', '')))
+  const v = calls.find(c => c.label === 'verify:C1#1')
+  assert.ok(v, 'the verifier ran')
+  assert.doesNotMatch(v.prompt, /Closes #55/)
+})
+await check('F652-2 an eval that names the PR title, a Closes line or the pull request body is refused; so is a given list', async () => {
+  const bads = [ev('C1-3', 'behaviour', { check: 'gh pr view --json body; expect Closes #5' }), ev('C1-3', 'behaviour', { statement: 'The PR title starts with fix' }), ev('C1-3', 'behaviour', { statement: 'the pull request body lists tests' })]
+  for (const bad of bads) {
+    const x = await evalsRun([C1PR], () => withMeta(listOf('C1').concat(bad)), okCheck, { evalsRounds: 1 })
+    assert.equal(x.C1.reason, PR_REFUSAL, JSON.stringify(bad))
+  }
+  const y = await evalsRun([{ ...C1PR, evals: listOf('C1').concat(prEval) }], noWriter)
+  assert.equal(y.C1.reason, PR_REFUSAL)
+})
+await check('F652-2 an eval about code that names a pull request in passing is not refused', async () => {
+  const fine = ev('C1-3', 'behaviour', { statement: 'the opener step reads the notes', check: 'node --test test/open.test.mjs; expect pass' })
+  const x = await evalsRun([C1PR], () => withMeta(listOf('C1').concat(fine)))
+  assert.ok(evalLabels('C1').includes('implement:C1'))
+  assert.equal(x.C1.evals.length, 3)
+})
+const failingC11 = { pass: true, headSha: 'sha-C1', checks: [{ name: 'lint', pass: true }], evals: [{ id: 'C1-1', result: 'fail', evidence: 'no PR body' }, { id: 'C1-2', result: 'pass', evidence: 'ok', breakCheck: 'fails-without-change' }] }
+const disputeFlow = ruling => (p, o) => o.label === 'verify:C1#1' ? failingC11
+  : o.label === 'fix:C1#1' ? { summary: 'nothing to change', changed: false, disputes: [{ id: 'C1-1', reason: 'no code change can satisfy it' }] }
+  : o.label === 'dispute:C1#1' ? ruling : undefined
+await check('F652-3 a failing eval and a fixer dispute with no push go to the writer, not to the no-progress stop', async () => {
+  const newEval = ev('C1-1', 'behaviour', { statement: 'C1-1 checkable from the branch' })
+  const x = await disputeRun(listOf('C1'), disputeFlow({ ruling: 'change', reason: 'not checkable', eval: newEval }))
+  assert.equal(disputeCalls().length, 1)
+  assert.ok(calls.some(c => c.label === 'verify:C1#2'), 'a second round ran')
+  assert.doesNotMatch(String(x.C1.reason), /no progress/)
+  assert.equal(x.C1.evalDisputes[0].ruling, 'change')
+})
+await check('F652-3 a kept dispute with no push still stops with no progress', async () => {
+  const x = await disputeRun(listOf('C1'), disputeFlow({ ruling: 'keep', reason: 'k' }))
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /no progress/)
+})
