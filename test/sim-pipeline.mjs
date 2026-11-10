@@ -2163,6 +2163,23 @@ await check('K02-13: the result holds the last verifier round only', async () =>
   assert.deepEqual(x.C1.breakCheck, x.C1.history[1].breakCheck)
   assert.deepEqual(x.C1.breakCheck.passes, [])
 })
+await check('K02: a tests-only round adds no break-check data', () => withChanged(['test/a.test.mjs'], async () => {
+  const ans = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: ans }))
+  assert.equal(x.C1.testsOnly, true)
+  assert.equal(hasBreak(x.C1), false)
+}))
+await check('K02: not-applicable on a behaviour eval is recorded under notRun', async () => {
+  const ans = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'not-applicable' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: ans }))
+  assert.deepEqual(x.C1.history[0].breakCheck.notRun, ['X-1'])
+  assert.deepEqual(x.C1.history[0].breakCheck.notApplicable, [])
+})
+await check('K02: a resumed run keeps the break-check results of the carried history', async () => {
+  const carried = { fails: ['X-1'], passes: [], notRun: [], notApplicable: [] }
+  const x = await hooked(only1('C1').map(p => ({ ...p, resume: { history: [{ round: 1, testPass: true, failingChecks: [], blockersAndMajors: [], breakCheck: carried }] } })), () => undefined)
+  assert.deepEqual(x.C1.breakCheck, carried)
+})
 await check('F659: the last verifier round decides tests only', () => withChanged(l => /#changed1$/.test(l) ? ['test/a.test.mjs'] : ['test/a.test.mjs', 'src/a.js'], async () => {
   const fail = vres({ evals: [{ id: 'X-1', result: 'fail', evidence: 'bad' }, { id: 'X-2', result: 'pass', breakCheck: 'not-applicable' }] })
   const ok = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
