@@ -1,3 +1,4 @@
+// K03-4: ledger.sh report counts the no-progress stop that names an eval as one maintainer touch.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'

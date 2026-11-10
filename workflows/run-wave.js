@@ -1365,9 +1365,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     if (listChanged) row.listChanged = true
     if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
     if (fix && fix.changed === false && !listChanged) {
-      // An eval that failed its break check was run and passed: its test is weak, so the eval is not unchecked.
-      const weakTests = new Set(blocking.filter(f => f.via === 'break check').map(f => (/^eval (\S+?):/.exec(f.title) || [])[1]))
-      const failedEvals = ((outcome.evals && outcome.evals.failed) || []).filter(id => !weakTests.has(id))
+      const failedEvals = (outcome.evals && outcome.evals.failed) || []
       const named = failedEvals.length ? `; eval ${failedEvals.join(', ')} failed and may not be checkable from a clean clone` : ''
       const stop = { signedOff: false, reason: `no progress: the fix changed nothing in round ${round}, ${round - startRound + 1} of ${max} used (${cap})${named}`, lastFindings: blocking, lastTest: test, fixSummary: fix.summary }
       if (blocking.length > 0) return halt(stop.reason, stop)
