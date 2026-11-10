@@ -631,7 +631,7 @@ const fastText = FAST_CHECKS.map(c => `\`${c}\``).join(', ')
 const ownE2e = `the e2e test files this branch adds or changes (\`git diff --name-only --diff-filter=d origin/HEAD...HEAD | grep -E '${E2E_PATTERN}'\`), run with \`${E2E_COMMAND}\` where {files} is that list; skip this when the list is empty. Do not run the full e2e suite`
 // Only runPRSteps sets pr.evals, after the list passed evalsVerdict and the reviewers.
 const evalsText = pr => pr.evals ? `\nEvals (what must be true when this PR is done; the list is settled, no agent edits it):\n${JSON.stringify(pr.evals.map(e => ({ id: e.id, kind: e.kind, statement: e.statement, check: e.check })), null, 1)}` : ''
-const prBlock = pr => `PR: ${pr.id} - ${pr.title}\nBranch: ${pr.branch}\nKind: ${pr.kind || 'code'}${pr.quickState ? `\nQuick-fix entry (the brief for this PR, from issue #${pr.quick.issue}):\n${pr.quickState.brief}` : ''}\nNotes for this PR:\n${pr.notes || '(none)'}${decided(pr)}${evalsText(pr)}`
+const prBlock = (pr, withEvals = true) => `PR: ${pr.id} - ${pr.title}\nBranch: ${pr.branch}\nKind: ${pr.kind || 'code'}${pr.quickState ? `\nQuick-fix entry (the brief for this PR, from issue #${pr.quick.issue}):\n${pr.quickState.brief}` : ''}\nNotes for this PR:\n${pr.notes || '(none)'}${decided(pr)}${withEvals ? evalsText(pr) : ''}`
 const cloneTo = (dir, pr) => `\`rm -rf ${TMP}/${dir} && git clone https://github.com/${REPO}.git ${TMP}/${dir} && cd ${TMP}/${dir} && git checkout ${pr.branch}\``
 const freshBranch = (prefix, pr, n) => `\`git fetch origin && git checkout -B ${prefix}-${pr.id}-r${n} origin/${pr.branch}\` (a new local name, because another worktree may hold ${pr.branch}). Push with \`git push origin HEAD:${pr.branch}\`.`
 
@@ -699,7 +699,7 @@ ${BREAK_CHECK ? `${RELATED_TESTS ? 6 : 5}. Break check. Only when no eval failed
 Evals (every id needs a result):
 ${evalListOf(pr).map(e => `Eval ${e.id} [${e.kind}] ${e.statement}\n  Check: ${e.check}${e.test ? `\n  Test: ${e.test}` : ''}`).join('\n')}
 
-${prBlock(pr)}`
+${prBlock(pr, false)}`
 
 const reviewPrompt = (pr, round, history, siblings, stopOnConflict = false) => `${ctx(pr)}
 
