@@ -226,22 +226,21 @@ const TESTS_ONLY_LINE_RULE = `This PR adds tests only. In a new PR body, put thi
 const testsOnlyState = {}
 // Per PR: the break-check results of the last verifier round that gave any. A later round without them leaves it alone.
 const breakCheckState = {}
-const BREAK_GROUPS = { 'fails-without-change': 'fails', 'passes-without-change': 'passes', 'not-run': 'notRun', 'not-applicable': 'notApplicable' }
-const breakCheckOf = (pr, byId) => {
-  const out = { fails: [], passes: [], notRun: [], notApplicable: [] }
-  for (const e of evalListOf(pr)) {
-    const r = byId.get(e.id)
-    const invalid = r && r.breakCheck === 'not-applicable' && BREAK_KINDS.includes(e.kind)
-    const g = r && r.result === 'pass' ? (invalid ? 'notRun' : BREAK_GROUPS[r.breakCheck]) : undefined
-    if (g) out[g].push(e.id)
-  }
-  return Object.values(out).some(a => a.length) ? out : null
-}
 const TEST_FILE = new RegExp(`${E2E_PATTERN}|(^|/)(tests?|__tests__)/|\\.(test|spec)\\.[cm]?[jt]sx?$`)
 // Repo policy, read once per PR from the default branch. The PR cannot set it, so a `ci` result needs a name the repo trusts.
 const ciChecksState = {}
 // The only place that reads a verifier's answer. Its own `pass` is ignored, like the tester's. An eval id with no result, or a `ci`
 // result that names no check from ciChecks, is no result. A missing id counts in `failed` of the history row, because it did not pass.
+const BREAK_GROUPS = { 'fails-without-change': 'fails', 'passes-without-change': 'passes', 'not-run': 'notRun', 'not-applicable': 'notApplicable' }
+const breakCheckOf = (pr, byId) => {
+  const out = { fails: [], passes: [], notRun: [], notApplicable: [] }
+  for (const e of evalListOf(pr)) {
+    const r = byId.get(e.id)
+    const g = r && r.result === 'pass' ? BREAK_GROUPS[r.breakCheck] : undefined
+    if (g) out[g].push(e.id)
+  }
+  return Object.values(out).some(a => a.length) ? out : null
+}
 const verifyOutcome = (pr, verify) => {
   const base = testOutcome(pr, verify)
   const trusted = ciChecksState[pr.id] || []
@@ -1920,8 +1919,6 @@ async function runPRSteps(input) {
     }
   }
   const history = pr.resume ? pr.resume.history || [] : []
-  const carriedBreak = [...history].reverse().find(h => h && h.breakCheck)
-  if (carriedBreak && !breakCheckState[pr.id]) breakCheckState[pr.id] = carriedBreak.breakCheck
   const marked = r => { stopMark(history, r.reason); return r }
   const minors = (pr.resume ? pr.resume.minors || [] : []).concat(quickMinors)
   let impl = { problems: '' }
