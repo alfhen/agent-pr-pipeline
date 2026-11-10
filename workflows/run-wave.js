@@ -1384,15 +1384,16 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
       const named = failedEvals.length ? `; eval ${failedEvals.join(', ')} failed and may not be checkable from a clean clone` : ''
       const stop = { signedOff: false, reason: `no progress: the fix changed nothing in round ${round}, ${round - startRound + 1} of ${max} used (${cap})${named}`, lastFindings: blocking, lastTest: test, fixSummary: fix.summary }
       if (blocking.length > 0) return halt(stop.reason, stop)
-      // Only failing checks are left and the head is the same, so the failure may be a flaky check: run the checks once more.
+      // Only failing checks are left, so the failure may be a flaky check: run the checks once more. It shows a flake only on the same head, which is checked after the rerun.
       const again = await checkCall(pr, `${round}r`)
       if (!again) return { signedOff: false, reason: 'tester or reviewer failed' }
       const second = checkOutcome(pr, again)
       noteTest(pr, second)
       history.push(historyRow(`${round}r`, second, second.findings, 0))
       if (second.nothingRan) return halt('tests did not run')
-      const sameHead = !!(again.headSha && test.headSha) && (again.headSha.startsWith(test.headSha) || test.headSha.startsWith(again.headSha))
-      if (second.pass && !sameHead) return halt(stop.reason, stop)
+      if (!again.headSha || !test.headSha) return halt(`head unknown: a check call reported no head (first run ${test.headSha || 'none'}, rerun ${again.headSha || 'none'}), so the rerun cannot show that the failure was flaky`, { ...stop, lastTest: again })
+      const sameHead = again.headSha.startsWith(test.headSha) || test.headSha.startsWith(again.headSha)
+      if (!sameHead) return halt(`head moved: the checks ran on ${test.headSha} and then on ${again.headSha}, so the rerun cannot show that the failure was flaky`, { ...stop, lastTest: again })
       if (second.pass && evalMode && !ran) {
         // No reviewer has seen this head: the next round's verifier passes and the reviewers run.
         if (round === startRound + max - 1) return halt(`no reviewer round: the checks passed on the rerun in the last round, ${max} of ${max} used (${cap})`, stop)

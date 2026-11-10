@@ -1979,9 +1979,13 @@ await check('#602: a rerun on a different head does not sign off', async () => {
   const failing = { pass: false, headSha: 'sha-C1', checks: [ck('unit', { pass: false })] }
   const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? failing : o.label === 'test:C1#1r' ? { pass: true, headSha: 'sha-new', checks: [ck('unit')] } : o.label === 'fix:C1#1' ? { summary: 'none', changed: false } : undefined)
   assert.equal(x.C1.ready, false)
-  assert.match(x.C1.reason, /the fix changed nothing in round 1/)
+  assert.match(x.C1.reason, /head/i)
+  assert.match(x.C1.reason, /moved/i)
+  assert.ok(x.C1.reason.includes('sha-C1') && x.C1.reason.includes('sha-new'))
+  assert.doesNotMatch(x.C1.reason, /the fix changed nothing/)
   assert.ok(!calls.some(c => c.label === 'docs:C1' || c.label === 'open:C1'))
   assert.equal(x.C1.history.at(-1).round, '1r')
+  assert.equal(x.C1.history.at(-1).stop, x.C1.reason)
 })
 await check('E03a: the verify prompt holds the related-tests step and the acceptance definition', async () => {
   await hooked(withEvals('C1'), verifyHook({}))
@@ -1997,6 +2001,43 @@ await check('#602: the rule holds on the verifier path, with the label verify:<i
   assert.equal(ok.C1.ready, true)
   const twice = await hooked(withEvals('C1'), (p, o) => /^verify:C1#1r?$/.test(o.label) ? failing : o.label === 'fix:C1#1' ? { summary: 'none', changed: false } : undefined)
   assert.equal(twice.C1.reason, 'checks failed twice: unit')
+})
+await check('K06-2: a failing rerun on a different head stops with the head-moved reason', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? { pass: false, headSha: 'sha-C1', checks: [ck('unit', { pass: false })] } : o.label === 'test:C1#1r' ? { pass: false, headSha: 'sha-new', checks: [ck('unit', { pass: false })] } : o.label === 'fix:C1#1' ? { summary: 'none', changed: false } : undefined)
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /head/i)
+  assert.match(x.C1.reason, /moved/i)
+  assert.ok(x.C1.reason.includes('sha-C1') && x.C1.reason.includes('sha-new'))
+  assert.ok(!x.C1.reason.startsWith('checks failed twice'))
+  assert.ok(!calls.some(c => c.label === 'test:C1#2'))
+})
+await check('K06-3: a missing headSha on either check call stops with the head-unknown reason', async () => {
+  const run = (first, rerun) => hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? first : o.label === 'test:C1#1r' ? rerun : o.label === 'fix:C1#1' ? { summary: 'none', changed: false } : undefined)
+  const bad = { pass: false, checks: [ck('unit', { pass: false })] }
+  const good = { pass: true, checks: [ck('unit')] }
+  const cases = [
+    [bad, { ...good, headSha: 'sha-C1' }, true],
+    [{ ...bad, headSha: 'sha-C1' }, good, true],
+    [{ ...bad, headSha: 'sha-C1' }, bad, false],
+  ]
+  for (const [first, rerun, noOpen] of cases) {
+    const x = await run(first, rerun)
+    assert.equal(x.C1.ready, false)
+    assert.match(x.C1.reason, /head/i)
+    assert.match(x.C1.reason, /unknown/i)
+    assert.ok(!x.C1.reason.startsWith('checks failed twice'))
+    if (noOpen) assert.ok(!calls.some(c => c.label === 'open:C1'))
+  }
+})
+await check('K06-6: on the verifier path a rerun on a different head stops with the head-moved reason', async () => {
+  const failing = vres({ pass: false, checks: [ck('unit', { pass: false })] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: failing }, (p, o) => o.label === 'verify:C1#1r' ? vres({ headSha: 'sha-new' }) : o.label === 'fix:C1#1' ? { summary: 'none', changed: false } : undefined))
+  assert.ok(calls.some(c => c.label === 'verify:C1#1r'))
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /head/i)
+  assert.match(x.C1.reason, /moved/i)
+  assert.ok(x.C1.reason.includes('sha-C1') && x.C1.reason.includes('sha-new'))
+  assert.ok(!calls.some(c => c.label === 'review:C1#2' || c.label === 'verify:C1#2'))
 })
 await check('E03b-1 and E03b-6: passes-without-change is a failed eval and a major, and the fixer gets it', async () => {
   const bad = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'passes-without-change', test: 'test/x.test.mjs' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
