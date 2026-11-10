@@ -1183,6 +1183,7 @@ await check('K04: a large-form answer takes its exit code only from its last exi
   assert.equal(a.ready, false)
   assert.match(a.reason, /^land-fix check failed:/)
   assert.ok(!a.reason.includes(/saved at (\S+)/.exec(withLine)[1]), a.reason)
+  assert.match(a.reason, /exit 3/)
   assert.ok(!calls.some(c => /^landreview:LK3/.test(c.label)))
   assert.match(calls.find(c => c.label === 'io:LK3#landcommits1').prompt, new RegExp(`PIPELINE_IO_TMP=${largeTmp} bash /plug/scripts/io\\.sh land-commits\\.sh`))
   const bare = withLine.replace(/pipeline-io: exit 3\n$/, '')

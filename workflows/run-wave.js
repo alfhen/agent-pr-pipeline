@@ -1081,7 +1081,10 @@ const readIo = (text, { large = false } = {}) => {
   const exitCode = Number(IO_EXIT.exec(lines[end])[1])
   const body = lines.slice(begin + 1, end)
   const hit = body.length === 1 && IO_LARGE.exec(body[0])
-  if (!hit) return { exitCode, output: body.join('\n') }
+  const claimsLarge = body.some(l => l.startsWith('pipeline-io: large output'))
+  if (!hit || !hit[1].startsWith(`${TMP}/`)) {
+    return claimsLarge ? { exitCode: -1, output: `${IO_TOO_LARGE}: the saved file is not in the run tmp folder` } : { exitCode, output: body.join('\n') }
+  }
   return large ? { exitCode, output: '', file: hit[1] } : { exitCode: -1, output: IO_TOO_LARGE }
 }
 const fenceFor = text => '`'.repeat(Math.max(3, ...(text.match(/`+/g) || []).map(r => r.length + 1)))
@@ -1617,6 +1620,7 @@ async function landFixCheck(pr, n, beforeSha, fixerSha, history, minors) {
       head = h.head
     }
     const io = await ioCall(pr, `io:${pr.id}#landcommits${round}`, 'land-commits.sh', `${REPO} ${from} ${head} ${TMP}`, { phase: 'Land fix', large: true })
+    if (io && io.file && io.exitCode !== 0) return { fail: `land-fix check failed: exit ${io.exitCode}, the output was too large to show (saved in the run tmp folder)` }
     if (!io || io.exitCode !== 0) return { fail: `land-fix check failed: ${io ? io.output.trim() : 'pipeline-io failed'}` }
     return io
   }
