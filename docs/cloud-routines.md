@@ -203,7 +203,7 @@ A build for another repo cannot file into this repo, because the proxy serves on
 
 - At most `feedbackItems` items per wave, each with evidence and a suggested change.
 - At most `feedbackPerDay` new issues a day. An outbox over the cap waits, oldest first.
-- An item that repeats an open `pipeline-feedback` issue becomes a "seen again" comment on it. The collect session decides which items repeat, and writes that list to a file.
+- An item that repeats an open `pipeline-feedback` issue becomes a "seen again" comment on it. The collect session decides which items repeat, and writes that list to a file. A closed issue is never a repeat: `file-feedback.sh` files the item with a line `Seen before in #<n> (closed)`.
 - For another repo the redactor and the denylist check always run, and an item that holds a denylist string is refused. A filed issue says only `Source: another repo`.
 - The collect routine follows the stage of the feedback repo. An outbox older than 7 days is dropped.
 
