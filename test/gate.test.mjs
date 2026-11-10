@@ -575,3 +575,35 @@ test('plugin-repo: no other script parses the manifest repository', () => {
   const hits = readers.filter((f) => /\.repository|\["repository"\]|getpath/.test(readFileSync(f, 'utf8')))
   assert.deepEqual(hits.map((f) => f.slice(f.indexOf('scripts/'))), ['scripts/plugin-repo.sh'])
 })
+
+test('gate --ci-checks (E03a-9): prints the ciChecks list of the settings file', () => {
+  const s = setup({ files: null, settings: null })
+  put(s.fx, `${P}__contents__.github__pipeline.json.json`, { gates: [], ciChecks: ['ci', 'e2e'] })
+  const r = run(s, 'gate-files.sh', ['o/r', '--ci-checks'])
+  assert.equal(r.code, 0)
+  assert.match(r.out, /^CICHECKS \["ci","e2e"\]$/m)
+})
+
+test('gate --ci-checks (E03a-9): a missing key or a missing file gives ["ci"]', () => {
+  assert.ok(!('ciChecks' in JSON.parse(readFileSync(join(FX, 'pipeline.json'), 'utf8'))))
+  const a = run(setup({ files: null, settings: 'repo' }), 'gate-files.sh', ['o/r', '--ci-checks'])
+  assert.equal(a.code, 0)
+  assert.match(a.out, /^CICHECKS \["ci"\]$/m)
+  const b = run(setup({ files: null, settings: 'missing' }), 'gate-files.sh', ['o/r', '--ci-checks'])
+  assert.equal(b.code, 0)
+  assert.match(b.out, /^CICHECKS \["ci"\]$/m)
+})
+
+test('gate --ci-checks (E03a-9): a bad value or an unreadable file exits 3', () => {
+  const bad = setup({ files: null, settings: null })
+  put(bad.fx, `${P}__contents__.github__pipeline.json.json`, { gates: [], ciChecks: 'ci' })
+  const a = run(bad, 'gate-files.sh', ['o/r', '--ci-checks'])
+  assert.equal(a.code, 3)
+  assert.match(a.out, /GATE ERROR/)
+  const mixed = setup({ files: null, settings: null })
+  put(mixed.fx, `${P}__contents__.github__pipeline.json.json`, { gates: [], ciChecks: ['ci', 3] })
+  assert.equal(run(mixed, 'gate-files.sh', ['o/r', '--ci-checks']).code, 3)
+  const b = run(setup({ files: null, settings: 'error' }), 'gate-files.sh', ['o/r', '--ci-checks'])
+  assert.equal(b.code, 3)
+  assert.match(b.out, /GATE ERROR/)
+})

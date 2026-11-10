@@ -7,7 +7,7 @@ It grew out of building [Tagreeve](https://github.com/alfhen/tagreeve) (first ca
 ## What is in it
 
 - **Skills.** `pr-pipeline` runs the loop: plan, waves, land and merge. `write-goals` interviews the maintainer and writes the product goals document that the pipeline needs before its first run.
-- **Role agents.** `evals-writer`, `implementer`, `tester`, `reviewer`, `qa`, `arch-reviewer`, `product-reviewer`, `fixer`, `docs-writer`, `docs-reviewer`, `pr-opener`, `bot-waiter`, `bot-answerer`, `land-fixer`, `merge-safety`, `goals-preflight`, `triager`, `pipeline-io`, `evaluator` and `feedback-redactor`. Each has its own rules, model, effort and the smallest tool set its role needs.
+- **Role agents.** `evals-writer`, `implementer`, `tester`, `verifier`, `reviewer`, `qa`, `arch-reviewer`, `product-reviewer`, `fixer`, `docs-writer`, `docs-reviewer`, `pr-opener`, `bot-waiter`, `bot-answerer`, `land-fixer`, `merge-safety`, `goals-preflight`, `triager`, `pipeline-io`, `evaluator` and `feedback-redactor`. Each has its own rules, model, effort and the smallest tool set its role needs.
 - **Workflow.** `run-wave` runs one wave of PRs through the loop with the role agents.
 - **Scripts and templates.** The land and merge scripts, `gate-files.sh`, `plugin-version.sh`, `semver.sh`, `bot-status.sh`, `wait-bots.sh`, `quick-brief.sh`, `pr-overlap.sh`, `io.sh`, `check-syntax.sh`, `cleanup.sh`, `check-version.sh`, `scripts/release.sh`, the goals check, `scripts/file-feedback.sh`, `scripts/token-report.sh`, `scripts/ledger.sh`, and the plan, goals, `AGENTS.md` and `pipeline.json` templates.
 
@@ -43,7 +43,7 @@ Updates: `claude plugin update agent-pr-pipeline@agent-pr-pipeline`. A new versi
 
 Run `/agent-pr-pipeline:write-goals`. It asks you for the product's goals, non-goals and users, writes the goals document (for example `docs/goals.md`) and checks it. Merge it in its own PR. The pipeline refuses to start without it.
 
-Then copy `templates/pipeline.json` to `.github/pipeline.json` and add the paths the repo wants gated. Without the file, `gate-files.sh` uses the plugin's default gates, and `release.sh` refuses because `autoRelease` is not true. `knownFlakes` in the same file lists check names that may fail for reasons outside a PR. `land-wave.sh` reruns the failed jobs of only those checks, once.
+Then copy `templates/pipeline.json` to `.github/pipeline.json` and add the paths the repo wants gated. Without the file, `gate-files.sh` uses the plugin's default gates, and `release.sh` refuses because `autoRelease` is not true. `knownFlakes` in the same file lists check names that may fail for reasons outside a PR. `land-wave.sh` reruns the failed jobs of only those checks, once. `ciChecks` (default `["ci"]`) lists the CI checks that may stand in for an eval the verifier could not run.
 
 ## Use
 
@@ -87,7 +87,7 @@ The local routine is replaced by the cloud routines once it is retired (docs/clo
 - Run the checks in [AGENTS.md](AGENTS.md) before you push. The `ci` workflow runs the same checks on every PR.
 - The `ci` workflow also runs `scripts/check-version.sh`. The manifest version must be semantic and, in a PR that changes it, higher than the latest tag.
 - The `release` workflow runs when a release is published. It runs the simulation and checks that the manifest version matches the tag.
-- `.github/pipeline.json` lists the gated paths of this repo, its `knownFlakes` and `autoRelease`. A PR that touches a gated path is merged by the maintainer, never by an agent. `templates/pipeline.json` is the starting file for another repo.
+- `.github/pipeline.json` lists the gated paths of this repo, its `knownFlakes`, `ciChecks` and `autoRelease`. A PR that touches a gated path is merged by the maintainer, never by an agent. `templates/pipeline.json` is the starting file for another repo.
 - `scripts/release.sh` makes a release from the main session after the last wave. It runs only when `autoRelease` is true and its checks pass. The skill lists the checks. It refuses until a tag exists, so the maintainer makes the first release. It never publishes a package: the repo's CI does that.
 
 ## Explainer

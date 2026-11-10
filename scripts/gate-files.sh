@@ -3,6 +3,9 @@
 #        gate-files.sh <owner/repo> --scope <branch>
 #        gate-files.sh <owner/repo> --head <branch>
 #        gate-files.sh <owner/repo> --same <sha> <branch>
+#        gate-files.sh <owner/repo> --ci-checks
+# --ci-checks prints "CICHECKS <json array>": the top-level ciChecks of .github/pipeline.json on the default branch, ["ci"] when the
+# file or the key is missing. It exits 3 ("GATE ERROR") when the file or the value cannot be read.
 # --same prints "SAME <sha>", the branch head, only when the branch tree equals the tree of <sha>. It exits 1 when the
 # trees differ or cannot be read.
 # --head prints "HEAD <sha>", the branch head on GitHub. It exits 1 when that cannot be read.
@@ -19,6 +22,19 @@ if [ "$pr" = "--head" ]; then
   sha=$(gh api "repos/$R/branches/$3" --jq .commit.sha 2>&1) || { echo "cannot read the branch head ($sha)"; exit 1; }
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "unexpected branch head: $sha"; exit 1; }
   echo "HEAD $sha"; exit 0
+fi
+if [ "$pr" = "--ci-checks" ]; then
+  branch=$(gh api "repos/$R" --jq .default_branch 2>&1) || { echo "GATE ERROR: cannot read the default branch ($branch)"; exit 3; }
+  settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=$branch" 2>&1)
+  if [ $? -ne 0 ]; then
+    case $settings in
+      *"HTTP 404"*) echo 'CICHECKS ["ci"]'; exit 0 ;;
+      *) echo "GATE ERROR: cannot read .github/pipeline.json ($settings)"; exit 3 ;;
+    esac
+  fi
+  names=$(jq -c 'if has("ciChecks") | not then ["ci"] elif (.ciChecks | type) == "array" and all(.ciChecks[]; type == "string") then .ciChecks else error("ciChecks") end' <<<"$settings" 2>/dev/null) \
+    || { echo "GATE ERROR: ciChecks is not a list of strings"; exit 3; }
+  echo "CICHECKS $names"; exit 0
 fi
 if [ "$pr" = "--same" ]; then
   [ -n "$3" ] && [ -n "$4" ] || { echo "usage: gate-files.sh <owner/repo> --same <sha> <branch>"; exit 2; }
