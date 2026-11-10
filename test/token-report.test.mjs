@@ -187,3 +187,14 @@ test('--json writes comparable false when a transcript has an unreadable line', 
   assert.equal(run(outFile, folder, '--json', json).status, 0)
   assert.equal(JSON.parse(readFileSync(json, 'utf8')).comparable, false)
 })
+
+test('--json writes comparable false when one agent transcript is empty', () => {
+  const { outFile, folder, dir } = setup([
+    { role: 'reviewer', lines: [first('A1'), msg('m1', [1, 10, 100, 5])] },
+    { role: 'reviewer', lines: [first('A1')] },
+  ])
+  writeFileSync(join(folder, 'agent-1.jsonl'), '')
+  const json = join(dir, 'tokens.json')
+  assert.equal(run(outFile, folder, '--json', json).status, 0)
+  assert.equal(JSON.parse(readFileSync(json, 'utf8')).comparable, false)
+})

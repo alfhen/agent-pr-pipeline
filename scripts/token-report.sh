@@ -54,6 +54,7 @@ while IFS= read -r f; do
   [ -n "$role" ] || role=unknown
   desc=$(jq -r '.description // ""' "$meta" 2>/dev/null) || desc=""
   jq -c . "$f" >/dev/null 2>&1 || bad=$((bad + 1))
+  [ -s "$f" ] || bad=$((bad + 1))
   jq -R -c 'fromjson? // empty' "$f" | jq -c -s --arg role "$role" --arg desc "$desc" '
     ([.[] | select(.type == "user") | .message.content | strings] | first // "") as $first
     | ([to_entries[] | select(.value.message.usage != null) | {key: (.value.message.id // "line\(.key)"), value: .value.message.usage}] | from_entries | [.[]]) as $u
