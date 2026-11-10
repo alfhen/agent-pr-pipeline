@@ -1950,6 +1950,16 @@ await check('#602: the checks failing again stop the PR with "checks failed twic
   assert.equal(calls.filter(c => c.label === 'test:C1#1r').length, 1)
   assert.ok(!calls.some(c => c.label === 'test:C1#2'))
 })
+await check('E04: a flaky check that passes on the rerun does not sign off before a reviewer has run', async () => {
+  const bad = vres({ pass: false, checks: [ck('unit', { pass: false, log: 'flaky' })] })
+  const x = await hooked(withEvals('C1'), (p, o) => o.label === 'verify:C1#1' ? bad : o.label === 'verify:C1#1r' ? vres() : o.label === 'fix:C1#1' ? { summary: 'nothing to fix', changed: false } : o.label === 'review:C1#2' ? reviewOf([f('major', 'late finding')]) : undefined)
+  assert.ok(calls.some(c => c.label === 'review:C1#2'), 'the reviewers run on the head that passed')
+  assert.ok(calls.findIndex(c => c.label === 'verify:C1#1r') < calls.findIndex(c => c.label === 'review:C1#2'))
+  assert.ok(!calls.some(c => c.label === 'review:C1#1'))
+  assert.ok(x.C1.history.some(h => h.round === 2), 'round 2 ran')
+  assert.ok(x.C1.history.some(h => h.round === 2 && h.blockersAndMajors.length), 'the reviewer blocker is kept')
+  assert.equal(x.C1.ready, false)
+})
 await check('#602: open blocking findings and a fix that changed nothing stop at once, with no rerun', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? { pass: false, headSha: 'sha-C1', checks: [ck('unit', { pass: false })] } : o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : o.label.startsWith('fix:C1') ? { summary: 'wrong', changed: false } : undefined)
   assert.equal(x.C1.reason, 'no progress: the fix changed nothing in round 1, 1 of 4 used (maxRounds)')
