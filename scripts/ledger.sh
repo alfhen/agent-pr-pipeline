@@ -5,6 +5,7 @@
 #        ledger.sh <owner/repo> backfill [--dry-run]
 #        ledger.sh <owner/repo> report [--since <tag>] [--from <file of record lines>]
 #        ledger.sh <owner/repo> hand <pr number> code|process
+#        ledger.sh <owner/repo> miss <pr number> <issue number>
 # The ledger is one open issue labelled pipeline-ledger, opened by the account from GET /user. It holds one comment for
 # each PR of each run: a first line "<!-- pipeline:ledger v1 <run> <pr id> -->" and one fenced JSON record. A record counts
 # only when scripts/trusted-comment.jq accepts it. Nothing but init makes the issue, so no repo gets one by itself.
@@ -13,6 +14,8 @@
 # writes nothing for a run and PR that has a record. list prints one JSON line per record: when two records have one run
 # and PR id, only the one with the lowest comment id counts, here and in report. put deletes its own record when it is
 # not the lowest after the post; a refused delete is logged and does not fail put.
+# An eval miss is a defect that no eval caught. put writes one for a PR that is ready and has codeChangedByBots true (the
+# only place that rule lives); miss writes one for a defect traced to a merged PR later. report counts a PR once, however many.
 # backfill writes one record per merged PR that has none, with the facts GitHub holds and no tokens.
 # report reads the merge mode and the bot threads from GitHub for each merged PR, in one function that backfill uses too.
 # --dry-run prints the records and writes nothing, and works with no ledger issue. report --from reads those lines.
@@ -31,12 +34,12 @@ LABEL=pipeline-ledger
 PREFIX='<!-- pipeline:ledger v1 '
 
 die() { local code=$1; shift; echo "ledger: $*" >&2; exit "$code"; }
-usage() { die 64 "usage: ledger.sh <owner/repo> init|put <output file> --run <id> [--tokens <file>] [--cloud] [--land-fix] [--dry-run]|list|backfill [--dry-run]|report [--since <tag>] [--from <file>]|hand <pr> code|process"; }
+usage() { die 64 "usage: ledger.sh <owner/repo> init|put <output file> --run <id> [--tokens <file>] [--cloud] [--land-fix] [--dry-run]|list|backfill [--dry-run]|report [--since <tag>] [--from <file>]|hand <pr> code|process|miss <pr> <issue>"; }
 
 repo=${1:-}; cmd=${2:-}
 [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || usage
 shift 2 2>/dev/null || usage
-out=""; run_id=""; tokfile=""; cloud=0; landfix=0; dry=0; since=""; from=""; hpr=""; hkind=""
+out=""; run_id=""; tokfile=""; cloud=0; landfix=0; dry=0; since=""; from=""; hpr=""; hkind=""; mississue=""
 case "$cmd" in
   init|list) [ $# -eq 0 ] || usage ;;
   put)
@@ -64,6 +67,8 @@ case "$cmd" in
     done ;;
   hand) [ $# -eq 2 ] || usage; hpr=$1; hkind=$2
     [[ $hpr =~ ^[0-9]+$ ]] && [[ $hkind == code || $hkind == process ]] || usage ;;
+  miss) [ $# -eq 2 ] || usage; hpr=$1; mississue=$2
+    [[ $hpr =~ ^[0-9]+$ ]] && [[ $mississue =~ ^[0-9]+$ ]] || usage ;;
   *) usage ;;
 esac
 
@@ -174,7 +179,8 @@ case "$cmd" in
                    then {ran: true, kept: ($p.minorPass.kept == true), why: ($p.minorPass.why // null), weighted: $minorCost}
                    else {ran: false, kept: null, why: null, weighted: null} end),
        codeChangedByBots: ($p.codeChangedByBots == true),
-       evalMisses: ($p.evalMisses | if type == "array" then . else [] end),
+       evalMisses: (($p.evalMisses | if type == "array" then . else [] end) as $m
+                    | if $p.ready == true and $p.codeChangedByBots == true and ($m | any(.[]?; type == "object" and .source == "bot") | not) then $m + [{source: "bot"}] else $m end),
        tokens: $tok}' "$out" 2>&1) || die 65 "$out is not a workflow output with prs: $recs"
     [ -n "$recs" ] || exit 0
     if [ "$dry" = 1 ]; then find_issue; else need_issue; fi
@@ -231,6 +237,15 @@ case "$cmd" in
     echo "ledger: wrote a $hkind hand fix for #$hpr (comment $cid)"
     exit 0 ;;
 
+  miss)
+    need_issue
+    ts=$(date +%s)
+    rec=$(jq -nc --arg repo "$repo" --argjson n "$hpr" --argjson i "$mississue" '{v: 1, repo: $repo, run: "miss", pluginVersion: null, kind: "miss",
+      pr: {id: "#\($n)", number: $n}, ready: null, reason: null, rounds: null, evals: null, minorPass: null, codeChangedByBots: null, evalMisses: [{source: "later", issue: $i}], tokens: null}')
+    cid=$(post_record "miss-$ts-$mississue" "#$hpr" "$rec") || die 3 "could not post the eval miss"
+    echo "ledger: wrote an eval miss for #$hpr from issue #$mississue (comment $cid)"
+    exit 0 ;;
+
   report)
     sincedate=""
     if [ -n "$since" ]; then
@@ -272,8 +287,9 @@ case "$cmd" in
       | map(. as $g | ($facts[$g[0].gkey | tostring] // {}) as $f | {
           weighted: ([$g[].tokens.weighted | numbers] | if length > 0 then add else null end),
           noCache: ([$g[].tokens.noCacheRead | numbers] | if length > 0 then add else null end),
-          rounds: ([$g[] | select(.kind != "land-fix" and .kind != "hand") | .rounds | numbers] | if length > 0 then max else null end),
+          rounds: ([$g[] | select(.kind != "land-fix" and .kind != "hand" and .kind != "miss") | .rounds | numbers] | if length > 0 then max else null end),
           touches: (([$g[] | .reason | strings | select(test("^(needs human:|no progress:|rounds exhausted: the fix changed nothing|checks failed twice:)"))] | length) + (if $f.mergeMode == "person" then 1 else 0 end)),
+          miss: any($g[]; (.evalMisses | arrays | length) > 0),
           defect: any($g[]; .codeChangedByBots == true or ((.evalMisses | arrays | length) > 0)),
           landFixes: ([$g[] | select(.kind == "land-fix")] | length),
           hands: [$g[] | select(.kind == "hand") | .handFix],
@@ -289,6 +305,7 @@ case "$cmd" in
         "PRs with 4 or more rounds: \([$r[] | select(. >= 4)] | length) of \($r | length).",
         "Maintainer touches per PR: \(if $n == 0 then "n/a" else ([$rows[].touches] | add) / $n | num end), \([$rows[].touches] | add // 0) in all.",
         "Defects found after sign-off: \([$rows[] | select(.defect)] | length) PRs.",
+        "Eval misses: \([$rows[] | select(.miss)] | length) PRs.",
         "Land fixes: \([$rows[].landFixes] | add // 0) records on \([$rows[] | select(.landFixes > 0)] | length) PRs, counted apart from defects.",
         "Hand fixes: \([$rows[].hands[] | select(. == "code")] | length) by code, \([$rows[].hands[] | select(. == "process")] | length) by process.",
         "Bot threads: \([$rows[].botThreads] | add // 0) in all.",

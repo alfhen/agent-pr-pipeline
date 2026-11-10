@@ -325,6 +325,12 @@ test('L01 build step 9 writes the cloud ledger record after the token report, wi
   assert.match(usageOf('ledger.sh'), /ledger\.sh <owner\/repo> put <workflow output file> --run <id> \[--tokens <file>\] \[--cloud\]/)
 })
 
+test('E06-4 collect reads closed feedback issues but never lists a closed one as a duplicate', () => {
+  assert.match(prompts.collect, /Read the closed ones too, with `state=closed`/)
+  assert.match(prompts.collect, /A closed issue is never a duplicate/)
+  assert.match(prompts.collect, /`Seen before in #<n> \(closed\)`/)
+})
+
 test('the docs say one run handles every step up to the limit', () => {
   assert.match(read('docs/cloud-routines.md'), /One run handles every step up to a limit of 20 passes/)
   assert.match(read('docs/cloud-routines.md'), /copies `run-wave\.js` from `pluginRoot` to `\.git\/apl\/run-wave\.js`/)

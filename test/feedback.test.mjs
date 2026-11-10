@@ -562,3 +562,43 @@ test('a failure inside a helper shows its reason on stderr', () => {
   assert.equal(r.status, 1)
   assert.match(r.stderr, /cannot read/)
 })
+
+const withStates = (items, open, closed) => {
+  const w = setup({ items, issues: null })
+  const q = s => join(w.dir, 'fx', `${ISSUES}@state=${s}&labels=pipeline-feedback&per_page=100.json`)
+  writeFileSync(q('open'), JSON.stringify(open)); writeFileSync(q('closed'), JSON.stringify(closed))
+  return w
+}
+
+test('E06-4 an item that matches a closed issue is filed with the link, and an open match is skipped', () => {
+  const open = [{ title: 'Open and again', number: 5 }]
+  const closed = [{ title: 'Seen once  ', number: 8 }, { title: 'seen once', number: 12 }, { title: 'A closed pull request', number: 9, pull_request: {} }, { title: 'Open and again', number: 4 }]
+  assert.ok(closed.some(i => i.title.trim() === 'Seen once'), 'fixture holds the closed match')
+  const items = [item('Seen once'), item('Open and again'), item('Brand new'), item('A closed pull request')]
+  const r = withStates(items, open, closed).run()
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(r.posts.length, 3)
+  const seen = r.posts.find(p => p.includes('title=Seen once'))
+  assert.match(seen, /Seen before in #12 \(closed\)/)
+  assert.ok(!r.posts.some(p => p.includes('title=Open and again')))
+  assert.match(r.stdout, /SKIP duplicate: Open and again/)
+  for (const t of ['Brand new', 'A closed pull request']) assert.ok(!r.posts.find(p => p.includes(`title=${t}`)).includes('Seen before'))
+})
+
+test('E06-4 a dry run prints the Seen before line, and a failed closed read files nothing', () => {
+  const w = withStates([item('Seen once')], [], [{ title: 'Seen once', number: 8 }])
+  const r = w.run('--dry-run')
+  assert.match(r.stdout, /WOULD FILE Seen once \[pipeline-feedback\] in [^\n]*\nSeen before in #8 \(closed\)/)
+  assert.equal(r.posts.length, 0)
+  rmSync(join(w.dir, 'fx', `${ISSUES}@state=closed&labels=pipeline-feedback&per_page=100.json`))
+  const f = w.run()
+  assert.equal(f.status, 1)
+  assert.match(f.stdout, /cannot list closed issues/)
+  assert.equal(f.posts.length, 0)
+})
+
+test('E06-6 with no closed match the posts carry no Seen before line', () => {
+  const r = withStates([item('Brand new')], [], [{ title: 'Something else', number: 3 }]).run()
+  assert.equal(r.posts.length, 1)
+  assert.ok(!r.posts[0].includes('Seen before'))
+})
