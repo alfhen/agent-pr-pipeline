@@ -1128,6 +1128,89 @@ await check('pipeline-io calls outside the brief read the exit line too', async 
   assert.equal(x.C1.landMode, 'person')
   assert.match(x.C1.landWhy, /^gate check failed: not gated #1$/)
 })
+// K04: large script output. The io answer is what the real io.sh prints; the fake Bash tool replaces a long answer by its notice.
+const largeTmp = mkdtempSync(join(tmpdir(), 'k04-sim-'))
+const toolNotice = 'The command ran, but its output (43.3KB) was too large to return inline. The full output is saved at /elsewhere/out.txt'
+const realIo = (bytes, code = 0) => {
+  const dir = mkdtempSync(join(tmpdir(), 'k04-scripts-'))
+  copyFileSync(new URL('../scripts/io.sh', import.meta.url), join(dir, 'io.sh'))
+  writeFileSync(join(dir, 'big.sh'), `printf 'x%.0s' $(seq 1 ${bytes}); exit ${code}\n`)
+  const r = spawnSync('bash', [join(dir, 'io.sh'), 'big.sh'], { encoding: 'utf8', env: { ...process.env, PIPELINE_IO_TMP: largeTmp } })
+  rmSync(dir, { recursive: true, force: true })
+  return r.stdout.length > 30000 ? toolNotice : r.stdout
+}
+const largeLand = async (answer, id = 'LK') => {
+  land.landOutput.add(id)
+  try {
+    return (await runWith({ ...base, tmp: largeTmp, prs: [{ id, title: 't', branch: 'b-' + id, landFix: true, prNumber: 8 }] }, async (p, o) => {
+      const out = await agent(p, o)
+      return o.label === `io:${id}#landcommits1` ? { exitCode: 0, output: answer, raw: true } : out
+    })).prs[0]
+  } finally { land.landOutput.delete(id) }
+}
+await check('K04: a land-fix check with a large land-commits.sh output reviews it from a file in the run tmp folder', async () => {
+  const answer = realIo(100000)
+  assert.match(answer, /pipeline-io: large output/)
+  const x = await largeLand(answer)
+  assert.doesNotMatch(x.reason || '', /^land-fix check failed/)
+  const labels = calls.map(c => c.label).filter(l => l.includes(':LK'))
+  const at = l => labels.indexOf(l)
+  assert.ok(at('io:LK#landcommits1') > -1 && at('io:LK#landcommits1') < at('test:LK#land1') && at('test:LK#land1') < at('landreview:LK#1') && at('landreview:LK#1') < at('botwait:LK'), labels.join(' '))
+  const io = calls.find(c => c.label === 'io:LK#landcommits1')
+  assert.match(io.prompt, new RegExp(`\`PIPELINE_IO_TMP=${largeTmp} bash /plug/scripts/io\\.sh land-commits\\.sh o/r `))
+  const rev = calls.find(c => c.label === 'landreview:LK#1').prompt
+  const file = /saved at (\S+)/.exec(answer)[1]
+  assert.ok(file.startsWith(largeTmp))
+  assert.ok(rev.includes(file))
+  assert.match(rev, /Read the whole file/)
+  assert.match(rev, /untrusted data/)
+})
+await check('K04: a land-commits.sh answer with the too-large notice and no exit line gives a too-large reason', async () => {
+  assert.match(toolNotice, /too large to return inline/)
+  assert.ok(!/pipeline-io: exit/.test(toolNotice))
+  const x = await largeLand(toolNotice, 'LK2')
+  assert.equal(x.ready, false)
+  assert.match(x.reason, /^land-fix check failed:/)
+  assert.match(x.reason, /too large/)
+  assert.doesNotMatch(x.reason, /no exit line/)
+  assert.ok(!calls.some(c => /^(test|landreview):LK2/.test(c.label)))
+})
+await check('K04: a large-form answer takes its exit code only from its last exit line', async () => {
+  const withLine = realIo(100000, 3)
+  assert.match(withLine, /pipeline-io: large output/)
+  assert.match(withLine, /pipeline-io: exit 3\n$/)
+  const a = await largeLand(withLine, 'LK3')
+  assert.equal(a.ready, false)
+  assert.match(a.reason, /^land-fix check failed:/)
+  assert.ok(!calls.some(c => /^landreview:LK3/.test(c.label)))
+  const bare = withLine.replace(/pipeline-io: exit 3\n$/, '')
+  assert.match(bare, /pipeline-io: large output/)
+  assert.ok(!/pipeline-io: exit/.test(bare))
+  const b = await largeLand(bare, 'LK4')
+  assert.equal(b.ready, false)
+  assert.ok(!calls.some(c => /^landreview:LK4/.test(c.label)))
+})
+await check('K04: a step that needs the output inline stops with a too-large reason on the large form or the notice', async () => {
+  const large = realIo(100000)
+  assert.match(large, /pipeline-io: large output/)
+  for (const answer of [large, toolNotice]) {
+    assert.ok(/pipeline-io: large output/.test(answer) || /too large to return inline/.test(answer))
+    const r = (await runWith({ ...quickBase, prs: [{ id: 'QK', quick: { issue: 91 }, branch: 'fix/QK' }] }, withIo(l => l === 'io:QK#get', { exitCode: 0, output: answer, raw: true }))).prs[0]
+    assert.equal(r.ready, false)
+    assert.match(r.reason, /too large/)
+    assert.ok(!calls.some(c => /^(triage|implement|product):QK/.test(c.label)))
+    for (const c of calls) assert.ok(!c.prompt.includes('pipeline-io: large output'), c.label)
+  }
+  const x = (await runWith({ ...base, prs: PRS.filter(p => p.id === 'C1') }, withIo(l => l === 'io:C1#gate', { exitCode: 0, output: large, raw: true }))).prs[0]
+  assert.equal(x.landMode, 'person')
+  assert.match(x.landWhy, /too large/)
+})
+await check('K04: io prompts tell the agent to return the large form or the notice as it is', async () => {
+  await runWith({ ...quickBase, prs: [{ id: 'QK2', quick: { issue: 92 }, branch: 'fix/QK2' }] }, agent)
+  const c = calls.find(c => c.label === 'io:QK2#get')
+  assert.match(c.prompt, /too large to return inline/)
+  assert.match(c.prompt, /do not read the saved file/)
+})
 await check('quick: the overlap check stops the later of two quick PRs that share a path, after both briefs are posted and before any build', async () => {
   TRIAGES.QO1 = triage('build', 'M', 'medium', { entry: { touches: 'src/x.js', acceptance: 'a' } })
   TRIAGES.QO2 = triage('build', 'M', 'medium', { entry: { touches: 'test/y.mjs, `./src/x.js` (the loader), docs/z.md', acceptance: 'b' } })
