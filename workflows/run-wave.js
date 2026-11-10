@@ -1635,6 +1635,9 @@ const givenEvals = (pr, raw) => {
   return { list: obj.evals, meta: metaOf(obj, pr) }
 }
 
+// A resumed run keeps the disputes and deviations of the earlier run: the one-dispute-per-id rule and the PR body depend on them.
+const resumedList = (pr, key, keep) => pr.resume && Array.isArray(pr.resume[key]) ? pr.resume[key].filter(keep) : []
+
 async function checkEvals(pr, list, meta, round, writerNotes) {
   const [arch, product] = await parallel([
     () => archRuns(pr) ? call('evalsArch', pr, evalsCheckPrompt(pr, list, meta, 'architecture', round, writerNotes), `evalsarch:${pr.id}#${round}`, { schema: EVALSCHECK }) : Promise.resolve(undefined),
@@ -1761,7 +1764,7 @@ async function runPRSteps(input) {
   const minors = (pr.resume ? pr.resume.minors || [] : []).concat(quickMinors)
   let impl = { problems: '' }
   let rerunFixChanged
-  const evalsOut = () => pr.evals ? { evals: pr.evals, evalsMeta: pr.evalsMeta, evalDisputes: pr.evalDisputes } : {}
+  const evalsOut = () => pr.evals ? { evals: pr.evals, evalsMeta: pr.evalsMeta, evalDisputes: pr.evalDisputes, deviations: pr.deviations } : {}
   const rerunFix = () => rerunFixChanged === undefined ? {} : { rerunFixChanged }
   const decisionFindings = (pr.skipImpl || pr.resume) && (pr.architectureDecision || pr.productDecision)
     ? [{ severity: 'major', title: 'Apply the maintainer decision', detail: `Apply the maintainer decision given in the brief to the branch. If the branch already follows it, change nothing.${pr.architectureDecision ? ` Architecture decision: ${pr.architectureDecision}` : ''}${pr.productDecision ? ` Product decision: ${pr.productDecision}` : ''}` }]
@@ -1772,7 +1775,7 @@ async function runPRSteps(input) {
     const given = givenEvals(pr, rawEvals)
     return { id: pr.id, ready: false, reason: written.stop, history, ...(pr.resume && pr.resume.findings ? { lastFindings: pr.resume.findings } : {}), ...(given ? { evals: given.list, evalsMeta: given.meta } : {}) }
   }
-  if (written.evals) pr = { ...pr, evals: written.evals, evalsMeta: written.meta, evalDisputes: [], deviations: [] }
+  if (written.evals) pr = { ...pr, evals: written.evals, evalsMeta: written.meta, evalDisputes: resumedList(pr, 'evalDisputes', d => d && typeof d.id === 'string'), deviations: resumedList(pr, 'deviations', d => d && reasonOf(d.what)) }
   if (preFindings.length) {
     const decisionFix = await call('fix', pr, fixPrompt(pr, null, preFindings, history.length), `fix:${pr.id}#${history.length}`, { schema: FIX })
     if (decisionFix && typeof decisionFix.changed === 'boolean') rerunFixChanged = decisionFix.changed

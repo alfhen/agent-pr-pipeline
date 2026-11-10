@@ -2149,6 +2149,19 @@ await check('E02-3 a dispute from an implementer that did not push is settled an
   assert.equal(x.C1.evalDisputes.length, 1)
   assert.equal(x.C1.evalDisputes[0].ruling, 'keep')
 })
+await check('E02-3 a resume keeps the disputes and deviations of the earlier run: no second ruling, and the PR body lists them', async () => {
+  const changed = ev('C1-1', 'behaviour', { statement: 'C1-1 changed earlier' })
+  const earlier = { id: 'C1-1', from: 'implementer', reason: 'cannot be met', ruling: 'change', writerReason: 'fair' }
+  const dev = { what: 'touched the helper', where: 'a.js', why: 'needed' }
+  const resume = { history: [], evals: { evals: [changed, ev('C1-2', 'error path')] }, evalDisputes: [earlier], deviations: [dev] }
+  const x = await hooked([{ ...C1PR, resume }], (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x')])
+    : o.label === 'fix:C1#1' ? { summary: 's', disputes: [{ id: 'C1-1', reason: 'again' }] } : undefined, { evals: true })
+  assert.equal(disputeCalls().length, 0)
+  assert.deepEqual(x.C1.evalDisputes, [earlier])
+  assert.deepEqual(x.C1.deviations, [dev])
+  assert.match(calls.find(c => c.label === 'open:C1').prompt, /cannot be met/)
+  assert.match(calls.find(c => c.label === 'review:C1#1').prompt, /touched the helper/)
+})
 await check('E02-3 only the review loop fixer is told to return disputes; a bots fix prompt is not', async () => {
   await hooked(only1('B1'), (p, o) => o.label === 'evals:B1' ? withMeta(listOf('B1')) : o.label === 'botreview:B1#1' ? reviewOf([f('major', 'x')]) : undefined, { evals: true })
   const bots = calls.find(c => c.label === 'fix:B1#bots1')
