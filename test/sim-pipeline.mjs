@@ -3191,6 +3191,13 @@ await check('E04-1: the reviewers, the architecture review, the product review a
   assert.deepEqual(y.C1.history[0].failingChecks, ['unit'])
   assert.ok(!called('review:C1#1') && !called('arch:C1#1') && called('review:C1#2'))
 })
+await check('E04-1: a flaky-check rerun that passes keeps the earlier fix for the architecture review of the next round', async () => {
+  const arch = at('arch', 'C1', { 1: { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [f('major', 'wrong layer')] } })
+  const x = await hooked(withEvals('C1'), chain(arch, verifyHook({ 2: checkFailed }), (p, o) => o.label === 'fix:C1#2' ? { summary: 'none', changed: false } : undefined))
+  assert.equal(x.C1.ready, true)
+  assert.ok(called('verify:C1#2r') && called('review:C1#3'))
+  assert.ok(called('arch:C1#3'))
+})
 await check('E04-2: a blocker with an eval joins the list under a workflow id and the verifier checks it next round', async () => {
   const x = await hooked(withEvals('C1'), at('review', 'C1', { 1: reviewOf([fe('major', 'cache race')]) }))
   assert.equal(x.C1.ready, true)

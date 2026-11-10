@@ -1355,7 +1355,6 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
       if (second.pass && evalMode && !ran) {
         // No reviewer has seen this head: the next round's verifier passes and the reviewers run.
         if (round === startRound + max - 1) return halt(`no reviewer round: the checks passed on the rerun in the last round, ${max} of ${max} used (${cap})`, stop)
-        loopState.fixed = false
         continue
       }
       if (second.pass) return { signedOff: true, headSha: again.headSha || test.headSha || (review && review.headSha) }
