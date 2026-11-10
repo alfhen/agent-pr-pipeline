@@ -31,6 +31,8 @@
       "Agent(agent-pr-pipeline:docs-reviewer)",
       "Agent(docs-writer)",
       "Agent(agent-pr-pipeline:docs-writer)",
+      "Agent(evals-writer)",
+      "Agent(agent-pr-pipeline:evals-writer)",
       "Agent(evaluator)",
       "Agent(agent-pr-pipeline:evaluator)",
       "Agent(feedback-redactor)",

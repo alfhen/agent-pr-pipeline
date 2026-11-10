@@ -28,6 +28,9 @@ const REDACTED = ITEMS.map(i => ({ ...i, title: `generic: ${i.title}`, detail: '
 const briefs = {}
 const storedInstead = {}
 let triageCount = 0
+// Answers for the evals writer (label evals:<id>, evals:<id>#w<n>) and its reviewers (evalsarch:<id>#<n>, evalsproduct:<id>#<n>); a case sets them.
+const evalsPlan = { writer: () => null, check: () => ({ verdict: 'ok', notes: '' }) }
+const evalsFake = (o, prompt, id) => /^evals(arch|product):/.test(o.label) ? evalsPlan.check(o, prompt, id) : evalsPlan.writer(o, prompt, id)
 // Each build entry touches its own file, so quick PRs in one run never overlap unless a test makes them.
 const triage = (decision, size, risk, extra = {}) => ({
   decision, size, risk, why: `why ${decision} ${size} ${risk}`, newConcepts: [],
@@ -90,6 +93,7 @@ const agentRaw = async (prompt, o) => {
   if (o.label.startsWith('preflight')) return preflight
   if (/#cleanup/.test(o.label)) return cleanupAnswer(o.label, prompt)
   if (o.label.startsWith('triage')) return TRIAGES[id]
+  if (o.label.startsWith('evals')) return evalsFake(o, prompt, id)
   if (o.label.startsWith('safety')) return land.safetyDown.has(id) ? null : land.person.has(id) ? { verdict: 'person', why: 'renames the --all flag' } : { verdict: 'safe', why: 'internal change' }
   if (o.label.startsWith('io:') && o.label.endsWith('#gate')) {
     if (land.gateDown.has(id)) return null
@@ -219,7 +223,7 @@ const PRS = [
   { id: 'B1', title: 't', branch: 'b16' },
   { id: 'W1', title: 't', branch: 'b17' },
 ]
-const base = { repo: 'o/r', tmp: '/x', plan: 'docs/p.md', architecture: 'docs/design.md', goals: 'docs/goals.md', pluginRoot: '/plug', prs: PRS }
+const base = { evals: false, repo: 'o/r', tmp: '/x', plan: 'docs/p.md', architecture: 'docs/design.md', goals: 'docs/goals.md', pluginRoot: '/plug', prs: PRS }
 const GOOD = { ok: true, exists: true, goals: 3, nonGoals: 2, missing: [] }
 let lastResult
 const MAIN_DENYLIST = ['o', 'r', 'o/r', 'https://github.com/o/r', 'src/billing/invoice.ts', 'README.md', 'src/secret/area.ts', 'billing/invoice.ts', 'secret/area.ts', ...PRS.map(p => p.branch)]
@@ -394,6 +398,185 @@ await check('no skill instruction without a skills argument', () => {
   assert.ok(mainCalls.every(c => !c.prompt.includes('Skill tool')))
 })
 
+// E01: the evals writer. Each case sets evalsPlan, runs with evals true, and resets it.
+const ev = (id, kind, extra) => ({ id, kind, statement: `${id} must hold`, check: `run ${id}; expect ok`, ...extra })
+const listOf = pid => [ev(`${pid}-1`, 'behaviour'), ev(`${pid}-2`, 'error path')]
+const okCheck = () => ({ verdict: 'ok', notes: '' })
+const noWriter = () => assert.fail('the writer ran')
+const evalsRun = async (prs, writer, check = okCheck, extra = {}) => {
+  evalsPlan.writer = writer
+  evalsPlan.check = check
+  try { return await simulate({ ...base, evals: true, ...extra, prs }) } finally { evalsPlan.writer = () => null; evalsPlan.check = okCheck }
+}
+const evalLabels = id => calls.map(c => c.label).filter(l => l.split(':')[1].split('#')[0] === id)
+const C1PR = PRS.find(p => p.id === 'C1')
+const ALGO = { ...C1PR, algorithm: true }
+const withMeta = (list, meta = {}) => ({ evals: list, ...meta })
+const ALGO_FULL = [ev('C1-1', 'behaviour'), ev('C1-2', 'error path'), ev('C1-3', 'time bound'), ev('C1-4', 'size limit'), ev('C1-5', 'reference')]
+const without = kind => ALGO_FULL.filter(e => e.kind !== kind)
+const evalsStop = r => r.reason && /^evals/.test(r.reason)
+
+await check('E01-1 a code PR gets its list before the implementer, and every later brief and the PR body hold it', async () => {
+  const list = listOf('C1')
+  const x = await evalsRun([C1PR], () => withMeta(list))
+  const labels = evalLabels('C1')
+  assert.ok(labels.indexOf('evals:C1') >= 0 && labels.indexOf('evals:C1') < labels.indexOf('evalsarch:C1#1'))
+  assert.ok(labels.indexOf('evalsarch:C1#1') < labels.indexOf('implement:C1'))
+  for (const label of ['implement:C1', 'test:C1#1', 'review:C1#1', 'arch:C1#1', 'open:C1']) {
+    const prompt = calls.find(c => c.label === label).prompt
+    for (const e of list) assert.ok(prompt.includes(e.statement), `${label} lacks ${e.id}`)
+  }
+  assert.match(calls.find(c => c.label === 'open:C1').prompt, /"Evals" section/)
+  assert.deepEqual(x.C1.evals, list)
+  assert.deepEqual(x.C1.evalsMeta, { noErrorPath: '', noReference: '', algorithm: false })
+  assert.equal(calls.find(c => c.label === 'evals:C1').agentType, 'agent-pr-pipeline:evals-writer')
+  assert.equal(calls.find(c => c.label === 'evals:C1').model, 'opus')
+  assert.equal(calls.find(c => c.label === 'evalsarch:C1#1').agentType, 'agent-pr-pipeline:arch-reviewer')
+  assert.ok(!calls.some(c => c.label.startsWith('evalsproduct')), 'the product reviewer checks the list only when productReview is all')
+})
+await check('E01-1 the open prompt gives the last result of each eval from the history rows', async () => {
+  const given = [ev('C1-1', 'behaviour'), ev('C1-2', 'error path'), ev('C1-3', 'regression')]
+  const row = (round, evals) => ({ round, testPass: true, failingChecks: [], blockersAndMajors: [], evals })
+  const history = [row(1, { passed: ['C1-1'], failed: ['C1-2', 'C1-3'], ci: [] }), row(2, { passed: ['C1-2'], failed: [], ci: ['C1-3'] })]
+  await evalsRun([{ ...C1PR, evals: given, resume: { history } }], noWriter)
+  const rows = JSON.parse(/Eval rows: (\[.*\])/.exec(calls.find(c => c.label === 'open:C1').prompt)[1])
+  assert.deepEqual(rows.map(r => r.result), ['pass', 'pass', 'ci'])
+  await evalsRun([{ ...C1PR, evals: given }], noWriter)
+  const fresh = JSON.parse(/Eval rows: (\[.*\])/.exec(calls.find(c => c.label === 'open:C1').prompt)[1])
+  assert.deepEqual(fresh.map(r => r.result), ['not checked', 'not checked', 'not checked'])
+})
+await check('E01-2 a list with no error path eval and no reason is refused; after evalsRounds the PR stops', async () => {
+  const x = await evalsRun([C1PR], () => withMeta([ev('C1-1', 'behaviour')]))
+  assert.equal(x.C1.ready, false)
+  assert.equal(x.C1.reason, 'evals refused: no error path')
+  assert.deepEqual(evalLabels('C1'), ['evals:C1', 'evals:C1#w2'])
+  assert.match(calls.find(c => c.label === 'evals:C1#w2').prompt, /refused it/)
+  const y = await evalsRun([C1PR], () => withMeta([ev('C1-1', 'behaviour')]), okCheck, { evalsRounds: 1 })
+  assert.deepEqual(evalLabels('C1'), ['evals:C1'])
+  assert.equal(y.C1.reason, 'evals refused: no error path')
+})
+await check('E01-2 a noErrorPath reason lets a list without an error path eval through', async () => {
+  const x = await evalsRun([C1PR], () => withMeta([ev('C1-1', 'behaviour')], { noErrorPath: 'a rename has no error path' }))
+  assert.ok(evalLabels('C1').includes('implement:C1'))
+  assert.equal(x.C1.evalsMeta.noErrorPath, 'a rename has no error path')
+})
+await check('E01-2 the structure rules refuse an empty list, a repeated id and an eval with no id, kind, statement or check', async () => {
+  const bad = [[], [ev('C1-1', 'behaviour'), ev('C1-1', 'error path')], [ev('', 'behaviour'), ev('C1-2', 'error path')], [ev('C1-1', 'vibes'), ev('C1-2', 'error path')], [ev('C1-1', 'behaviour', { statement: '' }), ev('C1-2', 'error path')], [ev('C1-1', 'behaviour', { check: ' ' }), ev('C1-2', 'error path')]]
+  for (const list of bad) {
+    const x = await evalsRun([C1PR], () => withMeta(list), okCheck, { evalsRounds: 1 })
+    assert.match(x.C1.reason, /^evals refused: /, JSON.stringify(list))
+    assert.ok(!evalLabels('C1').includes('implement:C1'), JSON.stringify(list))
+  }
+})
+await check('E01-3 an algorithm entry needs a time bound, a size limit and a reference or a noReference reason', async () => {
+  const attempt = async (list, meta) => {
+    const x = await evalsRun([ALGO], () => withMeta(list, meta), okCheck, { evalsRounds: 1 })
+    return { x, built: evalLabels('C1').includes('implement:C1') }
+  }
+  let r1 = await attempt(without('time bound'))
+  assert.equal(r1.built, false)
+  assert.equal(r1.x.C1.reason, 'evals refused: no time bound')
+  r1 = await attempt(without('size limit'))
+  assert.equal(r1.built, false)
+  assert.equal(r1.x.C1.reason, 'evals refused: no size limit')
+  r1 = await attempt(without('reference'))
+  assert.equal(r1.built, false)
+  assert.equal(r1.x.C1.reason, 'evals refused: no reference')
+  r1 = await attempt(without('reference'), { noReference: 'no simple version of this function exists' })
+  assert.equal(r1.built, true)
+  r1 = await attempt(ALGO_FULL)
+  assert.equal(r1.built, true)
+  assert.equal(r1.x.C1.evalsMeta.algorithm, true)
+})
+await check('E01-3 the writer can set algorithm itself', async () => {
+  const x = await evalsRun([C1PR], () => withMeta(listOf('C1'), { algorithm: true }), okCheck, { evalsRounds: 1 })
+  assert.equal(x.C1.reason, 'evals refused: no time bound')
+})
+await check('E01-4 a needs-change from the evals check goes back to the writer once, with the notes', async () => {
+  let n = 0
+  const x = await evalsRun([C1PR], () => withMeta(listOf('C1')), () => ++n === 1 ? { verdict: 'needs-change', notes: 'the QA line has no eval' } : okCheck())
+  assert.deepEqual(evalLabels('C1').slice(0, 5), ['evals:C1', 'evalsarch:C1#1', 'evals:C1#w2', 'evalsarch:C1#2', 'implement:C1'])
+  assert.match(calls.find(c => c.label === 'evals:C1#w2').prompt, /the QA line has no eval/)
+  assert.ok(!calls.find(c => c.label === 'evals:C1').prompt.includes('the QA line has no eval'))
+  assert.equal(x.C1.ready, true)
+})
+await check('E01-4 a second needs-change stops the PR with the notes', async () => {
+  const x = await evalsRun([C1PR], () => withMeta(listOf('C1')), () => ({ verdict: 'needs-change', notes: 'no eval for the QA line' }))
+  assert.equal(x.C1.reason, 'evals check: architecture: no eval for the QA line')
+  assert.ok(!evalLabels('C1').includes('implement:C1'))
+})
+await check('E01-4 the product reviewer checks the list too when productReview is all, and a check that does not answer stops the PR', async () => {
+  await evalsRun([C1PR], () => withMeta(listOf('C1')), okCheck, { productReview: 'all' })
+  assert.ok(evalLabels('C1').includes('evalsproduct:C1#1'))
+  const x = await evalsRun([C1PR], () => withMeta(listOf('C1')), o => o.label.startsWith('evalsproduct') ? null : okCheck(), { productReview: 'all' })
+  assert.equal(x.C1.reason, 'evals check: the product reviewer did not answer')
+})
+await check('E01-5 prs[].evals skips the writer, keeps the rules and puts the list in the implementer prompt', async () => {
+  const list = listOf('C1')
+  const x = await evalsRun([{ ...C1PR, evals: list }], noWriter)
+  assert.ok(!calls.some(c => /^evals:/.test(c.label)))
+  assert.ok(evalLabels('C1').includes('evalsarch:C1#1'))
+  assert.match(calls.find(c => c.label === 'implement:C1').prompt, /C1-2 must hold/)
+  assert.deepEqual(x.C1.evals, list)
+  const y = await evalsRun([{ ...C1PR, evals: [ev('C1-1', 'behaviour')] }], noWriter)
+  assert.equal(y.C1.reason, 'evals refused: no error path')
+  assert.ok(!evalLabels('C1').includes('implement:C1'))
+  assert.ok(!calls.some(c => /^evals:/.test(c.label)))
+})
+await check('E01-5 resume.evals keeps its meta: a noErrorPath reason and an algorithm without a reference eval pass, an algorithm without a time bound does not', async () => {
+  const resumed = evals => ({ ...C1PR, resume: { history: [], evals } })
+  const attempt = async evals => ({ x: await evalsRun([resumed(evals)], noWriter), labels: evalLabels('C1') })
+  let r1 = await attempt({ evals: [ev('C1-1', 'behaviour')], noErrorPath: 'a rename' })
+  assert.ok(!evalsStop(r1.x.C1))
+  assert.ok(r1.labels.includes('evalsarch:C1#1'))
+  r1 = await attempt({ evals: without('reference'), algorithm: true, noReference: 'no simple version exists' })
+  assert.ok(!evalsStop(r1.x.C1))
+  r1 = await attempt({ evals: without('time bound'), algorithm: true })
+  assert.equal(r1.x.C1.reason, 'evals refused: no time bound')
+  r1 = await attempt(listOf('C1'))
+  assert.ok(!evalsStop(r1.x.C1))
+  assert.deepEqual(r1.x.C1.evals, listOf('C1'))
+})
+await check('E01-5 a resume or a skipImpl PR with no list has no writer, a tester and no verifier, and keeps its history', async () => {
+  const history = [{ round: 1, testPass: true, failingChecks: [], blockersAndMajors: [] }]
+  for (const extra of [{ resume: { history } }, { skipImpl: true }]) {
+    const x = await evalsRun([{ ...C1PR, ...extra }], noWriter)
+    const labels = evalLabels('C1')
+    assert.ok(!labels.some(l => /^evals/.test(l)))
+    assert.ok(labels.some(l => l.startsWith('test:C1#')))
+    assert.ok(!labels.some(l => l.startsWith('verify:')))
+    assert.equal(x.C1.evals, undefined)
+    if (extra.resume) assert.deepEqual(x.C1.history[0], history[0])
+  }
+})
+await check('E01-10 plan and docs PRs get no writer', async () => {
+  const prs = [C1PR, PRS.find(p => p.id === 'D1'), { id: 'P9', title: 'plan', branch: 'b30', kind: 'plan' }]
+  await evalsRun(prs, () => withMeta(listOf('C1')))
+  assert.deepEqual(calls.filter(c => /^evals:[^#]+$/.test(c.label)).map(c => c.label), ['evals:C1'])
+  assert.ok(!calls.some(c => /^evalsarch:(D1|P9)/.test(c.label)))
+  assert.ok(calls.some(c => c.label === 'implement:P9'))
+})
+await check('E01-7 a writer that dies twice stops the PR and no implementer runs', async () => {
+  const x = await evalsRun([C1PR], () => null)
+  assert.equal(x.C1.reason, 'evals writer failed')
+  assert.deepEqual(evalLabels('C1'), ['evals:C1', 'evals:C1'])
+})
+await check('E01-9 the default path runs writer, evals check, implementer, tester, reviewers, bots, minor pass and docs in order', async () => {
+  evalsPlan.writer = () => withMeta(listOf('C1'))
+  const { evals, ...defaults } = base
+  try { await simulate({ ...defaults, prs: [C1PR] }) } finally { evalsPlan.writer = () => null }
+  const steps = evalLabels('C1').map(l => l.split(':')[0])
+  const first = step => steps.indexOf(step)
+  assert.deepEqual(steps.slice(0, 6), ['evals', 'evalsarch', 'implement', 'test', 'review', 'arch'])
+  assert.ok(first('arch') < first('docs') && first('docs') < first('open') && first('open') < first('botwait'))
+})
+await check('E01-6 evals false turns the writer and the check off, also for a given list', async () => {
+  const x = await evalsRun([{ ...C1PR, evals: listOf('C1') }], noWriter, okCheck, { evals: false })
+  assert.ok(!evalLabels('C1').some(l => /^evals/.test(l)))
+  assert.equal(x.C1.evals, undefined)
+  assert.doesNotMatch(calls.find(c => c.label === 'implement:C1').prompt, /Evals \(/)
+})
+
 failWait = true
 const w = await simulate(base)
 failWait = false
@@ -532,7 +715,7 @@ const prsWithSkills = PRS.map(pr =>
     : pr.id === 'D1' ? { ...pr, skills: { impl: ['humanizer:humanizer'], review: ['humanizer:humanizer'] } }
       : pr)
 await simulate({ ...base, skills: SKILLS, prs: prsWithSkills })
-const STEP_OF = { botreview: 'review', landreview: 'review', qa: 'qa', docs: 'docs', docsfix: 'docs', docsreview: 'docs', implement: 'impl', test: 'test', review: 'review', arch: 'arch', product: 'product', fix: 'fix', open: 'open', botwait: 'botWait', botanswer: 'botAnswer', landfix: 'landFix', preflight: 'preflight', evaluate: 'evaluate', redact: 'redact' }
+const STEP_OF = { botreview: 'review', landreview: 'review', qa: 'qa', docs: 'docs', docsfix: 'docs', docsreview: 'docs', evals: 'evals', evalsarch: 'evals', evalsproduct: 'evals', implement: 'impl', test: 'test', verify: 'verify', review: 'review', arch: 'arch', product: 'product', fix: 'fix', open: 'open', botwait: 'botWait', botanswer: 'botAnswer', landfix: 'landFix', preflight: 'preflight', evaluate: 'evaluate', redact: 'redact' }
 const expected = c => {
   const step = STEP_OF[c.label.split(':')[0]]
   const id = c.label.split(':')[1].split('#')[0]
@@ -582,7 +765,7 @@ const frontmatter = name => {
   const text = readFileSync(new URL(`agents/${name}.md`, root), 'utf8')
   return Object.fromEntries(text.split('---')[1].trim().split('\n').map(l => [l.slice(0, l.indexOf(':')), l.slice(l.indexOf(':') + 1).trim()]))
 }
-const AGENT_OF = { botreview: 'reviewer', landreview: 'reviewer', qa: 'qa', docsfix: 'docs-writer', implement: 'implementer', test: 'tester', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight', triage: 'triager', io: 'pipeline-io', safety: 'merge-safety', evaluate: 'evaluator', redact: 'feedback-redactor' }
+const AGENT_OF = { evals: 'evals-writer', evalsarch: 'arch-reviewer', evalsproduct: 'product-reviewer', botreview: 'reviewer', landreview: 'reviewer', qa: 'qa', docsfix: 'docs-writer', implement: 'implementer', test: 'tester', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight', triage: 'triager', io: 'pipeline-io', safety: 'merge-safety', evaluate: 'evaluator', redact: 'feedback-redactor' }
 const WRITERS = ['implementer', 'fixer', 'docs-writer', 'bot-answerer', 'land-fixer']
 await simulate(base)
 await check('every call names its role agent from the plugin', () => {
@@ -640,7 +823,7 @@ await check('plugin and marketplace manifests agree, and the workflow is named r
 
 // Quick fixes: the triage gate.
 const QUICK = ['QS', 'QN', 'QM', 'QF', 'QY', 'QL', 'QH', 'QP', 'QD', 'QE', 'QT', 'QA']
-const quickBase = { repo: 'o/r', tmp: '/x', goals: 'docs/goals.md', architecture: 'docs/design.md', pluginRoot: '/plug', prs: QUICK.map((id, i) => ({ id, quick: { issue: 40 + i }, branch: `fix/${id}` })) }
+const quickBase = { evals: false, repo: 'o/r', tmp: '/x', goals: 'docs/goals.md', architecture: 'docs/design.md', pluginRoot: '/plug', prs: QUICK.map((id, i) => ({ id, quick: { issue: 40 + i }, branch: `fix/${id}` })) }
 const qr = await simulate(quickBase)
 const quickCalls = calls
 const forPr = (id, re) => quickCalls.filter(c => c.label.split(':')[1].split('#')[0] === id && re.test(c.label))

@@ -92,7 +92,8 @@ Summary: a plan is reviewed first, including whether it still serves the product
 
 Big work starts as a plan document, for example `docs/plan-<version>.md`. Copy `${CLAUDE_PLUGIN_ROOT}/templates/plan.md`. The plan is the brief for every worker, so it must be concrete:
 
-- **One entry per PR**, with an ID (`T01`, `U02`...), the issues it closes, a **Touches** line (every file it edits) and an **Acceptance** line (the test that proves it, and how that test fails without the change). An entry that adds a check (a gate, a guard, a refusal or a trust rule) also has an **Invariants** line: one sentence per property that must hold for every input. A plan that adds states (a status, a mode, a lock) lists each state, how it starts and what ends it.
+- **One entry per PR**, with an ID (`T01`, `U02`...), the issues it closes, a **Round cap**, a **Touches** line (every file it edits) and an **Acceptance** line (the test that proves it, and how that test fails without the change). An entry that adds a check (a gate, a guard, a refusal or a trust rule) also has an **Invariants** line: one sentence per property that must hold for every input. A plan that adds states (a status, a mode, a lock) lists each state, how it starts and what ends it.
+- **Evals.** An entry of a code PR has an **Evals** table: id (`<entry id>-<n>`), kind, one plain sentence that says what must be true, and how to check it. The kinds are `behaviour`, `error path`, `regression`, `quality bar`, `size limit`, `time bound` and `reference`. Cover each behaviour, each error path, the Acceptance line and the QA line. An entry that adds or changes an algorithm has an `Algorithm: yes` line, and its table needs a time bound, a size limit and a reference (a slow, simple version of the same function, compared with it on generated inputs), or a written reason for the reference. The table is input to the evals writer: before the build it keeps or improves each row, adds the rows that are missing, and the architecture reviewer checks the list. Plan and docs PRs have no list.
 - **Waves.** Entries in one wave can touch the same file when they edit different parts of it. Entries that edit the same part stay in different waves. The Touches line of each entry names the function or section for a shared file. A conflict at landing goes through the land fix, one PR at a time. A Mermaid diagram of the waves, with a one-line summary.
 - **Shared files.** If several PRs must add to one file (a CHANGELOG), the plan PR adds one marker per PR with a blank line between each pair. Each PR replaces only its own marker. Git sees no conflict because no two PRs edit adjacent lines.
 - **Out of scope.** A table of what waits and why.
@@ -105,6 +106,7 @@ Plan-author checklist. Check it before the plan goes to review; the plan review 
 4. Give each acceptance test a way to fail, and say how.
 5. Give each entry that adds a check an Invariants line, and each plan that adds states a States table.
 6. Name the gated paths each entry touches.
+7. Give each code entry a Round cap and an Evals table, and an `Algorithm: yes` line when it adds or changes an algorithm.
 
 Triage before planning when the input is a pile of issues: give each read-only agent a group of issues, ask it to check each one against the code (not the title), and return still-valid, size, milestone and reasons. Some "bugs" turn out to be fixed already, and some "nits" turn out to be real bugs.
 
