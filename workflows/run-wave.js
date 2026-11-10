@@ -1336,9 +1336,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     }
     const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, round, review && review.sweep, true, true), `fix:${pr.id}#${round}`, { schema: FIX })
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
-    const evalsBefore = pr.evals
-    if (fix) await settleDisputes(pr, fix.disputes, 'fixer')
-    const listChanged = pr.evals !== evalsBefore
+    const listChanged = fix ? await settleDisputes(pr, fix.disputes, 'fixer') : false
     if (pr.kind !== 'plan' && fix && fix.planConflict) {
       delete row.themes
       return halt('needs human: plan conflict', { conflict: fix.planConflict })
@@ -1366,7 +1364,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
       return halt(stop.reason, { ...stop, lastFindings: second.findings, lastTest: again })
     }
     loopState.siblings = labelSiblings(fix && fix.siblings, blocking)
-    loopState.fixed = !fix || fix.changed !== false || listChanged
+    loopState.fixed = !fix || fix.changed !== false
   }
 }
 
@@ -1807,8 +1805,10 @@ ${JSON.stringify(current, null, 1)}
 The dispute: ${JSON.stringify(d.reason)}`
 
 // The list changes only here, and only through a writer answer that passes evalsVerdict and the evals check.
+// Returns true when a ruling changed the list.
 async function settleDisputes(pr, disputes, from) {
-  if (!pr.evals || !Array.isArray(disputes)) return
+  let changed = false
+  if (!pr.evals || !Array.isArray(disputes)) return changed
   for (const raw of disputes) {
     const id = raw && reasonOf(raw.id)
     if (!id) { log(`${pr.id} dispute without an id ignored`); continue }
@@ -1828,9 +1828,11 @@ async function settleDisputes(pr, disputes, from) {
     const c = bad ? null : await checkEvals(pr, next, pr.evalsMeta, `d${n}`, record.writerReason)
     if (bad || c.down || c.notes) { Object.assign(record, { ruling: 'rejected', why: bad || c.down || c.notes }); continue }
     pr.evals = next
+    changed = true
     record.ruling = 'change'
     record.eval = next.find(e => e.id === id)
   }
+  return changed
 }
 
 // A stop that pushed no row still closes the segment: the row carries the reason and no themes, so a resume starts clean.

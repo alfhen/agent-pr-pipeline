@@ -3434,7 +3434,7 @@ await check('F652-2 an eval that names the PR title, a Closes line or the pull r
   assert.equal(y.C1.reason, PR_REFUSAL)
 })
 await check('F652-2 an eval about code that names a pull request in passing is not refused', async () => {
-  const fine = ev('C1-3', 'behaviour', { statement: 'the opener step reads the notes', check: 'node --test test/open.test.mjs; expect pass' })
+  const fine = ev('C1-3', 'behaviour', { statement: 'openPrompt reads the PR id from the entry', check: 'node --test test/open.test.mjs; expect pass' })
   const x = await evalsRun([C1PR], () => withMeta(listOf('C1').concat(fine)))
   assert.ok(evalLabels('C1').includes('implement:C1'))
   assert.equal(x.C1.evals.length, 3)
