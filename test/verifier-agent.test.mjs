@@ -33,3 +33,22 @@ test('verifier has the tester related-tests and acceptance rules', () => {
 test('template has ciChecks', () => {
   assert.deepEqual(JSON.parse(read('templates/pipeline.json')).ciChecks, ['ci']);
 });
+
+test('E03b-4 and E03b-7: the break check pushes nothing, restores the clone and treats added and changed files differently', () => {
+  assert.match(body, /Never push, and never touch the branch/);
+  assert.match(body, /then restore the clone/);
+  assert.match(body, /Reset a file the PR changes with `git checkout \$\(git merge-base origin\/HEAD HEAD\) -- <file>`/);
+  assert.match(body, /Delete a file the PR adds, because it is not on `origin\/HEAD`/);
+});
+
+test('E03b-10: a load, import, missing-file, syntax or exit 127 error is not-run, not a proof', () => {
+  assert.match(body, /fails on its own assertion/);
+  assert.match(body, /A load, import, missing-file, syntax or exit 127 error is not that/);
+  assert.match(body, /set `not-run` and give the reason/);
+});
+
+test('E03b-8 and E03b-9: kinds that pass by design are not-applicable, an unmapped eval is not-run, a ci eval gets none', () => {
+  assert.match(body, /`not-applicable` for kinds `regression`, `quality bar`, `size limit`, `time bound` and `reference`/);
+  assert.match(body, /cannot map the eval to a test/);
+  assert.match(body, /A `ci` eval gets no break check/);
+});
