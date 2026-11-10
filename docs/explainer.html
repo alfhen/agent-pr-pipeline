@@ -187,6 +187,7 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
   <section aria-labelledby="cast">
     <h2 id="cast">Who does what</h2>
     <div class="cast">
+      <div class="role agent"><span class="who">EVALS WRITER</span><h3>Says what must be true</h3><p>Before the build, an Opus agent writes a list of checks in plain words, from the plan and the default branch. The architect checks the list for gaps. The builder then builds against it.</p></div>
       <div class="role agent"><span class="who">BUILDER</span><h3>Writes the change</h3><p>Follows one entry in the plan. Adds a test, then breaks the feature on purpose to prove the test notices.</p></div>
       <div class="role check"><span class="who">TESTER</span><h3>Starts from scratch</h3><p>Downloads a fresh copy and runs every check. It changes nothing, so "works on my machine" can't slip through.</p></div>
       <div class="role check"><span class="who">REVIEWER</span><h3>Looks for trouble</h3><p>A stronger model reads the change against the plan and the design. It ranks each problem: blocker, major or minor.</p></div>
