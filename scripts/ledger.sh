@@ -88,7 +88,7 @@ need_issue() { find_issue; [ -n "$issue" ] || die 65 "no ledger issue in $repo: 
 # Parses the trusted ledger comments into records. With $1 = raw, a run and PR id that has several records keeps all of them.
 PARSE='
 [.[] | objects
-  | select((.user | objects | .login) == $user and (.body | type) == "string")
+  | select((.user | objects | .login) == $user and (.body | type) == "string" and (.body as $b | any($t[0][]; . == $b)))
   | (.body | capture("^<!-- pipeline:ledger v1 (?<run>[^ ]+) (?<pr>[^ ]+) -->\\s*\\n```json\\n(?<json>.*)\\n```\\s*$"; "s")?) as $h
   | (.id) as $id
   | ($h.json | try fromjson catch null) as $r
@@ -97,9 +97,10 @@ PARSE='
 | sort_by(.commentId)
 | if $raw == "1" then . else unique_by(._key) end'
 records_json() {
-  local comments
+  local comments trusted
   comments=$(pages "repos/$repo/issues/$issue/comments") || die 3 "cannot read the ledger comments"
-  jq -c --arg user "$user" --arg raw "${1:-}" "$PARSE" <<<"$comments" || die 3 "cannot parse the ledger comments"
+  trusted=$(jq -c --arg prefix "$PREFIX" --arg user "$user" --arg all 1 -f "$TRUSTED" <<<"$comments") || die 3 "cannot read the trusted comments"
+  jq -c --slurpfile t <(printf '%s' "$trusted") --arg user "$user" --arg raw "${1:-}" "$PARSE" <<<"$comments" || die 3 "cannot parse the ledger comments"
 }
 
 post_record() { # <run> <pr id> <record json>: prints the new comment id
