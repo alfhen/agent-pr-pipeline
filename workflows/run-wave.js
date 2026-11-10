@@ -1469,7 +1469,7 @@ async function runPR(input) {
   return result
 }
 
-const evalsRuns = pr => EVALS_ON && pr.kind !== 'plan' && pr.kind !== 'docs'
+const evalsRuns = pr => pr.kind !== 'plan' && pr.kind !== 'docs'
 const reasonOf = v => typeof v === 'string' ? v.trim() : ''
 const metaOf = (x, pr) => ({ noErrorPath: reasonOf(x && x.noErrorPath), noReference: reasonOf(x && x.noReference), algorithm: !!((x && x.algorithm) || pr.algorithm) })
 
@@ -1522,7 +1522,7 @@ async function checkEvals(pr, list, meta, round, writerNotes) {
 async function writeEvals(pr, raw) {
   if (!evalsRuns(pr)) return {}
   const given = givenEvals(pr, raw)
-  if (!given && (pr.resume || pr.skipImpl)) return {}
+  if (!given && (!EVALS_ON || pr.resume || pr.skipImpl)) return {}
   if (given) {
     const bad = evalsVerdict(given.list, pr, given.meta)
     if (bad) return { stop: `evals refused: ${bad}` }

@@ -592,11 +592,16 @@ await check('E01-2 the writer notes reach the evals check on a later attempt', a
   assert.ok(!evalsStop(x.C1))
   assert.match(calls.find(c => c.label === 'evalsarch:C1#2').prompt, /covered by C1-2/)
 })
-await check('E01-6 evals false turns the writer and the check off, also for a given list', async () => {
-  const x = await evalsRun([{ ...C1PR, evals: listOf('C1') }], noWriter, okCheck, { evals: false })
+await check('E01-6 evals false turns the writer off, a given list still runs', async () => {
+  const x = await evalsRun([C1PR], noWriter, okCheck, { evals: false })
   assert.ok(!evalLabels('C1').some(l => /^evals/.test(l)))
   assert.equal(x.C1.evals, undefined)
   assert.doesNotMatch(calls.find(c => c.label === 'implement:C1').prompt, /Evals \(/)
+  const y = await evalsRun([{ ...C1PR, evals: listOf('C1') }], noWriter, okCheck, { evals: false })
+  assert.ok(!evalsStop(y.C1))
+  assert.ok(evalLabels('C1').some(l => /^evalsarch/.test(l)))
+  assert.ok(y.C1.evals)
+  assert.match(calls.find(c => c.label === 'implement:C1').prompt, /Evals \(/)
 })
 
 failWait = true
