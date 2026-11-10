@@ -97,7 +97,7 @@ test('L01-4 a local record has tokens by role and the weighted figure, and a clo
   assert.equal(l1.tokens.weighted, Math.round(10 + 40 + 25 + 25))
   assert.equal(l2.tokens, null)
   const cloud = records(run(s, 'put', out, '--run', 'run-9', '--cloud', '--dry-run'))
-  assert.ok(cloud.length === 2 && cloud.every(c => c.tokens.comparable === false && c.tokens.source === 'cloud' && c.tokens.raw === 9000 && c.tokens.byRole === null))
+  assert.ok(cloud.length === 2 && cloud.every(c => c.tokens.comparable === false && c.tokens.source === 'cloud' && c.tokens.raw === null && c.tokens.agents === null && c.tokens.waveTotal === 9000 && c.tokens.waveAgents === 4 && c.tokens.byRole === null))
   assert.equal(run(s, 'put', out, '--run', 'x', '--cloud', '--tokens', tokens).status, 64)
 })
 
@@ -399,4 +399,12 @@ test('E06-2 miss records a later defect and report counts the PR once with a bot
   assert.match(rep, /^Defects found after sign-off: 2 PRs\.$/m)
   assert.match(rep, /^Eval misses: 2 PRs\.$/m)
   assert.match(rep, /^Rounds per merged PR: median 1, over 3 PRs/m)
+})
+
+test('a local record from a tokens file that is not comparable keeps the wave totals out of raw and agents', () => {
+  const s = setup()
+  const out = tmp(s, 'out.json', wave)
+  const tokens = tmp(s, 'tokens.json', { comparable: false, totals: { totalTokens: 7000, agentCount: 5 }, prs: [] })
+  const recs = records(run(s, 'put', out, '--run', 'wf_1', '--tokens', tokens, '--dry-run'))
+  assert.ok(recs.length === 2 && recs.every(r => r.tokens.comparable === false && r.tokens.source === 'totals' && r.tokens.raw === null && r.tokens.agents === null && r.tokens.waveTotal === 7000 && r.tokens.waveAgents === 5))
 })

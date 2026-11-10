@@ -15,7 +15,7 @@
 # so it passes the denylist of file-feedback.sh like any other item.
 # --json writes, for ledger.sh, per PR: tokens by role (four counts), raw (the sum with cache reads), noCacheRead, weighted,
 # agent count, wall minutes (first to last timestamp over the PR's transcripts) and the cost of the minor pass (agents labelled
-# minorfix:, minorreview: and test:<id>#minor1). Without a transcript folder it writes the totals with comparable false.
+# minorfix:, minorreview: and test:<id>#minor1). Without a transcript folder, or when a transcript line is unreadable, comparable is false.
 # Exit: 0 done, 1 the output file is missing or is not a workflow output, 64 bad argument.
 set -u
 usage="usage: token-report.sh <workflow output file> [<transcript folder>] [--feedback <file>] [--json <file>]"
@@ -54,6 +54,7 @@ while IFS= read -r f; do
   [ -n "$role" ] || role=unknown
   desc=$(jq -r '.description // ""' "$meta" 2>/dev/null) || desc=""
   jq -c . "$f" >/dev/null 2>&1 || bad=$((bad + 1))
+  [ -s "$f" ] || bad=$((bad + 1))
   jq -R -c 'fromjson? // empty' "$f" | jq -c -s --arg role "$role" --arg desc "$desc" '
     ([.[] | select(.type == "user") | .message.content | strings] | first // "") as $first
     | ([to_entries[] | select(.value.message.usage != null) | {key: (.value.message.id // "line\(.key)"), value: .value.message.usage}] | from_entries | [.[]]) as $u
@@ -66,7 +67,7 @@ while IFS= read -r f; do
        cacheWrite: ([$u[] | .cache_creation_input_tokens // 0] | add // 0),
        cacheRead: ([$u[] | .cache_read_input_tokens // 0] | add // 0),
        output: ([$u[] | .output_tokens // 0] | add // 0),
-       messages: ($u | length)}' >> "$rows" 2>/dev/null || echo "token-report: skipped unreadable $f" >&2
+       messages: ($u | length)}' >> "$rows" 2>/dev/null || { echo "token-report: skipped unreadable $f" >&2; bad=$((bad + 1)); }
 done < <(find "$dir" -maxdepth 1 -name 'agent-*.jsonl' | sort)
 
 if [ ! -s "$rows" ]; then echo "transcripts: no agent files in the folder, totals only"; exit 0; fi
@@ -97,14 +98,14 @@ report=$(jq -s -r --argjson mult "$mult" --argjson bad "$bad" '
 echo "$report"
 
 if [ -n "$json" ]; then
-  jq -s --slurpfile o "$out" '
+  jq -s --slurpfile o "$out" --argjson bad "$bad" '
     def sums: {input: (map(.input) | add), cacheWrite: (map(.cacheWrite) | add), cacheRead: (map(.cacheRead) | add), output: (map(.output) | add)};
     def secs: sub("\\.[0-9]+"; "") | fromdateiso8601;
     def figures: sums as $s | {byRole: (group_by(.role) | map({key: .[0].role, value: sums}) | from_entries),
       raw: ($s.input + $s.cacheWrite + $s.cacheRead + $s.output), noCacheRead: ($s.input + $s.cacheWrite + $s.output),
       weighted: ($s.input + $s.cacheRead * 0.1 + $s.cacheWrite * 1.25 + $s.output * 5 | round), agents: length,
       wallMinutes: ([.[].first | strings] as $f | [.[].last | strings] as $l | if ($f | length) == 0 or ($l | length) == 0 then null else ((($l | max | secs) - ($f | min | secs)) / 6 | round / 10) end)};
-    {comparable: true, totals: ($o[0] | {totalTokens, agentCount}),
+    {comparable: ($bad == 0), totals: ($o[0] | {totalTokens, agentCount}),
      prs: ([.[] | select(.pr != null)] | group_by(.pr) | map({id: .[0].pr} + figures + {minorPass: ([.[] | select(.minor)] | if length == 0 then {agents: 0, weighted: 0} else figures | {agents, weighted} end)})),
      total: figures}' "$rows" > "$json" || { echo "token-report: cannot write $json" >&2; exit 1; }
 fi

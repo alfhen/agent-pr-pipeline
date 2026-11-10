@@ -169,3 +169,32 @@ test('--json with no transcript folder writes the totals with comparable false',
   assert.equal(run(outFile, join(dir, 'nope'), '--json', json).status, 0)
   assert.deepEqual(JSON.parse(readFileSync(json, 'utf8')), { comparable: false, totals: { totalTokens: 12345, agentCount: 0 }, prs: [] })
 })
+
+test('--json writes comparable false when a file is valid JSON but a line is not a transcript entry', () => {
+  const { outFile, folder, dir } = setup([
+    { role: 'reviewer', lines: [first('A1'), msg('m1', [1, 10, 100, 5])] },
+    { role: 'reviewer', lines: [{ type: 'user', message: 'text' }] },
+  ])
+  const json = join(dir, 'tokens.json')
+  assert.equal(run(outFile, folder, '--json', json).status, 0)
+  assert.equal(JSON.parse(readFileSync(json, 'utf8')).comparable, false)
+})
+
+test('--json writes comparable false when a transcript has an unreadable line', () => {
+  const { outFile, folder, dir } = setup([{ role: 'reviewer', lines: [first('A1'), msg('m1', [1, 10, 100, 5])] }])
+  appendFileSync(join(folder, 'agent-0.jsonl'), 'not json\n')
+  const json = join(dir, 'tokens.json')
+  assert.equal(run(outFile, folder, '--json', json).status, 0)
+  assert.equal(JSON.parse(readFileSync(json, 'utf8')).comparable, false)
+})
+
+test('--json writes comparable false when one agent transcript is empty', () => {
+  const { outFile, folder, dir } = setup([
+    { role: 'reviewer', lines: [first('A1'), msg('m1', [1, 10, 100, 5])] },
+    { role: 'reviewer', lines: [first('A1')] },
+  ])
+  writeFileSync(join(folder, 'agent-1.jsonl'), '')
+  const json = join(dir, 'tokens.json')
+  assert.equal(run(outFile, folder, '--json', json).status, 0)
+  assert.equal(JSON.parse(readFileSync(json, 'utf8')).comparable, false)
+})
