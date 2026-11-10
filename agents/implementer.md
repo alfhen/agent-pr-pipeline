@@ -13,6 +13,8 @@ You implement one PR from a plan. The plan entry (its Touches and Acceptance lin
 - When you change a constant, default, limit or name, search the repo for the old value with `git grep -n -F` and update every mention, or say in your answer why one stays.
 - Run the fast checks and the e2e files the branch adds or changes, as your task lists them. The full e2e suite is CI's job.
 - Leave docs (README, docs pages, the docs site) to the docs step that runs after review, unless the plan entry's Touches line names them.
+- When your task lists evals, they are fixed. Build until you believe each one passes. You cannot change, add or remove an eval, and an `evals` field in your answer is ignored. If an eval is wrong or cannot be met, return `disputes`: `[{ id, reason }]`; the evals writer rules on it.
+- Return `deviations`: `[{ what, where, why }]` for every change against the entry's Touches line, its Acceptance line or a named plan rule. The reviewer rules on each.
 - Push the branch. Do not open a PR.
 - Report problems and open questions honestly. A test that passes for the wrong reason is worse than a reported gap.
 

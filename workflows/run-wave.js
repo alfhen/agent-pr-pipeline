@@ -304,6 +304,7 @@ const decided = pr => (pr.architectureDecision ? `\nArchitecture decision by the
 const AGENT_PREFIX = A.agentPrefix === undefined ? 'agent-pr-pipeline:' : A.agentPrefix
 const ROLES = {
   evals: { agent: 'evals-writer', phase: 'Evals', clone: true, skills: null },
+  dispute: { agent: 'evals-writer', phase: 'Evals', model: 'evals', clone: true, skills: null },
   evalsArch: { agent: 'arch-reviewer', phase: 'Evals', model: 'arch', clone: true, skills: null },
   evalsProduct: { agent: 'product-reviewer', phase: 'Evals', model: 'product', clone: true, skills: null },
   impl: { agent: 'implementer', phase: 'Implement', isolation: 'worktree' },
@@ -370,11 +371,14 @@ ${SPEC ? `Spec: ${SPEC}\n` : ''}${pr && pr.quick
 Temporary files go under ${TMP}/<your label>/. Never use /tmp.
 ${A.context || ''}`
 
+const DISPUTE_ITEM = { type: 'object', properties: { id: { type: 'string' }, reason: { type: 'string' } }, required: ['id', 'reason'] }
 const IMPL = {
   type: 'object',
   properties: {
     pushed: { type: 'boolean' }, branch: { type: 'string' }, headSha: { type: 'string' },
     summary: { type: 'string' }, acceptanceTestPassed: { type: 'boolean' }, problems: { type: 'string' }, worktree: { type: 'string' },
+    disputes: { type: 'array', items: DISPUTE_ITEM },
+    deviations: { type: 'array', items: { type: 'object', properties: { what: { type: 'string' }, where: { type: 'string' }, why: { type: 'string' } }, required: ['what', 'why'] } },
   },
   required: ['pushed', 'branch', 'summary', 'acceptanceTestPassed'],
 }
@@ -396,6 +400,14 @@ const EVALS = {
     notes: { type: 'string' },
   },
   required: ['evals'],
+}
+const DISPUTE = {
+  type: 'object',
+  properties: {
+    ruling: { type: 'string', enum: ['keep', 'change'] }, reason: { type: 'string' },
+    eval: { type: 'object', properties: { id: { type: 'string' }, kind: { type: 'string', enum: EVAL_KINDS }, statement: { type: 'string' }, check: { type: 'string' }, test: { type: 'string' } }, required: ['id', 'kind', 'statement', 'check'] },
+  },
+  required: ['ruling', 'reason'],
 }
 const EVALSCHECK = {
   type: 'object',
@@ -589,6 +601,7 @@ const FIX = {
   type: 'object',
   properties: {
     summary: { type: 'string' }, worktree: { type: 'string' }, changed: { type: 'boolean' }, planConflict: { type: 'string' },
+    disputes: { type: 'array', items: DISPUTE_ITEM },
     sameAs: { type: 'array', items: { type: 'array', items: { type: 'number' } } },
     siblings: {
       type: 'array',
@@ -635,13 +648,21 @@ const prBlock = (pr, withEvals = true) => `PR: ${pr.id} - ${pr.title}\nBranch: $
 const cloneTo = (dir, pr) => `\`rm -rf ${TMP}/${dir} && git clone https://github.com/${REPO}.git ${TMP}/${dir} && cd ${TMP}/${dir} && git checkout ${pr.branch}\``
 const freshBranch = (prefix, pr, n) => `\`git fetch origin && git checkout -B ${prefix}-${pr.id}-r${n} origin/${pr.branch}\` (a new local name, because another worktree may hold ${pr.branch}). Push with \`git push origin HEAD:${pr.branch}\`.`
 
+const NO_DISPUTES = ' Disputes are not taken in this task: do not return `disputes`; if an eval looks wrong, say so in your summary.'
+const noDisputesText = pr => pr.evals ? `\nThe evals in the PR block are fixed. You cannot change, add or remove an eval.${NO_DISPUTES}\n` : ''
+const DEVIATIONS_TEXT = 'When you change something against the entry\'s Touches line, its Acceptance line or a named plan rule, return it in `deviations`: [{ what, where, why }].'
+const fixedEvalsText = (pr, deviations, disputes = true) => {
+  const dev = deviations ? DEVIATIONS_TEXT : ''
+  if (!pr.evals) return dev ? `\n${dev}\n` : ''
+  return `\nThe evals in the PR block are fixed. Build until you believe every one passes. You cannot change, add or remove an eval, and an eval in your answer is ignored.${disputes ? ' If an eval is wrong or cannot be met, build the rest and return \`disputes\`: [{ id, reason }]. The evals writer rules on each dispute.' : NO_DISPUTES}${dev ? ` ${dev}` : ''}\n`
+}
 const implPrompt = pr => `${ctx(pr)}
 
 Task: implement this PR.
 1. You are in a fresh git worktree. Run \`git fetch origin && git checkout -B ${pr.branch} origin/HEAD\`. If ${pr.branch} already exists on origin from an earlier attempt, build on it: \`git checkout -B ${pr.branch} origin/${pr.branch}\`.
 2. Read ${SPEC ? `${SPEC}, ` : ''}${ref(pr)} and the code you will change.
 3. Checks: ${fastText}, and ${ownE2e}.
-4. Commit and \`git push -u origin ${pr.branch}\`.
+4. Commit and \`git push -u origin ${pr.branch}\`.${fixedEvalsText(pr, true)}
 Return pushed, branch, headSha, a short summary, whether the acceptance test passed, any problems or open questions, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}`
@@ -708,7 +729,7 @@ Clone it: ${cloneTo(`review-${pr.id}-r${round}`, pr)}. The diff is \`git diff or
 ${pr.kind === 'plan' ? `Check each entry's Acceptance line against the plan's decisions: a line that says a test or file "passes unchanged" while a decision changes a limit, name or default that it hard-codes cannot be met. Report it as a blocker; the fix is to edit the plan.\n` : stopOnConflict ? `If a blocker cannot be fixed without breaking the Touches line or an Acceptance line of the entry, start its title with \`plan conflict:\`. The loop then stops for a person.` : ''}
 Return headSha, a summary, the findings (give each blocker and major a \`theme\`: reuse the name from an earlier round when it is the same weakness), the sweep (for each blocker and major: the sibling places you checked and those with the same weakness) and, when the plan entry or brief has an Invariants line, \`invariants\`: one row per invariant, with holds and evidence.
 
-Honour a threat model that the plan, the notes or the context states: do not report as a blocker or major an attack it rules out. When none is stated and your findings keep going around one check, say so in the summary.
+${pr.deviations && pr.deviations.length ? `The implementer reports these deviations from the entry:\n${JSON.stringify(pr.deviations, null, 1)}\nRule on each one: accepted, or a finding. A change outside the entry's Touches line is a finding unless the entry or a plan rule allows it.\n\n` : ''}Honour a threat model that the plan, the notes or the context states: do not report as a blocker or major an attack it rules out. When none is stated and your findings keep going around one check, say so in the summary.
 
 ${prBlock(pr)}
 ${history.length ? `\nEarlier rounds (check their blockers and majors are really fixed):\n${JSON.stringify(history, null, 1)}` : ''}${siblings && siblings.length ? `\nThe fixer's sweep of sibling places in the last fix round. Check that it is complete, and report each sibling place it missed that has the same weakness:\n${JSON.stringify(siblings, null, 1)}` : ''}`
@@ -749,14 +770,14 @@ const numbered = findings => {
   return [...groups].map(([file, items]) => `File ${file}:\n${JSON.stringify(items, null, 1)}`).join('\n')
 }
 // findings come from mergeDuplicates, so their order is the order of the numbers.
-const fixPrompt = (pr, outcome, findings, round, sweep, stopOnConflict = false) => `${ctx(pr)}
+const fixPrompt = (pr, outcome, findings, round, sweep, stopOnConflict = false, allowDisputes = false) => `${ctx(pr)}
 
 Task: fix the branch after review round ${round}.
 1. You are in a fresh git worktree. ${freshBranch('fix', pr, round)}
 2. For each finding, list every sibling place with the same weakness and fix them in the same round. For a plan, list the other entries and states each edit touches.
 ${stopOnConflict && pr.kind !== 'plan' ? `3. If a fix would need a change outside the Touches line, or would break an Acceptance line (for example, editing a test the entry says passes unchanged), change nothing and return \`planConflict\`: one sentence that names the two plan statements that disagree.
 ` : ''}${stopOnConflict && pr.kind !== 'plan' ? '4' : '3'}. Checks: ${fastText}, and ${ownE2e}.
-Return a short summary of each fix, any finding you disagree with and why, \`siblings\` (per finding number: the places you checked and the places you fixed), \`sameAs\` (groups of finding numbers that you fixed as one), changed (true when you pushed a commit, false when you pushed nothing), and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
+${fixedEvalsText(pr, false, allowDisputes)}Return a short summary of each fix, any finding you disagree with and why, \`siblings\` (per finding number: the places you checked and the places you fixed), \`sameAs\` (groups of finding numbers that you fixed as one), changed (true when you pushed a commit, false when you pushed nothing), and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}
 
@@ -772,8 +793,7 @@ Task: fix minor findings in one pass. This is the only minor pass of this PR: no
 2. You may change only these files, which the PR already changes: ${JSON.stringify(files)}. Some may be gated paths: the maintainer merges a PR that changes one, so editing it adds no way to merge. Fix a finding only when its file is on that list. Change no other file, and never a path under .github, a .claude folder, AGENTS.md, CLAUDE.md, CLAUDE.local.md or docs/goals.md. Skip a finding that needs a change outside the list.
 3. Skip a finding that needs a design choice: more than one fix would be right, or the fix changes behaviour the plan entry names. Fix only what is plain.
 4. Checks: ${fastText}, and ${ownE2e}.
-5. Commit and push. If you fix no finding, push nothing and return changed false.
-Return changed, headSha (\`git rev-parse HEAD\` after your push), fixed (the numbers of the findings you fixed), skipped (the number and why, for each finding you left), a short summary, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
+5. Commit and push. If you fix no finding, push nothing and return changed false.${noDisputesText(pr) || '\n'}Return changed, headSha (\`git rev-parse HEAD\` after your push), fixed (the numbers of the findings you fixed), skipped (the number and why, for each finding you left), a short summary, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}
 
@@ -799,7 +819,7 @@ const minorRevertPrompt = (pr, signedSha, attempt) => `${ctx(pr)}
 Task: drop the minor pass of ${pr.branch}. Its check failed, so the branch goes back to the state that passed review, with a new commit.
 1. You are in a fresh git worktree. ${freshBranch('minorrevert', pr, attempt)}
 2. If \`git rev-list ${signedSha}..HEAD\` prints nothing, the branch has no commit after the signed-off state: push nothing. Otherwise revert every commit added after ${signedSha}: \`git revert --no-edit ${signedSha}..HEAD\` (add \`-m 1\` for a merge commit). Never force-push and never rebase.
-3. Check that \`git diff --quiet ${signedSha} HEAD\` succeeds, so the tree equals the signed-off state. Push when you added a commit.
+3. Check that \`git diff --quiet ${signedSha} HEAD\` succeeds, so the tree equals the signed-off state. Push when you added a commit.${noDisputesText(pr)}
 Return reverted (true only when the tree equals ${signedSha} and the branch on GitHub holds it), headSha (\`git rev-parse HEAD\` after your push), a short summary, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}`
@@ -860,7 +880,7 @@ const evalResultOf = (id, history) => {
   return 'not checked'
 }
 const evalsOpenStep = (pr, rounds) => pr.evals
-  ? ` Add an "Evals" section with a table of the rows below (columns: Id, Kind, What must be true, Last result). In an existing body, replace its Evals section with it, or add one.\nEval rows: ${JSON.stringify(pr.evals.map(e => ({ id: e.id, kind: e.kind, statement: e.statement, result: evalResultOf(e.id, rounds) })))}`
+  ? ` Add an "Evals" section with a table of the rows below (columns: Id, Kind, What must be true, Last result). In an existing body, replace its Evals section with it, or add one.\nEval rows: ${JSON.stringify(pr.evals.map(e => ({ id: e.id, kind: e.kind, statement: e.statement, result: evalResultOf(e.id, rounds) })))}${pr.evalDisputes && pr.evalDisputes.length ? `\nUnder the Evals table, list each dispute of an eval (id, who raised it, its reason, the ruling and the writer's reason):\n${JSON.stringify(pr.evalDisputes)}` : ''}`
   : ''
 const openPrompt = (pr, rounds, minors, arch, untested = [], fixed = []) => `${ctx(pr)}
 
@@ -970,7 +990,7 @@ Task: bring PR #${pr.prNumber} (${pr.branch}) to a mergeable state with green CI
 1. You are in a fresh git worktree. ${freshBranch('land', pr, 0)}
 2. Conflict: \`git merge origin/HEAD\`, then ${fastText}, and ${ownE2e}.
 3. CI: find the failed run ids with \`gh api "repos/${REPO}/actions/runs?head_sha=<head>" --jq '.workflow_runs[] | select(.conclusion == "failure") | .id'\` (<head> is the output of \`git rev-parse HEAD\` after your push), then list the failed jobs of a run with \`gh api repos/${REPO}/actions/runs/<run>/jobs\`, then read a job's log with \`gh api repos/${REPO}/actions/jobs/<job>/logs\`; rerun a flaky network failure with \`gh api -X POST repos/${REPO}/actions/runs/<run>/rerun-failed-jobs\`.
-4. Wait: \`bash ${PLUGIN_ROOT}/scripts/wait-ci.sh ${REPO} ${pr.prNumber} 9\`, with the Bash tool's timeout set to 600000 ms. It prints one JSON line with head, state (pending, success or failure), failed and timedOut. While timedOut is true, run it again, at most 3 calls in all. If it is still timedOut, return readyToMerge false and say so in notes.
+4. Wait: \`bash ${PLUGIN_ROOT}/scripts/wait-ci.sh ${REPO} ${pr.prNumber} 9\`, with the Bash tool's timeout set to 600000 ms. It prints one JSON line with head, state (pending, success or failure), failed and timedOut. While timedOut is true, run it again, at most 3 calls in all. If it is still timedOut, return readyToMerge false and say so in notes.${noDisputesText(pr)}
 Return readyToMerge, headSha, notes and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}`
@@ -1223,8 +1243,9 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     loopState.themes = themesOf(blocking).map(normTitle)
     if (repeated.length) return { signedOff: false, reason: 'needs human: scope', lastFindings: blocking, escalation: scopeEscalation(repeated) }
     if (round === startRound + max - 1) return { signedOff: false, reason: exhausted('', max, max, cap), lastFindings: blocking, lastTest: test }
-    const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, round, review.sweep, true), `fix:${pr.id}#${round}`, { schema: FIX })
+    const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, round, review.sweep, true, true), `fix:${pr.id}#${round}`, { schema: FIX })
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
+    if (fix) await settleDisputes(pr, fix.disputes, 'fixer')
     if (pr.kind !== 'plan' && fix && fix.planConflict) return { signedOff: false, reason: 'needs human: plan conflict', conflict: fix.planConflict }
     if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
     if (fix && fix.changed === false) {
@@ -1614,6 +1635,12 @@ const givenEvals = (pr, raw) => {
   return { list: obj.evals, meta: metaOf(obj, pr) }
 }
 
+// A resumed run keeps the disputes and deviations of the earlier run: the one-dispute-per-id rule and the PR body depend on them.
+const resumedList = (pr, key, keep) => pr.resume && Array.isArray(pr.resume[key]) ? pr.resume[key].filter(keep) : []
+const resumedDisputes = pr => resumedList(pr, 'evalDisputes', d => d && typeof d.id === 'string')
+const resumedDeviations = pr => resumedList(pr, 'deviations', d => d && reasonOf(d.what))
+const carriedOut = (disputes, deviations) => ({ ...(disputes && disputes.length ? { evalDisputes: disputes } : {}), ...(deviations && deviations.length ? { deviations } : {}) })
+
 async function checkEvals(pr, list, meta, round, writerNotes) {
   const [arch, product] = await parallel([
     () => archRuns(pr) ? call('evalsArch', pr, evalsCheckPrompt(pr, list, meta, 'architecture', round, writerNotes), `evalsarch:${pr.id}#${round}`, { schema: EVALSCHECK }) : Promise.resolve(undefined),
@@ -1654,6 +1681,46 @@ async function writeEvals(pr, raw) {
     last = { rule: !!bad, reason: bad ? `the rule "${bad}" refused it.` : `the reviewers found gaps: ${c.notes}`, evals: w.evals }
   }
   return { stop: 'evals writer failed' }
+}
+
+const disputePrompt = (pr, d, current, n) => `${ctx(pr)}
+
+Task: rule on a dispute about one eval of this PR. The ${d.from} agent, which builds against your list, says the eval is wrong or cannot be met. Nothing in the list changes unless you rule \`change\`.
+1. Clone the default branch: ${evalsClone(`dispute-${pr.id}-${n}`, pr)} and cd there. Read the default branch only; never read or check out a PR branch.
+2. Read the entry of this PR (${ref(pr)}) and the code it touches. Decide whether the eval asks for more than the entry does, or for something that cannot be done, or is right.
+3. Return \`ruling\`: \`keep\` (the eval stays as it is) or \`change\` (give the new eval in \`eval\`, with the same id), and \`reason\`. A change must keep the list within its rules: it may not remove the only error path eval, the time bound, the size limit or the reference unless the list already has a reason for that.
+
+${evalsBlock(pr)}
+
+The eval in dispute:
+${JSON.stringify(current, null, 1)}
+The dispute: ${JSON.stringify(d.reason)}`
+
+// The list changes only here, and only through a writer answer that passes evalsVerdict and the evals check.
+async function settleDisputes(pr, disputes, from) {
+  if (!pr.evals || !Array.isArray(disputes)) return
+  for (const raw of disputes) {
+    const id = raw && reasonOf(raw.id)
+    if (!id) { log(`${pr.id} dispute without an id ignored`); continue }
+    if (pr.evalDisputes.some(d => d.id === id)) { log(`${pr.id} dispute for ${id} ignored: one dispute for each eval`); continue }
+    const record = { id, from, reason: reasonOf(raw.reason) }
+    pr.evalDisputes.push(record)
+    const current = pr.evals.find(e => e.id === id)
+    if (!current) { Object.assign(record, { ruling: 'rejected', writerReason: '', why: 'no eval has this id' }); continue }
+    const n = pr.evalDisputes.length
+    let w = null
+    try { w = await call('dispute', pr, disputePrompt(pr, record, current, n), `dispute:${pr.id}#${n}`, { schema: DISPUTE }) } catch (e) { w = null }
+    if (!w || (w.ruling !== 'keep' && w.ruling !== 'change')) { Object.assign(record, { ruling: 'unsettled', writerReason: '' }); continue }
+    record.writerReason = reasonOf(w.reason)
+    if (w.ruling === 'keep') { record.ruling = 'keep'; continue }
+    const next = pr.evals.map(e => e.id === id ? { ...w.eval, id } : e)
+    const bad = w.eval ? evalsVerdict(next, pr, pr.evalsMeta) : 'no new eval'
+    const c = bad ? null : await checkEvals(pr, next, pr.evalsMeta, `d${n}`, record.writerReason)
+    if (bad || c.down || c.notes) { Object.assign(record, { ruling: 'rejected', why: bad || c.down || c.notes }); continue }
+    pr.evals = next
+    record.ruling = 'change'
+    record.eval = next.find(e => e.id === id)
+  }
 }
 
 async function runPRSteps(input) {
@@ -1700,7 +1767,7 @@ async function runPRSteps(input) {
   const minors = (pr.resume ? pr.resume.minors || [] : []).concat(quickMinors)
   let impl = { problems: '' }
   let rerunFixChanged
-  const evalsOut = () => pr.evals ? { evals: pr.evals, evalsMeta: pr.evalsMeta } : {}
+  const evalsOut = () => pr.evals ? { evals: pr.evals, evalsMeta: pr.evalsMeta, evalDisputes: pr.evalDisputes, ...carriedOut([], pr.deviations) } : carriedOut([], pr.deviations)
   const rerunFix = () => rerunFixChanged === undefined ? {} : { rerunFixChanged }
   const decisionFindings = (pr.skipImpl || pr.resume) && (pr.architectureDecision || pr.productDecision)
     ? [{ severity: 'major', title: 'Apply the maintainer decision', detail: `Apply the maintainer decision given in the brief to the branch. If the branch already follows it, change nothing.${pr.architectureDecision ? ` Architecture decision: ${pr.architectureDecision}` : ''}${pr.productDecision ? ` Product decision: ${pr.productDecision}` : ''}` }]
@@ -1709,15 +1776,19 @@ async function runPRSteps(input) {
   const written = await writeEvals(pr, rawEvals)
   if (written.stop) {
     const given = givenEvals(pr, rawEvals)
-    return { id: pr.id, ready: false, reason: written.stop, history, ...(pr.resume && pr.resume.findings ? { lastFindings: pr.resume.findings } : {}), ...(given ? { evals: given.list, evalsMeta: given.meta } : {}) }
+    return { id: pr.id, ready: false, reason: written.stop, history, ...(pr.resume && pr.resume.findings ? { lastFindings: pr.resume.findings } : {}), ...(given ? { evals: given.list, evalsMeta: given.meta } : {}), ...carriedOut(resumedDisputes(pr), resumedDeviations(pr)) }
   }
-  if (written.evals) pr = { ...pr, evals: written.evals, evalsMeta: written.meta }
+  pr = { ...pr, deviations: resumedDeviations(pr) }
+  if (written.evals) pr = { ...pr, evals: written.evals, evalsMeta: written.meta, evalDisputes: resumedDisputes(pr) }
   if (preFindings.length) {
     const decisionFix = await call('fix', pr, fixPrompt(pr, null, preFindings, history.length), `fix:${pr.id}#${history.length}`, { schema: FIX })
     if (decisionFix && typeof decisionFix.changed === 'boolean') rerunFixChanged = decisionFix.changed
   } else if (!pr.skipImpl && !pr.resume) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
+    if (impl && !impl.pushed && pr.evals) await settleDisputes(pr, impl.disputes, 'implementer')
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl, ...evalsOut() }
+    pr.deviations = (Array.isArray(impl.deviations) ? impl.deviations : []).filter(d => d && reasonOf(d.what))
+    await settleDisputes(pr, impl.disputes, 'implementer')
   }
   if (verifies(pr)) ciChecksState[pr.id] = await ciChecksOf(pr)
   const loopState = { fixed: false, themes: resumeThemes(history), archOpen: false, siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
