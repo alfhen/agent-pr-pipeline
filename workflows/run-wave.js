@@ -1365,7 +1365,9 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     if (listChanged) row.listChanged = true
     if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
     if (fix && fix.changed === false && !listChanged) {
-      const stop = { signedOff: false, reason: `no progress: the fix changed nothing in round ${round}, ${round - startRound + 1} of ${max} used (${cap})`, lastFindings: blocking, lastTest: test, fixSummary: fix.summary }
+      const failedEvals = (outcome.evals && outcome.evals.failed) || []
+      const named = failedEvals.length ? `; eval ${failedEvals.join(', ')} failed and may not be checkable from a clean clone` : ''
+      const stop = { signedOff: false, reason: `no progress: the fix changed nothing in round ${round}, ${round - startRound + 1} of ${max} used (${cap})${named}`, lastFindings: blocking, lastTest: test, fixSummary: fix.summary }
       if (blocking.length > 0) return halt(stop.reason, stop)
       // Only failing checks are left and the head is the same, so the failure may be a flaky check: run the checks once more.
       const again = await checkCall(pr, `${round}r`)
