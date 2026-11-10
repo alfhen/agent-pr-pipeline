@@ -1384,7 +1384,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
       const named = failedEvals.length ? `; eval ${failedEvals.join(', ')} failed and may not be checkable from a clean clone` : ''
       const stop = { signedOff: false, reason: `no progress: the fix changed nothing in round ${round}, ${round - startRound + 1} of ${max} used (${cap})${named}`, lastFindings: blocking, lastTest: test, fixSummary: fix.summary }
       if (blocking.length > 0) return halt(stop.reason, stop)
-      // Only failing checks are left and the head is the same, so the failure may be a flaky check: run the checks once more.
+      // Only failing checks are left, so the failure may be a flaky check: run the checks once more. It shows a flake only on the same head, which is checked after the rerun.
       const again = await checkCall(pr, `${round}r`)
       if (!again) return { signedOff: false, reason: 'tester or reviewer failed' }
       const second = checkOutcome(pr, again)
