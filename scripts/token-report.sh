@@ -15,7 +15,7 @@
 # so it passes the denylist of file-feedback.sh like any other item.
 # --json writes, for ledger.sh, per PR: tokens by role (four counts), raw (the sum with cache reads), noCacheRead, weighted,
 # agent count, wall minutes (first to last timestamp over the PR's transcripts) and the cost of the minor pass (agents labelled
-# minorfix:, minorreview: and test:<id>#minor1). Without a transcript folder it writes the totals with comparable false.
+# minorfix:, minorreview: and test:<id>#minor1). Without a transcript folder, or when a transcript line is unreadable, comparable is false.
 # Exit: 0 done, 1 the output file is missing or is not a workflow output, 64 bad argument.
 set -u
 usage="usage: token-report.sh <workflow output file> [<transcript folder>] [--feedback <file>] [--json <file>]"
@@ -97,14 +97,14 @@ report=$(jq -s -r --argjson mult "$mult" --argjson bad "$bad" '
 echo "$report"
 
 if [ -n "$json" ]; then
-  jq -s --slurpfile o "$out" '
+  jq -s --slurpfile o "$out" --argjson bad "$bad" '
     def sums: {input: (map(.input) | add), cacheWrite: (map(.cacheWrite) | add), cacheRead: (map(.cacheRead) | add), output: (map(.output) | add)};
     def secs: sub("\\.[0-9]+"; "") | fromdateiso8601;
     def figures: sums as $s | {byRole: (group_by(.role) | map({key: .[0].role, value: sums}) | from_entries),
       raw: ($s.input + $s.cacheWrite + $s.cacheRead + $s.output), noCacheRead: ($s.input + $s.cacheWrite + $s.output),
       weighted: ($s.input + $s.cacheRead * 0.1 + $s.cacheWrite * 1.25 + $s.output * 5 | round), agents: length,
       wallMinutes: ([.[].first | strings] as $f | [.[].last | strings] as $l | if ($f | length) == 0 or ($l | length) == 0 then null else ((($l | max | secs) - ($f | min | secs)) / 6 | round / 10) end)};
-    {comparable: true, totals: ($o[0] | {totalTokens, agentCount}),
+    {comparable: ($bad == 0), totals: ($o[0] | {totalTokens, agentCount}),
      prs: ([.[] | select(.pr != null)] | group_by(.pr) | map({id: .[0].pr} + figures + {minorPass: ([.[] | select(.minor)] | if length == 0 then {agents: 0, weighted: 0} else figures | {agents, weighted} end)})),
      total: figures}' "$rows" > "$json" || { echo "token-report: cannot write $json" >&2; exit 1; }
 fi

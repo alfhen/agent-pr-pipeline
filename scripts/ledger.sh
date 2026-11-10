@@ -10,7 +10,8 @@
 # each PR of each run: a first line "<!-- pipeline:ledger v1 <run> <pr id> -->" and one fenced JSON record. A record counts
 # only when scripts/trusted-comment.jq accepts it. Nothing but init makes the issue, so no repo gets one by itself.
 # <run> is the run's wf_<id> for a local run, and the routine run id that `next` printed for a cloud run (--cloud).
-# --tokens is the file that token-report.sh --json wrote. put writes one record per PR in the result, ready or not, and
+# --tokens is the file that token-report.sh --json wrote. A cloud record, and a local one whose tokens file is not comparable,
+# keep the wave totals in tokens.waveTotal and tokens.waveAgents, so no PR record claims them as its own raw or agents. put writes one record per PR in the result, ready or not, and
 # writes nothing for a run and PR that has a record. list prints one JSON line per record: when two records have one run
 # and PR id, only the one with the lowest comment id counts, here and in report. put deletes its own record when it is
 # not the lowest after the post; a refused delete is logged and does not fail put.
@@ -163,10 +164,10 @@ case "$cmd" in
       | $prs[] | objects | . as $p
       | ($p.id | tostring) as $id
       | ($p.history | if type == "array" then [.[] | objects | select((.round | type) == "number" and .round == (.round | floor))] else [] end) as $rows
-      | (if $cloud == 1 then {source: "cloud", comparable: false, byRole: null, raw: ($root.totalTokens // null), noCacheRead: null, weighted: null, agents: ($root.agentCount // null), wallMinutes: null}
+      | (if $cloud == 1 then {source: "cloud", comparable: false, byRole: null, raw: null, noCacheRead: null, weighted: null, agents: null, wallMinutes: null, waveTotal: ($root.totalTokens // null), waveAgents: ($root.agentCount // null)}
          elif $tk == null then null
          elif $tk.comparable == true then (first($tk.prs[]? | select(.id == $id) | {source: "transcripts", comparable: true, byRole, raw, noCacheRead, weighted, agents, wallMinutes}) // null)
-         else {source: "totals", comparable: false, byRole: null, raw: ($tk.totals.totalTokens // null), noCacheRead: null, weighted: null, agents: ($tk.totals.agentCount // null), wallMinutes: null} end) as $tok
+         else {source: "totals", comparable: false, byRole: null, raw: null, noCacheRead: null, weighted: null, agents: null, wallMinutes: null, waveTotal: ($tk.totals.totalTokens // null), waveAgents: ($tk.totals.agentCount // null)} end) as $tok
       | (if $tk != null and $tk.comparable == true then (first($tk.prs[]? | select(.id == $id) | .minorPass.weighted) // null) else null end) as $minorCost
       | def byRound($k): [$rows[] | select((.evals | type) == "object") | {key: (.round | tostring), value: (.evals[$k] | ids)} | select(.value | length > 0)] | from_entries;
       {v: 1, repo: $repo, run: $run, pluginVersion: (if $ver == "" then null else $ver end), kind: $kind,
