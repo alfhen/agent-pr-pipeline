@@ -2106,6 +2106,63 @@ await check('F659: an unreadable or empty changed-file list keeps the break chec
     })
   }
 })
+const EVS3 = [...EVS, { id: 'X-3', kind: 'regression', statement: 's', check: 'c' }]
+const BC_ANS = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'not-run', breakWhy: 'no test maps' }, { id: 'X-3', result: 'pass', breakCheck: 'not-applicable' }] })
+const hasBreak = x => JSON.stringify(x).includes('breakCheck')
+await check('K02-1 and K02-2: break-check results are in the row and the result, ready or not', async () => {
+  const x = await hooked(withEvals('C1', EVS3), verifyHook({ 1: BC_ANS }))
+  assert.deepEqual(x.C1.history[0].breakCheck, { fails: ['X-1'], passes: [], notRun: ['X-2'], notApplicable: ['X-3'] })
+  assert.equal(x.C1.ready, true)
+  assert.deepEqual(x.C1.breakCheck, x.C1.history[0].breakCheck)
+  land.statusDown = new Set(['C1'])
+  let y
+  try { y = await hooked(withEvals('C1', EVS3), verifyHook({ 1: BC_ANS })) } finally { land.statusDown = new Set() }
+  assert.equal(y.C1.ready, false)
+  assert.deepEqual(y.C1.history[0].breakCheck, x.C1.history[0].breakCheck)
+  assert.deepEqual(y.C1.breakCheck, y.C1.history[0].breakCheck)
+})
+await check('K02-5: breakCheck false gives no break-check data even when the answer holds it', async () => {
+  const stale = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'passes-without-change' }, { id: 'X-2', result: 'pass' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: stale }), { breakCheck: false })
+  assert.equal(hasBreak(x.C1), false)
+})
+await check('K02-6: an unknown breakCheck value is left out of the row and the result', async () => {
+  const odd = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'maybe' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: odd }))
+  assert.deepEqual(x.C1.history[0].breakCheck.fails, ['X-1'])
+  assert.equal(JSON.stringify(x.C1.history[0].breakCheck).includes('X-2'), false)
+  assert.equal(JSON.stringify(x.C1.breakCheck).includes('X-2'), false)
+})
+await check('K02-7: passes-without-change is under passes in its row', async () => {
+  const bad = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'passes-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: bad }))
+  assert.deepEqual(x.C1.history[0].breakCheck.passes, ['X-1'])
+  assert.deepEqual(x.C1.history[0].breakCheck.fails, ['X-2'])
+  assert.deepEqual(x.C1.history[0].evals, { passed: ['X-2'], failed: ['X-1'], ci: [] })
+})
+await check('K02-8: a round with a fail result adds no break-check data and the result keeps the earlier round', async () => {
+  const r1 = vres({ pass: false, checks: [ck('unit', { pass: false })], evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const r2 = vres({ evals: [{ id: 'X-1', result: 'fail', evidence: 'bad', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: r1, 2: r2 }), { maxRounds: 2 })
+  assert.equal(x.C1.history[1].breakCheck, undefined)
+  assert.equal(x.C1.ready, false)
+  assert.deepEqual(x.C1.history[0].breakCheck.fails, ['X-1', 'X-2'])
+  assert.deepEqual(x.C1.breakCheck, x.C1.history[0].breakCheck)
+})
+await check('K02-9: the tester path gets no break-check data', async () => {
+  const x = await hooked(only1('C1'), () => undefined)
+  assert.equal(x.C1.ready, true)
+  assert.equal(hasBreak(x.C1), false)
+})
+await check('K02-13: the result holds the last verifier round only', async () => {
+  const r1 = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'passes-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const r2 = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: r1, 2: r2 }), { maxRounds: 2 })
+  assert.deepEqual(x.C1.history[0].breakCheck.passes, ['X-1'])
+  assert.deepEqual(x.C1.history[1].breakCheck.fails, ['X-1', 'X-2'])
+  assert.deepEqual(x.C1.breakCheck, x.C1.history[1].breakCheck)
+  assert.deepEqual(x.C1.breakCheck.passes, [])
+})
 await check('F659: the last verifier round decides tests only', () => withChanged(l => /#changed1$/.test(l) ? ['test/a.test.mjs'] : ['test/a.test.mjs', 'src/a.js'], async () => {
   const fail = vres({ evals: [{ id: 'X-1', result: 'fail', evidence: 'bad' }, { id: 'X-2', result: 'pass', breakCheck: 'not-applicable' }] })
   const ok = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
