@@ -730,7 +730,7 @@ Task: verify the branch from a clean clone. Run every check below, then each eva
 2. Run in order: ${fastText}. Then run ${ownE2e}.
 ${relatedStep}${RELATED_TESTS ? 4 : 3}. Run the check of each eval, in order, and compare the result with what it says must be true. An eval is a fixed requirement: you cannot change, drop or reword it.
 ${RELATED_TESTS ? 5 : 4}. You may add up to 3 checks of your own that the builder did not see, and report each in \`extra\`.
-${BREAK_CHECK ? `${RELATED_TESTS ? 6 : 5}. Break check. Only when no eval failed and none has no result (a ci result is allowed): for each eval of kind behaviour or error path with the result pass, find the test that ran its check (set \`test\`), take the change out of the files that are not tests in your clone, run the test, and restore the clone. Reset a file the PR changes with \`git checkout $(git merge-base origin/HEAD HEAD) -- <file>\`, so only the PR's change comes out. Delete a file the PR adds, because it is not on origin/HEAD. Push nothing. Set \`breakCheck\` to fails-without-change only when the test fails on its own assertion (a result comparison). A load, import, missing-file, syntax or exit-127 error is not that: set not-run and give the reason in \`breakWhy\`. Set passes-without-change when the test still passes. Set not-applicable for kinds regression, quality bar, size limit, time bound and reference. Set not-run, with the reason, when you cannot map the eval to a test. A ci eval gets no break check. ${testsOnly ? `A script found that every file the PR changes is a test, so there is no change to take out: set \`breakCheck\` not-applicable with the \`breakWhy\` \`${TESTS_ONLY_WHY}\` for every eval, and run no break check.` : ''}\n` : ''}Return ${returnChecks}, \`evals\`: one row per eval id with result pass, fail or ci, the evidence (the output that shows it) and, for ci, \`ciCheck\`: the name of the CI check that covers it, used only when the sandbox refused the command${BREAK_CHECK ? `, and \`test\`, \`breakCheck\` and \`breakWhy\` from the break check` : ''}, and \`extra\`: your own checks with name, pass and evidence.
+${BREAK_CHECK ? `${RELATED_TESTS ? 6 : 5}. Break check. ${testsOnly ? `A script found that every file the PR changes is a test, so there is no change to take out: set \`breakCheck\` not-applicable with the \`breakWhy\` \`${TESTS_ONLY_WHY}\` for every eval, and run no break check.` : `Only when no eval failed and none has no result (a ci result is allowed): for each eval of kind behaviour or error path with the result pass, find the test that ran its check (set \`test\`), take the change out of the files that are not tests in your clone, run the test, and restore the clone. Reset a file the PR changes with \`git checkout $(git merge-base origin/HEAD HEAD) -- <file>\`, so only the PR's change comes out. Delete a file the PR adds, because it is not on origin/HEAD. Push nothing. Set \`breakCheck\` to fails-without-change only when the test fails on its own assertion (a result comparison). A load, import, missing-file, syntax or exit-127 error is not that: set not-run and give the reason in \`breakWhy\`. Set passes-without-change when the test still passes. Set not-applicable for kinds regression, quality bar, size limit, time bound and reference. Set not-run, with the reason, when you cannot map the eval to a test. A ci eval gets no break check.`}\n` : ''}Return ${returnChecks}, \`evals\`: one row per eval id with result pass, fail or ci, the evidence (the output that shows it) and, for ci, \`ciCheck\`: the name of the CI check that covers it, used only when the sandbox refused the command${BREAK_CHECK ? `, and \`test\`, \`breakCheck\` and \`breakWhy\` from the break check` : ''}, and \`extra\`: your own checks with name, pass and evidence.
 
 Evals (every id needs a result):
 ${evalListOf(pr).map(e => `Eval ${e.id} [${e.kind}] ${e.statement}\n  Check: ${e.check}${e.test ? `\n  Test: ${e.test}` : ''}`).join('\n')}
@@ -1898,7 +1898,7 @@ async function runPRSteps(input) {
     if (landing.landRefused) return stopped(landing.landWhy, { headSha: end.head, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     if (end.red) return stopped(end.reason, { headSha: end.head, ci: end.ci, approvedBy: end.approvedBy, ...landing, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     return {
-      id: pr.id, prNumber: n, ready: true, headSha: end.head, ...landing, untested: untestedOf(pr), ...(testsOnlyState[pr.id] ? { testsOnly: true } : {}), notes: r.notes,
+      id: pr.id, prNumber: n, ready: true, headSha: end.head, ...landing, untested: untestedOf(pr), notes: r.notes,
       ci: end.ci, approvedBy: end.approvedBy || b.wait.approvedBy || [], botNotes: b.wait.notes, codeChangedByBots: !!(b.answer && b.answer.codeChanged),
       lateMinors, history,
     }
@@ -1908,7 +1908,7 @@ async function runPRSteps(input) {
   const minors = (pr.resume ? pr.resume.minors || [] : []).concat(quickMinors)
   let impl = { problems: '' }
   let rerunFixChanged
-  const evalsOut = () => pr.evals ? { evals: pr.evals, evalsMeta: pr.evalsMeta, evalDisputes: pr.evalDisputes, ...carriedOut([], pr.deviations) } : carriedOut([], pr.deviations)
+  const evalsOut = () => ({ ...(testsOnlyState[pr.id] ? { testsOnly: true } : {}), ...(pr.evals ? { evals: pr.evals, evalsMeta: pr.evalsMeta, evalDisputes: pr.evalDisputes, ...carriedOut([], pr.deviations) } : carriedOut([], pr.deviations)) })
   const rerunFix = () => rerunFixChanged === undefined ? {} : { rerunFixChanged }
   const decisionFindings = (pr.skipImpl || pr.resume) && (pr.architectureDecision || pr.productDecision)
     ? [{ severity: 'major', title: 'Apply the maintainer decision', detail: `Apply the maintainer decision given in the brief to the branch. If the branch already follows it, change nothing.${pr.architectureDecision ? ` Architecture decision: ${pr.architectureDecision}` : ''}${pr.productDecision ? ` Product decision: ${pr.productDecision}` : ''}` }]
@@ -1976,7 +1976,7 @@ async function runPRSteps(input) {
   const end = await endFacts(pr, n, headSha)
   const landing = end.ok || end.red ? await landFor(pr, n, end.head) : {}
   const result = {
-    id: pr.id, ready: true, ...(testsOnlyState[pr.id] ? { testsOnly: true } : {}), prNumber: n, prUrl: opened.prUrl, headSha: end.head || headSha,
+    id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl, headSha: end.head || headSha,
     ...landing, untested: untestedOf(pr), ci: end.ci,
     approvedBy: end.approvedBy || (wait && wait.approvedBy) || [], botNotes: wait && wait.notes,
     codeChangedByBots: !!(answer && answer.codeChanged), closesIssues: (answer && answer.closesIssues) || [], lateMinors: b.lateMinors || [],
