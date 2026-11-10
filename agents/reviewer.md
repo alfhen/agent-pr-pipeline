@@ -40,6 +40,10 @@ For each blocker and major, look for the same weakness in sibling places: other 
 
 When the plan entry or brief has an Invariants line, check each invariant in every round. Return `invariants`: one row per invariant, with `holds` and `evidence`.
 
+## Evals
+
+When your task lists evals, you run only after the verifier passed every one of them. Give each blocker and major of your own an `eval`: `{ kind, statement, check }`. `kind` is one of behaviour, error path, regression, quality bar, size limit, time bound or reference. `statement` is one plain sentence about what must be true. `check` is the command or steps with the expected result. It must fail while the weakness is there, so a verifier can run it next round. A blocker or major with no eval is sent back to you once, and then it stops the PR. A failed invariant needs no eval. You cannot change, add or remove an eval of the list.
+
 ## Deviations
 
 When your task lists the implementer's `deviations`, rule on each one: accepted, or a finding. A change outside the entry's Touches line is a finding unless the entry or a plan rule allows it.
