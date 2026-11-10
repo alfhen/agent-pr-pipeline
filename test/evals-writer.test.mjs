@@ -58,3 +58,12 @@ test('the plan template and the skill name the Round cap, the Algorithm line and
   assert.match(skill, /`Algorithm: yes` line/)
   assert.match(skill, /Give each code entry a Round cap and an Evals table/)
 })
+
+test('F652-1 the writer prompt and agent file name what is not an eval', () => {
+  for (const text of [prompts['evals:X1'], agentFile]) {
+    assert.match(text, /checkable from a clean clone of the branch/)
+    for (const thing of [/PR body or title/, /Closes/, /labels/, /bot comments/, /CI results/, /a merge/, /a release/]) assert.match(text, thing)
+    for (const thing of ['PR body or title', 'bot comments', 'CI results', 'a merge', 'a release']) assert.match(text, new RegExp(`(do not write an eval for|leave out)[^.]*${thing}`, 'i'))
+  }
+  assert.match(agentFile, /the notes still reach the opener/)
+})

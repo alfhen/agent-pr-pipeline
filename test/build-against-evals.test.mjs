@@ -72,3 +72,13 @@ test('E02-6 the reviewer agent file holds the deviation rule', () => {
   assert.match(read('agents/reviewer.md'), /## Deviations/)
   assert.match(read('agents/reviewer.md'), /A change outside the entry's Touches line is a finding unless the entry or a plan rule allows it/)
 })
+
+test('F652-3 the review-loop fix prompt and the fixer file say to dispute an eval no code change can meet', () => {
+  assert.match(prompts['fix:X1#1'], /When no change to the code can make a failing eval pass/)
+  assert.match(prompts['fix:X1#1'], /return a dispute for that eval/)
+  assert.match(prompts['fix:X1#1'], /Pushing nothing and returning no dispute is the wrong answer/)
+  const fixer = read('agents/fixer.md')
+  assert.match(fixer, /When no change to the code can make a failing eval pass/)
+  assert.match(fixer, /return a dispute for that eval/)
+  assert.match(fixer, /returning no dispute is the wrong answer/)
+})
