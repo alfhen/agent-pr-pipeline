@@ -69,6 +69,8 @@ let cleanupMode = 'ok'
 const cleanupAnswer = label => label.endsWith('init') ? (cleanupMode === 'initdown' ? null : cleanupMode === 'initfail' ? { exitCode: 1, output: 'cleanup: boom' } : { exitCode: 0, output: cleanupMode === 'refused' ? 'KEPT /x refused: shared temp folder' : 'MARKED /x' })
   : cleanupMode === 'down' ? null : cleanupMode === 'fail' ? { exitCode: 1, output: 'cleanup: boom' }
   : { exitCode: 0, output: /(clones|all)$/.test(label) ? 'REMOVED /x/test-1' : '' }
+// What the fake pipeline-io answers for gate-files.sh --ci-checks.
+const ciAnswer = { names: ['ci'], down: new Set() }
 const lastHead = {}
 const checkedHead = {}
 // A bot answer reports a head of its own, which the tester replaces; the end read must not follow it.
@@ -106,6 +108,9 @@ const agentRaw = async (prompt, o) => {
     if (land.landFail.has(id)) return { exitCode: 1, output: 'land-commits: cannot read ' + 'b'.repeat(40) }
     landHead[id] = prompt.match(/land-commits\.sh \S+ \S+ (\S+)/)[1]
     return { exitCode: 0, output: land.landOutput.has(id) ? 'merge abc\n+resolved line\n' : '' }
+  }
+  if (o.label.startsWith('io:') && o.label.endsWith('#cichecks')) {
+    return ciAnswer.down.has(id) ? { exitCode: 3, output: 'GATE ERROR: cannot read .github/pipeline.json' } : { exitCode: 0, output: 'CICHECKS ' + JSON.stringify(ciAnswer.names) }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#minorscope')) {
     if (minorScope.compare[id]) return realScope(minorScope.compare[id])
@@ -163,6 +168,7 @@ const agentRaw = async (prompt, o) => {
   if (o.label.startsWith('implement')) return { pushed: true, branch: 'b', summary: 's', acceptanceTestPassed: true, worktree: wt(o) }
   if (o.label.startsWith('fix:')) return { summary: 's', worktree: wt(o), siblings: id === 'B1' ? [{ finding: 'the new regex anchor', checked: ['other anchors'], fixed: [] }] : [] }
   const round = o.label.split('#')[1] || ''
+  if (o.label.startsWith('verify')) return { pass: true, headSha: 'sha-' + id, checks: [{ name: 'lint', pass: true }], evals: [...prompt.matchAll(/^Eval (\S+) \[/gm)].map(m => ({ id: m[1], result: 'pass', evidence: 'ok' })) }
   if (o.label.startsWith('test')) return { pass: true, headSha: /^land/.test(round) && !land.testMoved.has(id) ? landHead[id].padEnd(40, 'c') : 'sha-' + id + (/^(docs|bots|land)/.test(round) ? '-' + round : ''), checks: [{ name: 'lint', pass: true }] }
   if (o.label.startsWith('landreview')) return { summary: 's', findings: land.landBad.has(id) || (land.landBadOnce.has(id) && round === '1') ? [{ severity: 'major', title: 'the resolution drops the new flag', detail: 'd' }] : [{ severity: 'minor', title: 'land nit', detail: 'd' }] }
   if (o.label.startsWith('botreview')) return { summary: 's', findings: id === 'B1' && round === '1' ? [{ severity: 'major', title: 'the new regex anchor rejects valid input', detail: 'd' }, { severity: 'minor', title: 'round one nit', detail: 'd' }] : [{ severity: 'minor', title: 'late nit', detail: 'd' }], invariants: id === 'B1' && round === '1' ? [{ text: 'the gate refuses an unknown path', holds: false, evidence: 'it accepts one' }] : [], sweep: [] }
@@ -532,7 +538,7 @@ const prsWithSkills = PRS.map(pr =>
     : pr.id === 'D1' ? { ...pr, skills: { impl: ['humanizer:humanizer'], review: ['humanizer:humanizer'] } }
       : pr)
 await simulate({ ...base, skills: SKILLS, prs: prsWithSkills })
-const STEP_OF = { botreview: 'review', landreview: 'review', qa: 'qa', docs: 'docs', docsfix: 'docs', docsreview: 'docs', implement: 'impl', test: 'test', review: 'review', arch: 'arch', product: 'product', fix: 'fix', open: 'open', botwait: 'botWait', botanswer: 'botAnswer', landfix: 'landFix', preflight: 'preflight', evaluate: 'evaluate', redact: 'redact' }
+const STEP_OF = { verify: 'test', botreview: 'review', landreview: 'review', qa: 'qa', docs: 'docs', docsfix: 'docs', docsreview: 'docs', implement: 'impl', test: 'test', review: 'review', arch: 'arch', product: 'product', fix: 'fix', open: 'open', botwait: 'botWait', botanswer: 'botAnswer', landfix: 'landFix', preflight: 'preflight', evaluate: 'evaluate', redact: 'redact' }
 const expected = c => {
   const step = STEP_OF[c.label.split(':')[0]]
   const id = c.label.split(':')[1].split('#')[0]
@@ -582,7 +588,7 @@ const frontmatter = name => {
   const text = readFileSync(new URL(`agents/${name}.md`, root), 'utf8')
   return Object.fromEntries(text.split('---')[1].trim().split('\n').map(l => [l.slice(0, l.indexOf(':')), l.slice(l.indexOf(':') + 1).trim()]))
 }
-const AGENT_OF = { botreview: 'reviewer', landreview: 'reviewer', qa: 'qa', docsfix: 'docs-writer', implement: 'implementer', test: 'tester', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight', triage: 'triager', io: 'pipeline-io', safety: 'merge-safety', evaluate: 'evaluator', redact: 'feedback-redactor' }
+const AGENT_OF = { botreview: 'reviewer', landreview: 'reviewer', qa: 'qa', docsfix: 'docs-writer', implement: 'implementer', test: 'tester', verify: 'verifier', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight', triage: 'triager', io: 'pipeline-io', safety: 'merge-safety', evaluate: 'evaluator', redact: 'feedback-redactor' }
 const WRITERS = ['implementer', 'fixer', 'docs-writer', 'bot-answerer', 'land-fixer']
 await simulate(base)
 await check('every call names its role agent from the plugin', () => {
@@ -610,7 +616,7 @@ await check('only the land fixer keeps a 1-hour cache', () => {
 })
 await check('only the tester, bot waiter and preflight leave out CLAUDE.md', () => {
   for (const name of new Set(Object.values(AGENT_OF))) {
-    assert.equal(frontmatter(name).omitClaudeMd === 'true', ['tester', 'bot-waiter', 'goals-preflight', 'pipeline-io'].includes(name), name)
+    assert.equal(frontmatter(name).omitClaudeMd === 'true', ['tester', 'verifier', 'bot-waiter', 'goals-preflight', 'pipeline-io'].includes(name), name)
   }
 })
 await check('read-only agents have no edit tools, except pipeline-io with Write', () => {
@@ -1608,6 +1614,131 @@ await check('a decision rerun that stops at open still reports rerunFixChanged',
   const x = await hooked(only('C1').map(p => ({ ...p, skipImpl: true, architectureDecision: 'use A' })), (p, o) => /^fix:C1#0/.test(o.label) ? { summary: 's', changed: false } : o.label === 'open:C1' ? {} : undefined)
   assert.equal(x.C1.reason, 'PR not opened')
   assert.equal(x.C1.rerunFixChanged, false)
+})
+// E03a: the verifier replaces the tester when the PR has an eval list, and a flaky check gets one rerun (#602).
+const ck = (name, extra = {}) => ({ name, pass: true, ...extra })
+const EVS = [{ id: 'X-1', kind: 'behaviour', statement: 'the flag works', check: 'run it, expect 0' }, { id: 'X-2', kind: 'error path', statement: 'bad input is refused', check: 'run it with bad input, expect 2' }]
+const withEvals = (id, evals = EVS) => only1(id).map(p => ({ ...p, evals }))
+const vres = (extra = {}) => ({ pass: true, headSha: 'sha-C1', checks: [ck('lint')], evals: EVS.map(e => ({ id: e.id, result: 'pass', evidence: 'ok' })), ...extra })
+const verifyHook = (answers, rest) => (p, o) => { const m = /^verify:C1#(\d+)$/.exec(o.label); if (m && answers[m[1]]) return answers[m[1]]; return rest ? rest(p, o) : undefined }
+await check('E03a-7: a PR without evals calls the tester, never the verifier, and reads no ciChecks', () => {
+  assert.ok(mainCalls.some(c => c.label.startsWith('test:C1')))
+  assert.ok(!mainCalls.some(c => c.label.startsWith('verify:') || c.label.endsWith('#cichecks')))
+})
+await check('E03a: with evals the verifier replaces the tester, gets the eval list and ciChecks is read once', async () => {
+  const x = await hooked(withEvals('C1'), () => undefined)
+  assert.equal(x.C1.ready, true)
+  const v = calls.find(c => c.label === 'verify:C1#1')
+  assert.equal(v.agentType, 'agent-pr-pipeline:verifier')
+  assert.equal(v.model, 'sonnet')
+  assert.match(v.prompt, /^Eval X-1 \[behaviour\] the flag works\n {2}Check: run it, expect 0$/m)
+  assert.match(v.prompt, /^Eval X-2 \[error path\]/m)
+  assert.ok(!calls.some(c => c.label === 'test:C1#1'))
+  assert.equal(calls.filter(c => c.label === 'io:C1#cichecks').length, 1)
+  const y = await hooked(withEvals('C1', { evals: EVS, noErrorPath: true }), () => undefined)
+  assert.ok(calls.some(c => c.label === 'verify:C1#1'))
+  assert.equal(y.C1.ready, true)
+})
+await check('E03a-1: an eval id with no result refuses sign-off and the fixer gets "eval <id> has no result"', async () => {
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ evals: [{ id: 'X-1', result: 'pass', evidence: 'ok' }] }) }))
+  assert.equal(x.C1.history[0].testPass, false)
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [test]: eval X-2 has no result'])
+  assert.match(fixCalls('C1')[0].prompt, /eval X-2 has no result/)
+  assert.equal(x.C1.history.length, 2)
+  assert.equal(x.C1.ready, true)
+})
+await check('E03a-2 and E03a-5: a fail result refuses sign-off even when the verifier says pass', async () => {
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ pass: true, evals: [{ id: 'X-1', result: 'fail', evidence: 'exit 1' }, { id: 'X-2', result: 'pass', evidence: 'ok' }] }) }))
+  assert.equal(x.C1.history[0].testPass, false)
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [test]: eval X-1 failed: exit 1'])
+  assert.match(fixCalls('C1')[0].prompt, /eval X-1 failed: exit 1/)
+  const bad = vres({ evals: [{ id: 'X-1', result: 'fail', evidence: 'exit 1' }, { id: 'X-2', result: 'pass' }] })
+  const never = await hooked(withEvals('C1'), verifyHook({ 1: bad, 2: bad, 3: bad, 4: bad }))
+  assert.equal(never.C1.ready, false)
+})
+await check('E03a-3: a ci result needs a name from ciChecks; without one it is no result, with one it counts and is untested', async () => {
+  const ci = n => vres({ evals: [{ id: 'X-1', result: 'pass', evidence: 'ok' }, { id: 'X-2', result: 'ci', ciCheck: n }] })
+  const unnamed = await hooked(withEvals('C1'), verifyHook({ 1: ci('other') }))
+  assert.deepEqual(unnamed.C1.history[0].blockersAndMajors, ['major [test]: eval X-2 has no result'])
+  assert.deepEqual(unnamed.C1.history[0].evals, { passed: ['X-1'], failed: ['X-2'], ci: [] })
+  const noName = await hooked(withEvals('C1'), verifyHook({ 1: ci(undefined) }))
+  assert.equal(noName.C1.history[0].testPass, false)
+  const named = await hooked(withEvals('C1'), verifyHook({ 1: ci('ci') }))
+  assert.equal(named.C1.history.length, 1)
+  assert.deepEqual(named.C1.history[0].evals, { passed: ['X-1'], failed: [], ci: ['X-2'] })
+  assert.deepEqual(named.C1.untested, ['X-2 (covered by CI check ci)'])
+  assert.notEqual(named.C1.landMode, 'auto')
+})
+await check('E03a-9: a failed ciChecks read gives [] and a ci result counts as no result', async () => {
+  ciAnswer.down.add('C1')
+  try {
+    const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ evals: [{ id: 'X-1', result: 'pass' }, { id: 'X-2', result: 'ci', ciCheck: 'ci' }] }) }))
+    assert.equal(x.C1.history[0].testPass, false)
+    assert.match(x.C1.history[0].blockersAndMajors[0], /eval X-2 has no result/)
+  } finally { ciAnswer.down.delete('C1') }
+  ciAnswer.names = ['e2e']
+  try {
+    const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ evals: [{ id: 'X-1', result: 'pass' }, { id: 'X-2', result: 'ci', ciCheck: 'ci' }] }) }))
+    assert.equal(x.C1.history[0].testPass, false)
+  } finally { ciAnswer.names = ['ci'] }
+})
+await check('E03a-4: a failed extra check of the verifier is a major, and only three are read', async () => {
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ extra: [{ name: 'empty input', pass: false, evidence: 'crash' }] }) }))
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [test]: extra check failed: empty input'])
+  assert.equal(x.C1.history[0].testPass, false)
+  const four = await hooked(withEvals('C1'), verifyHook({ 1: vres({ extra: [1, 2, 3].map(n => ({ name: 'ok' + n, pass: true })).concat([{ name: 'fourth', pass: false }]) }) }))
+  assert.equal(four.C1.history[0].testPass, true)
+})
+await check('E03a-6: the history row has the eval ids by result', async () => {
+  const x = await hooked(withEvals('C1'), () => undefined)
+  assert.deepEqual(x.C1.history[0].evals, { passed: ['X-1', 'X-2'], failed: [], ci: [] })
+  const y = await hooked(only1('C1'), () => undefined)
+  assert.equal(y.C1.history[0].evals, undefined)
+})
+await check('E03a-8: a ci item stays untested after a docs step whose tester round is clean', async () => {
+  const x = await hooked(withEvals('G1'), (p, o) => o.label === 'verify:G1#1' ? vres({ headSha: 'sha-G1', evals: [{ id: 'X-1', result: 'pass' }, { id: 'X-2', result: 'ci', ciCheck: 'ci' }] }) : undefined)
+  assert.ok(calls.some(c => c.label === 'test:G1#docs1'))
+  assert.ok(x.G1.history.some(h => h.round === 'docs1' && !h.notRun))
+  assert.deepEqual(x.G1.untested, ['X-2 (covered by CI check ci)'])
+  assert.notEqual(x.G1.landMode, 'auto')
+  assert.match(calls.find(c => c.label === 'open:G1').prompt, /X-2 \(covered by CI check ci\)/)
+})
+await check('E03a-8: a later verifier round replaces the evals bucket', async () => {
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ evals: [{ id: 'X-1', result: 'fail', evidence: 'x' }, { id: 'X-2', result: 'ci', ciCheck: 'ci' }] }) }))
+  assert.deepEqual(x.C1.untested, [])
+})
+await check('#602: a failing check with no findings and a fix that changed nothing reruns the checks once on the same head', async () => {
+  const failing = { pass: false, headSha: 'sha-C1', checks: [ck('unit', { pass: false, log: 'flaky' })] }
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? failing : o.label === 'fix:C1#1' ? { summary: 'nothing to fix', changed: false } : undefined)
+  assert.ok(calls.some(c => c.label === 'test:C1#1r'))
+  assert.equal(calls.filter(c => c.label.startsWith('review:C1')).length, 1)
+  assert.equal(x.C1.ready, true)
+  assert.deepEqual(x.C1.history.map(h => h.round), [1, '1r'])
+})
+await check('#602: the checks failing again stop the PR with "checks failed twice: <names>"', async () => {
+  const failing = { pass: false, headSha: 'sha-C1', checks: [ck('unit', { pass: false, log: 'boom' }), ck('lint')] }
+  const x = await hooked(only1('C1'), (p, o) => /^test:C1#1r?$/.test(o.label) ? failing : o.label === 'fix:C1#1' ? { summary: 'nothing to fix', changed: false } : undefined)
+  assert.equal(x.C1.ready, false)
+  assert.equal(x.C1.reason, 'checks failed twice: unit')
+  assert.equal(calls.filter(c => c.label === 'test:C1#1r').length, 1)
+  assert.ok(!calls.some(c => c.label === 'test:C1#2'))
+})
+await check('#602: open blocking findings and a fix that changed nothing stop at once, with no rerun', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? { pass: false, headSha: 'sha-C1', checks: [ck('unit', { pass: false })] } : o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : o.label.startsWith('fix:C1') ? { summary: 'wrong', changed: false } : undefined)
+  assert.equal(x.C1.reason, 'rounds exhausted: the fix changed nothing in round 1, 1 of 4 used (maxRounds)')
+  assert.ok(!calls.some(c => c.label === 'test:C1#1r'))
+})
+await check('#602: a fix that changed something gets no rerun', async () => {
+  await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? { pass: false, headSha: 'sha-C1', checks: [ck('unit', { pass: false })] } : undefined)
+  assert.ok(!calls.some(c => c.label === 'test:C1#1r'))
+})
+await check('#602: the rule holds on the verifier path, with the label verify:<id>#<n>r', async () => {
+  const failing = vres({ pass: false, checks: [ck('unit', { pass: false })] })
+  const ok = await hooked(withEvals('C1'), verifyHook({ 1: failing }, (p, o) => o.label === 'fix:C1#1' ? { summary: 'none', changed: false } : undefined))
+  assert.ok(calls.some(c => c.label === 'verify:C1#1r'))
+  assert.equal(ok.C1.ready, true)
+  const twice = await hooked(withEvals('C1'), (p, o) => /^verify:C1#1r?$/.test(o.label) ? failing : o.label === 'fix:C1#1' ? { summary: 'none', changed: false } : undefined)
+  assert.equal(twice.C1.reason, 'checks failed twice: unit')
 })
 await check('severity: a review major titled [minor] x is one major line, a conflict and a clean title for the fixer', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)

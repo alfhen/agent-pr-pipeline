@@ -52,6 +52,7 @@ const MILESTONE_STEP = A.milestone ? `\nFirst read the milestone number: \`gh ap
 const STEPS = Object.assign({
   impl: { model: 'sonnet', effort: 'medium' },
   test: { model: 'sonnet', effort: 'low' },
+  verify: { model: 'sonnet', effort: 'medium' },
   review: { model: 'opus', effort: 'high' },
   arch: { model: 'opus', effort: 'high' },
   product: { model: 'opus', effort: 'high' },
@@ -207,15 +208,49 @@ const testOutcome = (pr, test) => {
     pass: !nothingRan && failed.length === 0 && !accMissing,
   }
 }
-// Per PR: the refused checks of the last test round, the QA scenarios that did not run, and the minor pass state no agent could confirm. Every test round replaces `checks`; `pass` is never replaced.
+const evalListOf = pr => Array.isArray(pr.evals) ? pr.evals : pr.evals && Array.isArray(pr.evals.evals) ? pr.evals.evals : []
+const verifies = pr => evalListOf(pr).length > 0
+// Repo policy, read once per PR from the default branch. The PR cannot set it, so a `ci` result needs a name the repo trusts.
+const ciChecksState = {}
+// The only place that reads a verifier's answer. Its own `pass` is ignored, like the tester's. An eval id with no result, or a `ci`
+// result that names no check from ciChecks, is no result. A missing id counts in `failed` of the history row, because it did not pass.
+const verifyOutcome = (pr, verify) => {
+  const base = testOutcome(pr, verify)
+  const trusted = ciChecksState[pr.id] || []
+  const byId = new Map()
+  for (const r of verify.evals || []) if (!byId.has(r.id) || r.result === 'fail') byId.set(r.id, r)
+  const findings = []
+  const passed = []; const failed = []; const ci = []; const covered = []
+  for (const e of evalListOf(pr)) {
+    const r = byId.get(e.id)
+    if (r && r.result === 'pass') passed.push(e.id)
+    else if (r && r.result === 'fail') {
+      failed.push(e.id)
+      findings.push({ severity: 'major', title: `eval ${e.id} failed: ${r.evidence || 'no evidence'}`, detail: `Eval ${e.id} (${e.statement}) failed. Check: ${e.check}. Evidence: ${r.evidence || '(none)'}` })
+    } else if (r && r.result === 'ci' && trusted.includes(r.ciCheck)) { ci.push(e.id); covered.push(`${e.id} (covered by CI check ${r.ciCheck})`) }
+    else {
+      failed.push(e.id)
+      findings.push({ severity: 'major', title: `eval ${e.id} has no result`, detail: `The verifier gave no usable result for eval ${e.id} (${e.statement}).${r && r.result === 'ci' ? ` It answered ci with ${JSON.stringify(r.ciCheck || '')}, which is not a check the repo names in ciChecks.` : ''} Check: ${e.check}` })
+    }
+  }
+  for (const x of (verify.extra || []).slice(0, 3)) {
+    if (!x.pass) findings.push({ severity: 'major', title: `extra check failed: ${x.name}`, detail: x.evidence || '' })
+  }
+  untestedFor(pr).evals = covered
+  return { ...base, findings: base.findings.concat(findings), pass: base.pass && findings.length === 0, evals: { passed, failed, ci } }
+}
+const checkOutcome = (pr, result) => verifies(pr) ? verifyOutcome(pr, result) : testOutcome(pr, result)
+// Per PR: the refused checks of the last test round, the QA scenarios that did not run, the minor pass state no agent could confirm, and the evals a CI check covers.
+// Every test round replaces `checks`; only a verifier round replaces `evals`, so a later tester round cannot clear a `ci` item; `pass` is never replaced.
 const untestedState = {}
-const untestedFor = pr => untestedState[pr.id] || (untestedState[pr.id] = { checks: [], qa: [], pass: [] })
+const untestedFor = pr => untestedState[pr.id] || (untestedState[pr.id] = { checks: [], qa: [], pass: [], evals: [] })
 const noteTest = (pr, outcome) => { untestedFor(pr).checks = outcome.notRun }
-const untestedOf = pr => { const u = untestedFor(pr); return u.checks.concat(u.qa, u.pass) }
+const untestedOf = pr => { const u = untestedFor(pr); return u.checks.concat(u.qa, u.pass, u.evals) }
 const themesOf = blocking => [...new Set(blocking.map(f => f.theme).filter(Boolean))]
 const historyRow = (round, outcome, blocking, conflicts) => ({
   round, testPass: outcome.pass, failingChecks: outcome.failed.map(c => c.name), blockersAndMajors: blocking.map(findingLine),
   ...(themesOf(blocking).length ? { themes: themesOf(blocking) } : {}),
+  ...(outcome.evals ? { evals: outcome.evals } : {}),
   ...(outcome.notRun.length ? { notRun: outcome.notRun } : {}),
   ...(outcome.related ? { relatedTests: outcome.related } : {}),
   ...(conflicts ? { severityConflicts: conflicts } : {}),
@@ -247,6 +282,7 @@ const AGENT_PREFIX = A.agentPrefix === undefined ? 'agent-pr-pipeline:' : A.agen
 const ROLES = {
   impl: { agent: 'implementer', phase: 'Implement', isolation: 'worktree' },
   test: { agent: 'tester', phase: 'Test', clone: true },
+  verify: { agent: 'verifier', phase: 'Test', clone: true, skills: 'test' },
   review: { agent: 'reviewer', phase: 'Review', clone: true, reviewModel: true },
   botReview: { agent: 'reviewer', phase: 'Bots', clone: true, reviewModel: true, skills: 'review' },
   qa: { agent: 'qa', phase: 'QA', clone: true },
@@ -325,6 +361,15 @@ const TEST = {
     related: { type: 'object', properties: { files: { type: 'array', items: { type: 'string' } }, projects: { type: 'array', items: { type: 'string' } } } },
   },
   required: ['pass', 'checks'],
+}
+const VERIFY = {
+  type: 'object',
+  properties: {
+    ...TEST.properties,
+    evals: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, result: { type: 'string', enum: ['pass', 'fail', 'ci'] }, evidence: { type: 'string' }, ciCheck: { type: 'string' } }, required: ['id', 'result'] } },
+    extra: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, pass: { type: 'boolean' }, evidence: { type: 'string' } }, required: ['name', 'pass'] } },
+  },
+  required: ['pass', 'checks', 'evals'],
 }
 const FILE = { type: 'string', description: 'Path relative to the repo root, with no line number' }
 const THEME = { type: 'string', description: 'A short name for the weakness behind a blocker or major, such as "bypass of the path check". Reuse the earlier name when the weakness is the same.' }
@@ -556,6 +601,20 @@ Task: test the branch from a clean clone.
 1. \`rm -rf ${TMP}/test-${pr.id}-r${round} && git clone --branch ${pr.branch} https://github.com/${REPO}.git ${TMP}/test-${pr.id}-r${round}\` and cd there.
 2. Run in order: ${fastText}. Then run ${ownE2e}.
 ${relatedStep}Return pass, headSha, one entry per check with the failing log excerpt (\`refused\`: true for a command that a permission check denied, or for a file or project you could not run, so it did not run), \`acceptance\`: \`declared\` is true when the entry has an Acceptance line that names a runnable test, and \`check\` is the name of the check that runs it${RELATED_TESTS ? ', and `related`: the files you ran in step 3 and the test projects you ran them in (empty lists when the search found nothing)' : ''}.
+
+${prBlock(pr)}`
+
+const verifyPrompt = (pr, round) => `${ctx(pr)}
+
+Task: verify the branch from a clean clone. Run every check the tester runs, then each eval below.
+1. \`rm -rf ${TMP}/verify-${pr.id}-r${round} && git clone --branch ${pr.branch} https://github.com/${REPO}.git ${TMP}/verify-${pr.id}-r${round}\` and cd there.
+2. Run in order: ${fastText}. Then run ${ownE2e}.
+3. Run the check of each eval, in order, and compare the result with what it says must be true. An eval is a fixed requirement: you cannot change, drop or reword it.
+4. You may add up to 3 checks of your own that the builder did not see, and report each in \`extra\`.
+Return pass, headSha, one entry per check as the tester does (\`refused\`: true for a command that a permission check denied, so it did not run), \`acceptance\` as the tester does, \`evals\`: one row per eval id with result pass, fail or ci, the evidence (the output that shows it) and, for ci, \`ciCheck\`: the name of the CI check that covers it, used only when the sandbox refused the command, and \`extra\`: your own checks with name, pass and evidence.
+
+Evals (every id needs a result):
+${evalListOf(pr).map(e => `Eval ${e.id} [${e.kind}] ${e.statement}\n  Check: ${e.check}${e.test ? `\n  Test: ${e.test}` : ''}`).join('\n')}
 
 ${prBlock(pr)}`
 
@@ -1003,6 +1062,10 @@ const scopeEscalation = themes => ({
   why: 'Another round would add more fixes for the same theme.',
 })
 
+const checkCall = (pr, round) => verifies(pr)
+  ? call('verify', pr, verifyPrompt(pr, round), `verify:${pr.id}#${round}`, { schema: VERIFY })
+  : call('test', pr, testPrompt(pr, round), `test:${pr.id}#${round}`, { schema: TEST })
+
 async function reviewLoop(pr, startRound, history, minors, loopState) {
   const { max, cap } = roundsFor(pr)
   if (startRound > 1) log(`${pr.id} resume: this run does at most ${max} rounds (${startRound} to ${startRound + max - 1}), ${cap} counts rounds from the resume`)
@@ -1011,14 +1074,14 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     const wantProduct = productRuns(pr) && round === startRound
     const wantQa = qaRuns(pr) && (round === startRound || loopState.qaOpen.length > 0)
     const [test, review, arch, product, qa] = await parallel([
-      () => call('test', pr, testPrompt(pr, round), `test:${pr.id}#${round}`, { schema: TEST }),
+      () => checkCall(pr, round),
       () => call('review', pr, reviewPrompt(pr, round, history, loopState.siblings, true), `review:${pr.id}#${round}`, { schema: REVIEW }),
       () => wantArch ? call('arch', pr, archPrompt(pr, round, pr.kind === 'plan' ? loopState.reports : [], [...new Set(history.flatMap(h => h.themes || []))]), `arch:${pr.id}#${round}`, { schema: ARCHREV }) : Promise.resolve(null),
       () => wantProduct ? call('product', pr, productPrompt(pr, round), `product:${pr.id}#${round}`, { schema: PRODUCT }) : Promise.resolve(null),
       () => wantQa ? call('qa', pr, qaPrompt(pr, round, loopState.qaOpen, loopState.qaScenarios), `qa:${pr.id}#${round}`, { schema: QA }) : Promise.resolve(null),
     ])
     if (!test || !review) return { signedOff: false, reason: 'tester or reviewer failed' }
-    const outcome = testOutcome(pr, test)
+    const outcome = checkOutcome(pr, test)
     noteTest(pr, outcome)
     if (outcome.nothingRan) {
       history.push(historyRow(round, outcome, [], 0))
@@ -1069,7 +1132,18 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     if (pr.kind !== 'plan' && fix && fix.planConflict) return { signedOff: false, reason: 'needs human: plan conflict', conflict: fix.planConflict }
     if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
     if (fix && fix.changed === false) {
-      return { signedOff: false, reason: `rounds exhausted: the fix changed nothing in round ${round}, ${round - startRound + 1} of ${max} used (${cap})`, lastFindings: blocking, lastTest: test, fixSummary: fix.summary }
+      const stop = { signedOff: false, reason: `rounds exhausted: the fix changed nothing in round ${round}, ${round - startRound + 1} of ${max} used (${cap})`, lastFindings: blocking, lastTest: test, fixSummary: fix.summary }
+      if (blocking.length > 0) return stop
+      // Only failing checks are left and the head is the same, so the failure may be a flaky check: run the checks once more.
+      const again = await checkCall(pr, `${round}r`)
+      if (!again) return { signedOff: false, reason: 'tester or reviewer failed' }
+      const second = checkOutcome(pr, again)
+      noteTest(pr, second)
+      history.push(historyRow(`${round}r`, second, second.findings, 0))
+      if (second.nothingRan) return { signedOff: false, reason: 'tests did not run' }
+      if (second.pass) return { signedOff: true, headSha: again.headSha || test.headSha || review.headSha }
+      if (second.failed.length) return { ...stop, reason: `checks failed twice: ${second.failed.map(c => c.name).join(', ')}`, lastTest: again }
+      return { ...stop, lastFindings: second.findings, lastTest: again }
     }
     loopState.siblings = labelSiblings(fix && fix.siblings, blocking)
     loopState.fixed = !fix || fix.changed !== false
@@ -1099,6 +1173,16 @@ async function docsStep(pr, signedSha, history, minors) {
     if (round === DOCS_ROUNDS) return { ok: false, reason: exhausted('docs check: ', DOCS_ROUNDS, DOCS_ROUNDS, 'docsRounds'), lastFindings: blocking, docs }
     await call('docs', pr, docsFixPrompt(pr, outcome, blocking, round, signedSha), `docsfix:${pr.id}#${round}`, { schema: DOCS })
   }
+}
+
+// The CI check names the repo accepts for a `ci` eval result, read by one script from the default branch. [] when they cannot be read.
+async function ciChecksOf(pr) {
+  if (!PLUGIN_ROOT) return []
+  const io = await ioCall(pr, `io:${pr.id}#cichecks`, 'gate-files.sh', `${REPO} --ci-checks`)
+  const m = io && io.exitCode === 0 ? /^CICHECKS (\[.*\])$/m.exec(io.output) : null
+  let names = null
+  try { names = m ? JSON.parse(m[1]) : null } catch (e) { names = null }
+  return Array.isArray(names) && names.every(n => typeof n === 'string') ? names : []
 }
 
 // The files the PR changes, gated ones included but never a floor path, read by one script from the default branch's settings. Null when
@@ -1448,6 +1532,7 @@ async function runPRSteps(input) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl }
   }
+  if (verifies(pr)) ciChecksState[pr.id] = await ciChecksOf(pr)
   const loopState = { fixed: false, themes: resumeThemes(history), archOpen: false, siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
   let loop = await reviewLoop(pr, history.length + 1, history, minors, loopState)
   if (!loop.signedOff) return { id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, ...(loop.fixSummary ? { fixSummary: loop.fixSummary } : {}), escalation: loop.escalation, conflict: loop.conflict, architecture: loopState.reports, product: loopState.product, ...rerunFix() }

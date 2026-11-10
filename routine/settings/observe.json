@@ -56,7 +56,9 @@
       "Agent(reviewer)",
       "Agent(agent-pr-pipeline:reviewer)",
       "Agent(tester)",
-      "Agent(agent-pr-pipeline:tester)"
+      "Agent(agent-pr-pipeline:tester)",
+      "Agent(verifier)",
+      "Agent(agent-pr-pipeline:verifier)"
     ]
   }
 }
