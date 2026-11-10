@@ -68,7 +68,7 @@ case "$cmd" in
   hand) [ $# -eq 2 ] || usage; hpr=$1; hkind=$2
     [[ $hpr =~ ^[0-9]+$ ]] && [[ $hkind == code || $hkind == process ]] || usage ;;
   miss) [ $# -eq 2 ] || usage; hpr=$1; mississue=$2
-    [[ $hpr =~ ^[0-9]+$ ]] && [[ $mississue =~ ^[0-9]+$ ]] || usage ;;
+    [[ $hpr =~ ^[1-9][0-9]{0,8}$ ]] && [[ $mississue =~ ^[1-9][0-9]{0,8}$ ]] || usage ;;
   *) usage ;;
 esac
 

@@ -384,6 +384,8 @@ test('E06-2 miss records a later defect and report counts the PR once with a bot
   assert.match(r.writes[0], /^POST \/repos\/o\/r\/issues\/7\/comments body=<!-- pipeline:ledger v1 miss-\d+-77 #42 -->\\n```json\\n.*"kind":"miss".*"evalMisses":\[\{"source":"later","issue":77\}\]/)
   assert.equal(run(s, 'miss', '42').status, 64)
   assert.equal(run(s, 'miss', '42', 'x').status, 64)
+  assert.equal(run(s, 'miss', '42', '1234567890123456789').status, 64)
+  assert.equal(run(s, 'miss', '0042', '77').status, 64)
   assert.equal(run(setup({ issue: false }), 'miss', '42', '77').status, 65)
   const missRec = (id, n, i) => rec(id, `miss-${id}-${i}`, `#${n}`, { kind: 'miss', pr: { id: `#${n}`, number: n }, rounds: null, evalMisses: [{ source: 'later', issue: i }] })
   const comments = [
