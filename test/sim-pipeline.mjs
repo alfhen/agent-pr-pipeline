@@ -2116,6 +2116,63 @@ await check('F659: an unreadable or empty changed-file list keeps the break chec
     })
   }
 })
+const EVS3 = [...EVS, { id: 'X-3', kind: 'regression', statement: 's', check: 'c' }]
+const BC_ANS = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'not-run', breakWhy: 'no test maps' }, { id: 'X-3', result: 'pass', breakCheck: 'not-applicable' }] })
+const hasBreak = x => JSON.stringify(x).includes('breakCheck')
+await check('K02-1 and K02-2: break-check results are in the row and the result, ready or not', async () => {
+  const x = await hooked(withEvals('C1', EVS3), verifyHook({ 1: BC_ANS }))
+  assert.deepEqual(x.C1.history[0].breakCheck, { fails: ['X-1'], passes: [], notRun: ['X-2'], notApplicable: ['X-3'] })
+  assert.equal(x.C1.ready, true)
+  assert.deepEqual(x.C1.breakCheck, x.C1.history[0].breakCheck)
+  land.statusDown = new Set(['C1'])
+  let y
+  try { y = await hooked(withEvals('C1', EVS3), verifyHook({ 1: BC_ANS })) } finally { land.statusDown = new Set() }
+  assert.equal(y.C1.ready, false)
+  assert.deepEqual(y.C1.history[0].breakCheck, x.C1.history[0].breakCheck)
+  assert.deepEqual(y.C1.breakCheck, y.C1.history[0].breakCheck)
+})
+await check('K02-5: breakCheck false gives no break-check data even when the answer holds it', async () => {
+  const stale = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'passes-without-change' }, { id: 'X-2', result: 'pass' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: stale }), { breakCheck: false })
+  assert.equal(hasBreak(x.C1), false)
+})
+await check('K02-6: an unknown breakCheck value is left out of the row and the result', async () => {
+  const odd = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'maybe' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: odd }))
+  assert.deepEqual(x.C1.history[0].breakCheck.fails, ['X-1'])
+  assert.equal(JSON.stringify(x.C1.history[0].breakCheck).includes('X-2'), false)
+  assert.equal(JSON.stringify(x.C1.breakCheck).includes('X-2'), false)
+})
+await check('K02-7: passes-without-change is under passes in its row', async () => {
+  const bad = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'passes-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: bad }))
+  assert.deepEqual(x.C1.history[0].breakCheck.passes, ['X-1'])
+  assert.deepEqual(x.C1.history[0].breakCheck.fails, ['X-2'])
+  assert.deepEqual(x.C1.history[0].evals, { passed: ['X-2'], failed: ['X-1'], ci: [] })
+})
+await check('K02-8: a round with a fail result adds no break-check data and the result keeps the earlier round', async () => {
+  const r1 = vres({ pass: false, checks: [ck('unit', { pass: false })], evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const r2 = vres({ evals: [{ id: 'X-1', result: 'fail', evidence: 'bad', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: r1, 2: r2 }), { maxRounds: 2 })
+  assert.equal(x.C1.history[1].breakCheck, undefined)
+  assert.equal(x.C1.ready, false)
+  assert.deepEqual(x.C1.history[0].breakCheck.fails, ['X-1', 'X-2'])
+  assert.deepEqual(x.C1.breakCheck, x.C1.history[0].breakCheck)
+})
+await check('K02-9: the tester path gets no break-check data', async () => {
+  const x = await hooked(only1('C1'), () => undefined)
+  assert.equal(x.C1.ready, true)
+  assert.equal(hasBreak(x.C1), false)
+})
+await check('K02-13: the result holds the last verifier round only', async () => {
+  const r1 = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'passes-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const r2 = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: r1, 2: r2 }), { maxRounds: 2 })
+  assert.deepEqual(x.C1.history[0].breakCheck.passes, ['X-1'])
+  assert.deepEqual(x.C1.history[1].breakCheck.fails, ['X-1', 'X-2'])
+  assert.deepEqual(x.C1.breakCheck, x.C1.history[1].breakCheck)
+  assert.deepEqual(x.C1.breakCheck.passes, [])
+})
 await check('F659: the last verifier round decides tests only', () => withChanged(l => /#changed1$/.test(l) ? ['test/a.test.mjs'] : ['test/a.test.mjs', 'src/a.js'], async () => {
   const fail = vres({ evals: [{ id: 'X-1', result: 'fail', evidence: 'bad' }, { id: 'X-2', result: 'pass', breakCheck: 'not-applicable' }] })
   const ok = vres({ evals: [{ id: 'X-1', result: 'pass', breakCheck: 'fails-without-change' }, { id: 'X-2', result: 'pass', breakCheck: 'fails-without-change' }] })
@@ -3349,6 +3406,57 @@ await check('E04-5b: a fixed eval is progress, and the same failed evals in roun
   assert.ok(called('verify:C1#4'))
   const y = await hooked(withEvals('C1'), verifyHook({ 1: failing('X-2'), 2: failing('X-2'), 3: failing('X-2') }))
   assert.match(y.C1.reason, /^no progress: rounds 2 and 3 /)
+})
+const k03 = (ids, extra = {}) => vres({ pass: false, evals: listOf('C1').map(e => ({ id: e.id, result: ids.includes(e.id) ? 'fail' : 'pass', evidence: 'x', breakCheck: 'fails-without-change' })), ...extra })
+const k03Hook = (answer, fix = { summary: 'nothing to change', changed: false }) => (p, o) => o.label === 'verify:C1#1' ? answer : o.label === 'fix:C1#1' ? fix : undefined
+await check('K03-1: a failed eval with a fix that changed nothing stops with the eval id and checkable', async () => {
+  const x = await hooked(withEvals('C1', listOf('C1')), k03Hook(k03(['C1-2'])))
+  assert.match(x.C1.reason, /^no progress:/)
+  assert.match(x.C1.reason, /C1-2/)
+  assert.match(x.C1.reason, /checkable/)
+  assert.equal(x.C1.history.at(-1).stop, x.C1.reason)
+  assert.equal(x.C1.fixSummary, 'nothing to change')
+  assert.ok(!called('verify:C1#1r') && !called('verify:C1#2'))
+})
+await check('K03-2: the reason names only the evals that failed in the round', async () => {
+  const x = await hooked(withEvals('C1', listOf('C1')), k03Hook(k03(['C1-2'])))
+  assert.ok(x.C1.history[0].evals.passed.includes('C1-1'))
+  assert.match(x.C1.reason, /C1-2/)
+  assert.doesNotMatch(x.C1.reason, /C1-1/)
+})
+await check('K03-5: two failed evals are both named', async () => {
+  const x = await hooked(withEvals('C1', listOf('C1')), k03Hook(k03(['C1-1', 'C1-2'])))
+  assert.match(x.C1.reason, /C1-1/)
+  assert.match(x.C1.reason, /C1-2/)
+  assert.match(x.C1.reason, /checkable/)
+})
+await check('K03-6: a failed eval and a failed check stop at once and name the eval, with no rerun', async () => {
+  const x = await hooked(withEvals('C1', listOf('C1')), k03Hook(k03(['C1-2'], { checks: [ck('unit', { pass: false })] })))
+  assert.match(x.C1.reason, /^no progress:/)
+  assert.match(x.C1.reason, /C1-2/)
+  assert.ok(!called('verify:C1#1r'))
+})
+await check('K03-7: a kept dispute of a failed eval stops with the eval id and checkable', async () => {
+  const x = await disputeRun(listOf('C1'), (p, o) => o.label === 'verify:C1#1' ? k03(['C1-1'])
+    : o.label === 'fix:C1#1' ? { summary: 'nothing to change', changed: false, disputes: [{ id: 'C1-1', reason: 'no code change can satisfy it' }] }
+    : o.label === 'dispute:C1#1' ? { ruling: 'keep', reason: 'k' } : undefined)
+  assert.ok(called('dispute:C1#1'))
+  assert.match(x.C1.reason, /^no progress:/)
+  assert.match(x.C1.reason, /C1-1/)
+  assert.match(x.C1.reason, /checkable/)
+})
+await check('K03-8: an eval with no result is named', async () => {
+  const x = await hooked(withEvals('C1', listOf('C1')), k03Hook(k03([], { evals: [{ id: 'C1-1', result: 'pass', evidence: 'ok', breakCheck: 'fails-without-change' }] })))
+  assert.ok(x.C1.history[0].blockersAndMajors.some(l => /eval C1-2 has no result/.test(l)))
+  assert.match(x.C1.reason, /^no progress:/)
+  assert.match(x.C1.reason, /C1-2/)
+})
+await check('K03-14: with every eval passed the reason names no eval', async () => {
+  const x = await hooked(withEvals('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([fe('major', 'x')]) : o.label === 'fix:C1#1' ? { summary: 'nothing', changed: false } : undefined)
+  assert.equal(x.C1.history[0].evals.failed.length, 0)
+  assert.equal(x.C1.reason, 'no progress: the fix changed nothing in round 1, 1 of 4 used (maxRounds)')
+  assert.doesNotMatch(x.C1.reason, /checkable/)
+  assert.ok(!called('verify:C1#1r'))
 })
 await check('E04-6: a plan conflict stop leaves no themes and a marker, and a resume runs a fix round', async () => {
   const x = await hooked(only1('C1'), at('review', 'C1', { 1: reviewOf([f('blocker', 'plan conflict: E3 vs D2', { theme: 'limit' })]) }))

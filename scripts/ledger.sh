@@ -170,13 +170,15 @@ case "$cmd" in
          elif $tk.comparable == true then (first($tk.prs[]? | select(.id == $id) | {source: "transcripts", comparable: true, byRole, raw, noCacheRead, weighted, agents, wallMinutes}) // null)
          else {source: "totals", comparable: false, byRole: null, raw: null, noCacheRead: null, weighted: null, agents: null, wallMinutes: null, waveTotal: ($tk.totals.totalTokens // null), waveAgents: ($tk.totals.agentCount // null)} end) as $tok
       | (if $tk != null and $tk.comparable == true then (first($tk.prs[]? | select(.id == $id) | .minorPass.weighted) // null) else null end) as $minorCost
-      | def byRound($k): [$rows[] | select((.evals | type) == "object") | {key: (.round | tostring), value: (.evals[$k] | ids)} | select(.value | length > 0)] | from_entries;
+      | def bc($k): [($p.breakCheck | objects | .[$k]) | arrays | ids[]];
+      def byRound($k): [$rows[] | select((.evals | type) == "object") | {key: (.round | tostring), value: (.evals[$k] | ids)} | select(.value | length > 0)] | from_entries;
       {v: 1, repo: $repo, run: $run, pluginVersion: (if $ver == "" then null else $ver end), kind: $kind,
        pr: {id: $id, number: ($p.prNumber | if type == "number" then . else null end)},
        ready: ($p.ready == true), reason: ($p.reason // null),
        rounds: (if ($p.history | type) == "array" then ($rows | length) else 0 end),
-       evals: {count: (if ($p.evals | type) == "array" then ($p.evals | length) else ([$rows[] | .evals | objects | (.passed, .failed, .ci) | ids[]] | unique | length) end),
-               passed: byRound("passed"), failed: byRound("failed"), ci: byRound("ci")},
+       evals: ({count: (if ($p.evals | type) == "array" then ($p.evals | length) else ([$rows[] | .evals | objects | (.passed, .failed, .ci) | ids[]] | unique | length) end),
+               passed: byRound("passed"), failed: byRound("failed"), ci: byRound("ci")}
+              + ({fails: bc("fails"), passes: bc("passes"), notRun: bc("notRun"), notApplicable: bc("notApplicable")} as $b | if ([$b[]] | add | length) > 0 then {breakCheck: $b} else {} end)),
        minorPass: (if ($p.minorPass | type) == "object" and $p.minorPass.ran == true
                    then {ran: true, kept: ($p.minorPass.kept == true), why: ($p.minorPass.why // null), weighted: $minorCost}
                    else {ran: false, kept: null, why: null, weighted: null} end),
