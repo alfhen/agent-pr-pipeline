@@ -109,7 +109,7 @@ Wave 1 is the D9 wave. Wave 2 runs on the same `pluginRoot` and is judged by the
 - Both waves run from a local session (tokens by role exist only there), with `pluginRoot` at the installed v0.9.0, never at `main`. A fix merged in wave 1 must not judge wave 2.
 - `evals` is on, `breakCheck` is on, `docsUpdate` is on. The plan PR gets the product review and the architecture review.
 - Q630 runs as `quick: { issue: 630 }` in wave 1. The writer of a quick fix reads the issue, not this plan, so before the wave the main session posts Q630's Evals table as a comment on #630 from the maintainer's account. Comments by that account count as part of the issue.
-- Every path these entries touch is gated (`.github/pipeline.json`), so the maintainer merges every PR. No agent merge is expected, and `merge-safety` does not run.
+- Every entry except Q630 touches a gated path (`.github/pipeline.json`), so the maintainer merges those PRs, and `merge-safety` does not run for them. Q630 touches only `test/sim-pipeline.mjs`, and `test/**` is not gated, so `merge-safety` runs for Q630. This tests one more path of 0.9.0. The main session lands Q630 with `:auto` only when merge-safety says `safe`; an agent merge of this test-only PR is accepted and recorded in the shakedown record.
 - After each wave: `token-report.sh --json`, then `ledger.sh put` for the run (SKILL.md Step 4). After wave 2: `ledger.sh report --since v0.9.0`.
 - The builder session reports to the assessment session when this plan PR opens, at the end of each wave, when a PR stops for the second time, and when the release is cut.
 
@@ -152,26 +152,28 @@ What we hope to see, not a pass criterion:
 
 ### Wave 1
 
-**K01 The evals run again after a bot answer or a land fix changes code (#670).** Round cap 3. Touches: `workflows/run-wave.js` (`checkNewCode` only), `test/sim-pipeline.mjs` (cases after "a bot answer in words only needs no check"), `skills/pr-pipeline/SKILL.md` ("The loop for one PR", step 10 and step 11).
+**K01 The evals run again after a bot answer or a land fix changes code (#670).** Round cap 3. Touches: `workflows/run-wave.js` (`checkNewCode`, and the `landFix` branch of `runPRSteps`: only how the eval list reaches the land-fix check and the bot answer that follows it), `test/sim-pipeline.mjs` (cases after "a bot answer in words only needs no check"), `skills/pr-pipeline/SKILL.md` ("The loop for one PR", step 10 and step 11).
 - When a bot answer changes code on a PR that has an eval list, every eval is checked again on the new head before the PR can be ready.
-- The same holds for the code a land fix adds (the land-fix check runs when `land-commits.sh` prints something).
+- The same holds for the code a land fix adds (the land-fix check runs when `land-commits.sh` prints something). A land-fix run has no list of its own: the main session passes the list of the earlier result (its `evals`) as the `evals` PR option, which is the documented way and adds no argument. SKILL.md step 11 says so. The land-fix branch reads that option, so the land-fix check and the bot answer after it use the verifier.
+- A land-fix run that gets no list keeps the tester. This is a named case of the invariant, not a fault.
 - An eval that fails on the new head makes the PR not ready, with a reason that names the eval id. It goes through the same fix rounds as a bot-check finding, with the same cap (`botCheckRounds`).
 - The diff reviewer of the bot-answer check and of the land-fix check still runs.
 - A PR with no eval list keeps today's tester check.
 - Out of this entry: the docs check and the minor pass keep the tester.
 
-Invariants: a PR with an eval list is never ready on a head that the bot answer or the land fixer changed unless every eval id has a result on that head with no `fail`.
+Invariants: a PR with an eval list (in a land-fix run: a list passed as the `evals` PR option) is never ready on a head that the bot answer or the land fixer changed unless every eval id has a result on that head with no `fail`.
 Evals:
 
 | Id | Kind | What must be true | How to check |
 | --- | --- | --- | --- |
 | K01-1 | behaviour | On a PR with an eval list, a bot answer that changed code gets a verifier call on the new head, and no tester call for that check round. | Sim: a PR with `evals` and a bot answer with `codeChanged: true`; the calls hold a verifier call for the bot-check round and no `test:` call for it. |
-| K01-2 | behaviour | On a land fix with output, a PR with an eval list gets a verifier call on the new head. | Sim: `landFix: true` with an eval list and non-empty `land-commits.sh` output; a verifier call runs for the land-check round. |
+| K01-2 | behaviour | On a land fix with output, a PR whose list is passed as the `evals` PR option gets a verifier call on the new head, and no tester call. | Sim: `landFix: true` with `prNumber` and `evals: <list>` as PR options, and no other setup; non-empty `land-commits.sh` output. The calls hold `verify:<id>#land1` and no `test:<id>#land1`. On `main` the land-fix branch never reads the list, so there is no verify call. |
+| K01-6 | regression | A land-fix run with no `evals` option keeps the tester for the land-fix check. | Sim: the same run without `evals`; the calls hold `test:<id>#land1` and no verify call. |
 | K01-3 | error path | An eval that fails on the bot head makes the PR not ready, with a reason that names the eval id, after the fix rounds of the bot check. | Sim: the verifier fails eval `C1-1` in every bot-check round; the result has `ready: false`, a `fix:` call between the rounds, and a reason that holds `C1-1`. |
 | K01-4 | behaviour | When every eval passes on the bot head and the reviewer finds nothing, the PR is ready, and the bot-check history row has the eval results. | Sim: verifier passes all ids in the bot round; `ready: true`, and the bot row has `evals.passed` with every id. |
 | K01-5 | regression | A PR with no eval list keeps the tester in the bot-answer check and the land-fix check. | The existing cases "a bot answer that changed code is tested and reviewed on its diff before it can land" and "land fix: output from land-commits.sh starts a tester and a diff reviewer before the bot wait" pass unchanged. |
 
-Acceptance: `node test/sim-pipeline.mjs` passes; K01-1 and K01-3 fail on `main` because `checkNewCode` always calls the tester.
+Acceptance: `node test/sim-pipeline.mjs` passes; K01-1, K01-2 and K01-3 fail on `main` because `checkNewCode` always calls the tester.
 
 **K02 Break-check results in the result and the ledger record (#660).** Round cap 3. Touches: `workflows/run-wave.js` (`verifyOutcome`, `historyRow`, and `evalsOut` in `runPRSteps`), `scripts/ledger.sh` (`put`: the `evals` field of the record only), `test/sim-pipeline.mjs` (cases after "F659: an unreadable or empty changed-file list keeps the break check"), `test/ledger-break-check.test.mjs` (new), `skills/pr-pipeline/SKILL.md` ("The loop for one PR", step 2; the result paragraph of "Workflow arguments"; the `ledger.sh` line of "Files").
 - A verifier round that gave break-check results puts them in its history row, by eval id, grouped by the four results. The issue fixes the shape: `breakCheck: { fails, passes, notRun, notApplicable }`.
@@ -204,7 +206,7 @@ Evals:
 | K03-1 | behaviour | A failed eval with a fix that changed nothing and no dispute stops the PR with a reason that names the eval id and holds the word `checkable`. | Sim: the verifier fails `C1-2`, the fix returns `changed: false`; the reason starts with `no progress:` and holds `C1-2` and `checkable`. |
 | K03-2 | behaviour | Only the evals that failed in that round are named. | Sim: `C1-1` passes and `C1-2` fails; the reason holds `C1-2` and not `C1-1`. |
 | K03-3 | regression | A failing fast check with no failed eval in the same state keeps today's reason and the rerun. | The existing #602 cases pass unchanged. |
-| K03-4 | behaviour | `ledger.sh report` counts the new reason as a maintainer touch. | `test/ledger-no-progress.test.mjs` (new) with `test/fake-gh`: one record whose reason is the K03-1 reason; touches is 1. |
+| K03-4 | regression | `ledger.sh report` counts the new reason as a maintainer touch. | `test/ledger-no-progress.test.mjs` (new) with `test/fake-gh`: one record whose reason is the K03-1 reason; touches is 1. |
 
 Acceptance: `node test/sim-pipeline.mjs` passes; K03-1 fails on `main` because the reason names no eval.
 
@@ -281,11 +283,11 @@ Evals:
 | K06-2 | behaviour | A failing rerun on another head stops with the head-moved reason, not `checks failed twice`. | Sim: the rerun fails on `sha-new`. |
 | K06-3 | error path | A rerun where either call has no `headSha` stops with a reason that says the head is unknown. | Sim: two cases, one for each call without `headSha`. |
 | K06-4 | regression | Two failures on the same head still stop with `checks failed twice: <names>`, and a pass on the same head still signs off. | The other existing #602 cases pass unchanged. |
-| K06-5 | behaviour | `ledger.sh report` counts a record with the new reason as one maintainer touch. | `test/ledger-rerun-stop.test.mjs` with `test/fake-gh`: one record with that reason; touches is 1. |
+| K06-5 | regression | `ledger.sh report` counts a record with the new reason as one maintainer touch. The reason starts with `no progress:`, so `report` counts it on `main` and `ledger.sh` stays unchanged. If the build picks a reason that does not start with it, the `ledger.sh` change is part of the entry, and the eval is then kind behaviour and fails on `main`. | `test/ledger-rerun-stop.test.mjs` with `test/fake-gh`: one record with that reason; touches is 1. |
 
 Acceptance: `node test/sim-pipeline.mjs` passes; K06-1 and K06-2 fail on `main` because `reviewLoop` does not check the head before it picks the reason.
 
-**K07 A bot code change is an eval miss also when the PR ends not ready (#631).** Round cap 3. Touches: `scripts/ledger.sh` (`put`: the `evalMisses` field and the header comment on the rule), `workflows/run-wave.js` (`runPRSteps`: the not-ready exits after the bot answer, so they keep `codeChangedByBots`; `evaluatePrompt`: the eval-miss sentence), `agents/evaluator.md` (the eval-miss sentence), `test/ledger.test.mjs` (the E06-1 case), `test/evaluator-ledger.test.mjs` (the eval-miss assertion), `test/ledger-bot-miss.test.mjs` (new), `test/sim-pipeline.mjs` (cases after "a finding in the bot answer check gets a fix round and a second check"), `skills/pr-pipeline/SKILL.md` (the `ledger.sh` line of "Files" only).
+**K07 A bot code change is an eval miss also when the PR ends not ready (#631).** Round cap 3. Touches: `scripts/ledger.sh` (`put`: the `evalMisses` field and the header comment on the rule), `workflows/run-wave.js` (`runPRSteps`: the not-ready exits after the bot answer, also the stop exits of the `landFix` branch, so they keep `codeChangedByBots`; `evaluatePrompt`: the eval-miss sentence), `agents/evaluator.md` (the eval-miss sentence), `test/ledger.test.mjs` (the E06-1 case), `test/evaluator-ledger.test.mjs` (the eval-miss assertion), `test/ledger-bot-miss.test.mjs` (new), `test/sim-pipeline.mjs` (cases after "a finding in the bot answer check gets a fix round and a second check"), `skills/pr-pipeline/SKILL.md` (the `ledger.sh` line of "Files" only).
 - A PR whose bot answer changed code after sign-off gets one bot eval miss in its record, whether it ends ready or not: red CI at the end, a land refusal, end facts that fail, or a bot check that fails.
 - So every result exit after a bot answer that changed code says so, including the exit when the bot check fails.
 - A PR whose bot answer changed no code gets no bot miss. A second `put` for the same run and PR writes nothing, as today.
@@ -299,7 +301,7 @@ Evals:
 | K07-1 | behaviour | `put` writes a bot eval miss for a PR with `codeChangedByBots: true` and `ready: false`. | `test/ledger-bot-miss.test.mjs`: `put --dry-run` on such an output file; `evalMisses` is `[{ source: "bot" }]`. |
 | K07-2 | behaviour | A PR whose bot check fails after a bot answer that changed code has `codeChangedByBots: true` in its result. | Sim: bot answer `codeChanged: true` and a bot-check review with a blocker in every round; the result has `ready: false` and `codeChangedByBots: true`. |
 | K07-3 | regression | `codeChangedByBots: false` gives no bot miss, and an existing bot miss is not added twice. | The changed E06-1 case in `test/ledger.test.mjs`. |
-| K07-4 | behaviour | `report` gives the same count for eval misses and for defects when every defect is a bot code change. | `test/ledger-bot-miss.test.mjs` with `test/fake-gh`: one ready and one not-ready record, both with a bot code change; both lines count 2. |
+| K07-4 | behaviour | `report` gives the same count for eval misses and for defects when every defect is a bot code change. | `test/ledger-bot-miss.test.mjs` with `test/fake-gh`: the records are the `put --dry-run` output for one ready and one not-ready output file, both with a bot code change, not hand-written fixtures; both lines count 2. Without the `put` change the not-ready record has no miss, so the test fails. |
 | K07-5 | behaviour | The evaluator prompt and `agents/evaluator.md` no longer limit the eval miss to a ready PR. | `test/evaluator-ledger.test.mjs`: the eval-miss text is the same in both, and neither says "A ready PR". |
 
 Acceptance: `node --test test/ledger-bot-miss.test.mjs test/ledger.test.mjs test/evaluator-ledger.test.mjs` and `node test/sim-pipeline.mjs` pass; K07-1 fails on `main` because `put` needs `ready == true`, and K07-2 fails because the bot-check exit drops `codeChangedByBots`.
@@ -309,12 +311,12 @@ Acceptance: `node --test test/ledger-bot-miss.test.mjs test/ledger.test.mjs test
 - Size: 8 PRs plus this plan PR and the version PR. About 9 to 15 million subagent tokens without cache reads (a planning figure).
 - Basis: the 0.8.4 wave (3 PRs, 2.71M, 62 minutes) and 0.9.0 wave 1 (1.84M per PR). These entries are smaller than the 0.9.0 entries, so about 1M to 1.8M per PR, plus about 1M for the plan PR and 1 to 3 land-conflict repairs.
 - Dates: plan PR reviewed and merged on 2026-11-10 or 2026-11-11; wave 1 on 2026-11-11; wave 2 and the version PR on 2026-11-11 or 2026-11-12. **Range: 2026-11-11 to 2026-11-13.** The Tagreeve run can start the next working day.
-- It assumes: the maintainer merges each PR within about 4 hours of the working day (every PR here is gated, so 10 merges); at most one stop for a decision; the shakedown finds no fault. A fault adds a fix and a 0.9.2, about half a day to one day.
+- It assumes: the maintainer merges each PR within about 4 hours of the working day (9 of the 10 PRs are gated, so 9 maintainer merges; Q630 may be merged by an agent); at most one stop for a decision; the shakedown finds no fault. A fault adds a fix and a 0.9.2, about half a day to one day.
 
 ## Flagged concerns
 
 - **Which tag the Tagreeve run starts on.** Default: `v0.9.1`. It holds K01, which Tagreeve needs most (bot rounds are common there), and any fault fix. The other choice is `v0.9.0` right after wave 1 passes, which starts Tagreeve about half a day earlier but without K01. The maintainer can change the default without a new plan.
-- **The judge and the judged.** The shakedown judges 0.9.0 with PRs that change 0.9.0. Both waves keep `pluginRoot` at the installed v0.9.0, and every PR is gated, so the maintainer merges each one. A fix cannot judge itself.
+- **The judge and the judged.** The shakedown judges 0.9.0 with PRs that change 0.9.0. Both waves keep `pluginRoot` at the installed v0.9.0, and every PR but Q630 is gated, so the maintainer merges each of those. Q630 is a test-only change and can be merged by an agent after merge-safety says `safe`; it changes no code that the pipeline runs. A fix cannot judge itself.
 - **Small entries flatter the numbers.** Tokens per PR will likely be lower than in 0.9.0 because the entries are small. The comparison says so; it is not evidence that 0.9.0 got cheaper.
 - **Q630 depends on the triager.** If the triager does not return `build` with S and low risk, Q630 gets the full loop or stops with `plan`. Either one is a true result of the quick path and not a fault. If it stops, the main session runs it as a plan entry in wave 2.
 - **K04 is the largest entry.** It changes how every io call returns its output. If it reaches its cap, it moves to 0.9.2, and the shakedown stays valid with the other PRs.
