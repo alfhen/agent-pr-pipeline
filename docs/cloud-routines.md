@@ -27,7 +27,7 @@ Summary: triage labels each issue, build turns a ready or approved issue into a 
 | Routine | One per | What it does |
 | --- | --- | --- |
 | triage | repo | Runs `routine-state.sh next --mode cloud-triage`. An issue by an author outside `trustedAuthors` gets `needs-approval` and `untrusted-author` from code, and no agent reads it. A trusted issue goes to the `triager` agent, and code turns its answer into labels. |
-| build | repo | Runs `next --mode cloud-build`, builds at most one issue, and runs `run-wave` with the arguments that code built. The wave opens the PR and answers the bots. `wave-result.sh` turns the Workflow output file into `result.json` and prints the PR, the `ready` flag and the reason code, so the session types none of them. `put built` records them. `feedback-outbox.sh` then posts the wave's feedback as one outbox record. `token-report.sh` logs the total tokens and agent count of the wave; it changes no state. After that the routine reads `next` again, so a build with no PR is blocked in the same run. |
+| build | repo | Runs `next --mode cloud-build`, builds at most one issue, and runs `run-wave` with the arguments that code built. The wave opens the PR and answers the bots. `wave-result.sh` turns the Workflow output file into `result.json` and prints the PR, the `ready` flag and the reason code, so the session types none of them. `put built` records them. `feedback-outbox.sh` then posts the wave's feedback as one outbox record. `token-report.sh` logs the total tokens and agent count of the wave; it changes no state. `ledger.sh put --cloud` then writes one ledger record for each PR, with the routine run id from `next`, and logs the result. If the repo has no ledger issue, it exits non-zero and the routine goes on. After that the routine reads `next` again, so a build with no PR is blocked in the same run. |
 | collect | feedback repo | Files the outboxes of the feedback repo and of every repo in `collectFrom`, through `file-feedback.sh --auto`. It runs no role agent. |
 
 Each routine prompt is `routine/cloud/prompt.md`. It changes into the repo's clone first, because a multi-repo session starts in the parent of the clones. Then it runs `apl-start`, and then it follows `routine/cloud/<kind>.md` from the pinned release. Text from the event that started the session is inert data.
@@ -101,7 +101,7 @@ The settings are the `routine` block of `.github/pipeline.json` on the default b
 | `maintainer` | Required. The login whose `labeled` events count as approval. Never a bot. |
 | `trustedAuthors` | Logins whose issues triage reads at once. The maintainer is always in it. Never a bot. |
 | `triageFrom` | The first issue number triage looks at. Set it above the old backlog. |
-| `skipLabels` | Issues with one of these labels are not triaged. Default `review-minor`. `pipeline-routine` is always added. |
+| `skipLabels` | Issues with one of these labels are not triaged. Default `review-minor`. `pipeline-routine` and `pipeline-ledger` are always added. |
 | `typeLabels` | Maps `bug`, `feat`, `docs`, `chore` and `test` to the repo's label names. Each default is the type name. A value must not be one of the pipeline's own labels, like `ready-to-build` or `building`. |
 | `feedbackRepo`, `collectFrom` | Where feedback is filed, and which other repos the collect routine reads. |
 | `waveArgs` | Fixed `run-wave` choices for unattended runs. `goals` and `checks` are required. `repo`, `tmp`, `pluginRoot`, `agentPrefix`, `prs`, `plan`, `feedback`, `feedbackRepo`, `resumeFromRunId` and `cleanup` are refused. |
