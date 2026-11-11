@@ -148,6 +148,7 @@ const splitFindings = groups => {
 const absorb = (prev, f) => {
   if (f.fileIssue) prev.fileIssue = true
   if (f.theme && !prev.theme) prev.theme = f.theme
+  if (f.outsidePass) prev.outsidePass = true
   if (RANK[f.severity] > RANK[prev.severity]) {
     const extra = prev.detail && !(f.detail || '').includes(prev.detail) ? `\n\nAlso: ${prev.detail}` : ''
     const lost = prev.suggestedFix && !(f.suggestedFix || '').includes(prev.suggestedFix) && f.suggestedFix ? `\n\nAlso: ${prev.suggestedFix}` : ''
@@ -592,7 +593,16 @@ const MINORFIX = {
   },
   required: ['changed', 'summary'],
 }
-const MINORREVIEW = { ...REVIEW, required: [...REVIEW.required, 'unconfirmed'], properties: { ...REVIEW.properties, unconfirmed: { type: 'array', items: { type: 'number' } } } }
+const OUTSIDE_PASS = { type: 'boolean', description: 'True only for an untrusted-path finding about code outside the commits of the pass' }
+const MINORREVIEW = {
+  ...REVIEW,
+  required: [...REVIEW.required, 'unconfirmed'],
+  properties: {
+    ...REVIEW.properties,
+    findings: { ...REVIEW.properties.findings, items: { ...REVIEW.properties.findings.items, properties: { ...REVIEW.properties.findings.items.properties, outsidePass: OUTSIDE_PASS } } },
+    unconfirmed: { type: 'array', items: { type: 'number' } },
+  },
+}
 const MINORREVERT = {
   type: 'object',
   properties: { reverted: { type: 'boolean' }, headSha: { type: 'string' }, summary: { type: 'string' }, worktree: { type: 'string' } },
@@ -625,6 +635,7 @@ const FIX = {
   type: 'object',
   properties: {
     summary: { type: 'string' }, worktree: { type: 'string' }, changed: { type: 'boolean' }, planConflict: { type: 'string' },
+    unsaved: { type: 'object', properties: { error: { type: 'string' } } },
     disputes: { type: 'array', items: DISPUTE_ITEM },
     sameAs: { type: 'array', items: { type: 'array', items: { type: 'number' } } },
     siblings: {
@@ -700,6 +711,11 @@ ${prBlock(pr)}`
 const evalsBlock = pr => `PR: ${pr.id} - ${pr.title}\nKind: ${pr.kind || 'code'}${pr.quickState ? `\nQuick-fix entry (the brief for this PR, from issue #${pr.quick.issue}):\n${pr.quickState.brief}` : ''}${pr.algorithm ? '\nThe maintainer says this entry adds or changes an algorithm (Algorithm: yes).' : ''}\nNotes for this PR:\n${pr.notes || '(none)'}${decided(pr)}`
 const evalsClone = (dir, pr) => `\`rm -rf ${TMP}/${dir} && git clone https://github.com/${REPO}.git ${TMP}/${dir}\``
 
+const evalsRules = `Rules for the list (the writer and the evals check use the same rules):
+- The plan's "Rules for every PR" apply to the list (a quick-fix PR with no plan: the rules in its brief): each eval must keep them.
+- The Touches line is a limit: no eval needs a file outside it.
+- A claim that an eval fails on the default branch must be true there. Check it on the clone.`
+
 const evalsPrompt = (pr, attempt, last) => `${ctx(pr)}
 
 Task: write the evals for this PR. Nothing is built yet.
@@ -707,6 +723,7 @@ Task: write the evals for this PR. Nothing is built yet.
 2. Read ${GOALS}, ${SPEC ? `${SPEC}, ` : ''}${ref(pr)} (the entry of this PR, with its Touches, Acceptance, QA, Invariants, Round cap and Algorithm lines, and its Evals table when it has one) and the code the entry touches.
 3. Write the list as your instructions say. When the behaviour of an entry already holds on the default branch, give those evals kind regression and say so in notes. An Evals table in the entry is input: keep or improve each row under its id and add the rows it lacks.
 4. Each eval must be checkable from a clean clone of the branch, before the PR is open. Leave out what is not: the PR body or title, Closes lines, labels, bot comments or approvals, CI results, a merge, a release and any other pipeline step after the build. Notes that name such a thing still reach the opener, so they need no eval.
+${evalsRules}
 Return evals, algorithm, noErrorPath, noReference and notes.
 
 ${evalsBlock(pr)}${last ? `\n\nThis is attempt ${attempt}. Your last list was sent back: ${last.reason}\nYour last list:\n${JSON.stringify(last.evals, null, 1)}\n${last.rule ? 'A rule decides this, so the list itself must change; notes cannot change it.' : 'Change the list to meet this, or say in notes why it already does.'}` : ''}`
@@ -717,6 +734,7 @@ Task: check the list of evals for this PR${who === 'product' ? ' against the pro
 1. Clone the default branch: ${evalsClone(`evals-${who}-${pr.id}-r${round}`, pr)} and cd there. Read ${who === 'product' ? GOALS : ARCH}, then ${ref(pr)} (the entry of this PR).
 2. First question: which behaviour, error path, Acceptance line or QA line of the entry has no eval? Each such gap is a \`needs-change\` note.
 3. Then check that each eval is one plain sentence, has a check that can fail, and does not ask for more than the entry does${who === 'product' ? ' (an eval that widens the product or touches a non-goal is a note)' : ' (an eval that asks for a new concept the architecture does not have is a note)'}.
+${evalsRules}
 Return verdict (\`ok\` or \`needs-change\`) and notes: one line for each gap or problem, empty when the verdict is ok.
 
 ${evalsBlock(pr)}
@@ -808,7 +826,8 @@ Task: fix the branch after review round ${round}.
 2. For each finding, list every sibling place with the same weakness and fix them in the same round. For a plan, list the other entries and states each edit touches.
 ${stopOnConflict && pr.kind !== 'plan' ? `3. If a fix would need a change outside the Touches line, or would break an Acceptance line (for example, editing a test the entry says passes unchanged), change nothing and return \`planConflict\`: one sentence that names the two plan statements that disagree.
 ` : ''}${stopOnConflict && pr.kind !== 'plan' ? '4' : '3'}. Checks: ${fastText}, and ${ownE2e}.
-${fixedEvalsText(pr, false, allowDisputes)}${allowDisputes && pr.evals ? `${UNMEETABLE_EVAL_TEXT}\n` : ''}${designRulesText(pr)}Return a short summary of each fix, any finding you disagree with and why, \`siblings\` (per finding number: the places you checked and the places you fixed), \`sameAs\` (groups of finding numbers that you fixed as one), changed (true when you pushed a commit, false when you pushed nothing), and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
+${fixedEvalsText(pr, false, allowDisputes)}${allowDisputes && pr.evals ? `${UNMEETABLE_EVAL_TEXT}\n` : ''}${designRulesText(pr)}
+Return a short summary of each fix, any finding you disagree with and why, \`siblings\` (per finding number: the places you checked and the places you fixed), \`sameAs\` (groups of finding numbers that you fixed as one), changed (true when you pushed a commit, false when you pushed nothing), \`unsaved\` (give it, with \`error\` set to the error text, when a commit or a push failed and your work is not on the branch), and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}
 
@@ -837,6 +856,7 @@ const minorReviewPrompt = (pr, fromSha, fix, fixed, files) => `${ctx(pr)}
 Task: review only the commits of the minor pass, which fixed minor findings after the rest of the PR passed review.
 Clone it: ${cloneTo(`minorreview-${pr.id}`, pr)}. Those commits are \`git diff ${fromSha || 'origin/HEAD'}..HEAD\`; the whole PR is \`git diff origin/HEAD...HEAD\` for context.
 Check that each change fixes its finding, that it breaks nothing, and that it stays inside these files: ${JSON.stringify(files)}. Report a finding only about this diff. Do not review the rest of the PR again.
+One exception: if untrusted text (an agent answer, script output, a PR comment or a bot thread) chooses a path, command or URL that reaches a file read, a command or a reviewer prompt anywhere in the PR, report it as at least major even when it is outside this diff. Set \`outsidePass: true\` only when the finding is about code outside the commits of the pass, and on no other finding.
 Return headSha, a summary, the findings, \`unconfirmed\`: the numbers of the findings below that the diff does not really fix, and, when the plan entry or brief has an Invariants line, \`invariants\`: one row per invariant, with holds and evidence.
 
 ${prBlock(pr)}
@@ -1297,6 +1317,13 @@ async function checkCall(pr, round) {
   return call('verify', pr, verifyPrompt(pr, round, testsOnly), `verify:${pr.id}#${round}`, { schema: VERIFY })
 }
 
+// A fixer that could not commit or push leaves its work only in its worktree. Reporting that as "changed nothing" would hide it.
+const unsavedStop = fix => {
+  if (!fix || !fix.unsaved) return null
+  const error = typeof fix.unsaved.error === 'string' && fix.unsaved.error.trim() ? fix.unsaved.error.trim() : 'unknown'
+  return { reason: `fix not saved: ${error}${fix.worktree ? ` (the work is in ${fix.worktree})` : ' (the fixer gave no worktree)'}`, worktree: fix.worktree }
+}
+
 async function reviewLoop(pr, startRound, history, minors, loopState) {
   const { max, cap } = roundsFor(pr)
   if (startRound > 1) log(`${pr.id} resume: this run does at most ${max} rounds (${startRound} to ${startRound + max - 1}), ${cap} counts rounds from the resume`)
@@ -1387,6 +1414,8 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     }
     const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, round, review && review.sweep, true, true), `fix:${pr.id}#${round}`, { schema: FIX })
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
+    const unsaved = unsavedStop(fix)
+    if (unsaved) return halt(unsaved.reason, { lastFindings: blocking, lastTest: test, fixSummary: fix.summary, worktree: unsaved.worktree })
     const listChanged = fix ? await settleDisputes(pr, fix.disputes, 'fixer') : false
     if (pr.kind !== 'plan' && fix && fix.planConflict) {
       delete row.themes
@@ -1490,7 +1519,7 @@ async function restoredHead(pr, signedSha) {
 // Puts the branch back to the signed-off state with a new commit; two tries. Null when both fail or the script finds a difference.
 async function minorRestore(pr, signedSha) {
   for (let attempt = 1; attempt <= 2; attempt++) {
-    const rev = await call('minorRevert', pr, minorRevertPrompt(pr, signedSha, attempt - 1), `minorrevert:${pr.id}${attempt === 1 ? '' : '#2'}`, { schema: MINORREVERT })
+    const rev = await call('minorRevert', pr, minorRevertPrompt(pr, signedSha, attempt - 1), `minorrevert:${pr.id}${attempt === 1 ? '' : '#2'}`, { schema: MINORREVERT }).catch(() => null)
     if (!rev || !rev.reverted) continue
     const headSha = PLUGIN_ROOT ? await restoredHead(pr, signedSha) : null
     if (headSha) return { ...rev, headSha }
@@ -1502,7 +1531,7 @@ async function minorRestore(pr, signedSha) {
 const repoPath = file => file.replace(/^\.\//, '').replace(/:\d+(-\d+)?$/, '')
 
 // One capped pass: a fixer, one check of its commits, and a revert commit when the check fails. There is no fix round and no second pass.
-// It never stops the PR. A fixer that dies after its push is treated like a failed check, since its commits are unchecked. When the
+// It stops the PR only for an untrusted-path finding outside the pass, ranked major or blocker. A fixer that dies after its push is treated like a failed check, since its commits are unchecked. When the
 // branch cannot be restored, the PR goes on and a person merges it: the untested list says why.
 async function minorPass(pr, signedSha, history, minors) {
   const open = mergeDuplicates(minors)
@@ -1541,8 +1570,10 @@ async function minorPass(pr, signedSha, history, minors) {
   ])
   let why = ''
   let split = { blocking: [], minors: [], conflicts: 0 }
-  if (!test || !review) why = 'the check failed to run'
-  else {
+  if (!test || !review) {
+    why = 'the check failed to run'
+    if (review) split = splitFindings([[review.findings.concat(failedInvariants(review)), 'minor-check']])
+  } else {
     const outcome = testOutcome(pr, test)
     split = splitFindings([[review.findings.concat(failedInvariants(review)), 'minor-check'], [outcome.findings, 'test']])
     history.push(historyRow('minor1', outcome, split.blocking, split.conflicts))
@@ -1552,7 +1583,13 @@ async function minorPass(pr, signedSha, history, minors) {
     else if (split.blocking.length) why = `the check found ${split.blocking.length} blockers or majors`
     else noteTest(pr, outcome)
   }
-  if (why) return drop(why, (test && test.headSha) || (review && review.headSha) || fix.headSha)
+  // An untrusted-path finding outside the pass must survive the drop: the PR ends not ready.
+  const outside = split.blocking.filter(f => f.outsidePass)
+  if (why) {
+    minors.push(...split.minors.filter(f => f.outsidePass))
+    const dropped = await drop(why, (test && test.headSha) || (review && review.headSha) || fix.headSha)
+    return outside.length ? { ...dropped, outside } : dropped
+  }
   const unconfirmed = new Set(Array.isArray(review.unconfirmed) ? review.unconfirmed : [])
   const fixedItems = claimed.filter(n => Array.isArray(review.unconfirmed) && !unconfirmed.has(n)).map(n => candidates[n - 1])
   const rest = open.filter(m => !fixedItems.includes(m))
@@ -1593,6 +1630,11 @@ async function checkNewCode(pr, { tag, label, role, what, reviewPrompt }, histor
     siblings = labelSiblings(fix && fix.siblings, blocking)
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
     if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
+    const unsaved = unsavedStop(fix)
+    if (unsaved) {
+      row.stop = unsaved.reason
+      return { ok: false, reason: unsaved.reason, lastFindings: blocking, worktree: unsaved.worktree }
+    }
   }
 }
 
@@ -1656,7 +1698,7 @@ async function bots(pr, n, headSha, issues, history, minors) {
   const lateMinors = []
   const check = await botCheck(pr, n, headSha, answer, history, lateMinors, issues, minors)
   minors.push(...lateMinors)
-  if (!check.ok) return { ok: false, reason: check.reason, lastFindings: check.lastFindings, headSha: answer.headSha || headSha, wait, answer, lateMinors }
+  if (!check.ok) return { ok: false, reason: check.reason, lastFindings: check.lastFindings, worktree: check.worktree, headSha: answer.headSha || headSha, wait, answer, lateMinors }
   return { ok: true, headSha: check.headSha, wait, answer, lateMinors }
 }
 
@@ -1921,9 +1963,9 @@ async function runPRSteps(input) {
     const r = await call('landFix', pr, landFixPrompt(pr), `landfix:${pr.id}`, { schema: LANDFIX })
     if (!r || !r.readyToMerge) return stopped('land fix not ready', { headSha: r && r.headSha, notes: r && r.notes })
     const check = await landFixCheck(pr, n, before, r.headSha, history, lateMinors)
-    if (!check.ok) return stopped(check.reason, { headSha: r.headSha, lastFindings: check.lastFindings, notes: r.notes, lateMinors, untested: untestedOf(pr) })
+    if (!check.ok) return stopped(check.reason, { headSha: r.headSha, lastFindings: check.lastFindings, worktree: check.worktree, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     const b = await bots(pr, n, check.headSha, [], history, lateMinors)
-    if (!b.ok) return stopped(b.reason, { headSha: b.headSha, lastFindings: b.lastFindings, notes: r.notes, lateMinors, untested: untestedOf(pr) })
+    if (!b.ok) return stopped(b.reason, { headSha: b.headSha, lastFindings: b.lastFindings, worktree: b.worktree, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     const sync = await syncUntested(pr, n, null)
     if (!sync.ok) return stopped(sync.reason, { headSha: b.headSha, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     const end = await endFacts(pr, n, b.headSha)
@@ -1958,6 +2000,8 @@ async function runPRSteps(input) {
   if (preFindings.length) {
     const decisionFix = await call('fix', pr, fixPrompt(pr, null, preFindings, roundsIn(history)), `fix:${pr.id}#${roundsIn(history)}`, { schema: FIX })
     if (decisionFix && typeof decisionFix.changed === 'boolean') rerunFixChanged = decisionFix.changed
+    const unsaved = unsavedStop(decisionFix)
+    if (unsaved) return marked({ id: pr.id, ready: false, reason: unsaved.reason, history, lastFindings: preFindings, worktree: unsaved.worktree, fixSummary: decisionFix.summary, ...rerunFix(), ...evalsOut() })
   } else if (!pr.skipImpl && !pr.resume) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (impl && !impl.pushed && pr.evals) await settleDisputes(pr, impl.disputes, 'implementer')
@@ -1968,7 +2012,7 @@ async function runPRSteps(input) {
   if (verifies(pr)) ciChecksState[pr.id] = await ciChecksOf(pr)
   const loopState = { fixed: false, reviewed: false, themes: [], siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
   let loop = await reviewLoop(pr, roundsIn(history) + 1, history, minors, loopState)
-  if (!loop.signedOff) return marked({ id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, ...(loop.fixSummary ? { fixSummary: loop.fixSummary } : {}), escalation: loop.escalation, conflict: loop.conflict, architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
+  if (!loop.signedOff) return marked({ id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, ...(loop.fixSummary ? { fixSummary: loop.fixSummary } : {}), ...(loop.worktree ? { worktree: loop.worktree } : {}), escalation: loop.escalation, conflict: loop.conflict, architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
 
   let pass = { fixed: [], report: null }
   if (minorPassRuns(pr)) {
@@ -1978,6 +2022,7 @@ async function runPRSteps(input) {
   // Unchecked pass commits stay on the head, so a later test run on it fails for a reason no later agent can fix. Those steps
   // are skipped and listed as untested, and a person merges.
   const redHead = !!pass.revertFailed
+  if (pass.outside) return marked({ id: pr.id, ready: false, reason: `needs human: untrusted path outside the minor pass: ${pass.outside.map(f => f.title).join('; ')}`, history, lastFindings: pass.outside, minorPass: pass.report, untested: untestedOf(pr), architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
 
   let docs = null
   if (docsRuns(pr) && redHead) untestedFor(pr).pass.push('docs not updated: the minor pass commits are still on the branch')
@@ -2002,7 +2047,7 @@ async function runPRSteps(input) {
 
   if (redHead) untestedFor(pr).pass.push('bots not waited for or answered: the minor pass commits are still on the branch')
   const b = redHead ? { ok: true, headSha: loop.headSha, lateMinors: [] } : await bots(pr, n, loop.headSha, opened.issuesCreated || [], history, minors)
-  if (!b.ok) return marked({ id: pr.id, ready: false, reason: b.reason, history, prNumber: n, headSha: b.headSha, lastFindings: b.lastFindings, untested: untestedOf(pr), ...rerunFix(), ...evalsOut() })
+  if (!b.ok) return marked({ id: pr.id, ready: false, reason: b.reason, history, prNumber: n, headSha: b.headSha, lastFindings: b.lastFindings, worktree: b.worktree, untested: untestedOf(pr), ...rerunFix(), ...evalsOut() })
   const { wait, answer } = b
   const headSha = b.headSha
   const sync = await syncUntested(pr, n, openedUntested)

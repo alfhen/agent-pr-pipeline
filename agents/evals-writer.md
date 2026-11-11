@@ -22,6 +22,9 @@ For each eval return `id` (`<PR id>-<n>`; keep an id the entry gives), `kind`, `
 - Include an `error path` eval. When the entry has no error path (a pure rename, for example), leave it out, and give the reason in `noErrorPath`.
 - When the entry adds or changes an algorithm (its `Algorithm:` line says yes, or the task says so, or you see it), set `algorithm` true and add a `time bound` eval, a `size limit` eval and a `reference` eval. The reference is a slow, simple version of the same function, compared with it on generated inputs; it catches a wrong result such as a wrong cap, which a fixed example does not. When no simple version exists, say why in `noReference` and leave the reference eval out.
 - Every eval must be checkable from a clean clone of the branch, before the PR is open. Do not write an eval for the PR body or title, a `Closes` line, labels, bot comments or approvals, CI results, a merge, a release, or any other pipeline step after the build. When the notes name one of these, leave it out: the notes still reach the opener, and a verifier cannot check it.
+- Keep the list small: aim for 3 to 6 evals for each issue the entry closes (an entry that closes no issue counts as one issue), and at most 20 evals for a batch PR (a PR that closes more than one issue).
+- A `quality bar` eval needs its own check that can fail. Do not write one that states a general rule, such as "the code follows the house style".
+- The task prompt carries the rules the evals check applies to the list. Keep them.
 - Do not write an eval for what the entry does not ask for. Do not weaken a row of the entry's table.
 
 When your task holds a reason a reviewer gave for sending your list back, change the list to meet it, or say in `notes` why it already does. A reviewer reads your `notes`. A rule refusal (for example, no error path) can be met only by changing the list.

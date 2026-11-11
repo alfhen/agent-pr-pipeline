@@ -606,6 +606,27 @@ await check('E01-2 the writer notes reach the evals check on a later attempt', a
   assert.ok(!evalsStop(x.C1))
   assert.match(calls.find(c => c.label === 'evalsarch:C1#2').prompt, /covered by C1-2/)
 })
+const rulesOf = prompt => prompt.slice(prompt.indexOf('Rules for the list'), prompt.indexOf('\nReturn ', prompt.indexOf('Rules for the list')))
+await check('A06-1 the writer prompt holds the three rules of the evals check', async () => {
+  await evalsRun([C1PR], () => withMeta(listOf('C1')))
+  const p = calls.find(c => c.label === 'evals:C1').prompt
+  assert.match(p, /Rules for every PR" apply to the list/)
+  assert.match(p, /Touches line is a limit: no eval needs a file outside it/)
+  assert.match(p, /fails on the default branch must be true there/)
+})
+await check('A06-2 the evals-check prompts hold the same rule text as the writer prompt', async () => {
+  await evalsRun([C1PR], () => withMeta(listOf('C1')), okCheck, { productReview: 'all' })
+  const block = rulesOf(calls.find(c => c.label === 'evals:C1').prompt)
+  assert.ok(block.includes('Touches line is a limit'))
+  assert.ok(calls.find(c => c.label === 'evalsarch:C1#1').prompt.includes(block))
+  assert.ok(calls.find(c => c.label === 'evalsproduct:C1#1').prompt.includes(block))
+})
+await check('A06-7 a list of 21 evals is not refused by the check code', async () => {
+  const big = [...Array.from({ length: 20 }, (_, i) => ev(`C1-${i + 1}`, 'behaviour')), ev('C1-21', 'error path')]
+  const x = await evalsRun([C1PR], () => withMeta(big))
+  assert.ok(calls.some(c => c.label === 'implement:C1'))
+  assert.ok(!/^evals refused/.test(x.C1.reason || ''))
+})
 await check('E01-6 evals false turns the writer off, a given list still runs', async () => {
   const x = await evalsRun([C1PR], noWriter, okCheck, { evals: false })
   assert.ok(!evalLabels('C1').some(l => /^evals/.test(l)))
@@ -2117,6 +2138,71 @@ await check('#602: open blocking findings and a fix that changed nothing stop at
   assert.equal(x.C1.reason, 'no progress: the fix changed nothing in round 1, 1 of 4 used (maxRounds)')
   assert.ok(!calls.some(c => c.label === 'test:C1#1r'))
 })
+const unsavedFix = (label, extra = {}) => (p, o) => o.label === label ? { summary: 'could not save', changed: false, worktree: '/sim/wt/C1', unsaved: { error: 'git push: ENOSPC' }, ...extra } : undefined
+const failUnit = { pass: false, headSha: 'sha-C1', checks: [ck('unit', { pass: false })] }
+await check('A03-1 and A03-2: a fixer that reports unsaved work stops with fix not saved, the error and the worktree', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? failUnit : o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : unsavedFix('fix:C1#1')(p, o))
+  assert.equal(x.C1.ready, false)
+  assert.ok(x.C1.reason.startsWith('fix not saved:'))
+  assert.ok(x.C1.reason.includes('ENOSPC'))
+  assert.ok(!x.C1.reason.includes('no progress'))
+  assert.equal(x.C1.worktree, '/sim/wt/C1')
+  assert.ok(x.C1.reason.includes('/sim/wt/C1'))
+  assert.ok(!calls.some(c => ['test:C1#1r', 'test:C1#2', 'review:C1#2'].includes(c.label)))
+})
+await check('A03-3: the bot-answer check stops with fix not saved', async () => {
+  const x = await hooked(only1('B1'), (p, o) => o.label === 'botreview:B1#1' ? reviewOf([f('major', 'x')]) : o.label === 'fix:B1#bots1' ? { summary: 's', changed: true, worktree: '/sim/wt/B1', unsaved: { error: 'ENOSPC' } } : undefined)
+  assert.equal(x.B1.ready, false)
+  assert.ok(x.B1.reason.startsWith('fix not saved:'))
+  assert.ok(x.B1.reason.includes('ENOSPC'))
+  assert.equal(x.B1.worktree, '/sim/wt/B1')
+  assert.ok(!calls.some(c => c.label === 'test:B1#bots2' || c.label === 'botreview:B1#2'))
+})
+await check('A03-4: unsaved work with an empty or missing error says the error is unknown', async () => {
+  for (const unsaved of [{ error: '' }, {}, { error: '  ' }]) {
+    const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? failUnit : o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : unsavedFix('fix:C1#1', { unsaved })(p, o))
+    assert.ok(x.C1.reason.startsWith('fix not saved:'), x.C1.reason)
+    assert.ok(x.C1.reason.includes('unknown'))
+    assert.ok(!/undefined|null|no progress/.test(x.C1.reason))
+  }
+})
+await check('A03-7: a resume whose fix call reports unsaved work stops before any check', async () => {
+  const findings = [{ severity: 'major', title: 'old', detail: 'd' }]
+  const runs = [
+    only1('C1').map(p => ({ ...p, evals: EVS, resume: { history: [], minors: [], findings, evals: EVS } })),
+    only1('C1').map(p => ({ ...p, skipImpl: true, architectureDecision: 'use A' })),
+  ]
+  for (const prs of runs) {
+    const x = await hooked(prs, (p, o) => o.label.startsWith('fix:C1') ? { summary: 's', changed: true, worktree: '/sim/wt/C1', unsaved: { error: 'ENOSPC' } } : undefined)
+    assert.equal(x.C1.ready, false)
+    assert.ok(x.C1.reason.startsWith('fix not saved:') && x.C1.reason.includes('ENOSPC'))
+    assert.equal(x.C1.worktree, '/sim/wt/C1')
+    assert.ok(!calls.some(c => /^(verify|test):C1/.test(c.label)))
+  }
+  const y = await hooked(runs[0], (p, o) => o.label.startsWith('fix:C1') ? { summary: 's', changed: true, worktree: '/sim/wt/C1', unsaved: { error: 'ENOSPC' } } : undefined)
+  assert.ok(y.C1.evals, 'the stop result carries evals')
+})
+await check('A03-8: failing checks with no findings and unsaved work do not rerun the checks', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? failUnit : unsavedFix('fix:C1#1')(p, o))
+  assert.ok(x.C1.reason.startsWith('fix not saved:'))
+  assert.ok(!calls.some(c => c.label === 'test:C1#1r'))
+  assert.ok(!/^(checks failed twice|no progress)/.test(x.C1.reason))
+})
+await check('A03-9: unsaved work stops the PR also when the fixer answers changed true', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : unsavedFix('fix:C1#1', { changed: true })(p, o))
+  assert.ok(x.C1.reason.startsWith('fix not saved:'))
+  assert.ok(!calls.some(c => c.label === 'test:C1#2' || c.label === 'review:C1#2'))
+})
+await check('A03-10: the land-fix check stops with fix not saved', async () => {
+  for (const k of ['landOutput', 'landBad']) land[k] = new Set(['LA'])
+  try {
+    const x = await hooked(LANDS, (p, o) => o.label === 'fix:LA#land1' ? { summary: 's', changed: true, worktree: '/sim/wt/LA', unsaved: { error: 'ENOSPC' } } : undefined)
+    assert.equal(x.LA.ready, false)
+    assert.ok(x.LA.reason.startsWith('fix not saved:') && x.LA.reason.includes('ENOSPC'))
+    assert.equal(x.LA.worktree, '/sim/wt/LA')
+    assert.ok(!calls.some(c => c.label === 'test:LA#land2' || c.label === 'landreview:LA#2'))
+  } finally { for (const k of Object.keys(land)) land[k] = new Set() }
+})
 await check('#602: a fix that changed something gets no rerun', async () => {
   await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? { pass: false, headSha: 'sha-C1', checks: [ck('unit', { pass: false })] } : undefined)
   assert.ok(!calls.some(c => c.label === 'test:C1#1r'))
@@ -3240,6 +3326,57 @@ await check('minor pass: a major from the check does the same', async () => {
   assert.equal(x.C1.ready, true)
   assert.equal(x.C1.minorPass.kept, false)
   assert.equal(x.C1.land.split(':')[1], 'sha-revert')
+})
+await check('minor pass: the check prompt allows an untrusted-path finding outside the pass diff and names the mark', async () => {
+  await hooked(only1('C1'), passHook())
+  const prompt = calls.find(c => c.label === 'minorreview:C1').prompt
+  assert.match(prompt, /untrusted text[^\n]*path, command or URL[^\n]*even when it is outside this diff/)
+  assert.match(prompt, /outsidePass: true/)
+  assert.match(prompt, /Do not review the rest of the PR again/)
+})
+await check('minor pass: a major marked outside the pass reverts the pass and ends the PR not ready, with its title', async () => {
+  const x = await hooked(only1('C1'), passHook({ findings: [f('major', 'bot thread picks a file path', { outsidePass: true })] }))
+  assert.ok(calls.some(c => c.label === 'minorrevert:C1'))
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /bot thread picks a file path/)
+  assert.ok(!calls.some(c => c.label === 'open:C1' || c.label === 'docs:C1'))
+  assert.equal(x.C1.land, undefined)
+})
+await check('minor pass: a minor marked outside the pass goes to the checklist and stops nothing', async () => {
+  const x = await hooked(only1('C1'), passHook({ findings: [f('minor', 'odd path read', { outsidePass: true, file: 'src/a.js' })] }))
+  assert.ok(!calls.some(c => c.label === 'minorrevert:C1'))
+  assert.equal(x.C1.ready, true)
+  assert.match(calls.find(c => c.label === 'open:C1').prompt, /Minor findings not fixed: \[[\s\S]*odd path read/)
+})
+await check('minor pass: a major marked outside the pass is kept when both reverts fail', async () => {
+  const x = await hooked(only1('C1'), passHook({ findings: [f('major', 'script output picks a command', { outsidePass: true })], revert: { reverted: false } }))
+  assert.equal(labelsOf(/^minorrevert/).length, 2)
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /script output picks a command/)
+  assert.ok(!calls.some(c => c.label === 'open:C1'))
+})
+await check('minor pass: a major marked outside the pass is kept when the tester returns no answer', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#minor1' ? null : passHook({ findings: [f('major', 'tester gone outside title', { outsidePass: true })] })(p, o))
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /tester gone outside title/)
+  assert.match(x.C1.reason, /^needs human:/)
+  assert.ok(!calls.some(c => c.label === 'open:C1'))
+})
+await check('minor pass: a revert agent that throws twice still keeps the outside-marked major', async () => {
+  let tries = 0
+  const x = await hooked(only1('C1'), (p, o) => {
+    if (o.label.startsWith('minorrevert:C1')) { tries++; throw new Error('revert agent crashed') }
+    return passHook({ findings: [f('major', 'thrown revert outside title', { outsidePass: true })] })(p, o)
+  })
+  assert.equal(tries, 4)
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /thrown revert outside title/)
+})
+await check('minor pass: an outside-marked minor reaches the checklist when the pass is dropped', async () => {
+  const x = await hooked(only1('C1'), passHook({ testPass: false, findings: [f('minor', 'dropped pass outside minor', { outsidePass: true, file: 'src/a.js' })] }))
+  assert.ok(calls.some(c => c.label === 'minorrevert:C1'))
+  assert.equal(x.C1.ready, true)
+  assert.match(calls.find(c => c.label === 'open:C1').prompt, /Minor findings not fixed: \[[\s\S]*dropped pass outside minor/)
 })
 await check('minor pass: a minor from the check starts no second pass and goes to the checklist', async () => {
   const x = await hooked(only1('C1'), passHook({ findings: [f('minor', 'late thought', { file: 'src/a.js' })] }))
