@@ -61,7 +61,7 @@ Ask Claude Code to plan and build a release or a set of issues with the pipeline
    - Code that a land fix adds is tested and reviewed by other agents before the PR can land.
    - For a merge you asked for in the conversation, the merge scripts take `--person`.
 5. show the maintainer the feedback items from the end-of-run evaluation and, after approval, file them with `scripts/file-feedback.sh`. The evaluation also assesses token cost from waste signals, and `scripts/token-report.sh` prints the real token numbers after the workflow ends. `scripts/ledger.sh` then writes one record for each PR of the run as a comment on the repo's ledger issue (label `pipeline-ledger`), and `ledger.sh <repo> report` prints a report in plain words. Only `ledger.sh <repo> init`, run on the maintainer's go-ahead, makes the issue. For a wave in another repo, a redactor and a denylist keep that repo's details out of the issues.
-6. clean up. When a PR's work ends, a small agent deletes its clones and its finished worktrees, and after the evaluation the rest of the temp folder goes too. `cleanup: false` turns this off, and the result has a `cleanup` field that lists what was removed or kept.
+6. clean up. When a PR's work ends, a small agent deletes its clones and its finished worktrees, and after the evaluation the rest of the temp folder goes too, with the `io-large.*` files of large agent output. `cleanup: false` turns this off, and the result has a `cleanup` field that lists what was removed or kept.
 
 Read [skills/pr-pipeline/SKILL.md](skills/pr-pipeline/SKILL.md) for the loop, the workflow arguments, the role agents, cost and caching, and what to do when a step fails.
 
