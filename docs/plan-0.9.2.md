@@ -89,10 +89,10 @@ The wave A1 entries edit different parts of `workflows/run-wave.js`:
 | --- | --- |
 | A01 | `writeEvals`, `givenEvals`, `settleDisputes` (the accepted change only), `runPR` (a throw after the list is accepted), `runPRSteps` (the `written` block after `writeEvals` and `evalsOut`) |
 | A02 | `checkCall`, `reviewLoop` (only the stops right after the first check call of a round, before the reviewers run) |
-| A03 | `FIX`, `fixPrompt` (its Return line only), `reviewLoop` (only the block after the fixer answers, from the `fixChanged` line to the start of the rerun), `checkNewCode` (only after its fix call), `runPRSteps` (only the return after a review loop that did not sign off) |
+| A03 | `FIX`, `fixPrompt` (its Return line only), `reviewLoop` (only the block after the fixer answers, from the `fixChanged` line to the start of the rerun), `checkNewCode` (only after its fix call), `runPRSteps` (only the return after a review loop that did not sign off, and the `preFindings` fix call of a resume) |
 | A04 | `verifyPrompt` (only the break-check step) |
 | A06 | `evalsPrompt`, `evalsCheckPrompt` |
-| A07 | `minorReviewPrompt`, `minorPass` (only how the check's findings are read) |
+| A07 | `minorReviewPrompt`, `minorPass` (only how the check's findings are read), `runPRSteps` (only the block after `minorPass` returns, up to the docs step) |
 
 A05 and A08 do not edit `workflows/run-wave.js`. A08 owns the maintainer-touch rule of `ledger.sh report`, also for the `fix not saved:` reason that A03 adds, so A03 does not edit `ledger.sh`.
 
@@ -147,7 +147,8 @@ A stop for a person with a true reason is the pipeline working, except a stop th
 
 In wave B1, K01 runs with `maxRounds: 1`. In the 0.9.1 build of K01, round 1 had blockers or majors (#682 signed off after round 2), so the known finding of round 1 is expected to stop it after its list was accepted. Then the main session resumes K01 with only the arguments that the A09 resume script prints from that result, and `maxRounds: 2` (the rest of the Round cap of 3). It passes when:
 
-- the resume run has no `evalsarch:` and no `evalsproduct:` call for K01, and no `test:` call in its review loop;
+- the resume run has no `test:` call in its review loop, and no `evalsarch:` and no `evalsproduct:` call for K01, except one evals check on the list when the stopped result's list holds reviewer evals that its record lacks (round 1 adds them before the round cap stops the run); that check must accept the list, and a refusal is an `evals check:` stop that fails criterion 6;
+- a second resume from the result of the first, if one is needed, has no evals check (A01-10);
 - the verifier prompt of the resume holds every id of the accepted list;
 - the PR body has a result for every eval id;
 - each run has its own ledger record.
@@ -190,7 +191,7 @@ Reported in plain words from `ledger.sh report` and `token-report.sh`. One wave 
 - Every eval can be checked from a clean clone of the branch: no PR body, labels, bot comments, CI results or merges (#652).
 - An eval that says it fails on `main` must fail on `main`. A behaviour that already holds on `main` is kind `regression`.
 - Simulation tests check only what code decides. What an agent judges is checked by its prompt text or by a code step after it.
-- New tests go in new files. Named exceptions: `test/sim-pipeline.mjs`, where each entry adds its cases as one block after the anchor case its Touches line names; A04 also changes the `check` helper of that file.
+- New tests go in new files. Named exceptions: `test/sim-pipeline.mjs`, where each entry adds its cases as one block after the anchor case its Touches line names; A04 also changes the `check` helper of that file, and the E03b-10 test of `test/verifier-agent.test.mjs`, which pins the rule A04 replaces.
 - Test fixtures hold no data from another repo and no real paths of the maintainer's machine.
 - `workflows/run-wave.js` stays plain JavaScript with no filesystem, no `Date.now`, no `Math.random`.
 - No entry adds a role, a step or a run-wave argument. A new field in an agent answer or in the result is allowed when the entry names it.
@@ -204,7 +205,7 @@ Reported in plain words from `ledger.sh report` and `token-report.sh`. One wave 
 **A01 An accepted eval list survives a stop and a resume (#679, #690).** Round cap 3. Touches: `workflows/run-wave.js` (`writeEvals`, `givenEvals`, `settleDisputes`: the accepted change only, `runPR`, and in `runPRSteps` the `written` block after `writeEvals` and `evalsOut`), `scripts/recover-evals.sh` (new), `test/recover-evals.test.mjs` (new), `test/fixtures/recover-evals/` (new), `test/sim-pipeline.mjs` (cases after "E01-5 a resumed PR whose evals check stops keeps its history, findings and list"), `skills/pr-pipeline/SKILL.md` (see the table in Order and waves).
 - The list that the evals check accepted is the contract for the PR. Every result of a PR with an accepted list carries a record of it (its ids, kinds, statements and checks, and its meta), ready or not.
 - A resume or rerun whose list has the same content as that record runs no evals check. A list that differs from the record (a dispute ruling, a reviewer eval, a given list that differs) goes through `evalsVerdict` and the evals check, as today.
-- A dispute `change` that the evals check accepts updates the record.
+- A dispute `change` that the evals check accepts updates the record. So does any other list that the evals check accepts and that differs from the record (a writer list, a given list, a list with reviewer evals): it is the record in every later result, so the next resume runs no evals check on it.
 - A resume or a `skipImpl` rerun that says the PR had a list, and gives no list, stops before any check with a reason that says the list is missing. It never runs the tester path.
 - A PR whose steps throw after its list was accepted returns a result with `ready: false`, a reason that names the failure, and the list and record. It is not `null`.
 - A run that returned no result at all: `scripts/recover-evals.sh` reads what the run already wrote to disk (its journal or its transcript folder) and prints, for each PR, the accepted list, its meta, the record and the last verifier result of each eval id. It only reads; it runs nothing from the files.
@@ -223,6 +224,7 @@ Evals:
 | A01-6 | behaviour | A PR whose verifier throws twice after its list was accepted returns a not-ready result with the list, not `null`. | Sim: `verify:C1#1` throws on both tries; `prs` holds an object for C1 with `ready: false` and its `evals`. On `main` it is `null`. |
 | A01-7 | behaviour | `recover-evals.sh` prints the accepted list, its meta, the record and the last verifier result of each id from a run fixture. | `test/recover-evals.test.mjs`: a fixture with a writer answer, an evals-check answer and two verifier answers; the JSON output equals the expected file. |
 | A01-8 | error path | `recover-evals.sh` on a run with no accepted list for the PR, or on a missing path, exits non-zero, names the PR or the path, and prints no list. | The same test file: two cases; exit code not 0, empty stdout. |
+| A01-10 | behaviour | A resume whose changed list passes the evals check updates the record, so a second resume with that list runs no evals check. | Sim: resume C1 with the record plus one extra eval; the evals check accepts. Exactly one `evalsarch:` call, the result's record equals the new list, and a second resume from that result has no `evalsarch:` call. |
 | A01-9 | regression | A resume or `skipImpl` PR that never had a list keeps the tester path, and a resume whose evals check stops keeps its history. | The existing cases "E01-5 a resume or a skipImpl PR with no list has no writer, a tester and no verifier, and keeps its history" and "E01-5 a resumed PR whose evals check stops keeps its history, findings and list" pass unchanged. |
 
 Acceptance: `node --test test/recover-evals.test.mjs` and `node test/sim-pipeline.mjs` pass; A01-1 fails on `main` because `writeEvals` checks every given list, and A01-3 fails because a resume with no list takes the tester path.
@@ -244,10 +246,10 @@ Evals:
 
 Acceptance: `node test/sim-pipeline.mjs` passes; A02-1 fails on `main` because an empty answer turns into one major per id.
 
-**A03 A fix that could not be saved says so (#677).** Round cap 3. Touches: `workflows/run-wave.js` (`FIX`, the Return line of `fixPrompt`, in `reviewLoop` only the block after the fixer answers up to the rerun, in `checkNewCode` only the part after its fix call, in `runPRSteps` only the return after a loop that did not sign off), `agents/fixer.md` (one rule), `test/fixer-unsaved.test.mjs` (new), `test/sim-pipeline.mjs` (cases after "#602: open blocking findings and a fix that changed nothing stop at once, with no rerun"), `skills/pr-pipeline/SKILL.md` (see the table in Order and waves).
+**A03 A fix that could not be saved says so (#677).** Round cap 3. Touches: `workflows/run-wave.js` (`FIX`, the Return line of `fixPrompt`, in `reviewLoop` only the block after the fixer answers up to the rerun, in `checkNewCode` only the part after its fix call, in `runPRSteps` only the return after a loop that did not sign off and the `preFindings` fix call of a resume), `agents/fixer.md` (one rule), `test/fixer-unsaved.test.mjs` (new), `test/sim-pipeline.mjs` (cases after "#602: open blocking findings and a fix that changed nothing stop at once, with no rerun"), `skills/pr-pipeline/SKILL.md` (see the table in Order and waves).
 - A fixer that made changes but could not commit or push them says so in a field of its answer, with the error.
 - The PR then stops with a reason that starts with `fix not saved:` and holds the error, never `no progress`. The result names the worktree that holds the work.
-- The same holds for the fix rounds of the bot-answer check and the land-fix check.
+- The same holds for the fix rounds of the bot-answer check and the land-fix check, and for the fix call that a resume with `findings` or a decision makes in `runPRSteps` before the review loop (K01's forced resume goes through it).
 - A fixer that changed nothing keeps today's `no progress` stop and the rerun of #602.
 - `ledger.sh report` counts the new stop as a maintainer touch through A08, so this entry does not edit `ledger.sh`.
 - Out of this entry: the docs writer, the bot answerer and the minor fixer, which have their own answers.
@@ -261,11 +263,12 @@ Evals:
 | A03-3 | behaviour | In the bot-answer check, a fixer that reports unsaved work stops the check with the same reason. | Sim: a bot-check fix round with the field; the reason starts with `fix not saved:`. |
 | A03-4 | error path | A fixer that reports unsaved work with no error text still stops with `fix not saved:` and says the error is unknown. | Sim: the field with an empty error; the reason holds `unknown`. |
 | A03-5 | regression | A fixer that changed nothing and reports no unsaved work keeps the `no progress` stop and the rerun. | The existing #602 cases pass unchanged. |
+| A03-7 | error path | A resume whose first fixer call reports unsaved work stops with a reason that starts with `fix not saved:`. | Sim: `resume: { history, findings, evals }` with a fixer answer that has the field and `ENOSPC`; `ready: false`, a reason that starts with `fix not saved:` and holds `ENOSPC`, and no verifier call. |
 | A03-6 | behaviour | `agents/fixer.md` tells the fixer to report a failed commit or push in that field, with the error and the worktree. | `test/fixer-unsaved.test.mjs`: the agent file names the field, a failed commit and a failed push. |
 
 Acceptance: `node --test test/fixer-unsaved.test.mjs` and `node test/sim-pipeline.mjs` pass; A03-1 fails on `main` because `changed: false` always gives `no progress`.
 
-**A04 The break check counts in-test failures and proves each case (#695).** Round cap 3. Touches: `agents/verifier.md` (the break-check rules), `workflows/run-wave.js` (`verifyPrompt`: the break-check step only), `test/sim-pipeline.mjs` (the `check` helper only), `test/break-check-rule.test.mjs` (new), `test/sim-filter.test.mjs` (new), `skills/pr-pipeline/SKILL.md` (see the table in Order and waves).
+**A04 The break check counts in-test failures and proves each case (#695).** Round cap 3. Touches: `agents/verifier.md` (the break-check rules), `workflows/run-wave.js` (`verifyPrompt`: the break-check step only), `test/sim-pipeline.mjs` (the `check` helper only), `test/verifier-agent.test.mjs` (the E03b-10 test, changed in place to the new rule), `test/break-check-rule.test.mjs` (new), `test/sim-filter.test.mjs` (new), `skills/pr-pipeline/SKILL.md` (see the table in Order and waves).
 - A test that fails without the change for any reason other than a load, import, syntax, missing-file or exit 127 error counts as `fails-without-change`. A TypeError in the test body is such a failure.
 - When a test file stops at its first failing case, the verifier runs each case alone with the runner's filter by case name, so each case can be proven.
 - A `not-run` reason names which cause applied: load, import, syntax, missing file, exit 127, or no test for the eval.
@@ -277,12 +280,12 @@ Evals:
 
 | Id | Kind | What must be true | How to check |
 | --- | --- | --- | --- |
-| A04-1 | behaviour | The verifier file and the verify prompt say that a failure other than a load, import, syntax, missing-file or exit 127 error is `fails-without-change`, and neither limits it to the test's own assertion. | `test/break-check-rule.test.mjs`: reads `agents/verifier.md` and the verify prompt from a sim run; both hold the rule, and neither holds `own assertion`. |
+| A04-1 | behaviour | The verifier file and the verify prompt say that a failure other than a load, import, syntax, missing-file or exit 127 error is `fails-without-change`, and neither limits it to the test's own assertion. | `test/break-check-rule.test.mjs`: reads `agents/verifier.md` and the verify prompt from a sim run; both hold the rule, and neither holds `own assertion`. The E03b-10 test of `test/verifier-agent.test.mjs` is rewritten to the new wording and passes. |
 | A04-2 | behaviour | Both texts tell the verifier to run each case alone by name when a test file stops at its first failure. | The same test file: both hold the rule. |
 | A04-3 | behaviour | Both texts say that a `not-run` reason names its cause from the fixed list. | The same test file. |
 | A04-4 | behaviour | The sim filter runs only the cases whose name holds the text and prints one `ok` line for each. | `test/sim-filter.test.mjs`: run the sim with the filter set to a unique case name; exit 0 and exactly one `ok` line. |
 | A04-5 | error path | A filter that matches no case exits non-zero with a message. | The same test file: a filter of random text; exit code not 0. |
-| A04-6 | regression | With no filter the sim runs every case. | The same test file: the number of `ok` lines equals the number of `await check(` calls in the file. |
+| A04-6 | regression | With no filter the sim runs every case. | The same test file: a run with a filter that matches every case name prints the same `ok` lines as a run with no filter, and their number is at least the number of `await check(` calls in the file (some calls run in loops, so the two numbers can differ). |
 
 Acceptance: `node --test test/break-check-rule.test.mjs test/sim-filter.test.mjs` and `node test/sim-pipeline.mjs` pass; A04-1 fails on `main` because the rule says "own assertion", and A04-4 fails because the sim has no filter.
 
@@ -324,7 +327,7 @@ Evals:
 
 Acceptance: `node --test test/evals-writer-rubric.test.mjs` and `node test/sim-pipeline.mjs` pass; A06-1 fails on `main` because the writer prompt has no such rules.
 
-**A07 An untrusted path that reaches a read or a command is at least major.** Round cap 3. Touches: `agents/reviewer.md` (the rank list and the minor-pass sentence), `workflows/run-wave.js` (`minorReviewPrompt`, and in `minorPass` only how the check's findings are read), `test/reviewer-rank.test.mjs` (new), `test/sim-pipeline.mjs` (cases after "minor pass: a major from the check does the same"), `skills/pr-pipeline/SKILL.md` (see the table in Order and waves).
+**A07 An untrusted path that reaches a read or a command is at least major.** Round cap 3. Touches: `agents/reviewer.md` (the rank list and the minor-pass sentence), `workflows/run-wave.js` (`minorReviewPrompt`, in `minorPass` only how the check's findings are read, and in `runPRSteps` only the block after `minorPass` returns, up to the docs step: it adds a field to the pass result and returns not ready on it), `test/reviewer-rank.test.mjs` (new), `test/sim-pipeline.mjs` (cases after "minor pass: a major from the check does the same"), `skills/pr-pipeline/SKILL.md` (see the table in Order and waves).
 - A finding where a path, command or URL that untrusted text chooses reaches a file read, a command or a reviewer prompt is at least major. Untrusted text is an agent answer, script output, a PR comment or a bot thread.
 - The minor check may report such a security finding also outside the commits of the pass, and marks it as outside.
 - Such a finding is not lost when the pass is dropped: the PR ends not ready with a reason that names it (Flagged concerns).
@@ -409,7 +412,7 @@ What changed since the 0.9.1 entries:
 
 - **A security finding outside the minor pass (A07).** Default: the PR ends not ready with a reason that names the finding, so a person sees it before a merge. The other choice is an untested item on the PR, which also blocks an agent merge but lets the PR be ready. The maintainer can change the default without a new plan.
 - **The writer size is a prompt rule (A06).** `evalsVerdict` does not refuse a list of more than 20 evals, because a refusal adds a writer attempt and can stop a PR. If wave B shows lists above the cap, iteration 2 can add the refusal.
-- **A reviewer eval changes the list (A01).** A list with a reviewer eval differs from the accepted record, so a resume runs the evals check again, as #690 asks. The forced resume should therefore stop K01 in round 1, before a reviewer eval is added. If it does not, the evals check runs on the resume, and the report says so; it is not a fault of A01.
+- **A reviewer eval changes the list (A01).** A list with a reviewer eval differs from the accepted record, so a resume runs the evals check again, as #690 asks. The round cap stops K01 after the reviewers ran, so the stopped result can hold reviewer evals that the record lacks. The forced resume then runs one evals check on that list, and the report says so; it is not a fault of A01.
 - **The sim filter can show order-dependent cases (A04).** A case that needs an earlier case's state fails when it runs alone. The implementer fixes such a case in place only when it is in a block the entry touches; others are filed.
 - **Wave B ships after 0.9.2.** K01, Q630 and K07 merge after the tag, so they go out in the next release with iteration 2. Tagreeve starts on that release, not on 0.9.2.
 - **0.88M is a tight target.** K01 is the largest of the three. A miss of criterion 7 is reported with the per-role figures, and the cause is filed for iteration 2.
