@@ -1,0 +1,56 @@
+{
+  "pr": "C1",
+  "evals": [
+    {
+      "id": "C1-1",
+      "kind": "behaviour",
+      "statement": "C1-1 must hold",
+      "check": "run C1-1; expect ok"
+    },
+    {
+      "id": "C1-2",
+      "kind": "error path",
+      "statement": "C1-2 must hold",
+      "check": "run C1-2; expect ok"
+    }
+  ],
+  "evalsMeta": {
+    "noErrorPath": "",
+    "noReference": "",
+    "algorithm": false,
+    "accepted": {
+      "pr": "C1",
+      "evals": [
+        {
+          "id": "C1-1",
+          "kind": "behaviour",
+          "statement": "C1-1 must hold",
+          "check": "run C1-1; expect ok"
+        },
+        {
+          "id": "C1-2",
+          "kind": "error path",
+          "statement": "C1-2 must hold",
+          "check": "run C1-2; expect ok"
+        }
+      ],
+      "noErrorPath": "",
+      "noReference": "",
+      "algorithm": false
+    }
+  },
+  "results": {
+    "C1-1": {
+      "id": "C1-1",
+      "result": "pass",
+      "evidence": "second",
+      "breakCheck": "fails-without-change"
+    },
+    "C1-2": {
+      "id": "C1-2",
+      "result": "pass",
+      "evidence": "x",
+      "breakCheck": "fails-without-change"
+    }
+  }
+}

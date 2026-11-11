@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-11-11T10:00:13.000Z","message":{"content":"prompt"}}
+{"type":"assistant","timestamp":"2026-11-11T10:00:13.000Z","message":{"content":[{"type":"tool_use","name":"StructuredOutput","input":{"pass":true,"headSha":"sha","checks":[],"evals":[{"id":"C1-1","result":"pass","evidence":"second","breakCheck":"fails-without-change"}]}}]}}
