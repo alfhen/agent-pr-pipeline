@@ -10,8 +10,8 @@ const script = fileURLToPath(new URL('../scripts/cleanup.sh', import.meta.url))
 const base = realpathSync(mkdtempSync(join(tmpdir(), 'cleanup-io-')))
 const home = join(base, 'home'); mkdirSync(home)
 let n = 0
-const run = (args, env = {}) => {
-  const r = spawnSync('bash', [script, ...args], { encoding: 'utf8', env: { ...process.env, HOME: home, ...env } })
+const run = (args, env = {}, cwd = undefined) => {
+  const r = spawnSync('bash', [script, ...args], { encoding: 'utf8', cwd, env: { ...process.env, HOME: home, ...env } })
   return { status: r.status, out: r.stdout + r.stderr }
 }
 const folder = (marked = true) => {
@@ -119,4 +119,27 @@ test('a file that cannot be deleted is kept and the exit code is 0', { skip: pro
     assert.equal(lines(r.out, 'REMOVED').length, 0)
     assert.ok(existsSync(join(s, 'io-large.Ab12Cd')))
   } finally { chmodSync(s, 0o755) }
+})
+
+test('a newline in a top-level name never reaches the working folder', () => {
+  const s = folder()
+  const cwd = join(base, `cwd${n++}`); mkdirSync(cwd); mkdirSync(join(cwd, 'victim'))
+  writeFileSync(join(cwd, 'io-large.Ab'), 'keep')
+  touch(s, 'foo\nio-large.Ab'); mkdirSync(join(s, 'x\nvictim'))
+  const r = run(['clones', s, '--all'], {}, cwd)
+  assert.ok(existsSync(join(cwd, 'io-large.Ab')))
+  assert.ok(existsSync(join(cwd, 'victim')))
+  assert.ok(!/^REMOVED io-large/m.test(r.out))
+})
+
+test('an io-large file in a subfolder that is kept is not handled', { skip: process.getuid?.() === 0 }, () => {
+  const s = folder()
+  const sub = join(s, 'sub'); mkdirSync(sub); touch(sub, 'io-large.Qq1')
+  chmodSync(sub, 0o555)
+  try {
+    const r = run(['clones', s, '--all'])
+    assert.match(r.out, /^KEPT .*\/sub cannot delete$/m)
+    assert.ok(!lines(r.out, 'REMOVED').concat(lines(r.out, 'KEPT')).some((l) => l.includes('sub/io-large.Qq1')))
+    assert.ok(existsSync(join(sub, 'io-large.Qq1')))
+  } finally { chmodSync(sub, 0o755) }
 })
