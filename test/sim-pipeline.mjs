@@ -3228,6 +3228,34 @@ await check('minor pass: a major from the check does the same', async () => {
   assert.equal(x.C1.minorPass.kept, false)
   assert.equal(x.C1.land.split(':')[1], 'sha-revert')
 })
+await check('minor pass: the check prompt allows an untrusted-path finding outside the pass diff and names the mark', async () => {
+  await hooked(only1('C1'), passHook())
+  const prompt = calls.find(c => c.label === 'minorreview:C1').prompt
+  assert.match(prompt, /untrusted text[^\n]*path, command or URL[^\n]*even when it is outside this diff/)
+  assert.match(prompt, /outsidePass: true/)
+  assert.match(prompt, /Do not review the rest of the PR again/)
+})
+await check('minor pass: a major marked outside the pass reverts the pass and ends the PR not ready, with its title', async () => {
+  const x = await hooked(only1('C1'), passHook({ findings: [f('major', 'bot thread picks a file path', { outsidePass: true })] }))
+  assert.ok(calls.some(c => c.label === 'minorrevert:C1'))
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /bot thread picks a file path/)
+  assert.ok(!calls.some(c => c.label === 'open:C1' || c.label === 'docs:C1'))
+  assert.equal(x.C1.land, undefined)
+})
+await check('minor pass: a minor marked outside the pass goes to the checklist and stops nothing', async () => {
+  const x = await hooked(only1('C1'), passHook({ findings: [f('minor', 'odd path read', { outsidePass: true, file: 'src/a.js' })] }))
+  assert.ok(!calls.some(c => c.label === 'minorrevert:C1'))
+  assert.equal(x.C1.ready, true)
+  assert.match(calls.find(c => c.label === 'open:C1').prompt, /Minor findings not fixed: \[[\s\S]*odd path read/)
+})
+await check('minor pass: a major marked outside the pass is kept when both reverts fail', async () => {
+  const x = await hooked(only1('C1'), passHook({ findings: [f('major', 'script output picks a command', { outsidePass: true })], revert: { reverted: false } }))
+  assert.equal(labelsOf(/^minorrevert/).length, 2)
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /script output picks a command/)
+  assert.ok(!calls.some(c => c.label === 'open:C1'))
+})
 await check('minor pass: a minor from the check starts no second pass and goes to the checklist', async () => {
   const x = await hooked(only1('C1'), passHook({ findings: [f('minor', 'late thought', { file: 'src/a.js' })] }))
   assert.equal(labelsOf(/^minorfix/).length, 1)

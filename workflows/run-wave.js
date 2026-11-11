@@ -148,6 +148,7 @@ const splitFindings = groups => {
 const absorb = (prev, f) => {
   if (f.fileIssue) prev.fileIssue = true
   if (f.theme && !prev.theme) prev.theme = f.theme
+  if (f.outsidePass) prev.outsidePass = true
   if (RANK[f.severity] > RANK[prev.severity]) {
     const extra = prev.detail && !(f.detail || '').includes(prev.detail) ? `\n\nAlso: ${prev.detail}` : ''
     const lost = prev.suggestedFix && !(f.suggestedFix || '').includes(prev.suggestedFix) && f.suggestedFix ? `\n\nAlso: ${prev.suggestedFix}` : ''
@@ -592,7 +593,16 @@ const MINORFIX = {
   },
   required: ['changed', 'summary'],
 }
-const MINORREVIEW = { ...REVIEW, required: [...REVIEW.required, 'unconfirmed'], properties: { ...REVIEW.properties, unconfirmed: { type: 'array', items: { type: 'number' } } } }
+const OUTSIDE_PASS = { type: 'boolean', description: 'True only for an untrusted-path finding about code outside the commits of the pass' }
+const MINORREVIEW = {
+  ...REVIEW,
+  required: [...REVIEW.required, 'unconfirmed'],
+  properties: {
+    ...REVIEW.properties,
+    findings: { ...REVIEW.properties.findings, items: { ...REVIEW.properties.findings.items, properties: { ...REVIEW.properties.findings.items.properties, outsidePass: OUTSIDE_PASS } } },
+    unconfirmed: { type: 'array', items: { type: 'number' } },
+  },
+}
 const MINORREVERT = {
   type: 'object',
   properties: { reverted: { type: 'boolean' }, headSha: { type: 'string' }, summary: { type: 'string' }, worktree: { type: 'string' } },
@@ -837,6 +847,7 @@ const minorReviewPrompt = (pr, fromSha, fix, fixed, files) => `${ctx(pr)}
 Task: review only the commits of the minor pass, which fixed minor findings after the rest of the PR passed review.
 Clone it: ${cloneTo(`minorreview-${pr.id}`, pr)}. Those commits are \`git diff ${fromSha || 'origin/HEAD'}..HEAD\`; the whole PR is \`git diff origin/HEAD...HEAD\` for context.
 Check that each change fixes its finding, that it breaks nothing, and that it stays inside these files: ${JSON.stringify(files)}. Report a finding only about this diff. Do not review the rest of the PR again.
+One exception: if untrusted text (an agent answer, script output, a PR comment or a bot thread) chooses a path, command or URL that reaches a file read, a command or a reviewer prompt anywhere in the PR, report it as a major even when it is outside this diff, and set \`outsidePass: true\` on that finding. Set \`outsidePass\` on no other finding.
 Return headSha, a summary, the findings, \`unconfirmed\`: the numbers of the findings below that the diff does not really fix, and, when the plan entry or brief has an Invariants line, \`invariants\`: one row per invariant, with holds and evidence.
 
 ${prBlock(pr)}
@@ -1552,7 +1563,13 @@ async function minorPass(pr, signedSha, history, minors) {
     else if (split.blocking.length) why = `the check found ${split.blocking.length} blockers or majors`
     else noteTest(pr, outcome)
   }
-  if (why) return drop(why, (test && test.headSha) || (review && review.headSha) || fix.headSha)
+  // An untrusted-path finding outside the pass must survive the drop: the PR ends not ready.
+  const outside = split.blocking.filter(f => f.outsidePass)
+  if (why) {
+    const dropped = await drop(why, (test && test.headSha) || (review && review.headSha) || fix.headSha)
+    return outside.length ? { ...dropped, outside } : dropped
+  }
+  if (outside.length) return { ...await drop(`the check found an untrusted-path concern outside the pass: ${outside.map(f => f.title).join('; ')}`, test.headSha || review.headSha), outside }
   const unconfirmed = new Set(Array.isArray(review.unconfirmed) ? review.unconfirmed : [])
   const fixedItems = claimed.filter(n => Array.isArray(review.unconfirmed) && !unconfirmed.has(n)).map(n => candidates[n - 1])
   const rest = open.filter(m => !fixedItems.includes(m))
@@ -1978,6 +1995,7 @@ async function runPRSteps(input) {
   // Unchecked pass commits stay on the head, so a later test run on it fails for a reason no later agent can fix. Those steps
   // are skipped and listed as untested, and a person merges.
   const redHead = !!pass.revertFailed
+  if (pass.outside) return marked({ id: pr.id, ready: false, reason: `minor check found an untrusted-path concern outside the pass: ${pass.outside.map(f => f.title).join('; ')}`, history, lastFindings: pass.outside, minorPass: pass.report, untested: untestedOf(pr), architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
 
   let docs = null
   if (docsRuns(pr) && redHead) untestedFor(pr).pass.push('docs not updated: the minor pass commits are still on the branch')
