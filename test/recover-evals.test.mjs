@@ -296,6 +296,21 @@ test('A10-16 a change ruling in a run with no reviewer started is never replayed
   for (const form of FORMS) refusedRun(run(build(form, steps)))
 })
 
+test('A10-R1-1 a given list is read from a harness-indented transcript prompt', () => {
+  const LR = [ev('C1-1', 'behaviour'), ev('C1-2', 'error path'), ev('C1-3', 'behaviour')]
+  const real = listPrompt(LR, { noErrorPath: 'r' })
+  const prompt = '[Workflow harness - computed task] header\n' + `Brief.\n\n${real}`.split('\n').map(l => '  ' + l).join('\n')
+  assert.ok(prompt.includes('  Evals to check:\n  {') && !prompt.split('\n').includes('}'))
+  const r = run(build('folder', [
+    { label: 'evalsarch:C1#1', answer: ok, prompt },
+    { label: 'verify:C1#1', answer: verifier([row('C1-1', 'pass')]) },
+  ]))
+  assert.equal(r.status, 0, r.stderr)
+  const o = JSON.parse(r.stdout)
+  assert.deepEqual(bothEvals(o), LR)
+  assert.equal(o.evalsMeta.noErrorPath, 'r')
+})
+
 test('A10-5 a given list that the check accepted is read from the folder prompt only', () => {
   const marker = join(tmp, 'a10-5-marker')
   const LR = [ev('C1-1', 'behaviour', { statement: `runs $(touch ${marker}) here` }), ev('C1-2', 'error path'), ev('C1-3', 'behaviour')]

@@ -70,7 +70,8 @@ out=$(printf '%s' "$steps" | jq -e --arg pr "$pr" '
     if ($prompt | type) != "string" then null else
       ($prompt | split("Evals to check:\n")) as $parts
       | if ($parts | length) != 2 then null else
-          (try ($parts[1] | split("\n}") | .[0] + "\n}" | fromjson) catch null)
+          ($parts[0] | capture("(?<ind>[ \\t]*)$").ind) as $ind
+          | (try ($parts[1] | split("\n" + $ind + "}") | .[0] + "\n}" | fromjson) catch null)
           | if type == "object" and (.evals | type) == "array" and (.evals | length) > 0 then . else null end
         end
     end;
