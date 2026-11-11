@@ -42,6 +42,11 @@ case "$cmd" in
       while IFS= read -r d; do
         if rm -rf "$d"; then echo "REMOVED $d"; else echo "KEPT $d cannot delete"; fi
       done < <(find "$tmp" -mindepth 1 -maxdepth 1 -type d)
+      # Only the wave end removes these: another PR of the wave may still read one. find -type f skips symbolic links.
+      while IFS= read -r f; do
+        [[ "${f##*/}" =~ ^io-large\.[A-Za-z0-9]+$ ]] || continue
+        if rm -f "$f"; then echo "REMOVED $f"; else echo "KEPT $f cannot delete"; fi
+      done < <(find "$tmp" -mindepth 1 -maxdepth 1 -type f)
     else
       [[ "$id" =~ ^[A-Za-z0-9._]+$ ]] || { echo "KEPT $id not a plain id"; exit 0; }
       shopt -s nullglob
