@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, chmodSync, cpSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, chmodSync, cpSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -31,10 +31,12 @@ function report(prs) {
   }
   put('repos/o/r/issues/7/comments', comments)
   put('repos/o/r/pulls', Object.keys(prs).map(n => ({ number: Number(n), merged_at: '2026-11-02T00:00:00Z', body: '' })))
-  return spawnSync('bash', [join(root, 'scripts/ledger.sh'), 'o/r', 'report'], {
+  const r = spawnSync('bash', [join(root, 'scripts/ledger.sh'), 'o/r', 'report'], {
     encoding: 'utf8',
     env: { ...process.env, HOME: dir, PATH: `${bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: fx, FAKE_GH_LOG: join(dir, 'log') },
   })
+  r.fixture = readFileSync(join(fx, `${fname('repos/o/r/issues/7/comments')}.json`), 'utf8')
+  return r
 }
 
 test('A08-1 an evals check stop counts as one maintainer touch', () => {
@@ -52,9 +54,10 @@ test('A08-2 evals refused and fix not saved count one touch each', () => {
 test('A08-3 no reason, evals writer failed and tester or reviewer failed add no touch', () => {
   const a = 'evals writer failed'
   const b = 'tester or reviewer failed'
-  assert.equal(a, 'evals writer failed')
-  assert.equal(b, 'tester or reviewer failed')
+  const runWave = readFileSync(join(root, 'workflows/run-wave.js'), 'utf8')
+  assert.ok(runWave.includes(`'${a}'`) && runWave.includes(`'${b}'`))
   const r = report({ 61: [null, a, b, 'evals check: x'], 62: [null, a] })
+  assert.ok(r.fixture.includes(`\\"reason\\":\\"${a}\\"`) && r.fixture.includes(`\\"reason\\":\\"${b}\\"`))
   assert.equal(r.status, 0, r.stderr)
   assert.match(r.stdout, /^Maintainer touches per PR: 0\.5, 1 in all\.$/m)
 })
