@@ -252,6 +252,12 @@ const simulate = async (args, pre = GOOD) => {
 }
 const nameFilter = process.env.SIM_CASE_FILTER || ''
 let casesRun = 0
+process.on('beforeExit', () => {
+  if (nameFilter && casesRun === 0) {
+    console.error(`no case matched the filter: ${nameFilter}`)
+    process.exitCode = 1
+  }
+})
 const check = async (name, fn) => {
   if (nameFilter && !name.includes(nameFilter)) return
   casesRun++
@@ -3806,7 +3812,3 @@ await check('F652-3 a kept dispute with no push still stops with no progress', a
   assert.equal(x.C1.ready, false)
   assert.match(x.C1.reason, /no progress/)
 })
-if (nameFilter && casesRun === 0) {
-  console.error(`no case matched the filter: ${nameFilter}`)
-  process.exit(1)
-}

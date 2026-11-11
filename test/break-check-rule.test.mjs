@@ -63,6 +63,6 @@ for (const [name, text] of Object.entries(texts)) {
 
 for (const name of ['agents/verifier.md', 'verify prompt']) {
   test(`${name}: a TypeError in the test body is a proof`, () => {
-    assert.match(texts[name], /TypeError in the test body/);
+    assert.match(texts[name], /TypeError in the test body is such a failure/);
   });
 }
