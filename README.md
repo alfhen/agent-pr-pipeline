@@ -83,7 +83,7 @@ The local routine is replaced by the cloud routines once it is retired (docs/clo
 
 - Load your working copy without installing: `claude --plugin-dir .`
 - Check the manifests: `claude plugin validate .` and `claude plugin validate .claude-plugin/plugin.json`
-- Simulate the workflow with a fake `agent()`: `node test/sim-pipeline.mjs`. Run it after every change to `workflows/run-wave.js` or `agents/`. Script tests: `node --test test/*.test.mjs`.
+- Simulate the workflow with a fake `agent()`: `node test/sim-pipeline.mjs`. Run it after every change to `workflows/run-wave.js` or `agents/`. Set `SIM_CASE_FILTER` to run only the cases whose name holds that text. The run exits non-zero when no case matches. Script tests: `node --test test/*.test.mjs`.
 - Run the checks in [AGENTS.md](AGENTS.md) before you push. The `ci` workflow runs the same checks on every PR.
 - The `ci` workflow also runs `scripts/check-version.sh`. The manifest version must be semantic and, in a PR that changes it, higher than the latest tag.
 - The `release` workflow runs when a release is published. It runs the simulation and checks that the manifest version matches the tag.
