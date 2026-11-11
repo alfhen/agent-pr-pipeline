@@ -2000,9 +2000,8 @@ const retryRun = (answers, extra) => {
   return hooked(withEvals('C1'), (p, o) => {
     if (isVerifier(o)) { n++; if (answers[n - 1] !== undefined) return answers[n - 1] }
     return extra ? extra(p, o) : undefined
-  }).then(x => ({ x, count: () => n }))
+  }).then(x => ({ x }))
 }
-const verifierBefore = (label, labels) => labels.slice(0, labels.indexOf(label)).filter(l => l.startsWith('verify:')).length
 await check('A02-1: an empty evals list gets one more verifier call and no fixer', async () => {
   const { x } = await retryRun([vres({ evals: [] }), vres()])
   const labels = calls.map(c => c.label)

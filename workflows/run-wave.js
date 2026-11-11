@@ -1412,7 +1412,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
       const again = await checkCall(pr, `${round}r`)
       if (!again) return { signedOff: false, reason: 'tester or reviewer failed' }
       const noResultsAgain = noEvalResultsStop(again, `${round}r`)
-      if (noResultsAgain) return noResultsAgain
+      if (noResultsAgain) return { ...stop, ...noResultsAgain }
       const second = checkOutcome(pr, again)
       noteTest(pr, second)
       history.push(historyRow(`${round}r`, second, second.findings, 0))
