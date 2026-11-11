@@ -3256,6 +3256,13 @@ await check('minor pass: a major marked outside the pass is kept when both rever
   assert.match(x.C1.reason, /script output picks a command/)
   assert.ok(!calls.some(c => c.label === 'open:C1'))
 })
+await check('minor pass: a major marked outside the pass is kept when the tester returns no answer', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#minor1' ? null : passHook({ findings: [f('major', 'tester gone outside title', { outsidePass: true })] })(p, o))
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /tester gone outside title/)
+  assert.match(x.C1.reason, /^needs human:/)
+  assert.ok(!calls.some(c => c.label === 'open:C1'))
+})
 await check('minor pass: a minor from the check starts no second pass and goes to the checklist', async () => {
   const x = await hooked(only1('C1'), passHook({ findings: [f('minor', 'late thought', { file: 'src/a.js' })] }))
   assert.equal(labelsOf(/^minorfix/).length, 1)

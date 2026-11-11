@@ -1552,8 +1552,10 @@ async function minorPass(pr, signedSha, history, minors) {
   ])
   let why = ''
   let split = { blocking: [], minors: [], conflicts: 0 }
-  if (!test || !review) why = 'the check failed to run'
-  else {
+  if (!test || !review) {
+    why = 'the check failed to run'
+    if (review) split = splitFindings([[review.findings.concat(failedInvariants(review)), 'minor-check']])
+  } else {
     const outcome = testOutcome(pr, test)
     split = splitFindings([[review.findings.concat(failedInvariants(review)), 'minor-check'], [outcome.findings, 'test']])
     history.push(historyRow('minor1', outcome, split.blocking, split.conflicts))
@@ -1995,7 +1997,7 @@ async function runPRSteps(input) {
   // Unchecked pass commits stay on the head, so a later test run on it fails for a reason no later agent can fix. Those steps
   // are skipped and listed as untested, and a person merges.
   const redHead = !!pass.revertFailed
-  if (pass.outside) return marked({ id: pr.id, ready: false, reason: `minor check found an untrusted-path concern outside the pass: ${pass.outside.map(f => f.title).join('; ')}`, history, lastFindings: pass.outside, minorPass: pass.report, untested: untestedOf(pr), architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
+  if (pass.outside) return marked({ id: pr.id, ready: false, reason: `needs human: untrusted path outside the minor pass: ${pass.outside.map(f => f.title).join('; ')}`, history, lastFindings: pass.outside, minorPass: pass.report, untested: untestedOf(pr), architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
 
   let docs = null
   if (docsRuns(pr) && redHead) untestedFor(pr).pass.push('docs not updated: the minor pass commits are still on the branch')
