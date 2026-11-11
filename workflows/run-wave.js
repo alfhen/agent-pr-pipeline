@@ -160,6 +160,7 @@ const absorb = (prev, f) => {
   }
 }
 // One item per file and normalized title, with the highest severity and every source. The result is sorted by file, so the fix prompt numbers match the history.
+const REFUSED_LIST_TITLE = 'Refused eval list: '
 const mergeDuplicates = findings => {
   const seen = new Map()
   for (const f of findings) {
@@ -2018,12 +2019,12 @@ async function runPRSteps(input) {
   const decisionFindings = (pr.skipImpl || pr.resume) && (pr.architectureDecision || pr.productDecision)
     ? [{ severity: 'major', title: 'Apply the maintainer decision', detail: `Apply the maintainer decision given in the brief to the branch. If the branch already follows it, change nothing.${pr.architectureDecision ? ` Architecture decision: ${pr.architectureDecision}` : ''}${pr.productDecision ? ` Product decision: ${pr.productDecision}` : ''}` }]
     : []
-  const preFindings = mergeDuplicates(((pr.resume && pr.resume.findings) || []).concat(decisionFindings))
+  const preFindings = mergeDuplicates(((pr.resume && pr.resume.findings) || []).filter(f => !(f && typeof f.title === 'string' && f.title.startsWith(REFUSED_LIST_TITLE))).concat(decisionFindings))
   const written = await writeEvals(pr, rawEvals)
   if (written.stop) {
     const given = givenEvals(pr, rawEvals)
     const rec = usableRecord(pr, written.record)
-    const refused = rec && Array.isArray(written.refused) ? [{ severity: 'minor', title: `Refused eval list: ${written.stop}`, detail: JSON.stringify(written.refused) }] : []
+    const refused = rec && Array.isArray(written.refused) ? [{ severity: 'minor', title: `${REFUSED_LIST_TITLE}${written.stop}`, detail: JSON.stringify(written.refused) }] : []
     const findings = ((pr.resume && pr.resume.findings) || []).concat(refused)
     const listOut = rec ? recordOut(rec) : written.record ? { ...(given && Array.isArray(given.list) ? { evals: given.list } : {}), evalsMeta: { ...(given ? given.meta : {}), accepted: written.record } } : given ? { evals: given.list, evalsMeta: given.meta } : {}
     return { id: pr.id, ready: false, reason: written.stop, history, ...(findings.length ? { lastFindings: findings } : {}), ...listOut, ...carriedOut(resumedDisputes(pr), resumedDeviations(pr)) }

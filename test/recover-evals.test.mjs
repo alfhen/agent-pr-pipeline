@@ -29,7 +29,7 @@ function build(form, steps) {
     const lines = [{ type: 'launched' }]
     steps.forEach((s, i) => {
       lines.push({ type: 'started', key: `k${i}`, agentId: `a${i}`, label: s.label, phase: 'p' })
-      lines.push({ type: 'result', key: `k${i}`, agentId: `a${i}`, result: s.answer, toolsUsed: ['StructuredOutput'] })
+      if (s.answer != null) lines.push({ type: 'result', key: `k${i}`, agentId: `a${i}`, result: s.answer, toolsUsed: ['StructuredOutput'] })
     })
     writeFileSync(path, lines.map(l => JSON.stringify(l)).join('\n') + '\n')
   } else {
@@ -39,7 +39,7 @@ function build(form, steps) {
       const stamp = `2026-11-11T10:00:${String(10 + i).padStart(2, '0')}.000Z`
       writeFileSync(join(path, `agent-a${i}.jsonl`), [
         { type: 'user', timestamp: stamp, message: { content: 'prompt' } },
-        { type: 'assistant', timestamp: stamp, message: { content: [{ type: 'tool_use', name: 'StructuredOutput', input: s.answer }] } },
+        ...(s.answer != null ? [{ type: 'assistant', timestamp: stamp, message: { content: [{ type: 'tool_use', name: 'StructuredOutput', input: s.answer }] } }] : []),
       ].map(l => JSON.stringify(l)).join('\n') + '\n')
     })
   }
@@ -134,18 +134,33 @@ test('A01-8 no accepted list, or a missing path, exits non-zero and prints no li
     { label: 'evalsarch:C1#1', answer: ok },
     { label: 'evalsproduct:C1#1', answer: refuse },
   ]
+  const productSilent = [
+    { label: 'evals:C1', answer: writer(list1) },
+    { label: 'evalsarch:C1#1', answer: ok },
+    { label: 'evalsproduct:C1#1', answer: null },
+  ]
+  const disputeSilent = [
+    { label: 'evals:C1', answer: writer(list1) },
+    { label: 'evalsarch:C1#1', answer: ok },
+    { label: 'dispute:C1#1', answer: { ruling: 'change', eval: ev('C1-2', 'error path', { statement: 'changed' }), reason: 'r' } },
+    { label: 'evalsarch:C1#d1', answer: ok },
+    { label: 'evalsproduct:C1#d1', answer: null },
+  ]
   holds(otherPr, 'evals:C2', a => Array.isArray(a.evals))
   holds(died, 'evals:C1', a => Array.isArray(a.evals))
   assert.ok(!died.some(s => s.label.startsWith('evalsarch')))
   holds(productRefused, 'evalsarch:C1#1', a => a.verdict === 'ok')
   holds(productRefused, 'evalsproduct:C1#1', a => a.verdict === 'needs-change')
   for (const form of FORMS) {
-    for (const steps of [otherPr, died, productRefused]) {
+    for (const steps of [otherPr, died, productRefused, productSilent]) {
       const r = run(build(form, steps))
       assert.notEqual(r.status, 0)
       assert.equal(r.stdout, '')
       assert.match(r.stderr, /C1/)
     }
+    const r2 = run(build(form, disputeSilent))
+    assert.equal(r2.status, 0)
+    assert.deepEqual(JSON.parse(r2.stdout).evals, list1)
     const missing = join(tmp, `missing-${form}`)
     const r = run(missing)
     assert.notEqual(r.status, 0)

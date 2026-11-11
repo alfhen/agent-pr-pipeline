@@ -707,6 +707,10 @@ await check('A01-11 a resume whose changed list the check refuses keeps the reco
   assert.deepEqual(R1.evals, noErrorList)
   assert.equal(R1.evalsMeta.noErrorPath, record.noErrorPath)
   assert.ok(JSON.stringify(R1.lastFindings).includes('C1-9'))
+  const again = (await evalsRun(resumeWith(asGiven(R1), { findings: R1.lastFindings }), noWriter)).C1
+  assert.ok(again)
+  assert.equal(calls.filter(c => c.label.startsWith('fix:C1')).length, 0)
+  assert.ok(!calls.some(c => c.label.startsWith('fix:') && c.prompt.includes('C1-9')))
   const missing = (await evalsRun(resumeWith({ accepted: record }), noWriter)).C1
   assert.match(missing.reason, /^evals missing:/)
   for (const prev of [R1, missing]) {

@@ -6,7 +6,7 @@
 # Output: { pr, evals, evalsMeta: { noErrorPath, noReference, algorithm, accepted }, results: { <eval id>: <last verifier row> } }.
 # `evals` is the record's list and `evalsMeta.accepted` is the record: the last list the evals check accepted. The list of the
 # first writer attempt whose reviewers all said ok is the start; a dispute `change` whose check said ok replaces its eval.
-# A writer attempt or a change that a reviewer refused, and a `keep` ruling, are not the record.
+# A writer attempt or a change that a reviewer refused or that a started reviewer never answered, and a `keep` ruling, are not the record.
 # Exit: 0 printed, 1 the path is missing or holds no accepted list for the PR (nothing on stdout), 64 bad argument.
 set -u
 usage="usage: recover-evals.sh <journal.jsonl | transcript folder> <PR id>"
@@ -22,13 +22,13 @@ if [ -d "$src" ]; then
       label=$(jq -r '.description // ""' "${f%.jsonl}.meta.json" 2>/dev/null) || label=""
       [ -n "$label" ] || continue
       jq -R -c 'fromjson? // empty | select(.type == "assistant") | .timestamp as $t | .message.content[]? | select(.type == "tool_use" and .name == "StructuredOutput") | {t: $t, answer: .input}' "$f" 2>/dev/null \
-        | jq -s -c --arg label "$label" 'last // empty | . + {label: $label}'
+        | jq -s -c --arg label "$label" '(last // {t: null, answer: null}) + {label: $label}'
     done | jq -s -c 'sort_by(.t // "")'
   ) || steps='[]'
 elif [ -f "$src" ]; then
   steps=$(jq -R -c 'fromjson? // empty' "$src" | jq -s -c '
     reduce .[] as $e ({m: {}, out: []};
-      if $e.type == "started" then .m[$e.agentId] = $e.label
+      if $e.type == "started" then .m[$e.agentId] = $e.label | .out += [{label: $e.label, answer: null}]
       elif $e.type == "result" then .out += [{label: .m[$e.agentId], answer: $e.result}]
       else . end) | .out') || steps='[]'
 else
@@ -39,12 +39,14 @@ fi
 out=$(printf '%s' "$steps" | jq -e --arg pr "$pr" '
   def txt: if type == "string" then gsub("^\\s+|\\s+$"; "") else "" end;
   . as $all
+  | ([$all[] | .label // empty]) as $started
   | ($all | map(select(.label != null and (.answer | type) == "object"))) as $s
   | def last_of($label): ([$s[] | select(.label == $label)] | last // null) | if . == null then null else .answer end;
   def approved($suffix):
     (last_of("evalsarch:\($pr)#\($suffix)")) as $a
     | (last_of("evalsproduct:\($pr)#\($suffix)")) as $p
-    | $a != null and $a.verdict == "ok" and ($p == null or $p.verdict == "ok");
+    | ($started | index("evalsproduct:\($pr)#\($suffix)") != null) as $pStarted
+    | $a != null and $a.verdict == "ok" and (if $pStarted then ($p != null and $p.verdict == "ok") else true end);
   ([$s[] | select(.label == "evals:\($pr)" or (.label | startswith("evals:\($pr)#w")))
      | {n: (if .label == "evals:\($pr)" then 1 else (.label | sub("^.*#w"; "") | tonumber? // 0) end), answer}]
    | sort_by(.n)
