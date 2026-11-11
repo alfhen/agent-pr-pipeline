@@ -2104,6 +2104,69 @@ await check('#602: open blocking findings and a fix that changed nothing stop at
   assert.equal(x.C1.reason, 'no progress: the fix changed nothing in round 1, 1 of 4 used (maxRounds)')
   assert.ok(!calls.some(c => c.label === 'test:C1#1r'))
 })
+const unsavedFix = (label, extra = {}) => (p, o) => o.label === label ? { summary: 'could not save', changed: false, worktree: '/sim/wt/C1', unsaved: { error: 'git push: ENOSPC' }, ...extra } : undefined
+const failUnit = { pass: false, headSha: 'sha-C1', checks: [ck('unit', { pass: false })] }
+await check('A03-1 and A03-2: a fixer that reports unsaved work stops with fix not saved, the error and the worktree', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? failUnit : o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : unsavedFix('fix:C1#1')(p, o))
+  assert.equal(x.C1.ready, false)
+  assert.ok(x.C1.reason.startsWith('fix not saved:'))
+  assert.ok(x.C1.reason.includes('ENOSPC'))
+  assert.ok(!x.C1.reason.includes('no progress'))
+  assert.equal(x.C1.worktree, '/sim/wt/C1')
+  assert.ok(x.C1.reason.includes('/sim/wt/C1'))
+  assert.ok(!calls.some(c => ['test:C1#1r', 'test:C1#2', 'review:C1#2'].includes(c.label)))
+})
+await check('A03-3: the bot-answer check stops with fix not saved', async () => {
+  const x = await hooked(only1('B1'), (p, o) => o.label === 'botreview:B1#1' ? reviewOf([f('major', 'x')]) : o.label === 'fix:B1#bots1' ? { summary: 's', changed: true, worktree: '/sim/wt/B1', unsaved: { error: 'ENOSPC' } } : undefined)
+  assert.equal(x.B1.ready, false)
+  assert.ok(x.B1.reason.startsWith('fix not saved:'))
+  assert.ok(x.B1.reason.includes('ENOSPC'))
+  assert.equal(x.B1.worktree, '/sim/wt/B1')
+  assert.ok(!calls.some(c => c.label === 'test:B1#bots2' || c.label === 'botreview:B1#2'))
+})
+await check('A03-4: unsaved work with an empty or missing error says the error is unknown', async () => {
+  for (const unsaved of [{ error: '' }, {}, { error: '  ' }]) {
+    const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? failUnit : o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : unsavedFix('fix:C1#1', { unsaved })(p, o))
+    assert.ok(x.C1.reason.startsWith('fix not saved:'), x.C1.reason)
+    assert.ok(x.C1.reason.includes('unknown'))
+    assert.ok(!/undefined|null|no progress/.test(x.C1.reason))
+  }
+})
+await check('A03-7: a resume whose fix call reports unsaved work stops before any check', async () => {
+  const findings = [{ severity: 'major', title: 'old', detail: 'd' }]
+  const runs = [
+    only1('C1').map(p => ({ ...p, resume: { history: [], minors: [], findings } })),
+    only1('C1').map(p => ({ ...p, skipImpl: true, architectureDecision: 'use A' })),
+  ]
+  for (const prs of runs) {
+    const x = await hooked(prs, (p, o) => o.label.startsWith('fix:C1') ? { summary: 's', changed: true, worktree: '/sim/wt/C1', unsaved: { error: 'ENOSPC' } } : undefined)
+    assert.equal(x.C1.ready, false)
+    assert.ok(x.C1.reason.startsWith('fix not saved:') && x.C1.reason.includes('ENOSPC'))
+    assert.equal(x.C1.worktree, '/sim/wt/C1')
+    assert.ok(!calls.some(c => /^(verify|test):C1/.test(c.label)))
+  }
+})
+await check('A03-8: failing checks with no findings and unsaved work do not rerun the checks', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? failUnit : unsavedFix('fix:C1#1')(p, o))
+  assert.ok(x.C1.reason.startsWith('fix not saved:'))
+  assert.ok(!calls.some(c => c.label === 'test:C1#1r'))
+  assert.ok(!/^(checks failed twice|no progress)/.test(x.C1.reason))
+})
+await check('A03-9: unsaved work stops the PR also when the fixer answers changed true', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label.startsWith('review:C1') ? reviewOf([f('major', 'x')]) : unsavedFix('fix:C1#1', { changed: true })(p, o))
+  assert.ok(x.C1.reason.startsWith('fix not saved:'))
+  assert.ok(!calls.some(c => c.label === 'test:C1#2' || c.label === 'review:C1#2'))
+})
+await check('A03-10: the land-fix check stops with fix not saved', async () => {
+  for (const k of ['landOutput', 'landBad']) land[k] = new Set(['LA'])
+  try {
+    const x = await hooked(LANDS, (p, o) => o.label === 'fix:LA#land1' ? { summary: 's', changed: true, worktree: '/sim/wt/LA', unsaved: { error: 'ENOSPC' } } : undefined)
+    assert.equal(x.LA.ready, false)
+    assert.ok(x.LA.reason.startsWith('fix not saved:') && x.LA.reason.includes('ENOSPC'))
+    assert.equal(x.LA.worktree, '/sim/wt/LA')
+    assert.ok(!calls.some(c => c.label === 'test:LA#land2' || c.label === 'landreview:LA#2'))
+  } finally { for (const k of Object.keys(land)) land[k] = new Set() }
+})
 await check('#602: a fix that changed something gets no rerun', async () => {
   await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? { pass: false, headSha: 'sha-C1', checks: [ck('unit', { pass: false })] } : undefined)
   assert.ok(!calls.some(c => c.label === 'test:C1#1r'))

@@ -625,6 +625,7 @@ const FIX = {
   type: 'object',
   properties: {
     summary: { type: 'string' }, worktree: { type: 'string' }, changed: { type: 'boolean' }, planConflict: { type: 'string' },
+    unsaved: { type: 'object', properties: { error: { type: 'string' } } },
     disputes: { type: 'array', items: DISPUTE_ITEM },
     sameAs: { type: 'array', items: { type: 'array', items: { type: 'number' } } },
     siblings: {
@@ -808,7 +809,8 @@ Task: fix the branch after review round ${round}.
 2. For each finding, list every sibling place with the same weakness and fix them in the same round. For a plan, list the other entries and states each edit touches.
 ${stopOnConflict && pr.kind !== 'plan' ? `3. If a fix would need a change outside the Touches line, or would break an Acceptance line (for example, editing a test the entry says passes unchanged), change nothing and return \`planConflict\`: one sentence that names the two plan statements that disagree.
 ` : ''}${stopOnConflict && pr.kind !== 'plan' ? '4' : '3'}. Checks: ${fastText}, and ${ownE2e}.
-${fixedEvalsText(pr, false, allowDisputes)}${allowDisputes && pr.evals ? `${UNMEETABLE_EVAL_TEXT}\n` : ''}${designRulesText(pr)}Return a short summary of each fix, any finding you disagree with and why, \`siblings\` (per finding number: the places you checked and the places you fixed), \`sameAs\` (groups of finding numbers that you fixed as one), changed (true when you pushed a commit, false when you pushed nothing), and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
+${fixedEvalsText(pr, false, allowDisputes)}${allowDisputes && pr.evals ? `${UNMEETABLE_EVAL_TEXT}\n` : ''}${designRulesText(pr)}
+Return a short summary of each fix, any finding you disagree with and why, \`siblings\` (per finding number: the places you checked and the places you fixed), \`sameAs\` (groups of finding numbers that you fixed as one), changed (true when you pushed a commit, false when you pushed nothing), \`unsaved\` (give it, with \`error\` set to the error text, when a commit or a push failed and your work is not on the branch), and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}
 
@@ -1297,6 +1299,13 @@ async function checkCall(pr, round) {
   return call('verify', pr, verifyPrompt(pr, round, testsOnly), `verify:${pr.id}#${round}`, { schema: VERIFY })
 }
 
+// A fixer that could not commit or push leaves its work only in its worktree. Reporting that as "changed nothing" would hide it.
+const unsavedStop = fix => {
+  if (!fix || !fix.unsaved) return null
+  const error = typeof fix.unsaved.error === 'string' && fix.unsaved.error.trim() ? fix.unsaved.error.trim() : 'unknown'
+  return { reason: `fix not saved: ${error}${fix.worktree ? ` (the work is in ${fix.worktree})` : ''}`, worktree: fix.worktree }
+}
+
 async function reviewLoop(pr, startRound, history, minors, loopState) {
   const { max, cap } = roundsFor(pr)
   if (startRound > 1) log(`${pr.id} resume: this run does at most ${max} rounds (${startRound} to ${startRound + max - 1}), ${cap} counts rounds from the resume`)
@@ -1387,6 +1396,8 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     }
     const fix = await call('fix', pr, fixPrompt(pr, outcome, blocking, round, review && review.sweep, true, true), `fix:${pr.id}#${round}`, { schema: FIX })
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
+    const unsaved = unsavedStop(fix)
+    if (unsaved) return halt(unsaved.reason, { lastFindings: blocking, lastTest: test, fixSummary: fix.summary, worktree: unsaved.worktree })
     const listChanged = fix ? await settleDisputes(pr, fix.disputes, 'fixer') : false
     if (pr.kind !== 'plan' && fix && fix.planConflict) {
       delete row.themes
@@ -1593,6 +1604,11 @@ async function checkNewCode(pr, { tag, label, role, what, reviewPrompt }, histor
     siblings = labelSiblings(fix && fix.siblings, blocking)
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
     if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
+    const unsaved = unsavedStop(fix)
+    if (unsaved) {
+      row.stop = unsaved.reason
+      return { ok: false, reason: unsaved.reason, lastFindings: blocking, worktree: unsaved.worktree }
+    }
   }
 }
 
@@ -1656,7 +1672,7 @@ async function bots(pr, n, headSha, issues, history, minors) {
   const lateMinors = []
   const check = await botCheck(pr, n, headSha, answer, history, lateMinors, issues, minors)
   minors.push(...lateMinors)
-  if (!check.ok) return { ok: false, reason: check.reason, lastFindings: check.lastFindings, headSha: answer.headSha || headSha, wait, answer, lateMinors }
+  if (!check.ok) return { ok: false, reason: check.reason, lastFindings: check.lastFindings, worktree: check.worktree, headSha: answer.headSha || headSha, wait, answer, lateMinors }
   return { ok: true, headSha: check.headSha, wait, answer, lateMinors }
 }
 
@@ -1921,9 +1937,9 @@ async function runPRSteps(input) {
     const r = await call('landFix', pr, landFixPrompt(pr), `landfix:${pr.id}`, { schema: LANDFIX })
     if (!r || !r.readyToMerge) return stopped('land fix not ready', { headSha: r && r.headSha, notes: r && r.notes })
     const check = await landFixCheck(pr, n, before, r.headSha, history, lateMinors)
-    if (!check.ok) return stopped(check.reason, { headSha: r.headSha, lastFindings: check.lastFindings, notes: r.notes, lateMinors, untested: untestedOf(pr) })
+    if (!check.ok) return stopped(check.reason, { headSha: r.headSha, lastFindings: check.lastFindings, worktree: check.worktree, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     const b = await bots(pr, n, check.headSha, [], history, lateMinors)
-    if (!b.ok) return stopped(b.reason, { headSha: b.headSha, lastFindings: b.lastFindings, notes: r.notes, lateMinors, untested: untestedOf(pr) })
+    if (!b.ok) return stopped(b.reason, { headSha: b.headSha, lastFindings: b.lastFindings, worktree: b.worktree, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     const sync = await syncUntested(pr, n, null)
     if (!sync.ok) return stopped(sync.reason, { headSha: b.headSha, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     const end = await endFacts(pr, n, b.headSha)
@@ -1958,6 +1974,8 @@ async function runPRSteps(input) {
   if (preFindings.length) {
     const decisionFix = await call('fix', pr, fixPrompt(pr, null, preFindings, roundsIn(history)), `fix:${pr.id}#${roundsIn(history)}`, { schema: FIX })
     if (decisionFix && typeof decisionFix.changed === 'boolean') rerunFixChanged = decisionFix.changed
+    const unsaved = unsavedStop(decisionFix)
+    if (unsaved) return marked({ id: pr.id, ready: false, reason: unsaved.reason, history, lastFindings: preFindings, worktree: unsaved.worktree, fixSummary: decisionFix.summary, ...rerunFix(), ...evalsOut() })
   } else if (!pr.skipImpl && !pr.resume) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (impl && !impl.pushed && pr.evals) await settleDisputes(pr, impl.disputes, 'implementer')
@@ -1968,7 +1986,7 @@ async function runPRSteps(input) {
   if (verifies(pr)) ciChecksState[pr.id] = await ciChecksOf(pr)
   const loopState = { fixed: false, reviewed: false, themes: [], siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
   let loop = await reviewLoop(pr, roundsIn(history) + 1, history, minors, loopState)
-  if (!loop.signedOff) return marked({ id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, ...(loop.fixSummary ? { fixSummary: loop.fixSummary } : {}), escalation: loop.escalation, conflict: loop.conflict, architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
+  if (!loop.signedOff) return marked({ id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, ...(loop.fixSummary ? { fixSummary: loop.fixSummary } : {}), ...(loop.worktree ? { worktree: loop.worktree } : {}), escalation: loop.escalation, conflict: loop.conflict, architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
 
   let pass = { fixed: [], report: null }
   if (minorPassRuns(pr)) {
@@ -2002,7 +2020,7 @@ async function runPRSteps(input) {
 
   if (redHead) untestedFor(pr).pass.push('bots not waited for or answered: the minor pass commits are still on the branch')
   const b = redHead ? { ok: true, headSha: loop.headSha, lateMinors: [] } : await bots(pr, n, loop.headSha, opened.issuesCreated || [], history, minors)
-  if (!b.ok) return marked({ id: pr.id, ready: false, reason: b.reason, history, prNumber: n, headSha: b.headSha, lastFindings: b.lastFindings, untested: untestedOf(pr), ...rerunFix(), ...evalsOut() })
+  if (!b.ok) return marked({ id: pr.id, ready: false, reason: b.reason, history, prNumber: n, headSha: b.headSha, lastFindings: b.lastFindings, worktree: b.worktree, untested: untestedOf(pr), ...rerunFix(), ...evalsOut() })
   const { wait, answer } = b
   const headSha = b.headSha
   const sync = await syncUntested(pr, n, openedUntested)
