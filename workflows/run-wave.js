@@ -1303,7 +1303,7 @@ async function checkCall(pr, round) {
 const unsavedStop = fix => {
   if (!fix || !fix.unsaved) return null
   const error = typeof fix.unsaved.error === 'string' && fix.unsaved.error.trim() ? fix.unsaved.error.trim() : 'unknown'
-  return { reason: `fix not saved: ${error}${fix.worktree ? ` (the work is in ${fix.worktree})` : ''}`, worktree: fix.worktree }
+  return { reason: `fix not saved: ${error}${fix.worktree ? ` (the work is in ${fix.worktree})` : ' (the fixer gave no worktree)'}`, worktree: fix.worktree }
 }
 
 async function reviewLoop(pr, startRound, history, minors, loopState) {

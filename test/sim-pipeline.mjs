@@ -2135,7 +2135,7 @@ await check('A03-4: unsaved work with an empty or missing error says the error i
 await check('A03-7: a resume whose fix call reports unsaved work stops before any check', async () => {
   const findings = [{ severity: 'major', title: 'old', detail: 'd' }]
   const runs = [
-    only1('C1').map(p => ({ ...p, resume: { history: [], minors: [], findings } })),
+    only1('C1').map(p => ({ ...p, evals: EVS, resume: { history: [], minors: [], findings, evals: EVS } })),
     only1('C1').map(p => ({ ...p, skipImpl: true, architectureDecision: 'use A' })),
   ]
   for (const prs of runs) {
@@ -2145,6 +2145,8 @@ await check('A03-7: a resume whose fix call reports unsaved work stops before an
     assert.equal(x.C1.worktree, '/sim/wt/C1')
     assert.ok(!calls.some(c => /^(verify|test):C1/.test(c.label)))
   }
+  const y = await hooked(runs[0], (p, o) => o.label.startsWith('fix:C1') ? { summary: 's', changed: true, worktree: '/sim/wt/C1', unsaved: { error: 'ENOSPC' } } : undefined)
+  assert.ok(y.C1.evals, 'the stop result carries evals')
 })
 await check('A03-8: failing checks with no findings and unsaved work do not rerun the checks', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? failUnit : unsavedFix('fix:C1#1')(p, o))
