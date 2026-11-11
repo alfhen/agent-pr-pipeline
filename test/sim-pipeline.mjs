@@ -796,6 +796,68 @@ await check('A01-14 a resume with the record list keeps the rule inputs of the r
   assert.equal(archCalls().length, 0)
   assert.equal(x.C1.evalsMeta.noReference, 'recorded reason')
 })
+// A10: a throw out of the evals check or out of a later step still returns the record; a resumed PR also returns its history, disputes and deviations.
+const rethrowing = thunks => Promise.all(thunks.map(t => t()))
+const a10Hooked = async (prs, hook, par = parallel) => {
+  calls = []; cleanupCalls = []; timeline = []; logs = []
+  preflight = GOOD
+  evalsPlan.writer = () => null
+  evalsPlan.check = okCheck
+  try {
+    return await run({ ...base, evals: true, prs }, async (p, o) => {
+      const h = hook(p, o)
+      if (h === undefined) return agent(p, o)
+      calls.push({ label: o.label, model: o.model, prompt: p })
+      return h
+    }, par, log)
+  } finally { evalsPlan.writer = () => null; evalsPlan.check = okCheck }
+}
+const a10Dispute = { id: 'C1-1', from: 'fixer', reason: 'r', ruling: 'keep', writerReason: 'w' }
+const a10Deviation = { what: 'dev', where: 'x', why: 'y' }
+const a10Changed = R => R.evals.map((e, i) => i ? e : { ...e, statement: 'a changed statement' })
+await check('A10-1 a throw out of the evals check of a resume returns the given record', async () => {
+  const R = await accepted1()
+  const given = { ...asGiven(R), evals: a10Changed(R) }
+  assert.notDeepEqual(given.evals, R.evalsMeta.accepted.evals)
+  let thrown = 0
+  const hook = (p, o) => { if (o.label === 'evalsarch:C1#1') { thrown++; throw new Error('arch crashed') } }
+  const out = await a10Hooked(resumeWith(given), hook, rethrowing)
+  assert.ok(thrown >= 2)
+  const x = out.prs[0]
+  assert.ok(x)
+  assert.equal(x.ready, false)
+  assert.match(x.reason, /^(run failed|evals check):/)
+  assert.deepEqual(x.evalsMeta.accepted, R.evalsMeta.accepted)
+  assert.deepEqual(x.evals, R.evalsMeta.accepted.evals)
+})
+await check('A10-2 a run failed result of a resume carries its history, disputes and deviations; a fresh run carries the list only', async () => {
+  const R = await accepted1()
+  const H = { round: 1, testPass: true, failingChecks: [], blockersAndMajors: [] }
+  const hook = a01Chain(a01Review('C1', 2, [a01Finding('cache race')]), (p, o) => { if (o.label === 'verify:C1#3') throw new Error('verifier crashed') })
+  const out = await a10Hooked(resumeWith(asGiven(R), { history: [H], evalDisputes: [a10Dispute], deviations: [a10Deviation] }), hook, rethrowing)
+  const x = out.prs[0]
+  assert.match(x.reason, /^run failed:.*verifier crashed/)
+  assert.deepEqual(x.history[0], H)
+  assert.ok(x.history.some(r => r.round === 2))
+  assert.deepEqual(x.evalDisputes, [a10Dispute])
+  assert.deepEqual(x.deviations, [a10Deviation])
+  assert.deepEqual(x.evalsMeta.accepted, R.evalsMeta.accepted)
+})
+await check('A10-13 the workflow parallel keeps a throwing evals check a stop with the record; a record of another PR is never the record', async () => {
+  const R = await accepted1()
+  const given = { ...asGiven(R), evals: a10Changed(R) }
+  const hook = (p, o) => { if (o.label === 'evalsarch:C1#1') throw new Error('arch crashed') }
+  const x = (await a10Hooked(resumeWith(given, { evalDisputes: [a10Dispute], deviations: [a10Deviation] }), hook)).prs[0]
+  assert.equal(x.reason, 'evals check: the architecture reviewer did not answer')
+  assert.deepEqual(x.evalsMeta.accepted, R.evalsMeta.accepted)
+  assert.deepEqual(x.evalDisputes, [a10Dispute])
+  assert.deepEqual(x.deviations, [a10Deviation])
+  const other = { ...R.evalsMeta.accepted, pr: 'C2' }
+  assert.equal(other.pr, 'C2')
+  let y = null
+  try { y = (await a10Hooked(resumeWith({ ...given, accepted: other }), hook, rethrowing)).prs[0] } catch (e) { y = null }
+  assert.ok(y === null || y.evalsMeta.accepted !== other)
+})
 await check('E01-4 a quick PR with an object-form list builds, and its triage prompt shows no unaccepted list', async () => {
   const given = { evals: listOf('QS'), noErrorPath: 'x' }
   const x = await evalsRun([{ id: 'QS', quick: { issue: 40 }, branch: 'fix/QS', evals: given }], noWriter)
