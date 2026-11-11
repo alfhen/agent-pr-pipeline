@@ -1294,8 +1294,15 @@ async function checkCall(pr, round) {
   if (!verifies(pr)) return call('test', pr, testPrompt(pr, round), `test:${pr.id}#${round}`, { schema: TEST })
   const testsOnly = await testsOnlyBranch(pr, round)
   testsOnlyState[pr.id] = testsOnly
-  return call('verify', pr, verifyPrompt(pr, round, testsOnly), `verify:${pr.id}#${round}`, { schema: VERIFY })
+  const ask = () => call('verify', pr, verifyPrompt(pr, round, testsOnly), `verify:${pr.id}#${round}`, { schema: VERIFY })
+  const first = await ask()
+  if (!first || (first.evals && first.evals.length)) return first
+  log(`${pr.id} round ${round}: the verifier gave no eval results, asking once more`)
+  const second = await ask()
+  // The caller stops on the flag: a second empty answer would otherwise turn into one major per eval id and a fixer call.
+  return second && !(second.evals && second.evals.length) ? { ...second, noEvalResults: true } : second
 }
+const noEvalResultsStop = (test, round) => test.noEvalResults ? { signedOff: false, reason: `no eval results: the verifier gave no eval results twice in round ${round}` } : null
 
 async function reviewLoop(pr, startRound, history, minors, loopState) {
   const { max, cap } = roundsFor(pr)
@@ -1316,6 +1323,8 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     if (evalMode) {
       test = await checkCall(pr, round)
       if (!test) return { signedOff: false, reason: 'tester or reviewer failed' }
+      const noResults = noEvalResultsStop(test, round)
+      if (noResults) return noResults
       outcome = checkOutcome(pr, test)
       noteTest(pr, outcome)
       if (!outcome.nothingRan && outcome.pass) {
@@ -1402,6 +1411,8 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
       // Only failing checks are left, so the failure may be a flaky check: run the checks once more. It shows a flake only on the same head, which is checked after the rerun.
       const again = await checkCall(pr, `${round}r`)
       if (!again) return { signedOff: false, reason: 'tester or reviewer failed' }
+      const noResultsAgain = noEvalResultsStop(again, `${round}r`)
+      if (noResultsAgain) return noResultsAgain
       const second = checkOutcome(pr, again)
       noteTest(pr, second)
       history.push(historyRow(`${round}r`, second, second.findings, 0))

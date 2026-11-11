@@ -1993,6 +1993,105 @@ await check('E03a-1: an eval id with no result refuses sign-off and the fixer ge
   assert.equal(x.C1.history.length, 2)
   assert.equal(x.C1.ready, true)
 })
+const isVerifier = o => o.agentType === 'agent-pr-pipeline:verifier'
+const X1 = { id: 'X-1', result: 'pass', evidence: 'ok', breakCheck: 'fails-without-change' }
+const retryRun = (answers, extra) => {
+  let n = 0
+  return hooked(withEvals('C1'), (p, o) => {
+    if (isVerifier(o)) { n++; if (answers[n - 1] !== undefined) return answers[n - 1] }
+    return extra ? extra(p, o) : undefined
+  }).then(x => ({ x, count: () => n }))
+}
+const verifierBefore = (label, labels) => labels.slice(0, labels.indexOf(label)).filter(l => l.startsWith('verify:')).length
+await check('A02-1: an empty evals list gets one more verifier call and no fixer', async () => {
+  const { x } = await retryRun([vres({ evals: [] }), vres()])
+  const labels = calls.map(c => c.label)
+  assert.ok(labels.includes('review:C1#1'))
+  assert.ok(!labels.some(l => l.startsWith('fix:C1#')))
+  assert.equal(x.C1.history[0].round, 1)
+  assert.equal(x.C1.history[0].testPass, true)
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, [])
+  assert.equal(x.C1.ready, true)
+  assert.equal(calls.filter(c => c.label === 'verify:C1#1').length, 2)
+})
+await check('A02-2: an answer with no evals field counts as an empty list', async () => {
+  const first = vres(); delete first.evals
+  assert.ok(!('evals' in first))
+  const { x } = await retryRun([first, vres()])
+  const labels = calls.map(c => c.label)
+  assert.equal(calls.filter(c => c.label === 'verify:C1#1').length, 2)
+  assert.ok(labels.includes('review:C1#1'))
+  assert.ok(!labels.some(l => l.startsWith('fix:C1#')))
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, [])
+  assert.equal(x.C1.ready, true)
+})
+await check('A02-3: no eval results twice stops the PR with no fixer, reviewer or third verifier call', async () => {
+  let n = 0
+  const x = await hooked(withEvals('C1'), (p, o) => { if (isVerifier(o)) { n++; return vres({ evals: [] }) } })
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /no eval results/)
+  assert.match(x.C1.reason, /twice/)
+  assert.equal(n, 2)
+  assert.ok(!calls.some(c => c.label.startsWith('fix:C1#') || c.label.startsWith('review:C1#') || c.label === 'verify:C1#2'))
+})
+await check('A02-4: an answer that misses one id goes to the fixer with no extra verifier call', async () => {
+  let n = 0; let atFix = -1
+  const x = await hooked(withEvals('C1'), (p, o) => {
+    if (isVerifier(o)) { n++; if (n === 1) return vres({ evals: [X1] }) }
+    if (o.label === 'fix:C1#1') atFix = n
+  })
+  assert.equal(atFix, 1)
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [test]: eval X-2 has no result'])
+  assert.ok(calls.some(c => c.label === 'fix:C1#1'))
+})
+await check('A02-10: the retry answer decides the round, with no third verifier call', async () => {
+  const answers = [
+    vres({ evals: [X1] }),
+    vres({ evals: [{ id: 'X-1', result: 'fail', evidence: 'exit 1' }, { id: 'X-2', result: 'pass', evidence: 'ok' }] }),
+  ]
+  const wants = [['major [test]: eval X-2 has no result'], ['major [test]: eval X-1 failed: exit 1']]
+  for (const i of [0, 1]) {
+    let n = 0; let atFix = -1
+    const x = await hooked(withEvals('C1'), (p, o) => {
+      if (isVerifier(o)) { n++; if (n === 1) return vres({ evals: [] }); if (n === 2) return answers[i] }
+      if (o.label === 'fix:C1#1') atFix = n
+    })
+    assert.deepEqual(x.C1.history[0].blockersAndMajors, wants[i])
+    assert.equal(calls.filter(c => c.label === 'fix:C1#1').length, 1)
+    assert.equal(atFix, 2)
+  }
+})
+const rerunHook = (afterFix, state) => (p, o) => {
+  if (o.label === 'fix:C1#1') { state.fixed = true; return { summary: 'none', changed: false } }
+  if (!isVerifier(o)) return undefined
+  if (!state.fixed) return vres({ pass: false, checks: [ck('unit', { pass: false })] })
+  state.after++
+  return afterFix(state.after, o)
+}
+await check('A02-5: the flaky-check rerun gets the same retry', async () => {
+  const state = { fixed: false, after: 0 }
+  const x = await hooked(withEvals('C1'), rerunHook((n, o) => n === 1 ? vres({ evals: [] }) : n === 2 ? vres() : undefined, state))
+  const labels = calls.map(c => c.label)
+  const i2 = labels.indexOf('verify:C1#2')
+  assert.ok(i2 > -1)
+  assert.equal(labels.slice(labels.indexOf('fix:C1#1'), i2).filter(l => l.startsWith('verify:')).length, 2)
+  assert.ok(labels.includes('review:C1#2'))
+  assert.ok(!x.C1.history.some(h => h.blockersAndMajors.some(b => b.includes('has no result'))))
+  assert.equal(x.C1.ready, true)
+})
+await check('A02-11: no eval results twice on the rerun stops the PR', async () => {
+  const state = { fixed: false, after: 0 }
+  const x = await hooked(withEvals('C1'), rerunHook(() => vres({ evals: [] }), state))
+  assert.equal(x.C1.ready, false)
+  assert.equal(state.after, 2)
+  assert.ok(!calls.some(c => c.label === 'verify:C1#2' || c.label === 'fix:C1#2'))
+})
+await check('A02-6: a PR with no evals keeps the tester path and the tester is not retried', async () => {
+  const x = await hooked(only1('C1'), () => undefined)
+  assert.equal(calls.filter(c => c.label === 'test:C1#1').length, 1)
+  assert.ok(!calls.some(c => c.label.startsWith('verify:')))
+  assert.equal(x.C1.ready, true)
+})
 await check('E03a-2 and E03a-5: a fail result refuses sign-off even when the verifier says pass', async () => {
   const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ pass: true, evals: [{ id: 'X-1', result: 'fail', evidence: 'exit 1' }, { id: 'X-2', result: 'pass', evidence: 'ok' }] }) }))
   assert.equal(x.C1.history[0].testPass, false)
