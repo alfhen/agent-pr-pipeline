@@ -453,7 +453,7 @@ await check('E01-1 a code PR gets its list before the implementer, and every lat
   }
   assert.match(calls.find(c => c.label === 'open:C1').prompt, /"Evals" section/)
   assert.deepEqual(x.C1.evals, list)
-  assert.deepEqual(x.C1.evalsMeta, { noErrorPath: '', noReference: '', algorithm: false })
+  assert.deepEqual(x.C1.evalsMeta, { noErrorPath: '', noReference: '', algorithm: false, accepted: { pr: 'C1', evals: list, noErrorPath: '', noReference: '', algorithm: false } })
   assert.equal(calls.find(c => c.label === 'evals:C1').agentType, 'agent-pr-pipeline:evals-writer')
   assert.equal(calls.find(c => c.label === 'evals:C1').model, 'opus')
   assert.equal(calls.find(c => c.label === 'evalsarch:C1#1').agentType, 'agent-pr-pipeline:arch-reviewer')
@@ -592,6 +592,209 @@ await check('E01-5 a resumed PR whose evals check stops keeps its history, findi
   assert.deepEqual(x.C1.history, history)
   assert.deepEqual(x.C1.lastFindings, findings)
   assert.deepEqual(x.C1.evals, [ev('C1-1', 'behaviour')])
+})
+// A01: the accepted list is a record in every result, and a resume or a skipImpl rerun with the same list runs no evals check.
+const accepted1 = async (list = listOf('C1'), meta = {}, extra = {}) => (await evalsRun([C1PR], () => withMeta(list, meta), okCheck, extra)).C1
+const asGiven = r => ({ evals: r.evals, ...r.evalsMeta })
+const resumeWith = (evals, extra = {}) => [{ ...C1PR, resume: { history: [], evals, ...extra } }]
+const a01Hooked = async (prs, hook, { writer, check: evalsCheck, ...extra } = {}) => {
+  calls = []; cleanupCalls = []; timeline = []; logs = []
+  preflight = GOOD
+  evalsPlan.writer = writer || (() => null)
+  evalsPlan.check = evalsCheck || okCheck
+  try {
+    return await run({ ...base, evals: true, ...extra, prs }, async (p, o) => {
+      const h = hook(p, o)
+      if (h === undefined) return agent(p, o)
+      calls.push({ label: o.label, model: o.model, prompt: p })
+      return h
+    }, parallel, log)
+  } finally { evalsPlan.writer = () => null; evalsPlan.check = okCheck }
+}
+const a01Result = async (...a) => Object.fromEntries((await a01Hooked(...a)).prs.map(x => [x.id, x]))
+const a01Finding = (title, extra = {}) => ({ severity: 'major', title, detail: 'd', eval: { kind: 'behaviour', statement: `${title} holds`, check: 'run it, expect ok' }, ...extra })
+const a01Review = (id, round, findings) => (p, o) => o.label === `review:${id}#${round}` ? { summary: 's', findings } : undefined
+const a01Chain = (...hooks) => (p, o) => { for (const h of hooks) { const r = h(p, o); if (r !== undefined) return r } }
+const a01Given = (id, list) => [{ ...PRS.find(p => p.id === id), evals: list }]
+const a01Verify = (id, failing) => ({ pass: false, headSha: `sha-${id}`, checks: [{ name: 'lint', pass: true }], evals: listOf(id).map(e => ({ id: e.id, result: failing.includes(e.id) ? 'fail' : 'pass', evidence: 'x', breakCheck: 'fails-without-change' })) })
+const archCalls = () => calls.filter(c => c.label.startsWith('evalsarch:C1#'))
+const verifyPromptOf = () => calls.find(c => /^verify:C1#/.test(c.label)).prompt
+const holdsIds = (prompt, list) => { for (const e of list) assert.ok(prompt.includes(e.id), `the prompt lacks ${e.id}`) }
+await check('A01-1 a resume with the accepted list runs no evals check and the verifier gets every id', async () => {
+  const R = await accepted1(listOf('C1'), {}, { productReview: 'all' })
+  assert.deepEqual(R.evalsMeta.accepted.evals, R.evals)
+  await evalsRun(resumeWith(asGiven(R)), noWriter, okCheck, { productReview: 'all' })
+  assert.ok(!calls.some(c => /^evals(arch|product):C1/.test(c.label)))
+  holdsIds(verifyPromptOf(), R.evals)
+})
+await check('A01-2 a resume whose list differs in one statement runs the evals check once', async () => {
+  const R = await accepted1()
+  const changed = R.evals.map((e, i) => i ? e : { ...e, statement: 'a new statement' })
+  await evalsRun(resumeWith({ ...asGiven(R), evals: changed }), noWriter)
+  assert.equal(archCalls().length, 1)
+})
+await check('A01-3 an object form with the record and no list stops with evals missing, and only history keeps the tester', async () => {
+  const R = await accepted1()
+  const accepted = R.evalsMeta.accepted
+  const inputs = [
+    [{ ...C1PR, resume: { history: [], evals: { accepted } } }],
+    [{ ...C1PR, resume: { history: [], evals: { evals: [], accepted } } }],
+    [{ ...C1PR, skipImpl: true, evals: { accepted } }],
+  ]
+  for (const prs of inputs) {
+    const x = (await evalsRun(prs, noWriter)).C1
+    assert.equal(x.ready, false)
+    assert.match(x.reason, /^evals missing:/)
+    assert.deepEqual(x.evalsMeta.accepted, accepted)
+    assert.ok(!calls.some(c => /^(test|verify):C1/.test(c.label)))
+  }
+  await evalsRun([{ ...C1PR, resume: { history: [] } }], noWriter)
+  assert.ok(calls.some(c => c.label === 'test:C1#1'))
+})
+await check('A01-4 a PR that stops at the round cap or at the bot check still carries the record', async () => {
+  const cap = (await a01Result(a01Given('C1', listOf('C1')), a01Review('C1', 1, [a01Finding('gap')]), { maxRounds: 1 })).C1
+  const bots = (await a01Result(a01Given('B1', listOf('B1')), a01Chain(a01Review('B1', 1, [a01Finding('gap', { theme: 'gap' })]), (p, o) => o.label.startsWith('botreview:B1') ? { summary: 's', findings: [{ severity: 'major', title: 'late', detail: 'd' }] } : undefined))).B1
+  for (const [x, id] of [[cap, 'C1'], [bots, 'B1']]) {
+    assert.equal(x.ready, false)
+    assert.equal(x.evalsMeta.accepted.pr, id)
+    assert.deepEqual(x.evalsMeta.accepted.evals, listOf(id))
+  }
+  assert.match(bots.reason, /^bot answer check:/)
+})
+const fixerDispute = (newEval, answer) => (p, o) => o.label === 'verify:C1#1' ? a01Verify('C1', ['C1-1'])
+  : o.label === 'fix:C1#1' ? { summary: 's', disputes: [{ id: 'C1-1', reason: 'wrong' }] }
+  : o.label === 'dispute:C1#1' ? { ruling: 'change', reason: 'ok', eval: newEval }
+  : /^evalsarch:C1#d1/.test(o.label) ? answer : undefined
+await check('A01-5 a dispute change that the check accepts updates the record, and one it refuses does not', async () => {
+  const newEval = ev('C1-1', 'behaviour', { statement: 'C1-1 after the dispute' })
+  const writer = () => withMeta(listOf('C1'))
+  const ok = (await a01Result([C1PR], fixerDispute(newEval, { verdict: 'ok', notes: '' }), { writer })).C1
+  assert.ok(ok.evalsMeta.accepted.evals.some(e => e.statement === newEval.statement))
+  await evalsRun(resumeWith(asGiven(ok)), noWriter)
+  assert.equal(archCalls().length, 0)
+  const refused = (await a01Result([C1PR], fixerDispute(newEval, { verdict: 'needs-change', notes: 'weaker' }), { writer })).C1
+  assert.deepEqual(refused.evalsMeta.accepted.evals, listOf('C1'))
+})
+await check('A01-6 a PR that throws after its list was accepted returns the record', async () => {
+  const out = await a01Hooked(a01Given('C1', listOf('C1')), a01Chain(a01Review('C1', 1, [a01Finding('cache race')]), (p, o) => { if (o.label === 'verify:C1#2') throw new Error('verifier crashed') }))
+  const x = out.prs[0]
+  assert.ok(x)
+  assert.equal(x.ready, false)
+  assert.match(x.reason, /verifier crashed/)
+  assert.deepEqual(x.evals, x.evalsMeta.accepted.evals)
+  assert.deepEqual(x.evals, listOf('C1'))
+  assert.ok(!x.evals.some(e => e.id === 'C1-R1-1'))
+  const { accepted, ...meta } = x.evalsMeta
+  assert.deepEqual(meta, { noErrorPath: accepted.noErrorPath, noReference: accepted.noReference, algorithm: accepted.algorithm })
+})
+await check('A01-10 a resume whose changed list passes the check updates the record', async () => {
+  const R = await accepted1()
+  const list2 = R.evals.concat(ev('C1-3', 'behaviour'))
+  const R2 = (await evalsRun(resumeWith({ ...asGiven(R), evals: list2 }), noWriter)).C1
+  assert.equal(archCalls().length, 1)
+  assert.deepEqual(R2.evalsMeta.accepted.evals, list2)
+  await evalsRun(resumeWith(asGiven(R2)), noWriter)
+  assert.equal(archCalls().length, 0)
+})
+const noErrorList = [ev('C1-1', 'behaviour'), ev('C1-2', 'regression')]
+await check('A01-11 a resume whose changed list the check refuses keeps the record, and its result resumes with no check', async () => {
+  const R = await accepted1(noErrorList, { noErrorPath: 'no failing input exists' })
+  const record = R.evalsMeta.accepted
+  const R1 = (await evalsRun(resumeWith({ ...asGiven(R), evals: noErrorList.concat(ev('C1-9', 'behaviour')), noErrorPath: 'other reason' }), noWriter, () => ({ verdict: 'needs-change', notes: 'gap' }))).C1
+  assert.equal(R1.ready, false)
+  assert.match(R1.reason, /^evals check:/)
+  assert.deepEqual(R1.evalsMeta.accepted, record)
+  assert.deepEqual(R1.evals, noErrorList)
+  assert.equal(R1.evalsMeta.noErrorPath, record.noErrorPath)
+  assert.ok(JSON.stringify(R1.lastFindings).includes('C1-9'))
+  const again = (await evalsRun(resumeWith(asGiven(R1), { findings: R1.lastFindings }), noWriter)).C1
+  assert.ok(again)
+  assert.equal(calls.filter(c => c.label.startsWith('fix:C1')).length, 0)
+  assert.ok(!calls.some(c => c.label.startsWith('fix:') && c.prompt.includes('C1-9')))
+  const missing = (await evalsRun(resumeWith({ accepted: record }), noWriter)).C1
+  assert.match(missing.reason, /^evals missing:/)
+  for (const prev of [R1, missing]) {
+    const y = (await evalsRun(resumeWith(asGiven(prev)), noWriter)).C1
+    assert.equal(archCalls().length, 0)
+    assert.ok(!/^evals/.test(y.reason || ''))
+    holdsIds(verifyPromptOf(), record.evals)
+  }
+})
+await check('A01-13 a skipImpl rerun with the record and the same list runs no evals check', async () => {
+  const R = await accepted1()
+  await evalsRun([{ ...C1PR, skipImpl: true, evals: asGiven(R) }], noWriter)
+  assert.equal(archCalls().length, 0)
+  holdsIds(verifyPromptOf(), R.evals)
+})
+await check('A01-14 only the list is compared; a changed list, another PR or a record outside the object form runs the check', async () => {
+  const R = await accepted1()
+  const record = R.evalsMeta.accepted
+  const given = asGiven(R)
+  assert.deepEqual(record.evals, R.evals)
+  await evalsRun(resumeWith({ ...given, evals: R.evals.map((e, i) => i ? e : { ...e, statement: 'new text' }) }), noWriter)
+  assert.match(archCalls()[0].prompt, /new text/)
+  assert.doesNotMatch(archCalls()[0].prompt, /C1-1 must hold/)
+  for (const meta of [{ noReference: 'none needed' }, { noErrorPath: 'other text' }]) {
+    const x = (await evalsRun(resumeWith({ ...given, ...meta }), noWriter)).C1
+    assert.equal(archCalls().length, 0)
+    assert.ok(!/^evals/.test(x.reason || ''))
+  }
+  const [a, b] = R.evals
+  const once = [
+    resumeWith({ ...given, evals: [{ ...a, check: 'run it twice' }, b] }),
+    resumeWith({ ...given, evals: [{ ...a, kind: 'regression' }, b] }),
+    resumeWith({ ...given, evals: [b, a] }),
+    resumeWith({ ...given, accepted: { ...record, pr: 'C2' } }),
+    [{ ...C1PR, skipImpl: true, evals: R.evals, accepted: record }],
+    [{ ...C1PR, resume: { history: [], evals: R.evals, accepted: record } }],
+  ]
+  for (const prs of once) {
+    await evalsRun(prs, noWriter)
+    assert.equal(archCalls().length, 1)
+  }
+})
+await check('A01-15 a list that breaks evalsVerdict is refused with no check, also when it equals the record', async () => {
+  const R = await accepted1(noErrorList, { noErrorPath: 'no failing input exists' })
+  const record = R.evalsMeta.accepted
+  const a = (await evalsRun(resumeWith({ evals: record.evals, accepted: record }), noWriter)).C1
+  assert.match(a.reason, /^evals refused:/)
+  assert.equal(archCalls().length, 0)
+  assert.deepEqual(a.evalsMeta.accepted, record)
+  assert.equal(a.evalsMeta.noErrorPath, record.noErrorPath)
+  for (const e of record.evals) assert.ok(JSON.stringify(a.lastFindings).includes(e.id))
+  const b = (await evalsRun(resumeWith({ evals: record.evals.concat(ev('C1-9', 'behaviour'), ev('C1-9', 'behaviour')), accepted: record, noErrorPath: 'x' }), noWriter)).C1
+  assert.equal(b.reason, 'evals refused: id C1-9 repeats')
+  assert.equal(archCalls().length, 0)
+  assert.deepEqual(b.evals, record.evals)
+  assert.deepEqual(b.evalsMeta.accepted, record)
+  assert.ok(JSON.stringify(b.lastFindings).includes('C1-9'))
+})
+await check('A01-17 a reviewer eval added inside a run is not in the record, so a resume with that list runs the check once', async () => {
+  const writer = () => withMeta(listOf('C1'))
+  const R = (await a01Result([C1PR], a01Review('C1', 1, [a01Finding('gap')]), { writer, maxRounds: 1 })).C1
+  assert.ok(R.evals.some(e => e.id === 'C1-R1-1'))
+  assert.ok(!R.evalsMeta.accepted.evals.some(e => e.id === 'C1-R1-1'))
+  assert.equal(calls.filter(c => c.label.startsWith('evalsarch:C1')).length, 1)
+  const y = (await a01Result(resumeWith(asGiven(R), { minors: [], findings: [] }).map(p => ({ ...p, resume: { ...p.resume, history: R.history } })), () => undefined, { maxRounds: 1 })).C1
+  assert.equal(calls.filter(c => c.label.startsWith('evalsarch:C1')).length, 1)
+  assert.ok(y.evalsMeta.accepted.evals.some(e => e.id === 'C1-R1-1'))
+})
+await check('A01-5 a dispute change in a run with a reviewer eval is in the record with the reviewer eval, and a resume runs no evals check', async () => {
+  const newEval = ev('C1-1', 'behaviour', { statement: 'C1-1 after the dispute' })
+  const writer = () => withMeta(listOf('C1'))
+  const disputing = (p, o) => o.label === 'fix:C1#1' ? { summary: 's', disputes: [{ id: 'C1-1', reason: 'wrong' }] } : undefined
+  const hook = a01Chain(a01Review('C1', 1, [a01Finding('gap')]), disputing, (p, o) => o.label === 'dispute:C1#1' ? { ruling: 'change', reason: 'ok', eval: newEval } : /^evalsarch:C1#d1/.test(o.label) ? { verdict: 'ok', notes: '' } : undefined)
+  const R = (await a01Result([C1PR], hook, { writer, maxRounds: 2 })).C1
+  assert.ok(R.evals.some(e => e.id === 'C1-R1-1'))
+  assert.deepEqual(R.evalsMeta.accepted.evals, R.evals)
+  const x = await evalsRun([{ ...C1PR, resume: { history: R.history, evals: { evals: R.evals, ...R.evalsMeta } } }], noWriter)
+  assert.equal(archCalls().length, 0)
+})
+await check('A01-14 a resume with the record list keeps the rule inputs of the record', async () => {
+  const R = await accepted1(listOf('C1'), { noReference: 'recorded reason' })
+  const x = await evalsRun(resumeWith({ ...asGiven(R), noReference: 'other reason' }), noWriter)
+  assert.equal(archCalls().length, 0)
+  assert.equal(x.C1.evalsMeta.noReference, 'recorded reason')
 })
 await check('E01-4 a quick PR with an object-form list builds, and its triage prompt shows no unaccepted list', async () => {
   const given = { evals: listOf('QS'), noErrorPath: 'x' }

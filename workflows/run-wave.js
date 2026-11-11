@@ -159,6 +159,8 @@ const absorb = (prev, f) => {
     if (f.suggestedFix && !(prev.suggestedFix || '').includes(f.suggestedFix)) prev.suggestedFix = prev.suggestedFix ? `${prev.suggestedFix}\n\nAlso: ${f.suggestedFix}` : f.suggestedFix
   }
 }
+const REFUSED_LIST_TITLE = 'Refused eval list: '
+const resumeFindings = pr => ((pr.resume && pr.resume.findings) || []).filter(f => !(f && typeof f.title === 'string' && f.title.startsWith(REFUSED_LIST_TITLE)))
 // One item per file and normalized title, with the highest severity and every source. The result is sorted by file, so the fix prompt numbers match the history.
 const mergeDuplicates = findings => {
   const seen = new Map()
@@ -225,6 +227,7 @@ const TESTS_ONLY_LINE_RULE = `This PR adds tests only. In a new PR body, put thi
 // Set from the branch's changed files, read by a script on every verifier round, never from the verifier's word. The last round decides;
 // the opener and the result then say the PR adds tests only.
 const testsOnlyState = {}
+const recordState = {}
 // Per PR: the break-check results of the last verifier round that gave any. A later round without them leaves it alone.
 const breakCheckState = {}
 const TEST_FILE = new RegExp(`${E2E_PATTERN}|(^|/)(tests?|__tests__)/|\\.(test|spec)\\.[cm]?[jt]sx?$`)
@@ -1808,6 +1811,10 @@ async function runPR(input) {
   let result = null
   try {
     result = await runPRSteps(input)
+  } catch (e) {
+    const rec = recordState[input.id]
+    if (!rec) throw e
+    result = { id: input.id, ready: false, reason: `run failed: ${(e && e.message) || String(e)}`, ...recordOut(rec) }
   } finally {
     const cleanup = await cleanupPR(input)
     if (result && cleanup.length) result.cleanup = cleanup
@@ -1849,8 +1856,15 @@ const givenEvals = (pr, raw) => {
   const g = raw || (pr.resume && pr.resume.evals)
   if (!g) return null
   const obj = Array.isArray(g) ? { evals: g } : g
-  return { list: obj.evals, meta: metaOf(obj, pr) }
+  return { list: obj.evals, meta: metaOf(obj, pr), accepted: !Array.isArray(g) && obj.accepted && typeof obj.accepted === 'object' ? obj.accepted : null }
 }
+
+// The record is the last list the evals check accepted: { pr, evals, noErrorPath, noReference, algorithm }. It is never part of metaOf, so no evals-check prompt shows it.
+const makeRecord = (pr, list, meta) => ({ pr: pr.id, evals: list, noErrorPath: meta.noErrorPath, noReference: meta.noReference, algorithm: meta.algorithm })
+const setRecord = (pr, list, meta) => { pr.record = makeRecord(pr, list, meta); recordState[pr.id] = pr.record }
+const usableRecord = (pr, rec) => rec && rec.pr === pr.id && Array.isArray(rec.evals) && rec.evals.length ? rec : null
+const recordOut = rec => ({ evals: rec.evals, evalsMeta: { noErrorPath: reasonOf(rec.noErrorPath), noReference: reasonOf(rec.noReference), algorithm: !!rec.algorithm, accepted: rec } })
+const sameList = (a, b) => a.length === b.length && a.every((e, i) => e && b[i] && ['id', 'kind', 'statement', 'check'].every(k => e[k] === b[i][k]))
 
 // A resumed run keeps the disputes and deviations of the earlier run: the one-dispute-per-id rule and the PR body depend on them.
 const resumedList = (pr, key, keep) => pr.resume && Array.isArray(pr.resume[key]) ? pr.resume[key].filter(keep) : []
@@ -1878,11 +1892,16 @@ async function writeEvals(pr, raw) {
   const given = givenEvals(pr, raw)
   if (!given && (!EVALS_ON || pr.resume || pr.skipImpl)) return {}
   if (given) {
+    if (given.accepted && (pr.resume || pr.skipImpl) && !(Array.isArray(given.list) && given.list.length)) {
+      return { stop: 'evals missing: the input holds the accepted record and no list', record: given.accepted }
+    }
+    const rec = usableRecord(pr, given.accepted)
     const bad = evalsVerdict(given.list, pr, given.meta)
-    if (bad) return { stop: `evals refused: ${bad}` }
+    if (bad) return { stop: `evals refused: ${bad}`, record: rec, refused: given.list }
+    if (rec && sameList(given.list, rec.evals)) return { evals: given.list, meta: { noErrorPath: reasonOf(rec.noErrorPath), noReference: reasonOf(rec.noReference), algorithm: !!rec.algorithm }, record: rec }
     const c = await checkEvals(pr, given.list, given.meta, 1)
-    if (c.down || c.notes) return { stop: `evals check: ${c.down || c.notes}` }
-    return { evals: given.list, meta: given.meta }
+    if (c.down || c.notes) return { stop: `evals check: ${c.down || c.notes}`, record: rec, refused: given.list }
+    return { evals: given.list, meta: given.meta, record: makeRecord(pr, given.list, given.meta) }
   }
   let last = null
   for (let attempt = 1; attempt <= EVALS_ROUNDS; attempt++) {
@@ -1893,7 +1912,7 @@ async function writeEvals(pr, raw) {
     const bad = evalsVerdict(w.evals, pr, meta)
     const c = bad ? null : await checkEvals(pr, w.evals, meta, attempt, w.notes)
     if (c && c.down) return { stop: `evals check: ${c.down}` }
-    if (!bad && !c.notes) return { evals: w.evals, meta }
+    if (!bad && !c.notes) return { evals: w.evals, meta, record: makeRecord(pr, w.evals, meta) }
     if (attempt === EVALS_ROUNDS) return { stop: bad ? `evals refused: ${bad}` : `evals check: ${c.notes}` }
     last = { rule: !!bad, reason: bad ? `the rule "${bad}" refused it.` : `the reviewers found gaps: ${c.notes}`, evals: w.evals }
   }
@@ -1937,6 +1956,7 @@ async function settleDisputes(pr, disputes, from) {
     const c = bad ? null : await checkEvals(pr, next, pr.evalsMeta, `d${n}`, record.writerReason)
     if (bad || c.down || c.notes) { Object.assign(record, { ruling: 'rejected', why: bad || c.down || c.notes }); continue }
     pr.evals = next
+    setRecord(pr, next, pr.evalsMeta)
     changed = true
     record.ruling = 'change'
     record.eval = next.find(e => e.id === id)
@@ -1961,7 +1981,7 @@ async function runPRSteps(input) {
     pr = q.pr; quickMinors = q.minors; quickProduct = q.product; triage = q.triage
   }
   const rawEvals = pr.evalsIn
-  pr = { ...pr, evalsIn: undefined }
+  pr = { ...pr, evalsIn: undefined, record: undefined }
   if (pr.landFix) {
     const n = pr.prNumber
     const history = []
@@ -1995,19 +2015,26 @@ async function runPRSteps(input) {
   const minors = (pr.resume ? pr.resume.minors || [] : []).concat(quickMinors)
   let impl = { problems: '' }
   let rerunFixChanged
-  const evalsOut = () => ({ ...(testsOnlyState[pr.id] ? { testsOnly: true } : {}), ...(breakCheckState[pr.id] ? { breakCheck: breakCheckState[pr.id] } : {}), ...(pr.evals ? { evals: pr.evals, evalsMeta: pr.evalsMeta, evalDisputes: pr.evalDisputes, ...carriedOut([], pr.deviations) } : carriedOut([], pr.deviations)) })
+  const evalsOut = () => ({ ...(testsOnlyState[pr.id] ? { testsOnly: true } : {}), ...(breakCheckState[pr.id] ? { breakCheck: breakCheckState[pr.id] } : {}), ...(pr.evals ? { evals: pr.evals, evalsMeta: { ...pr.evalsMeta, accepted: pr.record }, evalDisputes: pr.evalDisputes, ...carriedOut([], pr.deviations) } : carriedOut([], pr.deviations)) })
   const rerunFix = () => rerunFixChanged === undefined ? {} : { rerunFixChanged }
   const decisionFindings = (pr.skipImpl || pr.resume) && (pr.architectureDecision || pr.productDecision)
     ? [{ severity: 'major', title: 'Apply the maintainer decision', detail: `Apply the maintainer decision given in the brief to the branch. If the branch already follows it, change nothing.${pr.architectureDecision ? ` Architecture decision: ${pr.architectureDecision}` : ''}${pr.productDecision ? ` Product decision: ${pr.productDecision}` : ''}` }]
     : []
-  const preFindings = mergeDuplicates(((pr.resume && pr.resume.findings) || []).concat(decisionFindings))
+  const preFindings = mergeDuplicates(resumeFindings(pr).concat(decisionFindings))
   const written = await writeEvals(pr, rawEvals)
   if (written.stop) {
     const given = givenEvals(pr, rawEvals)
-    return { id: pr.id, ready: false, reason: written.stop, history, ...(pr.resume && pr.resume.findings ? { lastFindings: pr.resume.findings } : {}), ...(given ? { evals: given.list, evalsMeta: given.meta } : {}), ...carriedOut(resumedDisputes(pr), resumedDeviations(pr)) }
+    const rec = usableRecord(pr, written.record)
+    const refused = rec && Array.isArray(written.refused) ? [{ severity: 'minor', title: `${REFUSED_LIST_TITLE}${written.stop}`, detail: JSON.stringify(written.refused) }] : []
+    const findings = resumeFindings(pr).concat(refused)
+    const listOut = rec ? recordOut(rec) : written.record ? { ...(given && Array.isArray(given.list) ? { evals: given.list } : {}), evalsMeta: { ...(given ? given.meta : {}), accepted: written.record } } : given ? { evals: given.list, evalsMeta: given.meta } : {}
+    return { id: pr.id, ready: false, reason: written.stop, history, ...(findings.length ? { lastFindings: findings } : {}), ...listOut, ...carriedOut(resumedDisputes(pr), resumedDeviations(pr)) }
   }
   pr = { ...pr, deviations: resumedDeviations(pr) }
-  if (written.evals) pr = { ...pr, evals: written.evals, evalsMeta: written.meta, evalDisputes: resumedDisputes(pr) }
+  if (written.evals) {
+    pr = { ...pr, evals: written.evals, evalsMeta: written.meta, evalDisputes: resumedDisputes(pr), record: written.record }
+    recordState[pr.id] = written.record
+  }
   if (preFindings.length) {
     const decisionFix = await call('fix', pr, fixPrompt(pr, null, preFindings, roundsIn(history)), `fix:${pr.id}#${roundsIn(history)}`, { schema: FIX })
     if (decisionFix && typeof decisionFix.changed === 'boolean') rerunFixChanged = decisionFix.changed

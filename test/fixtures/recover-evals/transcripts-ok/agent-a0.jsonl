@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-11-11T10:00:10.000Z","message":{"content":"prompt"}}
+{"type":"assistant","timestamp":"2026-11-11T10:00:10.000Z","message":{"content":[{"type":"tool_use","name":"StructuredOutput","input":{"evals":[{"id":"C1-1","kind":"behaviour","statement":"C1-1 must hold","check":"run C1-1; expect ok"},{"id":"C1-2","kind":"error path","statement":"C1-2 must hold","check":"run C1-2; expect ok"}],"noErrorPath":"","noReference":"","algorithm":false,"notes":""}}]}}
