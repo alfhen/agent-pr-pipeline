@@ -5,7 +5,7 @@
 # <run> is the run's wf_<id>, one per workflow start (a resume too). It is never taken from the transcript folder name.
 # --land-fix goes on to ledger.sh put. --feedback goes on to token-report.sh. Without --transcripts the records say comparable false.
 # Stops before any ledger call when token-report.sh refuses the output file. It never makes the ledger issue.
-# Exit: 0 done, 64 bad argument, otherwise the code of token-report.sh (1) or ledger.sh (2, 3, 65).
+# Exit: 0 done, 64 bad argument of this script or of either child script, otherwise the code of token-report.sh (1) or ledger.sh (2, 3, 65).
 set -u
 usage="usage: after-run.sh <owner/repo> <workflow output file> <temp folder> --run <wf_id> [--transcripts <folder>] [--land-fix] [--feedback <file>]"
 self=$0

@@ -61,6 +61,13 @@ test('A09-12 lateMinors are copied into resume.minors', () => {
   assert.equal(item.prNumber, 12)
 })
 
+test('A09-3 keeps evalsMeta when the result has no evals key', () => {
+  const p = { id: 'E1', ready: false, reason: 'evals missing: x', history: [], evalsMeta: meta('E1', mkEvals(2)) }
+  const { item } = ok(file(output([p])), 'E1')
+  assert.deepEqual(item.resume.evals, { ...p.evalsMeta })
+  assert.ok(!('evals' in item.resume.evals))
+})
+
 const recovered = () => {
   const r = spawnSync('bash', [join(root, 'scripts/recover-evals.sh'), join(root, 'test/fixtures/recover-evals/journal-ok.jsonl'), 'C1'], { encoding: 'utf8' })
   assert.equal(r.status, 0, r.stderr)
