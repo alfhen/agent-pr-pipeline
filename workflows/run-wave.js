@@ -700,6 +700,11 @@ ${prBlock(pr)}`
 const evalsBlock = pr => `PR: ${pr.id} - ${pr.title}\nKind: ${pr.kind || 'code'}${pr.quickState ? `\nQuick-fix entry (the brief for this PR, from issue #${pr.quick.issue}):\n${pr.quickState.brief}` : ''}${pr.algorithm ? '\nThe maintainer says this entry adds or changes an algorithm (Algorithm: yes).' : ''}\nNotes for this PR:\n${pr.notes || '(none)'}${decided(pr)}`
 const evalsClone = (dir, pr) => `\`rm -rf ${TMP}/${dir} && git clone https://github.com/${REPO}.git ${TMP}/${dir}\``
 
+const evalsRules = `Rules for the list (the evals check applies the same rules):
+- The plan's "Rules for every PR" apply to the list: each eval must keep them.
+- The Touches line is a limit: no eval needs a file outside it.
+- A claim that an eval fails on the default branch must be true there. Check it on the clone.`
+
 const evalsPrompt = (pr, attempt, last) => `${ctx(pr)}
 
 Task: write the evals for this PR. Nothing is built yet.
@@ -707,6 +712,7 @@ Task: write the evals for this PR. Nothing is built yet.
 2. Read ${GOALS}, ${SPEC ? `${SPEC}, ` : ''}${ref(pr)} (the entry of this PR, with its Touches, Acceptance, QA, Invariants, Round cap and Algorithm lines, and its Evals table when it has one) and the code the entry touches.
 3. Write the list as your instructions say. When the behaviour of an entry already holds on the default branch, give those evals kind regression and say so in notes. An Evals table in the entry is input: keep or improve each row under its id and add the rows it lacks.
 4. Each eval must be checkable from a clean clone of the branch, before the PR is open. Leave out what is not: the PR body or title, Closes lines, labels, bot comments or approvals, CI results, a merge, a release and any other pipeline step after the build. Notes that name such a thing still reach the opener, so they need no eval.
+${evalsRules}
 Return evals, algorithm, noErrorPath, noReference and notes.
 
 ${evalsBlock(pr)}${last ? `\n\nThis is attempt ${attempt}. Your last list was sent back: ${last.reason}\nYour last list:\n${JSON.stringify(last.evals, null, 1)}\n${last.rule ? 'A rule decides this, so the list itself must change; notes cannot change it.' : 'Change the list to meet this, or say in notes why it already does.'}` : ''}`
@@ -717,6 +723,7 @@ Task: check the list of evals for this PR${who === 'product' ? ' against the pro
 1. Clone the default branch: ${evalsClone(`evals-${who}-${pr.id}-r${round}`, pr)} and cd there. Read ${who === 'product' ? GOALS : ARCH}, then ${ref(pr)} (the entry of this PR).
 2. First question: which behaviour, error path, Acceptance line or QA line of the entry has no eval? Each such gap is a \`needs-change\` note.
 3. Then check that each eval is one plain sentence, has a check that can fail, and does not ask for more than the entry does${who === 'product' ? ' (an eval that widens the product or touches a non-goal is a note)' : ' (an eval that asks for a new concept the architecture does not have is a note)'}.
+${evalsRules}
 Return verdict (\`ok\` or \`needs-change\`) and notes: one line for each gap or problem, empty when the verdict is ok.
 
 ${evalsBlock(pr)}
