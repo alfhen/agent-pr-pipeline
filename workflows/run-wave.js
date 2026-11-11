@@ -1956,8 +1956,7 @@ async function settleDisputes(pr, disputes, from) {
     const c = bad ? null : await checkEvals(pr, next, pr.evalsMeta, `d${n}`, record.writerReason)
     if (bad || c.down || c.notes) { Object.assign(record, { ruling: 'rejected', why: bad || c.down || c.notes }); continue }
     pr.evals = next
-    const base = pr.record && Array.isArray(pr.record.evals) ? pr.record.evals : next
-    setRecord(pr, base.map(e => e.id === id ? { ...w.eval, id } : e), pr.evalsMeta)
+    setRecord(pr, next, pr.evalsMeta)
     changed = true
     record.ruling = 'change'
     record.eval = next.find(e => e.id === id)
@@ -1987,10 +1986,7 @@ async function runPRSteps(input) {
     const n = pr.prNumber
     const history = []
     const lateMinors = []
-    const given = givenEvals(pr, rawEvals)
-    const kept = usableRecord(pr, given && given.accepted)
-    const keptOut = kept ? recordOut(kept) : {}
-    const stopped = (reason, more) => { stopMark(history, reason); return { id: pr.id, prNumber: n, ready: false, reason, history, ...keptOut, ...more } }
+    const stopped = (reason, more) => { stopMark(history, reason); return { id: pr.id, prNumber: n, ready: false, reason, history, ...more } }
     if (!PLUGIN_ROOT) return stopped('pluginRoot missing: the land-fix check needs it to run land-commits.sh')
     const was = await readHead(pr, n, 'landhead')
     if (was.fail) return stopped(was.fail)
@@ -2009,7 +2005,7 @@ async function runPRSteps(input) {
     if (landing.landRefused) return stopped(landing.landWhy, { headSha: end.head, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     if (end.red) return stopped(end.reason, { headSha: end.head, ci: end.ci, approvedBy: end.approvedBy, ...landing, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     return {
-      id: pr.id, prNumber: n, ready: true, headSha: end.head, ...landing, ...keptOut, untested: untestedOf(pr), notes: r.notes,
+      id: pr.id, prNumber: n, ready: true, headSha: end.head, ...landing, untested: untestedOf(pr), notes: r.notes,
       ci: end.ci, approvedBy: end.approvedBy || b.wait.approvedBy || [], botNotes: b.wait.notes, codeChangedByBots: !!(b.answer && b.answer.codeChanged),
       lateMinors, history,
     }
