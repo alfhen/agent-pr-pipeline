@@ -82,7 +82,7 @@ Why this order:
 
 - A09 goes to wave A2. Its resume script copies the accepted-list record that A01 adds to the result, so it builds on A01. They also both edit the resume text of SKILL.md.
 - K07 goes to wave B2, as in 0.9.1. K01 and K07 both change the `landFix` branch of `runPRSteps`, and K07 changes the bot-check exit that a failing eval on a bot head (new in K01) leaves through.
-- Wave B runs on v0.9.3, so the fixes of wave A judge it. A fix must not judge itself, so wave A1 runs on the installed v0.9.1, and A01 and A09 run on the installed v0.9.2. `pluginRoot` is never `main`.
+- Wave B runs on v0.9.3, so the fixes of wave A judge it. A fix must not judge itself, so wave A1 runs on the installed v0.9.1, and A01 and A09 run on the installed v0.9.2. A wave run never has `pluginRoot` at `main`. The live run before a tag is not a wave of this repo: it tests the release candidate, a clone of `main`, on the scratch repo (Live run before the 0.9.2 and 0.9.3 tags).
 - A01 runs after 0.9.2 so that the A06 writer rules write its list. A01 has the hardest list of the iteration, so it is also the first test of A06.
 
 The wave A1 entries edit different parts of `workflows/run-wave.js`:
@@ -116,7 +116,7 @@ In `test/sim-pipeline.mjs` each entry adds its cases as one block after the anch
 
 ## How the iteration runs
 
-- Wave A runs from a local session (tokens by role exist only there), with `pluginRoot` at the installed v0.9.1, never at `main`.
+- Wave A1 runs from a local session (tokens by role exist only there), with `pluginRoot` at the installed v0.9.1, never at `main`.
 - A01 (wave A3) and A09 (wave A2) run from a local session with `pluginRoot` at the installed v0.9.2.
 - Wave B runs from a local session with `pluginRoot` at the installed v0.9.3.
 - `evals`, `breakCheck` and `docsUpdate` are on. The plan PR gets the product review and the architecture review.
@@ -148,7 +148,7 @@ For the iteration:
 
 **A01 and A09 on v0.9.2.** The same rule applies to them: an evals-check stop gets no resume, one fresh rebuild with the refusal in the entry notes, and a second stop stops the iteration for the maintainer.
 
-A stop for a person with a true reason is the pipeline working, except a stop that criterion 6 names. A wrong reason, a missing record, a step that did not run, or a result the main session had to correct is a fault. A fault found in wave A is filed and fixed in wave A2 when it is small, or before the 0.9.2 tag. A fault found in wave B is filed for iteration 2, and the Tagreeve start waits for its fix.
+A stop for a person with a true reason is the pipeline working, except a stop that criterion 6 names. A wrong reason, a missing record, a step that did not run, or a result the main session had to correct is a fault. A fault found in wave A1 is filed and fixed before the 0.9.3 tag, in wave A3 or A2 when it is small. A fault found in wave A3 or A2 is fixed before the 0.9.3 tag. A fault found in wave B is filed for iteration 2, and the Tagreeve start waits for its fix.
 
 ### Forced resume
 
@@ -429,7 +429,7 @@ What changed since the 0.9.1 entries:
 - Basis: 0.9.0 wave 1 (1.84M per PR) and the 0.9.1 waves. The wave A entries are small, so about 0.9M to 1.3M per PR; wave B has the 0.88M target; plus about 1M for the plan PR, the resume run, and 1 to 3 land repairs.
 - Dates: the maintainer gave a standing word to merge on green, and the six-PR 0.9.1 wave ran in one evening. So: plan PR merged on 2026-11-11; wave A1 (8 PRs) on 2026-11-11 to 2026-11-12; the live run and the 0.9.2 release on 2026-11-12; wave B on 2026-11-12 to 2026-11-13 (the plan as first written). **Range: 2026-11-13 to 2026-11-14.**
 - Amendment 1: wave A1 ran on 2026-11-11 (6.6M subagent tokens, 7 of 8 merged). The 0.9.2 release, wave A3 (A01), wave A2 (A09) and the 0.9.3 release add about one day: wave B on 2026-11-13 to 2026-11-14. **Range: 2026-11-14 to 2026-11-15.** The Tagreeve start moves by about one day, to about 2026-11-18 to 2026-11-20.
-- The whole of D10 to the Tagreeve start: iteration 1 to 2026-11-14; iteration 2 (6 batch PRs) and iteration 3 (6 batch PRs), about one to two days each, so the Tagreeve start is about **2026-11-17 to 2026-11-19**, and about 2026-11-21 if iteration 2's numbers call for a fourth iteration.
+- The whole of D10 to the Tagreeve start: iteration 1 to 2026-11-15; iteration 2 (6 batch PRs) and iteration 3 (6 batch PRs), about one to two days each, so the Tagreeve start is about **2026-11-18 to 2026-11-20**, and about 2026-11-22 if iteration 2's numbers call for a fourth iteration.
 - It assumes: PRs merge on green under the maintainer's standing word; the maintainer starts the live run within half a day of the prompt; at most one stop for a decision. A fault in the live run adds about half a day.
 
 ## Flagged concerns
