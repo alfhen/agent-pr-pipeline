@@ -136,10 +136,12 @@ For every PR of waves A and B:
 For the iteration:
 
 5. **No hand-steering.** No eval list was edited or typed by hand, and no commit was made by hand on a PR branch. In wave B, every resume argument came from the A09 resume script. A hand step is recorded with `ledger.sh hand <pr> process` and fails this criterion.
-6. **No evals-check stop for a person.** No PR stopped with `evals check:` or `evals refused:`.
+6. **No evals-check stop for a person.** In wave B, no PR stopped with `evals check:` or `evals refused:`. Wave A runs on v0.9.1, which still has the faults this plan fixes, so wave A's count is reported, not judged.
 7. **Tokens.** In wave B, the mean of subagent tokens without cache reads per PR is at or under 0.88M, from the ledger records.
 8. **First-attempt lists.** In wave B, the evals check accepted every list on the writer's first attempt (no `evals:<id>#w2` call).
-9. **More closed than filed.** The issues the iteration closes are more than the issues it files (`review-minor` issues and `pipeline-feedback` issues filed from its runs).
+9. **More closed than filed.** The issues the iteration closes are more than the issues it files (`review-minor` issues and `pipeline-feedback` issues filed from its runs). A miss is expected: the iteration closes about 9 issues with 12 PRs, and the six 0.9.1 PRs filed ten minors (about 1.7 per PR), so about 20 filed. The report gives the count by source. The cause is the minor pass, not the gate: since 0.8.5 the pass may fix a gated file the PR already changes. In 0.9.1 the pass ran on 4 of 6 PRs, and was dropped twice (K02: its check found a major; K03: its fix broke a test) and kept twice (K04, K06: 2 fixed each). K01 and K05 had no pass, because they ended in resume runs, which skip it. Iteration 2 takes two levers from these numbers: a resume that signs off runs the pass, and a dropped pass keeps the fixes that its check did not fault.
+
+**Wave A stops on a known 0.9.1 fault.** Wave A runs on v0.9.1. An entry that stops at the evals check, on a re-check of an accepted list (#690), on a verifier answer with no results (#687) or on a fix that was not saved (#677) gets no resume on v0.9.1. It gets one fresh rebuild with the reviewer's refusal in the entry notes. If it stops again, it moves behind the tag and is built on v0.9.2 in wave B. The tag cannot do without A01, A02, A06 and A09; if one of them moves behind, the tag waits for it. Any other entry can move to wave B.
 
 A stop for a person with a true reason is the pipeline working, except a stop that criterion 6 names. A wrong reason, a missing record, a step that did not run, or a result the main session had to correct is a fault. A fault found in wave A is filed and fixed in wave A2 when it is small, or before the 0.9.2 tag. A fault found in wave B is filed for iteration 2, and the Tagreeve start waits for its fix.
 
@@ -162,9 +164,10 @@ After wave A2 has landed and the version PR is merged, one run on `alfhen/pipeli
 How it starts: the auto-mode classifier refused a headless `claude -p --dangerously-skip-permissions` launch once, so this plan does not depend on that launch. The builder session prepares one folder: a clone of `main` as `pluginRoot`, the plugin's agents copied into the folder's `.claude/agents`, and a prompt file for the run. Then the maintainer does one of these, at the maintainer's choice:
 
 - start the run in a terminal from the prepared folder (`claude` with the prompt file), or
-- add a permission rule for the launch script, so the builder session can start it.
+- add a permission rule for the launch script, so the builder session can start it, or
+- waive the live run for 0.9.2: wave B tests v0.9.2 on three real PRs right after the tag, and nothing else uses 0.9.2 before that. The report then says the tag had no live run.
 
-A headless start needs `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` (SKILL.md, "When things go wrong"). The tag waits for this run. A fault it finds is fixed before the tag.
+A headless start needs `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` (SKILL.md, "When things go wrong"). The tag waits for this run, unless the maintainer waives it. A fault it finds is fixed before the tag.
 
 ### Iteration report
 
@@ -405,8 +408,9 @@ What changed since the 0.9.1 entries:
 
 - Size: 9 PRs in wave A, 3 in wave B, this plan PR and the version PR. About 12 to 16 million subagent tokens without cache reads (a planning figure).
 - Basis: 0.9.0 wave 1 (1.84M per PR) and the 0.9.1 waves. The wave A entries are small, so about 0.9M to 1.3M per PR; wave B has the 0.88M target; plus about 1M for the plan PR, the resume run, and 1 to 3 land repairs.
-- Dates: plan PR merged on 2026-11-11 or 2026-11-12; wave A1 on 2026-11-12; wave A2, the live run and the 0.9.2 release on 2026-11-13; wave B on 2026-11-13 and 2026-11-14. **Range: 2026-11-14 to 2026-11-17.** Iteration 2 can start the next working day.
-- It assumes: the maintainer merges each gated PR within about 4 hours of the working day (11 of the 12 build PRs are gated); the maintainer starts the live run within half a day of the prompt; at most one stop for a decision. A fault in the live run adds about half a day.
+- Dates: the maintainer gave a standing word to merge on green, and the six-PR 0.9.1 wave ran in one evening. So: plan PR merged on 2026-11-11; wave A1 (8 PRs) on 2026-11-11 to 2026-11-12; wave A2, the live run and the 0.9.2 release on 2026-11-12; wave B on 2026-11-12 to 2026-11-13. **Range: 2026-11-13 to 2026-11-14.**
+- The whole of D10 to the Tagreeve start: iteration 1 to 2026-11-14; iteration 2 (6 batch PRs) and iteration 3 (6 batch PRs), about one to two days each, so the Tagreeve start is about **2026-11-17 to 2026-11-19**, and about 2026-11-21 if iteration 2's numbers call for a fourth iteration.
+- It assumes: PRs merge on green under the maintainer's standing word; the maintainer starts the live run within half a day of the prompt; at most one stop for a decision. A fault in the live run adds about half a day.
 
 ## Flagged concerns
 
@@ -416,7 +420,9 @@ What changed since the 0.9.1 entries:
 - **The sim filter can show order-dependent cases (A04).** A case that needs an earlier case's state fails when it runs alone. The implementer fixes such a case in place only when it is in a block the entry touches; others are filed.
 - **Wave B ships after 0.9.2.** K01, Q630 and K07 merge after the tag, so they go out in the next release with iteration 2. Tagreeve starts on that release, not on 0.9.2.
 - **0.88M is a tight target.** K01 is the largest of the three. A miss of criterion 7 is reported with the per-role figures, and the cause is filed for iteration 2.
-- **The live run needs the maintainer.** The plan does not depend on a headless launch (How it starts). The tag waits for that run.
+- **The live run needs the maintainer.** The plan does not depend on a headless launch (How it starts). The tag waits for that run, unless the maintainer waives it. The 0.10.0 plan needs a home for the live run that needs neither the maintainer nor the skip-permissions flag, for example a cloud run on the scratch repo.
+- **No backstop for a second writer attempt that fails (A06).** If wave B shows a list that needs a second attempt and fails it, iteration 2 adds a third attempt or an automatic fresh rebuild with the check's notes.
+- **Wave A1 tests the by-part method.** Eight PRs in wave A1 edit `workflows/run-wave.js` and SKILL.md by part. Iterations 2 and 3 need the same method for 78 issues in that file, so the report gives wave A1's land repairs as the test of the method.
 
 ## Out of scope
 
