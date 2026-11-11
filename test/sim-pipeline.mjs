@@ -3263,6 +3263,22 @@ await check('minor pass: a major marked outside the pass is kept when the tester
   assert.match(x.C1.reason, /^needs human:/)
   assert.ok(!calls.some(c => c.label === 'open:C1'))
 })
+await check('minor pass: a revert agent that throws twice still keeps the outside-marked major', async () => {
+  let tries = 0
+  const x = await hooked(only1('C1'), (p, o) => {
+    if (o.label.startsWith('minorrevert:C1')) { tries++; throw new Error('revert agent crashed') }
+    return passHook({ findings: [f('major', 'thrown revert outside title', { outsidePass: true })] })(p, o)
+  })
+  assert.equal(tries, 4)
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /thrown revert outside title/)
+})
+await check('minor pass: an outside-marked minor reaches the checklist when the pass is dropped', async () => {
+  const x = await hooked(only1('C1'), passHook({ testPass: false, findings: [f('minor', 'dropped pass outside minor', { outsidePass: true, file: 'src/a.js' })] }))
+  assert.ok(calls.some(c => c.label === 'minorrevert:C1'))
+  assert.equal(x.C1.ready, true)
+  assert.match(calls.find(c => c.label === 'open:C1').prompt, /Minor findings not fixed: \[[\s\S]*dropped pass outside minor/)
+})
 await check('minor pass: a minor from the check starts no second pass and goes to the checklist', async () => {
   const x = await hooked(only1('C1'), passHook({ findings: [f('minor', 'late thought', { file: 'src/a.js' })] }))
   assert.equal(labelsOf(/^minorfix/).length, 1)

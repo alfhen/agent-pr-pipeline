@@ -1501,7 +1501,7 @@ async function restoredHead(pr, signedSha) {
 // Puts the branch back to the signed-off state with a new commit; two tries. Null when both fail or the script finds a difference.
 async function minorRestore(pr, signedSha) {
   for (let attempt = 1; attempt <= 2; attempt++) {
-    const rev = await call('minorRevert', pr, minorRevertPrompt(pr, signedSha, attempt - 1), `minorrevert:${pr.id}${attempt === 1 ? '' : '#2'}`, { schema: MINORREVERT })
+    const rev = await call('minorRevert', pr, minorRevertPrompt(pr, signedSha, attempt - 1), `minorrevert:${pr.id}${attempt === 1 ? '' : '#2'}`, { schema: MINORREVERT }).catch(() => null)
     if (!rev || !rev.reverted) continue
     const headSha = PLUGIN_ROOT ? await restoredHead(pr, signedSha) : null
     if (headSha) return { ...rev, headSha }
@@ -1568,6 +1568,7 @@ async function minorPass(pr, signedSha, history, minors) {
   // An untrusted-path finding outside the pass must survive the drop: the PR ends not ready.
   const outside = split.blocking.filter(f => f.outsidePass)
   if (why) {
+    minors.push(...split.minors.filter(f => f.outsidePass))
     const dropped = await drop(why, (test && test.headSha) || (review && review.headSha) || fix.headSha)
     return outside.length ? { ...dropped, outside } : dropped
   }
