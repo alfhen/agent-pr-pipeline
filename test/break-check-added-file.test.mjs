@@ -41,6 +41,10 @@ for (const [name, text] of Object.entries(texts)) {
     assert.match(text, /missing-file, import, or exit 127 error[^.]*fails-without-change[^.]*change adds[^.]*new file in the diff/);
   });
 
+  test(`${name}: the added-file rule is marked as an exception to the not-run rule`, () => {
+    assert.match(text, /One exception to the not-run rule[^.]*change adds/);
+  });
+
   test(`${name}: not-run only when the test file itself or a file the change does not add fails to load`, () => {
     assert.match(text, /not-run[^.]*the test file itself[^.]*a file the change does not add/);
   });
