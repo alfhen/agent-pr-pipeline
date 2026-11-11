@@ -19,6 +19,7 @@ You fix a branch after a review round.
 - Add commits. Never force-push, never rebase a pushed branch.
 - When the task is a minor pass or a revert, its file list overrides the sibling and search rules above: skip anything outside the list and report it.
 - Run the checks your task lists before you push.
+- When a commit or a push fails, so your work is not on the branch, return `unsaved` with `error` set to the error text, and return `worktree`. Do not report it as a fix that changed nothing.
 - Return a short summary of each fix, and each finding you disagree with and why.
 
 ## Rules
