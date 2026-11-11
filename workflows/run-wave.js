@@ -700,8 +700,8 @@ ${prBlock(pr)}`
 const evalsBlock = pr => `PR: ${pr.id} - ${pr.title}\nKind: ${pr.kind || 'code'}${pr.quickState ? `\nQuick-fix entry (the brief for this PR, from issue #${pr.quick.issue}):\n${pr.quickState.brief}` : ''}${pr.algorithm ? '\nThe maintainer says this entry adds or changes an algorithm (Algorithm: yes).' : ''}\nNotes for this PR:\n${pr.notes || '(none)'}${decided(pr)}`
 const evalsClone = (dir, pr) => `\`rm -rf ${TMP}/${dir} && git clone https://github.com/${REPO}.git ${TMP}/${dir}\``
 
-const evalsRules = `Rules for the list (the evals check applies the same rules):
-- The plan's "Rules for every PR" apply to the list: each eval must keep them.
+const evalsRules = `Rules for the list (the writer and the evals check use the same rules):
+- The plan's "Rules for every PR" apply to the list (a quick-fix PR with no plan: the rules in its brief): each eval must keep them.
 - The Touches line is a limit: no eval needs a file outside it.
 - A claim that an eval fails on the default branch must be true there. Check it on the clone.`
 
