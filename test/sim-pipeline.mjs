@@ -593,6 +593,27 @@ await check('E01-2 the writer notes reach the evals check on a later attempt', a
   assert.ok(!evalsStop(x.C1))
   assert.match(calls.find(c => c.label === 'evalsarch:C1#2').prompt, /covered by C1-2/)
 })
+const rulesOf = prompt => prompt.slice(prompt.indexOf('Rules for the list'), prompt.indexOf('\nReturn ', prompt.indexOf('Rules for the list')))
+await check('A06-1 the writer prompt holds the three rules of the evals check', async () => {
+  await evalsRun([C1PR], () => withMeta(listOf('C1')))
+  const p = calls.find(c => c.label === 'evals:C1').prompt
+  assert.match(p, /Rules for every PR" apply to the list/)
+  assert.match(p, /Touches line is a limit: no eval needs a file outside it/)
+  assert.match(p, /fails on the default branch must be true there/)
+})
+await check('A06-2 the evals-check prompts hold the same rule text as the writer prompt', async () => {
+  await evalsRun([C1PR], () => withMeta(listOf('C1')), okCheck, { productReview: 'all' })
+  const block = rulesOf(calls.find(c => c.label === 'evals:C1').prompt)
+  assert.ok(block.includes('Touches line is a limit'))
+  assert.ok(calls.find(c => c.label === 'evalsarch:C1#1').prompt.includes(block))
+  assert.ok(calls.find(c => c.label === 'evalsproduct:C1#1').prompt.includes(block))
+})
+await check('A06-7 a list of 21 evals is not refused by the check code', async () => {
+  const big = [...Array.from({ length: 20 }, (_, i) => ev(`C1-${i + 1}`, 'behaviour')), ev('C1-21', 'error path')]
+  const x = await evalsRun([C1PR], () => withMeta(big))
+  assert.ok(calls.some(c => c.label === 'implement:C1'))
+  assert.ok(!/^evals refused/.test(x.C1.reason || ''))
+})
 await check('E01-6 evals false turns the writer off, a given list still runs', async () => {
   const x = await evalsRun([C1PR], noWriter, okCheck, { evals: false })
   assert.ok(!evalLabels('C1').some(l => /^evals/.test(l)))
