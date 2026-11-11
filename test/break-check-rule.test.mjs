@@ -52,6 +52,10 @@ for (const [name, text] of Object.entries(texts)) {
     assert.match(text, /stops at its first failing case[^.]*each case alone[^.]*by case name/);
   });
 
+  test(`${name}: a case run alone counts only after it passed alone with the change`, () => {
+    assert.match(text, /alone with the change[^.]*first[^.]*passed alone with the change[^.]*full-file run/);
+  });
+
   test(`${name}: a not-run reason names one cause from the six`, () => {
     assert.match(text, /not-run reason in breakWhy names which cause applied: load, import, syntax, missing file, exit 127, or no test for the eval/);
   });
