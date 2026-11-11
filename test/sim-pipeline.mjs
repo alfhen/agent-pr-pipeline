@@ -250,7 +250,14 @@ const simulate = async (args, pre = GOOD) => {
   lastResult = out
   return Object.fromEntries(out.prs.map(r => [r.id, r]))
 }
-const check = async (name, fn) => { await fn(); console.log('ok  ' + name) }
+const nameFilter = process.env.SIM_CASE_FILTER || ''
+let casesRun = 0
+const check = async (name, fn) => {
+  if (nameFilter && !name.includes(nameFilter)) return
+  casesRun++
+  await fn()
+  console.log('ok  ' + name)
+}
 
 // Main run: every path except the failures.
 const r = await simulate(base)
@@ -2187,7 +2194,7 @@ await check('E03b-2 and E03b-7 and E03b-10: the verify prompt asks for the break
   assert.match(pr, /kind behaviour or error path with the result pass/)
   assert.match(pr, /git checkout \$\(git merge-base origin\/HEAD HEAD\) -- <file>/)
   assert.match(pr, /Delete a file the PR adds, because it is not on origin\/HEAD/)
-  assert.match(pr, /A load, import, missing-file, syntax or exit-127 error is not that: set not-run/)
+  assert.match(pr, /A load, import, syntax, missing-file or exit 127 error is not that: set not-run/)
 })
 await check('E03b-11: a ci result next to a pass behaviour eval keeps the break check; the ci item stays untested', async () => {
   const mixed = vres({ evals: [{ id: 'X-1', result: 'pass' }, { id: 'X-2', result: 'ci', ciCheck: 'ci' }] })
@@ -3799,3 +3806,7 @@ await check('F652-3 a kept dispute with no push still stops with no progress', a
   assert.equal(x.C1.ready, false)
   assert.match(x.C1.reason, /no progress/)
 })
+if (nameFilter && casesRun === 0) {
+  console.error(`no case matched the filter: ${nameFilter}`)
+  process.exit(1)
+}
