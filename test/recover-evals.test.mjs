@@ -185,3 +185,30 @@ test('A01-16 shell text in an answer is printed as text and never runs', () => {
     assert.ok(!existsSync(m1) && !existsSync(m2))
   }
 })
+
+test('A01-7 a run whose architecture reviewer was off is accepted on the product answer', () => {
+  const steps = [
+    { label: 'evals:C1', answer: writer(list1) },
+    { label: 'evalsproduct:C1#1', answer: ok },
+  ]
+  assert.ok(!steps.some(s => s.label.startsWith('evalsarch')))
+  for (const form of FORMS) {
+    const r = run(build(form, steps))
+    assert.equal(r.status, 0, r.stderr)
+    assert.deepEqual(JSON.parse(r.stdout).evals, list1)
+  }
+})
+
+test('A01-12 a verifier result older than an accepted change of its eval is left out', () => {
+  const steps = [
+    { label: 'evals:C1', answer: writer(list1) },
+    { label: 'evalsarch:C1#1', answer: ok },
+    { label: 'verify:C1#1', answer: verifier([row('C1-1', 'pass'), row('C1-2', 'pass')]) },
+    { label: 'dispute:C1#1', answer: { ruling: 'change', reason: 'r', eval: ev('C1-1', 'behaviour', { statement: 'changed' }) } },
+    { label: 'evalsarch:C1#d1', answer: ok },
+  ]
+  for (const form of FORMS) {
+    const out = JSON.parse(run(build(form, steps)).stdout)
+    assert.deepEqual(Object.keys(out.results), ['C1-2'])
+  }
+})

@@ -779,6 +779,22 @@ await check('A01-17 a reviewer eval added inside a run is not in the record, so 
   assert.equal(calls.filter(c => c.label.startsWith('evalsarch:C1')).length, 1)
   assert.ok(y.evalsMeta.accepted.evals.some(e => e.id === 'C1-R1-1'))
 })
+await check('A01-17 a dispute change after a reviewer eval keeps the reviewer eval out of the record', async () => {
+  const newEval = ev('C1-1', 'behaviour', { statement: 'C1-1 after the dispute' })
+  const writer = () => withMeta(listOf('C1'))
+  const disputing = (p, o) => o.label === 'fix:C1#1' ? { summary: 's', disputes: [{ id: 'C1-1', reason: 'wrong' }] } : undefined
+  const hook = a01Chain(a01Review('C1', 1, [a01Finding('gap')]), disputing, (p, o) => o.label === 'dispute:C1#1' ? { ruling: 'change', reason: 'ok', eval: newEval } : /^evalsarch:C1#d1/.test(o.label) ? { verdict: 'ok', notes: '' } : undefined)
+  const R = (await a01Result([C1PR], hook, { writer, maxRounds: 2 })).C1
+  assert.ok(R.evals.some(e => e.id === 'C1-R1-1'))
+  assert.ok(R.evalsMeta.accepted.evals.some(e => e.statement === newEval.statement))
+  assert.ok(!R.evalsMeta.accepted.evals.some(e => e.id === 'C1-R1-1'))
+})
+await check('A01-14 a resume with the record list keeps the rule inputs of the record', async () => {
+  const R = await accepted1(listOf('C1'), { noReference: 'recorded reason' })
+  const x = await evalsRun(resumeWith({ ...asGiven(R), noReference: 'other reason' }), noWriter)
+  assert.equal(archCalls().length, 0)
+  assert.equal(x.C1.evalsMeta.noReference, 'recorded reason')
+})
 await check('E01-4 a quick PR with an object-form list builds, and its triage prompt shows no unaccepted list', async () => {
   const given = { evals: listOf('QS'), noErrorPath: 'x' }
   const x = await evalsRun([{ id: 'QS', quick: { issue: 40 }, branch: 'fix/QS', evals: given }], noWriter)
@@ -1782,6 +1798,16 @@ await check('land fix: output from land-commits.sh starts a tester and a diff re
   assert.match(rev.prompt, /Read only this output/)
   assert.equal(rev.agentType, 'agent-pr-pipeline:reviewer')
   assert.equal(x.LA.land.split(':')[1], ABC)
+})
+await check('A01-4 a land fix result carries the record it was given', async () => {
+  const R = await accepted1()
+  const given = [{ ...LANDS[0], id: 'C1', evals: asGiven(R) }]
+  const x = await landRun({ landOutput: ["C1"] }, given)
+  assert.equal(x.C1.ready, true)
+  assert.deepEqual(x.C1.evalsMeta.accepted, R.evalsMeta.accepted)
+  const y = await landRun({ landOutput: ['C1'], testMoved: ['C1'] }, [{ ...LANDS[0], id: 'C1', evals: asGiven(R) }])
+  assert.equal(y.C1.ready, false)
+  assert.deepEqual(y.C1.evalsMeta.accepted, R.evalsMeta.accepted)
 })
 await check('land fix: a tested head that is not the reviewed head makes the PR not ready', async () => {
   const x = await landFixRun({ landOutput: ['LA'], testMoved: ['LA'] })

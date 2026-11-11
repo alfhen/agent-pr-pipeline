@@ -7,6 +7,9 @@
 # `evals` is the record's list and `evalsMeta.accepted` is the record: the last list the evals check accepted. The list of the
 # first writer attempt whose reviewers all said ok is the start; a dispute `change` whose check said ok replaces its eval.
 # A writer attempt or a change that a reviewer refused or that a started reviewer never answered, and a `keep` ruling, are not the record.
+# A verifier result older than an accepted change of its eval is left out. A list that the run was given in prs[].evals or resume.evals
+# is never written to disk, so it cannot be recovered: give it again. A run with no architecture and no product reviewer started
+# cannot be told from a run that died before the check, so it has no accepted list here.
 # Exit: 0 printed, 1 the path is missing or holds no accepted list for the PR (nothing on stdout), 64 bad argument.
 set -u
 usage="usage: recover-evals.sh <journal.jsonl | transcript folder> <PR id>"
@@ -40,13 +43,16 @@ out=$(printf '%s' "$steps" | jq -e --arg pr "$pr" '
   def txt: if type == "string" then gsub("^\\s+|\\s+$"; "") else "" end;
   . as $all
   | ([$all[] | .label // empty]) as $started
-  | ($all | map(select(.label != null and (.answer | type) == "object"))) as $s
+  | ($all | to_entries | map(.value + {i: .key} | select(.label != null and (.answer | type) == "object"))) as $s
   | def last_of($label): ([$s[] | select(.label == $label)] | last // null) | if . == null then null else .answer end;
   def approved($suffix):
     (last_of("evalsarch:\($pr)#\($suffix)")) as $a
     | (last_of("evalsproduct:\($pr)#\($suffix)")) as $p
+    | ($started | index("evalsarch:\($pr)#\($suffix)") != null) as $aStarted
     | ($started | index("evalsproduct:\($pr)#\($suffix)") != null) as $pStarted
-    | $a != null and $a.verdict == "ok" and (if $pStarted then ($p != null and $p.verdict == "ok") else true end);
+    | ($aStarted or $pStarted)
+      and (if $aStarted then ($a != null and $a.verdict == "ok") else true end)
+      and (if $pStarted then ($p != null and $p.verdict == "ok") else true end);
   ([$s[] | select(.label == "evals:\($pr)" or (.label | startswith("evals:\($pr)#w")))
      | {n: (if .label == "evals:\($pr)" then 1 else (.label | sub("^.*#w"; "") | tonumber? // 0) end), answer}]
    | sort_by(.n)
@@ -54,21 +60,22 @@ out=$(printf '%s' "$steps" | jq -e --arg pr "$pr" '
    | first // null) as $w
   | if $w == null then empty else
     ([$s[] | select(.label | startswith("dispute:\($pr)#"))
-       | {n: (.label | sub("^.*#"; "") | tonumber? // 0), answer}]
+       | {n: (.label | sub("^.*#"; "") | tonumber? // 0), answer, i}]
      | sort_by(.n)) as $disputes
-    | (reduce $disputes[] as $d ($w.answer.evals;
-        . as $list
-        | if $d.answer.ruling == "change" and ($d.answer.eval | type) == "object" and approved("d\($d.n)")
-             and ($list | any(.id == $d.answer.eval.id))
-          then map(if .id == $d.answer.eval.id then $d.answer.eval else . end)
-          else $list end)) as $record
+    | (reduce $disputes[] as $d ({list: $w.answer.evals, changed: {}};
+        if $d.answer.ruling == "change" and ($d.answer.eval | type) == "object" and approved("d\($d.n)")
+             and (.list | any(.id == $d.answer.eval.id))
+          then .list |= map(if .id == $d.answer.eval.id then $d.answer.eval else . end) | .changed[$d.answer.eval.id] = $d.i
+          else . end)) as $acc
+    | $acc.list as $record
+    | $acc.changed as $changed
     | ($w.answer) as $m
     | {noErrorPath: ($m.noErrorPath | txt), noReference: ($m.noReference | txt), algorithm: ($m.algorithm == true)} as $meta
     | {
         pr: $pr,
         evals: $record,
         evalsMeta: ($meta + {accepted: ({pr: $pr, evals: $record} + $meta)}),
-        results: ([$s[] | select(.label | startswith("verify:\($pr)#")) | .answer.evals[]? | select(type == "object" and (.id | type) == "string")]
+        results: ([$s[] | select(.label | startswith("verify:\($pr)#")) | .i as $i | .answer.evals[]? | select(type == "object" and (.id | type) == "string" and ($changed[.id] == null or $i > $changed[.id]))]
                   | reduce .[] as $r ({}; .[$r.id] = $r))
       }
   end
