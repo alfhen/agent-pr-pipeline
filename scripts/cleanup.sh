@@ -39,9 +39,14 @@ case "$cmd" in
     [ -n "$tmp" ] && [ -f "$tmp/$MARK" ] || { echo "KEPT $1 no $MARK marker"; exit 0; }
     refusal=$(refused "$tmp") && { echo "KEPT $1 refused: $refusal"; exit 0; }
     if [ "$id" = --all ]; then
-      while IFS= read -r d; do
-        if rm -rf "$d"; then echo "REMOVED $d"; else echo "KEPT $d cannot delete"; fi
-      done < <(find "$tmp" -mindepth 1 -maxdepth 1 -type d)
+      while IFS= read -r -d '' d; do
+        if rm -rf "$d"; then echo "REMOVED ${d//$'\n'/ }"; else echo "KEPT ${d//$'\n'/ } cannot delete"; fi
+      done < <(find "$tmp" -mindepth 1 -maxdepth 1 -type d -print0)
+      # NUL-separated so a newline in a name cannot yield a path relative to the cwd. Only the wave end removes these: another PR of the wave may still read one. find -type f skips symbolic links. The name pattern must match the mktemp template io-large.XXXXXX in scripts/io.sh and IO_LARGE_NAME in workflows/run-wave.js. Newlines in printed names become spaces so a name cannot forge a line.
+      while IFS= read -r -d '' f; do
+        [[ "${f##*/}" =~ ^io-large\.[A-Za-z0-9]+$ ]] || continue
+        if rm -f "$f"; then echo "REMOVED ${f//$'\n'/ }"; else echo "KEPT ${f//$'\n'/ } cannot delete"; fi
+      done < <(find "$tmp" -mindepth 1 -maxdepth 1 -type f -print0)
     else
       [[ "$id" =~ ^[A-Za-z0-9._]+$ ]] || { echo "KEPT $id not a plain id"; exit 0; }
       shopt -s nullglob
