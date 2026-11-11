@@ -5,6 +5,7 @@
 - Written after the 0.9.1 release. Checked against `main` at ccdbaff (Release 0.9.1, #694) and against GitHub on 2026-11-11. Nothing is built.
 - This release is iteration 1 of the maintainer's decision D10: work this repo's open issues down with the new pipeline before Tagreeve uses it.
 - The open PRs #682 (K01) and #678 (Q630) are closed with a pointer to this plan before wave B (Wave B).
+- Amended after wave A1 (Amendment 1). A01 stopped twice at the evals check, and the iteration stopped for the maintainer. The fix is in the entry text, so 0.9.2 ships A02 to A08, A01 and A09 are built on v0.9.2 and released as 0.9.3, and wave B runs on v0.9.3.
 
 ## Summary in plain words
 
@@ -72,16 +73,17 @@ D10 asks for this: the maintainer decided that this repo's open issues are worke
 
 ```mermaid
 flowchart LR
-  P[Plan PR] --> A1[Wave A1: A01 to A08] --> A2[Wave A2: A09] --> R[Version PR, live run, release 0.9.2] --> C[Close #682 and #678] --> B1[Wave B1: K01, Q630, forced resume] --> B2[Wave B2: K07]
+  P[Plan PR] --> A1[Wave A1: A02 to A08] --> R[Version PR, live run, release 0.9.2] --> A3[Wave A3 on v0.9.2: A01] --> A2[Wave A2 on v0.9.2: A09] --> R3[Version PR, live run, release 0.9.3] --> C[Close #682 and #678] --> B1[Wave B1 on v0.9.3: K01, Q630, forced resume] --> B2[Wave B2: K07]
 ```
 
-Summary: eight fixes in wave A1, the script entry in wave A2, then the release and the live run, then the rebuild of the three shakedown PRs on v0.9.2 in two waves.
+Summary: seven fixes in wave A1 and release 0.9.2; then A01 and A09 on v0.9.2 and release 0.9.3; then the rebuild of the three shakedown PRs on v0.9.3 in two waves.
 
 Why this order:
 
 - A09 goes to wave A2. Its resume script copies the accepted-list record that A01 adds to the result, so it builds on A01. They also both edit the resume text of SKILL.md.
 - K07 goes to wave B2, as in 0.9.1. K01 and K07 both change the `landFix` branch of `runPRSteps`, and K07 changes the bot-check exit that a failing eval on a bot head (new in K01) leaves through.
-- Wave B runs on v0.9.2, so the fixes of wave A judge it. A fix must not judge itself, so wave A runs on the installed v0.9.1.
+- Wave B runs on v0.9.3, so the fixes of wave A judge it. A fix must not judge itself, so wave A1 runs on the installed v0.9.1, and A01 and A09 run on the installed v0.9.2. `pluginRoot` is never `main`.
+- A01 runs after 0.9.2 so that the A06 writer rules write its list. A01 has the hardest list of the iteration, so it is also the first test of A06.
 
 The wave A1 entries edit different parts of `workflows/run-wave.js`:
 
@@ -100,7 +102,7 @@ A05 and A08 do not edit `workflows/run-wave.js`. A08 owns the maintainer-touch r
 
 | Entry | Parts of SKILL.md |
 | --- | --- |
-| A01 | "The loop for one PR" step 1; "Workflow arguments" the result paragraph; "When things go wrong" one new row after the `resumeFromRunId` row; "Files" one new line after the `io.sh` line |
+| A01 (wave A3) | "The loop for one PR" step 1; "Workflow arguments" the result paragraph (it names the record field and says that a resume and a `skipImpl` rerun pass it back in the object form of the given list); "When things go wrong" one new row after the `resumeFromRunId` row; "Files" one new line after the `io.sh` line. A01 edits no other part. The PR options paragraph is A09's. |
 | A02 | "When things go wrong" one new row after the `tester or reviewer failed` row |
 | A03 | "When things go wrong" the `no progress: the fix changed nothing in round N` row and one new row after it |
 | A04 | "The loop for one PR" step 2 |
@@ -115,10 +117,11 @@ In `test/sim-pipeline.mjs` each entry adds its cases as one block after the anch
 ## How the iteration runs
 
 - Wave A runs from a local session (tokens by role exist only there), with `pluginRoot` at the installed v0.9.1, never at `main`.
-- Wave B runs from a local session with `pluginRoot` at the installed v0.9.2.
+- A01 (wave A3) and A09 (wave A2) run from a local session with `pluginRoot` at the installed v0.9.2.
+- Wave B runs from a local session with `pluginRoot` at the installed v0.9.3.
 - `evals`, `breakCheck` and `docsUpdate` are on. The plan PR gets the product review and the architecture review.
 - Every wave A entry touches a gated path (`scripts/**`, `agents/**`, `workflows/**` or `skills/**`), so the maintainer merges each of them and `merge-safety` does not run for them.
-- After each run of wave A: `token-report.sh --json`, then `ledger.sh put` (SKILL.md Step 4), by hand as today. After each run of wave B: the A09 run script from v0.9.2, and a resume only with arguments from the A09 resume script.
+- After each run of wave A: `token-report.sh --json`, then `ledger.sh put` (SKILL.md Step 4), by hand as today. After each run of wave B: the A09 run script from v0.9.3, and a resume only with arguments from the A09 resume script.
 - After wave B: `ledger.sh report --since v0.9.1`.
 - The builder session reports to the assessment session when this plan PR opens, at the end of each wave, when a PR stops for the second time, and when the release is cut.
 
@@ -136,12 +139,14 @@ For every PR of waves A and B:
 For the iteration:
 
 5. **No hand-steering.** No eval list was edited or typed by hand, and no commit was made by hand on a PR branch. In wave B, every resume argument came from the A09 resume script. A hand step is recorded with `ledger.sh hand <pr> process` and fails this criterion.
-6. **No evals-check stop for a person.** In wave B, no PR stopped with `evals check:` or `evals refused:`. Wave A runs on v0.9.1, which still has the faults this plan fixes, so wave A's count is reported, not judged.
+6. **No evals-check stop for a person.** In wave B, and for A01 and A09, no PR stopped with `evals check:` or `evals refused:`. Wave A runs on v0.9.1, which still has the faults this plan fixes, so wave A's count is reported, not judged.
 7. **Tokens.** In wave B, the mean of subagent tokens without cache reads per PR is at or under 0.88M, from the ledger records.
 8. **First-attempt lists.** In wave B, the evals check accepted every list on the writer's first attempt (no `evals:<id>#w2` call).
 9. **More closed than filed.** The issues the iteration closes are more than the issues it files (`review-minor` issues and `pipeline-feedback` issues filed from its runs). A miss is expected: the iteration closes about 9 issues with 12 PRs, and the six 0.9.1 PRs filed ten minors (about 1.7 per PR), so about 20 filed. The report gives the count by source. The cause is the minor pass, not the gate: since 0.8.5 the pass may fix a gated file the PR already changes. In 0.9.1 the pass ran on 4 of 6 PRs, and was dropped twice (K02: its check found a major; K03: its fix broke a test) and kept twice (K04, K06: 2 fixed each). K01 and K05 had no pass, because they ended in resume runs, which skip it. Iteration 2 takes two levers from these numbers: a resume that signs off runs the pass, and a dropped pass keeps the fixes that its check did not fault.
 
-**Wave A stops on a known 0.9.1 fault.** Wave A runs on v0.9.1. An entry that stops at the evals check, on a re-check of an accepted list (#690), on a verifier answer with no results (#687) or on a fix that was not saved (#677) gets no resume on v0.9.1. It gets one fresh rebuild with the reviewer's refusal in the entry notes. If it stops again, it moves behind the tag and is built on v0.9.2 in wave B. The tag cannot do without A01, A02, A06 and A09, so they cannot move behind it: if one of them stops a second time, the iteration stops and the maintainer decides (for example a build on `main` as `pluginRoot` with a person check, or a smaller entry). Any other entry can move to wave B.
+**Wave A stops on a known 0.9.1 fault.** Wave A runs on v0.9.1. An entry that stops at the evals check, on a re-check of an accepted list (#690), on a verifier answer with no results (#687) or on a fix that was not saved (#677) gets no resume on v0.9.1. It gets one fresh rebuild with the reviewer's refusal in the entry notes. If it stops again, it moves behind the tag and is built on v0.9.2 in wave B. The 0.9.2 tag cannot do without A02 and A06, and the 0.9.3 tag cannot do without A01 and A09. If one of them stops a second time, the iteration stops and the maintainer decides. Any other entry can move to wave B.
+
+**A01 and A09 on v0.9.2.** The same rule applies to them: an evals-check stop gets no resume, one fresh rebuild with the refusal in the entry notes, and a second stop stops the iteration for the maintainer.
 
 A stop for a person with a true reason is the pipeline working, except a stop that criterion 6 names. A wrong reason, a missing record, a step that did not run, or a result the main session had to correct is a fault. A fault found in wave A is filed and fixed in wave A2 when it is small, or before the 0.9.2 tag. A fault found in wave B is filed for iteration 2, and the Tagreeve start waits for its fix.
 
@@ -157,7 +162,9 @@ In wave B1, K01 runs with `maxRounds: 1`. In the 0.9.1 build of K01, round 1 had
 
 If K01 signs off in round 1, K07 runs with `maxRounds: 1` in wave B2 in the same way. If K07 also signs off, the main session stops one wave B run on purpose after the `implement:` call returns `pushed: true`, recovers the list with the A01 script and resumes with the A09 script. The iteration report says which form ran.
 
-### Live run before the 0.9.2 tag
+### Live run before the 0.9.2 and 0.9.3 tags
+
+Each of the two tags gets the live run below.
 
 After wave A2 has landed and the version PR is merged, one run on `alfhen/pipeline-dogfood` from a clone of `main`, judged by criteria 1 to 4.
 
@@ -209,9 +216,11 @@ Reported in plain words from `ledger.sh report` and `token-report.sh`. One wave 
 - The list that the evals check accepted is the contract for the PR. Every result of a PR with an accepted list carries a record of it (its ids, kinds, statements and checks, and its meta), ready or not.
 - A resume or rerun whose list has the same content as that record runs no evals check. A list that differs from the record (a dispute ruling, a reviewer eval, a given list that differs) goes through `evalsVerdict` and the evals check, as today.
 - A dispute `change` that the evals check accepts updates the record. So does any other list that the evals check accepts and that differs from the record (a writer list, a given list, a list with reviewer evals): it is the record in every later result, so the next resume runs no evals check on it.
+- The record is one field of the result's `evalsMeta`, next to `noErrorPath`, `noReference` and `algorithm`; the entry names it. A resume passes it back in `resume.evals`, and a `skipImpl` rerun in `prs[].evals`, both in the object form `{ evals, noErrorPath, noReference, algorithm, <record> }` that `givenEvals` already reads for both. This is the existing option with the result's meta spread into it, not a new run-wave argument: no new key at the level of `prs[]` or `resume`, and no new top-level argument.
+- Every stop return after the list is accepted carries the record, also the stop that `writeEvals` itself returns (an `evals check:` or `evals refused:` stop of a resume whose changed list the check refuses, and the missing-list stop). That stop keeps the earlier record unchanged.
 - A resume or a `skipImpl` rerun that says the PR had a list, and gives no list, stops before any check with a reason that says the list is missing. It never runs the tester path.
 - A PR whose steps throw after its list was accepted returns a result with `ready: false`, a reason that names the failure, and the list and record. It is not `null`.
-- A run that returned no result at all: `scripts/recover-evals.sh` reads what the run already wrote to disk (its journal or its transcript folder) and prints, for each PR, the accepted list, its meta, the record and the last verifier result of each eval id. It only reads; it runs nothing from the files.
+- A run that returned no result at all: `scripts/recover-evals.sh` reads what the run already wrote to disk (its journal or its transcript folder) and prints, for each PR, the accepted list, its meta, the record and the last verifier result of each eval id. The record it prints is the last list the evals check accepted, also a dispute `change`. It only reads; it runs nothing from the files. Its evals run once for each of the two input forms.
 - SKILL.md step 1 says to recover the list before a resume when the earlier result is missing.
 
 Invariants: a list reaches the verifier with no new evals check only when its content equals the record of an earlier result of the same PR; a PR whose input says it had a list never runs the tester in its review loop.
@@ -225,9 +234,12 @@ Evals:
 | A01-4 | behaviour | Every result of a PR with an accepted list carries the record, also when it ends not ready. | Sim: a PR that stops at the round cap and one that stops at the bot check; both results hold the record, equal to the accepted list. |
 | A01-5 | behaviour | A dispute `change` that the evals check accepts updates the record, so a resume with the changed list runs no evals check. | Sim: a fixer dispute with `change`; the result's record has the new eval; a resume from that result has no `evalsarch:` call. |
 | A01-6 | behaviour | A PR whose verifier throws twice after its list was accepted returns a not-ready result with the list, not `null`. | Sim: `verify:C1#1` throws on both tries; `prs` holds an object for C1 with `ready: false` and its `evals`. On `main` it is `null`. |
-| A01-7 | behaviour | `recover-evals.sh` prints the accepted list, its meta, the record and the last verifier result of each id from a run fixture. | `test/recover-evals.test.mjs`: a fixture with a writer answer, an evals-check answer and two verifier answers; the JSON output equals the expected file. |
-| A01-8 | error path | `recover-evals.sh` on a run with no accepted list for the PR, or on a missing path, exits non-zero, names the PR or the path, and prints no list. | The same test file: two cases; exit code not 0, empty stdout. |
+| A01-7 | behaviour | `recover-evals.sh` prints the accepted list, its meta, the record and the last verifier result of each id from a run fixture, for each input form. | `test/recover-evals.test.mjs`: a journal fixture and a transcript-folder fixture, each with a writer answer, an evals-check answer and two verifier answers; each JSON output equals the expected file. |
+| A01-8 | error path | `recover-evals.sh` on a run with no accepted list for the PR, or on a missing path, exits non-zero, names the PR or the path, and prints no list, for each input form. | The same test file: the cases for each form; exit code not 0, empty stdout. |
 | A01-10 | behaviour | A resume whose changed list passes the evals check updates the record, so a second resume with that list runs no evals check. | Sim: resume C1 with the record plus one extra eval; the evals check accepts. Exactly one `evalsarch:` call, the result's record equals the new list, and a second resume from that result has no `evalsarch:` call. |
+| A01-11 | behaviour | A resume whose changed list the evals check refuses stops with `evals check:`, and its result holds the earlier record unchanged; a second resume from that result with the record's own list makes no evals-check call. | Sim: resume C1 with the record and a changed list that `evalsarch:C1#1` refuses; `ready: false`, the reason starts with `evals check:`, and the record equals the earlier one. Then a resume from that result; no `evalsarch:C1` call. On `main` there is no record. |
+| A01-12 | behaviour | `recover-evals.sh` prints a dispute `change` that the evals check accepted as the record, for each input form. | `test/recover-evals.test.mjs`: one fixture for each form with a writer list and an accepted `evalsarch:<id>#d1` change; the printed record holds the changed eval. |
+| A01-13 | behaviour | A `skipImpl` rerun whose `prs[].evals` object holds the record and the same list runs no evals check. | Sim: `skipImpl` with `prs[].evals` set to the list and meta of an earlier result; no `evalsarch:` call, and the `verify:` prompt holds each id. On `main` it calls `evalsarch:`. |
 | A01-9 | regression | A resume or `skipImpl` PR that never had a list keeps the tester path, and a resume whose evals check stops keeps its history. | The existing cases "E01-5 a resume or a skipImpl PR with no list has no writer, a tester and no verifier, and keeps its history" and "E01-5 a resumed PR whose evals check stops keeps its history, findings and list" pass unchanged. |
 
 Acceptance: `node --test test/recover-evals.test.mjs` and `node test/sim-pipeline.mjs` pass; A01-1 fails on `main` because `writeEvals` checks every given list, and A01-3 fails because a resume with no list takes the tester path.
@@ -386,7 +398,11 @@ Evals:
 
 Acceptance: `node --test test/after-run.test.mjs test/resume-args.test.mjs` passes; each test fails on `main` because the scripts do not exist.
 
-### Wave B (on `pluginRoot` v0.9.2)
+### Wave A3 (on `pluginRoot` v0.9.2)
+
+A01, as written above, built fresh on a new branch from `main` after the 0.9.2 tag. Wave A2 (A09) follows it, also on v0.9.2.
+
+### Wave B (on `pluginRoot` v0.9.3)
 
 Before wave B, the main session closes #682 and #678, each with one comment that points to this plan and to the new PR once it exists. Their branches stay until the new PRs merge; the maintainer decides about deleting them.
 
@@ -394,7 +410,7 @@ Each wave B PR is a fresh build on a new branch from `main` as it is then. Its e
 
 What changed since the 0.9.1 entries:
 
-- `pluginRoot` is v0.9.2, not v0.9.0. The 0.9.1 rule about the judge does not apply.
+- `pluginRoot` is v0.9.3, not v0.9.0. The 0.9.1 rule about the judge does not apply.
 - A03 changed the part of `checkNewCode` after its fix call. K01 builds on it.
 - A01 added the accepted-list record to every result. The `evals` that K01's land-fix run reads stays as it is.
 
@@ -406,9 +422,10 @@ What changed since the 0.9.1 entries:
 
 ## Date estimate
 
-- Size: 9 PRs in wave A, 3 in wave B, this plan PR and the version PR. About 12 to 16 million subagent tokens without cache reads (a planning figure).
+- Size: 9 PRs in wave A, 3 in wave B, this plan PR, its amendment and two version PRs. About 12 to 16 million subagent tokens without cache reads (a planning figure).
 - Basis: 0.9.0 wave 1 (1.84M per PR) and the 0.9.1 waves. The wave A entries are small, so about 0.9M to 1.3M per PR; wave B has the 0.88M target; plus about 1M for the plan PR, the resume run, and 1 to 3 land repairs.
 - Dates: the maintainer gave a standing word to merge on green, and the six-PR 0.9.1 wave ran in one evening. So: plan PR merged on 2026-11-11; wave A1 (8 PRs) on 2026-11-11 to 2026-11-12; wave A2, the live run and the 0.9.2 release on 2026-11-12; wave B on 2026-11-12 to 2026-11-13. **Range: 2026-11-13 to 2026-11-14.**
+- Amendment 1: wave A1 ran on 2026-11-11 (6.6M subagent tokens, 7 of 8 merged). The 0.9.2 release, wave A3 (A01), wave A2 (A09) and the 0.9.3 release add about one day: wave B on 2026-11-13 to 2026-11-14. **Range: 2026-11-14 to 2026-11-15.** The Tagreeve start moves by about one day, to about 2026-11-18 to 2026-11-20.
 - The whole of D10 to the Tagreeve start: iteration 1 to 2026-11-14; iteration 2 (6 batch PRs) and iteration 3 (6 batch PRs), about one to two days each, so the Tagreeve start is about **2026-11-17 to 2026-11-19**, and about 2026-11-21 if iteration 2's numbers call for a fourth iteration.
 - It assumes: PRs merge on green under the maintainer's standing word; the maintainer starts the live run within half a day of the prompt; at most one stop for a decision. A fault in the live run adds about half a day.
 
@@ -418,7 +435,8 @@ What changed since the 0.9.1 entries:
 - **The writer size is a prompt rule (A06).** `evalsVerdict` does not refuse a list of more than 20 evals, because a refusal adds a writer attempt and can stop a PR. If wave B shows lists above the cap, iteration 2 can add the refusal.
 - **A reviewer eval changes the list (A01).** A list with a reviewer eval differs from the accepted record, so a resume runs the evals check again, as #690 asks. The round cap stops K01 after the reviewers ran, so the stopped result can hold reviewer evals that the record lacks. The forced resume then runs one evals check on that list, and the report says so; it is not a fault of A01.
 - **The sim filter can show order-dependent cases (A04).** A case that needs an earlier case's state fails when it runs alone. The implementer fixes such a case in place only when it is in a block the entry touches; others are filed.
-- **Wave B ships after 0.9.2.** K01, Q630 and K07 merge after the tag, so they go out in the next release with iteration 2. Tagreeve starts on that release, not on 0.9.2.
+- **Wave B ships after 0.9.3.** K01, Q630 and K07 merge after the 0.9.3 tag, so they go out in the next release with iteration 2. Tagreeve starts on that release.
+- **One more release (Amendment 1).** Splitting the tag costs one more version PR and live run, about half a day. It keeps a released version as the judge of every entry.
 - **0.88M is a tight target.** K01 is the largest of the three. A miss of criterion 7 is reported with the per-role figures, and the cause is filed for iteration 2.
 - **The live run needs the maintainer.** The plan does not depend on a headless launch (How it starts). The tag waits for that run, unless the maintainer waives it. The 0.10.0 plan needs a home for the live run that needs neither the maintainer nor the skip-permissions flag, for example a cloud run on the scratch repo.
 - **No backstop for a second writer attempt that fails (A06).** If wave B shows a list that needs a second attempt and fails it, iteration 2 adds a third attempt or an automatic fresh rebuild with the check's notes.
