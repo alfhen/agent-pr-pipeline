@@ -847,7 +847,7 @@ const minorReviewPrompt = (pr, fromSha, fix, fixed, files) => `${ctx(pr)}
 Task: review only the commits of the minor pass, which fixed minor findings after the rest of the PR passed review.
 Clone it: ${cloneTo(`minorreview-${pr.id}`, pr)}. Those commits are \`git diff ${fromSha || 'origin/HEAD'}..HEAD\`; the whole PR is \`git diff origin/HEAD...HEAD\` for context.
 Check that each change fixes its finding, that it breaks nothing, and that it stays inside these files: ${JSON.stringify(files)}. Report a finding only about this diff. Do not review the rest of the PR again.
-One exception: if untrusted text (an agent answer, script output, a PR comment or a bot thread) chooses a path, command or URL that reaches a file read, a command or a reviewer prompt anywhere in the PR, report it as a major even when it is outside this diff, and set \`outsidePass: true\` on that finding. Set \`outsidePass\` on no other finding.
+One exception: if untrusted text (an agent answer, script output, a PR comment or a bot thread) chooses a path, command or URL that reaches a file read, a command or a reviewer prompt anywhere in the PR, report it as at least major even when it is outside this diff. Set \`outsidePass: true\` only when the finding is about code outside the commits of the pass, and on no other finding.
 Return headSha, a summary, the findings, \`unconfirmed\`: the numbers of the findings below that the diff does not really fix, and, when the plan entry or brief has an Invariants line, \`invariants\`: one row per invariant, with holds and evidence.
 
 ${prBlock(pr)}
@@ -1513,7 +1513,7 @@ async function minorRestore(pr, signedSha) {
 const repoPath = file => file.replace(/^\.\//, '').replace(/:\d+(-\d+)?$/, '')
 
 // One capped pass: a fixer, one check of its commits, and a revert commit when the check fails. There is no fix round and no second pass.
-// It never stops the PR. A fixer that dies after its push is treated like a failed check, since its commits are unchecked. When the
+// It stops the PR only for an untrusted-path finding outside the pass, ranked major or blocker. A fixer that dies after its push is treated like a failed check, since its commits are unchecked. When the
 // branch cannot be restored, the PR goes on and a person merges it: the untested list says why.
 async function minorPass(pr, signedSha, history, minors) {
   const open = mergeDuplicates(minors)
@@ -1571,7 +1571,6 @@ async function minorPass(pr, signedSha, history, minors) {
     const dropped = await drop(why, (test && test.headSha) || (review && review.headSha) || fix.headSha)
     return outside.length ? { ...dropped, outside } : dropped
   }
-  if (outside.length) return { ...await drop(`the check found an untrusted-path concern outside the pass: ${outside.map(f => f.title).join('; ')}`, test.headSha || review.headSha), outside }
   const unconfirmed = new Set(Array.isArray(review.unconfirmed) ? review.unconfirmed : [])
   const fixedItems = claimed.filter(n => Array.isArray(review.unconfirmed) && !unconfirmed.has(n)).map(n => candidates[n - 1])
   const rest = open.filter(m => !fixedItems.includes(m))
