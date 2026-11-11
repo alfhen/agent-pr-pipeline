@@ -41,10 +41,11 @@ test('E03b-4 and E03b-7: the break check pushes nothing, restores the clone and 
   assert.match(body, /Delete a file the PR adds, because it is not on `origin\/HEAD`/);
 });
 
-test('E03b-10: a load, import, missing-file, syntax or exit 127 error is not-run, not a proof', () => {
-  assert.match(body, /fails on its own assertion/);
-  assert.match(body, /A load, import, missing-file, syntax or exit 127 error is not that/);
-  assert.match(body, /set `not-run` and give the reason/);
+test('E03b-10: a load, import, syntax, missing-file or exit 127 error is not-run, not a proof', () => {
+  assert.match(body, /fails without the change for any reason other than a load, import, syntax, missing-file or exit 127 error/);
+  assert.match(body, /A load, import, syntax, missing-file or exit 127 error is not that/);
+  assert.match(body, /set `not-run`\. A `not-run` reason in `breakWhy` names which cause applied/);
+  assert.doesNotMatch(body, /own assertion/);
 });
 
 test('E03b-8 and E03b-9: kinds that pass by design are not-applicable, an unmapped eval is not-run, a ci eval gets none', () => {
