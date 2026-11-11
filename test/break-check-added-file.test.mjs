@@ -38,7 +38,7 @@ const texts = {
 for (const [name, text] of Object.entries(texts)) {
   test(`${name}: a missing file the change adds is fails-without-change`, () => {
     assert.match(text, /Break check/);
-    assert.match(text, /missing-file, import or exit 127 error[^.]*fails-without-change[^.]*change adds[^.]*new file in the diff/);
+    assert.match(text, /missing-file, import, or exit 127 error[^.]*fails-without-change[^.]*change adds[^.]*new file in the diff/);
   });
 
   test(`${name}: not-run only when the test file itself or a file the change does not add fails to load`, () => {
