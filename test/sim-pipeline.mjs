@@ -2084,7 +2084,19 @@ await check('A02-11: no eval results twice on the rerun stops the PR', async () 
   const x = await hooked(withEvals('C1'), rerunHook(() => vres({ evals: [] }), state))
   assert.equal(x.C1.ready, false)
   assert.equal(state.after, 2)
+  assert.match(x.C1.reason, /no eval results/)
+  assert.match(x.C1.reason, /twice/)
+  assert.match(x.C1.reason, /1r/)
   assert.ok(!calls.some(c => c.label === 'verify:C1#2' || c.label === 'fix:C1#2'))
+})
+await check('A02-3b: a second answer with no evals field also counts as no eval results', async () => {
+  const noField = () => { const v = vres(); delete v.evals; return v }
+  let n = 0
+  const x = await hooked(withEvals('C1'), (p, o) => { if (isVerifier(o)) { n++; return n === 1 ? vres({ evals: [] }) : noField() } })
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /no eval results/)
+  assert.match(x.C1.reason, /twice/)
+  assert.ok(!calls.some(c => c.label.startsWith('fix:C1#')))
 })
 await check('A02-6: a PR with no evals keeps the tester path and the tester is not retried', async () => {
   const x = await hooked(only1('C1'), () => undefined)
