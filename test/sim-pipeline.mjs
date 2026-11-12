@@ -2470,7 +2470,9 @@ await check('E01-1 the open prompt gives the last result of each eval from the h
   const answer = vres({ evals: [{ id: 'C1-1', result: 'pass', evidence: 'ok' }, { id: 'C1-2', result: 'pass', evidence: 'ok' }, { id: 'C1-3', result: 'ci', ciCheck: 'ci' }] })
   // The loop never leaves an id out of its newest verifier row, so the list grows after the verifier ran, as the review hook does here.
   const grow = (p, o) => { if (o.label === 'review:C1#2') given.push(...late) }
-  await hooked(only1('C1').map(p => ({ ...p, evals: given, resume: { history } })), (p, o) => verifyHook({ 1: answer, 2: answer }, grow)(p, o))
+  const x = await hooked(only1('C1').map(p => ({ ...p, evals: given, resume: { history } })), (p, o) => verifyHook({ 1: answer, 2: answer }, grow)(p, o))
+  const newest = x.C1.history.filter(h => h.evals).at(-1).evals
+  assert.ok(![...newest.passed, ...newest.failed, ...newest.ci].includes('C1-4'), 'the newest row with evals lacks C1-4')
   const verifierRow = calls.find(c => c.label === 'verify:C1#2')
   assert.ok(verifierRow && !verifierRow.prompt.includes('C1-4') && !verifierRow.prompt.includes('C1-5'), 'the verifier row lacks the late ids')
   const rows = JSON.parse(/Eval rows: (\[.*\])/.exec(calls.find(c => c.label === 'open:C1').prompt)[1])
