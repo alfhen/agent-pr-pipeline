@@ -1718,6 +1718,7 @@ async function bots(pr, n, headSha, issues, history, minors) {
   const answer = await call('botAnswer', pr, answerPrompt(pr, n, issues, headSha), `botanswer:${pr.id}`, { schema: ANSWER })
   if (!answer) return { ok: false, reason: 'bot answer failed', headSha, wait }
   if (!answer.codeChanged) return { ok: true, headSha, wait, answer }
+  botChangedState[pr.id] = true
   const lateMinors = []
   const check = await botCheck(pr, n, headSha, answer, history, lateMinors, issues, minors)
   minors.push(...lateMinors)

@@ -383,6 +383,15 @@ await check('K07-9: a throw after a bot code change keeps codeChangedByBots on t
   assert.match(x.reason, /^run failed:.*ci read crashed/)
   assert.equal(x.codeChangedByBots, true)
 })
+await check('K07-10: a throw in the bot answer check keeps codeChangedByBots on the run failed result', async () => {
+  calls = []; cleanupCalls = []; timeline = []; logs = []
+  preflight = GOOD
+  const out = await run({ ...base, prs: kBotPr() }, async (p, o) => { if (/^botreview:C2/.test(o.label)) throw new Error('review crashed'); return agent(p, o) }, thunks => Promise.all(thunks.map(t => t())), log)
+  const x = out.prs.find(r => r.id === 'C2')
+  assert.equal(x.ready, false)
+  assert.match(x.reason, /^run failed:.*review crashed/)
+  assert.equal(x.codeChangedByBots, true)
+})
 await check('K07-7: red CI after a bot code change keeps the field, and a words-only answer gives false', async () => {
   const x = await k7Run(PRS.filter(p => p.id === 'C2'), { cfg: [['ciFail', 'C2']], bad: false })
   assert.equal(x.C2.ready, false)
