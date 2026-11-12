@@ -25,7 +25,11 @@ const agentFile = readFileSync(new URL('../agents/evaluator.md', import.meta.url
 
 test('E06-3 the evaluator prompt names an eval miss as an item for the evals writer and gives the ledger command', () => {
   assert.ok(withRoot, 'the evaluator ran')
-  assert.match(withRoot, /codeChangedByBots true is an eval miss/)
+  const rule = text => /A PR with `?codeChangedByBots`? true is an eval miss[^.]*\./.exec(text.replaceAll('`', ''))
+  assert.ok(rule(withRoot) && rule(agentFile), 'both texts state the rule')
+  assert.equal(rule(withRoot)[0], rule(agentFile)[0])
+  assert.doesNotMatch(withRoot, /A ready PR with `?codeChangedByBots`? true/)
+  assert.doesNotMatch(agentFile, /A ready PR with `?codeChangedByBots`? true/)
   assert.match(withRoot, /item for the evals writer, with what the bot found/)
   assert.match(withRoot, /bash \/plugin\/scripts\/ledger\.sh o\/r report/)
 })
