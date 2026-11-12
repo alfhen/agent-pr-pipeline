@@ -2119,7 +2119,7 @@ async function runPRSteps(input) {
     id: pr.id, ready: true, prNumber: n, prUrl: opened.prUrl, headSha: end.head || headSha,
     ...landing, untested: untestedOf(pr), ci: end.ci,
     approvedBy: end.approvedBy || (wait && wait.approvedBy) || [], botNotes: wait && wait.notes,
-    codeChangedByBots: !!(answer && answer.codeChanged), closesIssues: (answer && answer.closesIssues) || [], lateMinors: b.lateMinors || [],
+    codeChangedByBots: botCodeChanged(b), closesIssues: (answer && answer.closesIssues) || [], lateMinors: b.lateMinors || [],
     docs, minorPass: pass.report,
     triage, issues: opened.issuesCreated || [], rounds: roundsIn(history), history, ...rerunFix(), ...evalsOut(), architecture: loopState.reports, product: loopState.product, qa: loopState.qa, implProblems: impl.problems || '',
   }
