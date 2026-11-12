@@ -70,6 +70,7 @@ Not in:
 | C08 A dropped minor pass keeps the fixes its check did not fault | Partial keep of a minor pass. | Two open points after the plan-review cap: its invariant ties a kept fix to a scripted check of the head only on the partial path, not on the clean keep; and its premise named #701 and #702 as open, which `main` already fixes. It caught none of the filed minors of iteration 1. |
 | C02 The merge gate reads a clean bot review of the head (#736) | The gate while no bot approves. | It sets what clears the merge gate (whose reply counts, a check run with no App, the request rule). The maintainer decides first. |
 | C03 One review for each final head | The review budget. | It sets when a review is asked, and its draft step needs a call that the REST-only rule forbids. The maintainer decides first, with C02. |
+| Eval producer field (0.9.6) | Each eval names the producer of its fixture's input shape (`inputFrom`), and the evals-check prompt shows it and judges it, so a fixture built on an input shape no producer makes is caught before the build. | The plan-review fixer took `inputFrom` out of C01 because nothing read it. It returns as its own entry with this named reader, written after an impact pass. |
 
 ## Order and waves
 
@@ -241,14 +242,14 @@ Acceptance: `node test/sim-pipeline.mjs` and `node --test test/*.test.mjs` pass;
 ## Release
 
 - 0.9.4 is tagged when C01, C04 and C05 are on `main`, with no live run (the maintainer waived it for 0.9.4). No tag for C04 and C05 alone: each tag costs the maintainer a plugin reload.
-- C06, C07, C08 and the gate entries C02 and C03 go to 0.9.5.
+- The batches of iteration 2 (plan 0.9.5) ship as 0.9.5. The held entries C06, C07, C08, the gate entries C02 and C03, and the eval-producer field go to 0.9.6.
 
 ## Date estimate
 
 - Size: 3 PRs, this plan PR, and the version PR. About 5 to 8 million subagent tokens without cache reads (a planning figure, from iteration 1: 0.9M to 2.1M per PR).
 - The gate is the slow part: about one completed CodeRabbit review an hour, so about one merge an hour.
 - Dates: this plan PR on 2026-11-13; wave C1 on 2026-11-13; wave D1 (C01) on 2026-11-13 to 2026-11-14; the 0.9.4 release on 2026-11-14. **Range: 2026-11-14 to 2026-11-15.**
-- The whole of D10 to the Tagreeve start: 0.9.4 by about 2026-11-15; the gate entries as 0.9.5 after the maintainer's decision; then the batches of iterations 2 and 3 (7 batches each) at about one merge an hour, about 1.5 to 2 days each; then the Wavewright rename release. **Tagreeve start: about 2026-11-19 to 2026-11-21.**
+- The whole of D10 to the Tagreeve start: 0.9.4 by about 2026-11-15; the batches of iteration 2 as 0.9.5; the held entries and the gate entries as 0.9.6 after the maintainer's decision; the batches of iteration 3 as 0.9.7 (7 batches in each iteration) at about one merge an hour, about 1.5 to 2 days each; then the Wavewright rename release. **Tagreeve start: about 2026-11-19 to 2026-11-21.**
 
 ## Flagged concerns
 
