@@ -373,6 +373,16 @@ await check('K07-6: a land-fix run keeps codeChangedByBots when the bot check fa
   assert.ok(b.LA.reason.startsWith('CI failed on the head'), b.LA.reason)
   assert.equal(b.LA.codeChangedByBots, true)
 })
+await check('K07-9: a throw after a bot code change keeps codeChangedByBots on the run failed result', async () => {
+  calls = []; cleanupCalls = []; timeline = []; logs = []
+  preflight = GOOD
+  const hook = (p, o) => { if (o.label === 'io:C2#endci') throw new Error('ci read crashed') }
+  const out = await run({ ...base, prs: kBotPr() }, async (p, o) => { if (hook(p, o)) return; return agent(p, o) }, thunks => Promise.all(thunks.map(t => t())), log)
+  const x = out.prs.find(r => r.id === 'C2')
+  assert.equal(x.ready, false)
+  assert.match(x.reason, /^run failed:.*ci read crashed/)
+  assert.equal(x.codeChangedByBots, true)
+})
 await check('K07-7: red CI after a bot code change keeps the field, and a words-only answer gives false', async () => {
   const x = await k7Run(PRS.filter(p => p.id === 'C2'), { cfg: [['ciFail', 'C2']], bad: false })
   assert.equal(x.C2.ready, false)
