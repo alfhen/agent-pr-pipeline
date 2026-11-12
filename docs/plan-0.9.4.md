@@ -101,7 +101,7 @@ In `test/sim-pipeline.mjs` each entry adds its cases as one block after the anch
 - `evals`, `breakCheck` and `docsUpdate` are on. The plan PR gets the product review and the architecture review.
 - Every entry touches a gated path. Until a gate change is released, each PR merges under the maintainer's standing rule of 2026-11-12: after a completed CodeRabbit review of the final head and green CI, with a merge record and a basis note. `merge-safety` does not run for them.
 - After each run: `scripts/after-run.sh` from v0.9.3. A resume uses only the arguments that `scripts/resume-args.sh` prints.
-- An evals-check stop gets one fresh rebuild with the refusal in the notes, as in iteration 1. A second stop moves the entry to the next iteration.
+- An evals-check stop gets one fresh rebuild with the refusal in the notes, as in iteration 1. The 0.9.4 tag needs C01: a second evals-check stop of C01 stops the iteration for the maintainer (overnight: for the assessment session). C04 and C05 ship in 0.9.4 when they are on `main`; the tag waits for them while they are still in their runs. A second evals-check stop of C04 or of C05 moves that entry to 0.9.6 with the held entries, and the tag goes without it. So no entry can block the tag by stopping twice, and the tag is never cut without the coverage map.
 - The builder session reports to the assessment session when the plan PR opens, at the end of each wave, when a PR stops for the second time, and when the release is cut.
 
 ## Pass criteria (written before the build)
@@ -163,6 +163,7 @@ Acceptance: `node test/sim-pipeline.mjs` passes; C04-1 fails on `main` because `
 - A test pins the SKILL.md step 2 sentence that a missing file the change adds is proof (#729). The sentence is already on `main` (#721).
 - The full-file fallback of a case that fails alone with the change does not give `fails-without-change` (#705).
 - Build note (open after the plan-review cap): a step the tester leaves out is recorded, and an omitted acceptance step fails the check.
+- Whether an acceptance step is required comes from the workflow, which knows from the entry whether it has an Acceptance line, and not from the tester's answer. A tester answer that leaves out the acceptance result when the entry has an Acceptance line fails the check. The mechanism is the build's.
 Evals:
 
 | Id | Kind | What must be true | How to check |
@@ -172,14 +173,15 @@ Evals:
 | C05-3 | behaviour | `agents/tester.md` and `refusedText` say a step outside the task is left out of `checks` and is not `refused`. | `test/break-check-mutation.test.mjs`. |
 | C05-4 | regression | SKILL.md step 2 holds the added-file proof sentence, and the test fails when it is removed. | The same test file. The sentence already holds on `main`; the test is new. |
 | C05-5 | error path | A case that fails alone with the change and passes in the full file gives no `fails-without-change`. | The same test file, with the prompt text of `verifyPrompt`. |
+| C05-6 | error path | A PR whose entry has an Acceptance line and whose tester answer has no acceptance result fails the check. | Sim: a PR whose notes hold an Acceptance line, and a `test:C1#1` answer with `pass: true`, every check passed and no `acceptance` field: the round is not a pass and the reason names the missing acceptance result. On `main` the round passes, because `testOutcome` reads the acceptance only from the tester's own answer. |
 
 Acceptance: `node --test test/break-check-mutation.test.mjs` and `node test/sim-pipeline.mjs` pass; C05-1 fails on `main`.
 
 ## Release
 
 - No tag for C04 and C05 alone. Each tag costs the maintainer a plugin reload, and these two do little for the batches.
-- The version PR waits until the entries of amendment 1 (C01, C06, C07) are on `main` too. Then 0.9.4 is tagged without C02 and C03, and with no live run (the maintainer waived it for 0.9.4). The gate entries become 0.9.5 after the maintainer's decision.
-- If amendment 1 does not converge in its plan review, there is no 0.9.4 tag until it does.
+- 0.9.4 is C01, C04 and C05. The tag waits for C01 from amendment 1b, and for C04 and C05 while they are still in their runs. It is tagged without C02 and C03, and with no live run (the maintainer waived it for 0.9.4).
+- The 0.9.4 tag needs C01: a second evals-check stop of C01 stops the iteration for the maintainer (overnight: for the assessment session). A second evals-check stop of C04 or of C05 moves that entry to 0.9.6 with the held entries, and the tag goes without it. So no entry can block the tag by stopping twice, and the tag is never cut without the coverage map.
 
 ## Date estimate
 
