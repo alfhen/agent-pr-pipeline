@@ -2002,9 +2002,11 @@ async function runPRSteps(input) {
     if (!PLUGIN_ROOT) return stopped('pluginRoot missing: the land-fix check needs it to run land-commits.sh')
     const given = givenEvals(pr, rawEvals)
     if (given) {
-      const bad = evalsVerdict(given.list, pr, given.meta)
+      const rec = Array.isArray(given.list) ? usableRecord(pr, given.accepted) : null
+      const meta = rec && sameList(given.list, rec.evals) ? { noErrorPath: reasonOf(rec.noErrorPath), noReference: reasonOf(rec.noReference), algorithm: !!rec.algorithm } : given.meta
+      const bad = evalsVerdict(given.list, pr, meta)
       if (bad) return stopped(`evals refused: ${bad}`)
-      pr = { ...pr, evals: given.list, evalsMeta: given.meta }
+      pr = { ...pr, evals: given.list, evalsMeta: meta }
       ciChecksState[pr.id] = await ciChecksOf(pr)
     }
     const was = await readHead(pr, n, 'landhead')

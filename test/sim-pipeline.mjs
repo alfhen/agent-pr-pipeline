@@ -382,6 +382,22 @@ await check('K01-3: an eval that fails on the land-fix head stops the PR before 
   assert.ok(x.LA.reason.includes('C1-2'), x.LA.reason)
   assert.ok(!calls.some(c => c.label === 'botwait:LA'))
 })
+const K_REFACTOR = [{ id: 'R1-1', kind: 'behaviour', statement: 'R1-1 must hold', check: 'run R1-1; expect ok' }]
+for (const [name, evals] of [
+  ['the object form with evalsMeta', { evals: K_REFACTOR, noErrorPath: 'pure refactor' }],
+  ['the accepted record alone', { evals: K_REFACTOR, accepted: { pr: 'LA', evals: K_REFACTOR, noErrorPath: 'pure refactor' } }],
+]) {
+  await check(`K01-R1-1: a land fix with ${name} and a noErrorPath reason gets a verifier call`, async () => {
+    const x = await kRun(kLandPr({ evals }), { cfg: [['landOutput', 'LA']] })
+    assert.equal(x.LA.ready, true, x.LA.reason)
+    assert.ok(kLabels('LA').includes('verify:LA#land1'))
+  })
+}
+await check('K01-R1-1: a land fix with a bare list and no reason is still refused', async () => {
+  const x = await kRun(kLandPr({ evals: K_REFACTOR }), { cfg: [['landOutput', 'LA']] })
+  assert.equal(x.LA.ready, false)
+  assert.ok(x.LA.reason.includes('evals refused'), x.LA.reason)
+})
 await check('K01-6: a land fix with no evals option keeps the tester', async () => {
   const x = await kRun(kLandPr(), { cfg: [['landOutput', 'LA']] })
   assert.equal(x.LA.ready, true)
