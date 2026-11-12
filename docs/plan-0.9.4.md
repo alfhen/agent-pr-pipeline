@@ -5,31 +5,32 @@
 - Draft, narrowed after plan review. Written after the 0.9.3 release, checked against `main` at ff1cfc7 (K01, #735). Nothing is built.
 - This release is the first part of iteration 2 of the maintainer's decision D10. The batches of iteration 2 run on the release that holds the evals-check entries (Release).
 - Plan review of the first draft (eight entries) did not converge: round 1 had 3 blockers and 9 majors, round 2 had 6 blockers and 13 majors, most of them on mechanism detail of C01, C02, C03, C06 and C07. The assessment session decided under the maintainer's overnight rule: this plan keeps the entries that settled (C04, C05, C08), and the others are held (Held for amendment).
+- The plan review of the narrowed plan reached its cap of 2 rounds with 5 majors in each round, on C04, C05 and C08. The assessment session decided under the overnight rule: C08 is held too, C04 and C05 keep their two open points as build notes, and the findings that `main` already fixes are corrected. These edits were made by hand after the cap.
 - K07 (#631, wave B2 of `docs/plan-0.9.2.md`) is still in its run. This plan does not touch its parts of `workflows/run-wave.js` (`runPRSteps`, the not-ready exits after the bot answer; `evaluatePrompt`) or `scripts/ledger.sh`.
 
 ## Summary in plain words
 
-Iteration 1 showed two large problems and three small ones. The large ones are the evals check (of 16 eval lists, 5 were accepted on the first attempt and 5 stopped for a person) and the merge gate (no bot can clear a PR since Gitar's free plan ran out). Their entries need more design work, so they are held for an amendment and for the maintainer.
+Iteration 1 showed two large problems and some small ones. The large ones are the evals check (of 16 eval lists, 5 were accepted on the first attempt and 5 stopped for a person) and the merge gate (no bot can clear a PR since Gitar's free plan ran out). Their entries need more design work, so they are held for an amendment and for the maintainer.
 
-This plan builds the three small ones now:
+This plan builds two small ones now:
 
 - C04: a resume that signs off runs the minor pass, like a first run.
 - C05: a tests-only PR records its mutation proof, and a check is "not run" only when no role ran it.
-- C08: a dropped minor pass keeps the fixes its check did not fault.
 
 Readers: the maintainer and the sessions that run the batches and Tagreeve. Out: new roles, new run-wave arguments, the batch fixes, the Wavewright rename. Each entry is one PR. A PR is done when its acceptance test passes in CI, an adversarial review reports no blockers or majors, and it is squash-merged.
 
 ## Goals this release serves
 
-- Automatic improvement (goal 7): C04 and C08 keep minor fixes that iteration 1 filed or lost. C05 makes a tests-only proof part of the record, so a tests-only PR needs no person for it.
-- Goal 8 share: every entry is work on the pipeline's own output, so the share is 3 of 3.
+- Automatic improvement (goal 7): C04 keeps minor fixes that a resume filed in iteration 1. C05 makes a tests-only proof part of the record, so a tests-only PR needs no person for it.
+- Goal 8 share: every entry is work on the pipeline's own output, so the share is 2 of 2.
 
 ## Findings
 
 | Finding | Issue | What is wrong |
 | --- | --- | --- |
 | A resume that signs off skips the minor pass. | none (0.9.1 report) | K01 and K05 had no pass, so their minors were filed, not fixed. |
-| A dropped minor pass reverts every fix, also the ones its check did not fault. | #702 | K02 and K03 lost fixes that were fine. An outside-marked minor is also lost when the pass drops for another reason. |
+| A dropped minor pass reverts every fix, also the ones its check did not fault. | none (0.9.1 report) | K02 and K03 lost fixes that were fine. The entry for it (C08) is held. |
+| Already fixed on `main`, issues still open. | #701, #702, #721 | `main` already keeps an outside-marked minor when the pass drops (#702, sim case "minor pass: an outside-marked minor reaches the checklist when the pass is dropped"), already gives the `pass.outside` stop the `needs human: untrusted path outside the minor pass:` prefix (#701), and SKILL.md step 2 already says that a missing file the change adds is proof (#721). Only a test that pins the step 2 wording is missing (#729). These issues are closed with a pointer to `main`, not by an entry of this plan. |
 | The PR body of a tests-only PR says its mutation checks "were refused and not run", but three agents ran them. | none (Q630, #731) | The tester of the minor-pass check declined by its own scope and reported `refused`. The verifier's record says not-applicable for every eval, so the proof is only in prose. |
 
 ## Scope
@@ -39,14 +40,15 @@ In:
 | Group | Entries | Issues | Size |
 | --- | --- | --- | --- |
 | A resume that signs off runs the minor pass | C04 | none | S |
-| Tests-only proof and "not run" | C05 | #705, #721, #729 | S |
-| A dropped pass keeps the fixes it did not fault | C08 | #701, #702 | M |
+| Tests-only proof and "not run" | C05 | #705, #729 | S |
 
 Not in:
 
 | Issue | Why it waits |
 | --- | --- |
 | #698, and the evals-check entries C01, C06, C07 | Held for amendment 1 (Held for amendment). |
+| C08 | Held (Held for amendment). |
+| #701, #702, #721 | Already fixed on `main` (Findings). |
 | #736, and the gate entries C02, C03 | Held for the maintainer (Held for amendment). |
 | #706 | A sim case that fails alone. A batch fix with the other sim minors. |
 | #708 | A ledger touch reason. `scripts/ledger.sh` is K07's, and the batches take the ledger minors together. |
@@ -60,6 +62,7 @@ Not in:
 | C01 The writer maps every bullet of the entry to its evals (#698) | The coverage map. | Amendment 1 rewrites it in what-must-be-true form. Code can check only that every coverage item has an eval id and that every id is in the list; whether the items are all the bullets of the entry is the check's judgment. |
 | C06 The evals check ranks its points | Corrections applied once, and an automatic fresh attempt. | Amendment 1 rewrites it in what-must-be-true form. |
 | C07 A size limit in code | The list size. | Amendment 1 rewrites it: the limit counts per coverage item and does not count evals a reviewer adds in a run. It must not reverse sim case A06-7, and it must not share a part of `workflows/run-wave.js` with C01 in one wave. |
+| C08 A dropped minor pass keeps the fixes its check did not fault | Partial keep of a minor pass. | Two open points after the plan-review cap: its invariant ties a kept fix to a scripted check of the head only on the partial path, not on the clean keep; and its premise named #701 and #702 as open, which `main` already fixes. It caught none of the filed minors of iteration 1. |
 | C02 The merge gate reads a clean bot review of the head (#736) | The gate while no bot approves. | It sets what clears the merge gate (whose reply counts, a check run with no App, the request rule). The maintainer decides first. |
 | C03 One review for each final head | The review budget. | It sets when a review is asked, and its draft step needs a call that the REST-only rule forbids. The maintainer decides first, with C02. |
 
@@ -67,23 +70,21 @@ Not in:
 
 ```mermaid
 flowchart LR
-  P[Plan PR] --> C1[Wave C1 on v0.9.3: C04 C05] --> C2[Wave C2 on v0.9.3: C08] --> A[Amendment 1 entries] --> R[Version PR, release 0.9.4] --> B[Iteration 2 batches on v0.9.4]
+  P[Plan PR] --> C1[Wave C1 on v0.9.3: C04 C05] --> A[Amendment 1 entries] --> R[Version PR, release 0.9.4] --> B[Iteration 2 batches on v0.9.4]
 ```
 
-Summary: two small fixes in wave C1, C08 after C04 is on main, then the entries of amendment 1, then the version PR and the release.
+Summary: two small fixes in wave C1, then the entries of amendment 1, then the version PR and the release.
 
 Why this order:
 
-- C08 goes to wave C2, after C04 is on `main`. C04 changes `minorPassRuns`, and C08's evals use the resume path that C04 opens to reach the pass.
-- Both waves run on the installed v0.9.3. A fix must not judge itself, and `pluginRoot` is never `main`.
+- The wave runs on the installed v0.9.3. A fix must not judge itself, and `pluginRoot` is never `main`.
 
 The entries edit different parts of `workflows/run-wave.js`:
 
 | Entry | Parts of `workflows/run-wave.js` |
 | --- | --- |
-| C04 | `minorPassRuns` |
+| C04 | `minorPassRuns`, and in `minorPass` only the history push of the `minor1` row |
 | C05 | `refusedText`, `verifyPrompt` (only the tests-only break-check sentence), `VERIFY` (the `breakCheck` enum), `verifyOutcome` (the `testsOnly` branch), `breakCheckOf` (the new value), `TESTS_ONLY_LINE` and its rule in `openPrompt` (only the tests-only sentence) |
-| C08 (wave C2) | `MINORFIX` (the commit map), `MINORREVIEW` (a `fixes` field on each finding), `normalizeFindings` and `absorb` (only the copy of the `fixes` field), `minorFixPrompt` (one commit for each fix), `minorPass` (the `drop` branch and the result), `minorReviewPrompt` (the Return line), `minorRevertPrompt`, `minorRestore` (the partial-revert check through `scripts/minor-partial.sh`), and in `runPRSteps` only the `pass.outside` return |
 
 `skills/pr-pipeline/SKILL.md` has one line for each step of "The loop for one PR", so two edits of one step always conflict:
 
@@ -91,13 +92,12 @@ The entries edit different parts of `workflows/run-wave.js`:
 | --- | --- |
 | C04 | "The loop for one PR" step 7 (one sentence on a resume) |
 | C05 | "The loop for one PR" step 2 |
-| C08 (wave C2) | "The loop for one PR" step 7 (the drop sentences) |
 
-C04 and C08 both edit step 7, in different waves. In `test/sim-pipeline.mjs` each entry adds its cases as one block after the anchor case its Touches line names, and no two entries share an anchor.
+In `test/sim-pipeline.mjs` each entry adds its cases as one block after the anchor case its Touches line names, and no two entries share an anchor.
 
 ## How the iteration runs
 
-- Both waves run from a local session with `pluginRoot` at the installed v0.9.3, never at `main`.
+- The wave runs from a local session with `pluginRoot` at the installed v0.9.3, never at `main`.
 - `evals`, `breakCheck` and `docsUpdate` are on. The plan PR gets the product review and the architecture review.
 - Every entry touches a gated path. Until a gate change is released, each PR merges under the maintainer's standing rule of 2026-11-12: after a completed CodeRabbit review of the final head and green CI, with a merge record and a basis note. `merge-safety` does not run for them.
 - After each run: `scripts/after-run.sh` from v0.9.3. A resume uses only the arguments that `scripts/resume-args.sh` prints.
@@ -108,10 +108,9 @@ C04 and C08 both edit step 7, in different waves. In `test/sim-pipeline.mjs` eac
 
 For the entries of this plan:
 
-1. **The four per-PR criteria of iteration 1** (a list before the build, a result for each eval id in the PR body, the break check ran, a ledger record with tokens by role) hold for C04, C05 and C08.
+1. **The four per-PR criteria of iteration 1** (a list before the build, a result for each eval id in the PR body, the break check ran, a ledger record with tokens by role) hold for C04 and C05.
 2. **C04 on a real resume.** The first resume in the batches that signs off makes a minor pass, and its result has a `minorPass` field.
 3. **C05 on a real tests-only PR.** The first tests-only PR in the batches has a `fails-on-mutation` result for each eval whose statement says it fails when a rule is removed, and its PR body has no "refused" line for a check that a role ran.
-4. **C08 on a real partial drop.** When a minor-pass check in the batches faults some fixes and not others, the result lists the kept fixes, or the report says that no such case came up.
 
 The list-acceptance criteria (at least 3 in 4 lists accepted on attempt 1, and no evals-check stop for a person, against iteration 1's base of 16 lists: 5 accepted on attempt 1, 6 on attempt 2, 5 stopped) apply to the batches. They are measured on the release that holds the entries of amendment 1, not on this plan's entries alone.
 
@@ -137,10 +136,11 @@ The list-acceptance criteria (at least 3 in 4 lists accepted on attempt 1, and n
 
 ### Wave C1
 
-**C04 A resume that signs off runs the minor pass.** Round cap 2. Touches: `workflows/run-wave.js` (`minorPassRuns`), `test/sim-pipeline.mjs` (the existing case "minor pass: a skipImpl rerun or a resume runs no pass", which keeps its `skipImpl` half and drops its resume half; and cases after "minor pass: a major from the check does the same"), `skills/pr-pipeline/SKILL.md` (see the table).
+**C04 A resume that signs off runs the minor pass.** Round cap 2. Touches: `workflows/run-wave.js` (`minorPassRuns`, and in `minorPass` only the history push of the `minor1` row), `test/sim-pipeline.mjs` (the existing case "minor pass: a skipImpl rerun or a resume runs no pass", which keeps its `skipImpl` half and drops its resume half; and cases after "minor pass: a major from the check does the same"), `skills/pr-pipeline/SKILL.md` (see the table).
 - A resume that signs off runs the minor pass, like a first run.
 - A `skipImpl` rerun, a docs PR and a plan PR still skip it.
 - A resume whose history already holds a minor-pass row (round `minor1`) runs no pass. A PR gets one pass, whether it runs once or is resumed, and SKILL.md and `AGENTS.md` keep saying so.
+- Build note (open after the plan-review cap): every pass that starts leaves a `minor1` row, whatever its end; `minorPass`'s history push joins C04's Touches. Today `minorPass` writes the row only when the tester and the check both answered, so a pass that drops before its check (the fixer changed nothing, or the check failed to run) leaves no row, and a later resume would run a second pass.
 Evals:
 
 | Id | Kind | What must be true | How to check |
@@ -149,18 +149,20 @@ Evals:
 | C04-2 | regression | A `skipImpl` rerun, a docs PR and a plan PR make no `minorfix:` call. | Sim: three cases. Each case holds a minor in a file in scope, so on a run that does the pass a `minorfix:` call happens and the case fails. |
 | C04-4 | error path | A resume whose history already holds a `minor1` row makes no `minorfix:` call, although a minor in a file in scope is carried. | Sim: `resume: { history: [{ round: 'minor1', testPass: true, failingChecks: [], blockersAndMajors: [] }], minors: [minorOf()] }` on a PR that signs off; no call matches `/^minorfix/`. Fails on a build that only drops `!pr.resume` from `minorPassRuns`. |
 | C04-3 | behaviour | SKILL.md step 7 says a resume that signs off runs the pass. | `grep -c` on the step line prints 1. |
+| C04-5 | error path | A resume after a run whose minor pass dropped before its check makes no `minorfix:` call. | Sim, two cases: run 1 has a minor in scope and (a) `minorfix:C1` answers `changed: false`, (b) `test:C1#minor1` answers null; run 1 then stops at a later step. Resume with the `history` and `minors` of that result on a PR that signs off: no call matches `/^minorfix/`. Both fail on a build that writes the row only after a completed check. |
 
 Acceptance: `node test/sim-pipeline.mjs` passes; C04-1 fails on `main` because `minorPassRuns` is false for a resume.
 
-**C05 A tests-only PR records its proof, and "not run" means no role ran it (#705, #721, #729).** Round cap 2. Touches: `workflows/run-wave.js` (see the table), `agents/verifier.md` (the tests-only rule), `agents/tester.md` (the scope rule), `test/break-check-mutation.test.mjs` (new), `test/verifier-agent.test.mjs` (the tests-only sentence at line 58 changes with the rule), `test/sim-pipeline.mjs` (the F659 tests-only cases that pin the "could not prove" sentence change; and cases after the tests-only cases of #659), `skills/pr-pipeline/SKILL.md` (see the table).
+**C05 A tests-only PR records its proof, and "not run" means no role ran it (#705, #729).** Round cap 2. Touches: `workflows/run-wave.js` (see the table), `agents/verifier.md` (the tests-only rule), `agents/tester.md` (the scope rule), `test/break-check-mutation.test.mjs` (new), `test/verifier-agent.test.mjs` (the tests-only sentence at line 58 changes with the rule), `test/sim-pipeline.mjs` (the F659 tests-only cases that pin the "could not prove" sentence change; and cases after the tests-only cases of #659), `skills/pr-pipeline/SKILL.md` (see the table).
 - On a tests-only PR the verifier runs, for each eval whose statement says it fails when a rule is removed, a named mutation of the code under test in its clone, and reports `breakCheck: fails-on-mutation` with the mutation in `breakWhy` when the case fails. It restores the file after each mutation.
 - The `VERIFY` schema allows `fails-on-mutation` in `breakCheck`. `verifyOutcome` keeps the value on a tests-only PR, where it sets it to null today.
 - `breakCheckOf` counts `fails-on-mutation` as proof, like `fails-without-change`.
 - `TESTS_ONLY_LINE` says the break check could not prove the tests can fail only when no eval has a mutation proof. With a proof it says which evals the mutation proved. The F659 cases and `test/verifier-agent.test.mjs` are updated to match, and keep the old sentence for the no-proof case.
 - A tests-only eval with no such statement stays not-applicable.
 - A tester that does not run a step because the step is outside its task leaves that step out of `checks`. It adds no check entry and no new answer field, so `testOutcome` is unchanged and the step counts as neither passed, failed nor refused. `refused` is only for a permission check or a file that could not run.
-- SKILL.md step 2 says that a missing file the change adds is proof (#721), and a test pins the wording (#729).
+- A test pins the SKILL.md step 2 sentence that a missing file the change adds is proof (#729). The sentence is already on `main` (#721).
 - The full-file fallback of a case that fails alone with the change does not give `fails-without-change` (#705).
+- Build note (open after the plan-review cap): a step the tester leaves out is recorded, and an omitted acceptance step fails the check.
 Evals:
 
 | Id | Kind | What must be true | How to check |
@@ -168,66 +170,28 @@ Evals:
 | C05-1 | behaviour | A tests-only verify answer with `fails-on-mutation` counts as a break-check fail in the history row, and the PR body line does not say "could not prove" for it. | Sim: a tests-only PR whose verifier answers `fails-on-mutation` for C1-1; the row's `breakCheck.fails` holds C1-1 and the open prompt holds the proof sentence. On `main` `breakCheck` is null for a tests-only PR. |
 | C05-2 | behaviour | The verify prompt of a tests-only PR asks for a named mutation for each "fails when removed" eval and the restore step. | Sim: the `verify:C1#1` prompt of a tests-only PR holds the rule. |
 | C05-3 | behaviour | `agents/tester.md` and `refusedText` say a step outside the task is left out of `checks` and is not `refused`. | `test/break-check-mutation.test.mjs`. |
-| C05-4 | behaviour | SKILL.md step 2 holds the added-file proof sentence, and the test fails when it is removed. | The same test file. |
+| C05-4 | regression | SKILL.md step 2 holds the added-file proof sentence, and the test fails when it is removed. | The same test file. The sentence already holds on `main`; the test is new. |
 | C05-5 | error path | A case that fails alone with the change and passes in the full file gives no `fails-without-change`. | The same test file, with the prompt text of `verifyPrompt`. |
 
 Acceptance: `node --test test/break-check-mutation.test.mjs` and `node test/sim-pipeline.mjs` pass; C05-1 fails on `main`.
 
-### Wave C2
-
-**C08 A dropped minor pass keeps the fixes its check did not fault (#701, #702).** Round cap 3. Touches: `workflows/run-wave.js` (see the table), `agents/reviewer.md` (the per-fix fault rule of the minor check), `scripts/minor-partial.sh` (new), `AGENTS.md` (step 6, the drop sentences), `test/minor-partial.test.mjs` (new, runs the script on a scratch repo), `test/sim-pipeline.mjs` (cases after the C04 block), `skills/pr-pipeline/SKILL.md` (see the table).
-- The fix agent makes one commit for each fix, and `MINORFIX` returns a commit map: the fix number and its sha.
-- The minor-check answer names, for each blocker or major, the numbers of the pass fixes it faults.
-- The `MINORREVIEW` schema gives each finding a `fixes` field (the numbers of the pass fixes it faults). `normalizeFindings` and `absorb` copy that field, so it is not lost when findings are merged, and two findings with one title keep the union of their fix numbers.
-- When the tests pass and every blocker or major names its fixes, the pass reverts only the faulted fix commits, and the tester and the check run once more on the new head. When they find nothing, the other fixes stay, and the result lists them as fixed.
-- Code does not trust the reverting agent's head. `scripts/minor-partial.sh` builds a scratch branch from the signed-off sha with a cherry-pick of the kept commits from the commit map, and the new head is accepted only when its tree equals the tree of that branch. A cherry-pick conflict, a missing sha, or a tree that differs drops the whole pass. The agent of `minorRevertPrompt` is told to revert the named commits only.
-- When the tests fail, or a blocker or major names no fix, the whole pass drops as today.
-- There is no third run: a finding on the second run drops the whole pass.
-- An outside-marked minor stays in the minors list when the pass drops for any reason (#702).
-- A blocker or major marked outside the pass ends the PR not ready with the `needs human:` prefix, on the first check and on the second. It is never counted as naming a fix, even when its `fixes` field is set.
-- The commit map is untrusted text. `run-wave.js` passes a sha to an io command or a prompt only when it is 40 lowercase hex and listed once, and each fix number only when it is in the claimed list. It does the same for the signed-off sha before any io call in the minor pass, `restoredHead` included. A value that fails the check drops the whole pass, and no command or prompt holds it. `scripts/minor-partial.sh` rejects any argument that is not 40 lowercase hex with exit 64, and checks that each kept sha lies in `<signedSha>..<head>` in order.
-- A kept pass needs the second tester run and the second check to be present and clean on the head the script accepted. A missing, failing or `unconfirmed` second run drops the whole pass.
-- A resume after a partial keep runs no pass (see C04).
-- The `needs human: untrusted path outside the minor pass:` stop keeps its prefix in every path (#701).
-- `AGENTS.md` step 6 says a pass reverts only the faulted fixes when the tests pass, and drops whole otherwise.
-Invariants: a kept pass fix was checked by a tester run and a check run on a head that holds it and no faulted fix, and the script checked that head.
-Evals:
-
-| Id | Kind | What must be true | How to check |
-| --- | --- | --- | --- |
-| C08-1 | behaviour | A check major that faults fix 2 of 3 reverts fix 2 only, a second check runs, and fixes 1 and 3 are in the result's fixed list. | Sim: calls hold `minorrevert:C1`, `test:C1#minor2` and `minorreview:C1#2`; `minorPass.fixed` has two titles. On `main` the pass drops all three. |
-| C08-2 | error path | A failing test, or a major that names no fix, drops the whole pass. | Sim: two cases; `minorPass.kept` is false. |
-| C08-3 | error path | A finding on the second check drops the whole pass, with no third run. | Sim: no `minorreview:C1#3`. |
-| C08-4 | behaviour | An outside-marked minor stays in the minors when the pass drops because the tests failed. | Sim (#702). |
-| C08-5 | behaviour | `agents/reviewer.md` asks the minor check to name the faulted fixes, `minorFixPrompt` asks for one commit for each fix, and `minorRevertPrompt` names the commits to revert. | `test/minor-partial.test.mjs`. |
-| C08-6 | error path | A partial revert that the agent reports as done but whose head still holds the faulted fix drops the whole pass. | Sim: the reverter returns `reverted: true` with a head whose tree differs from the script's; `minorPass.kept` is false and no kept fix is listed. |
-| C08-7 | behaviour | `scripts/minor-partial.sh` accepts a head whose tree equals the kept-commits tree, and refuses a tree that holds the faulted fix and a cherry-pick conflict. | `test/minor-partial.test.mjs`: three cases on a scratch repo. |
-| C08-8 | behaviour | `AGENTS.md` step 6 holds the partial-revert sentence. | The same test file greps it. |
-| C08-10 | error path | A commit map with a sha that is not 40 lowercase hex never reaches an io command or a reverter prompt, and the whole pass drops. | Sim: the `minorfix:C1` answer has the sha `abc; touch x`; no `io:C1#...` call or `minorrevert:C1` prompt holds `touch x`, and `minorPass.kept` is false. `test/minor-partial.test.mjs` runs the script with `--evil` and with a 7-hex sha and expects exit 64. |
-| C08-11 | error path | A signed-off head that is not 40 hex starts no io call and no minor pass. | Sim: the tester answers `headSha: 'a; touch x'` in round 1, the PR signs off with a minor in scope; no `io:C1#minorsame` prompt holds `touch x` and no `minorfix:C1` call. |
-| C08-12 | error path | A major marked outside the pass ends the PR not ready even when it names a pass fix, on the first check and on the second. | Sim, two cases: `minorreview:C1` (then `minorreview:C1#2`) returns a major with `outsidePass: true` and `fixes: [2]`; `ready` is false, the reason matches `/^needs human: untrusted path outside the minor pass:/`, and there is no `open:C1` call. Fails on a build that reads `outside` only on the whole-drop branch. |
-| C08-13 | error path | A second run that is missing, failing or `unconfirmed` drops the whole pass, and a kept pass ties to the head the script accepted. | Sim: three cases for the second tester and check answers; `minorPass.kept` is false in each. One more case: the kept result holds the head the script accepted. |
-| C08-9 | behaviour | Two minor-check findings with one title, one faulting fix 1 and one faulting fix 3, merge into one finding that faults fixes 1 and 3. | Sim: the `minorreview:C1` answer has the two findings; the pass reverts fixes 1 and 3 and keeps fix 2. On `main` the answer has no `fixes` field to keep. |
-
-Acceptance: `node --test test/minor-partial.test.mjs` and `node test/sim-pipeline.mjs` pass; C08-1 fails on `main`.
-
 ## Release
 
-- No tag for C04, C05 and C08 alone. Each tag costs the maintainer a plugin reload, and these three do little for the batches.
+- No tag for C04 and C05 alone. Each tag costs the maintainer a plugin reload, and these two do little for the batches.
 - The version PR waits until the entries of amendment 1 (C01, C06, C07) are on `main` too. Then 0.9.4 is tagged without C02 and C03, and with no live run (the maintainer waived it for 0.9.4). The gate entries become 0.9.5 after the maintainer's decision.
 - If amendment 1 does not converge in its plan review, there is no 0.9.4 tag until it does.
 
 ## Date estimate
 
-- Size: 3 PRs, this plan PR, amendment 1 with 3 more PRs, and the version PR. About 5 to 8 million subagent tokens without cache reads (a planning figure, from iteration 1: 0.9M to 2.1M per PR).
+- Size: 2 PRs, this plan PR, amendment 1 with 3 more PRs, and the version PR. About 5 to 8 million subagent tokens without cache reads (a planning figure, from iteration 1: 0.9M to 2.1M per PR).
 - The gate is the slow part: about one completed CodeRabbit review an hour, so about one merge an hour.
-- Dates: this plan PR on 2026-11-13; waves C1 and C2 on 2026-11-13; amendment 1 and its entries on 2026-11-13 to 2026-11-14; the 0.9.4 release on 2026-11-14. **Range: 2026-11-14 to 2026-11-15.**
+- Dates: this plan PR on 2026-11-13; wave C1 on 2026-11-13; amendment 1 and its entries on 2026-11-13 to 2026-11-14; the 0.9.4 release on 2026-11-14. **Range: 2026-11-14 to 2026-11-15.**
 - The whole of D10 to the Tagreeve start: 0.9.4 by about 2026-11-15; the gate entries as 0.9.5 after the maintainer's decision; then the batches of iterations 2 and 3 (7 batches each) at about one merge an hour, about 1.5 to 2 days each; then the Wavewright rename release. **Tagreeve start: about 2026-11-19 to 2026-11-21.**
 
 ## Flagged concerns
 
+- **Three plan reviews in a row did not settle inside the cap.** The narrowed plan stayed flat (5 majors, then 5) on C04, C05 and C08. The next plan, the batch plan of iteration 2, carries no mechanism and no eval tables: a batch entry is the issues it closes, its file group, its Touches by part and its wave.
 - **Two plans in a row whose review grew worse on mechanism detail.** Plan 0.9.2 amendment 1 (1 blocker and 4 majors, then 2 majors, then 4 majors) and this plan's first draft (3 blockers and 9 majors, then 6 blockers and 13 majors). From now on every entry is in what-must-be-true form: each bullet says what holds after the change, and the mechanism is the build's. An open design choice is written as a choice with a pick.
-- **C08 adds a second check run to the minor pass.** It costs a tester and a reviewer more on a partly faulted pass, and saves the fixes that iteration 1 lost. Whether the cost is worth it is the maintainer's to judge from the batches.
 - **C05 trusts the verifier's mutation.** A mutation that does not touch the rule under test could still make the case fail. The verifier names the mutation in `breakWhy`, so the reviewer and the report can read it.
 - **The coverage map and plan review.** The idea of C01 may carry over to plan review: each goal and each finding of a plan mapped to an entry. A candidate for release 3's planner, not part of this release.
 
