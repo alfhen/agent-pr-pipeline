@@ -15,8 +15,9 @@
 # fix step of the PR started and no dispute answer is a `change`. With no later step the list may be one that the run refused or
 # never checked, so nothing is printed.
 # An accepted dispute `change` is replayed only when the script finds the disputed id as the workflow counts it (the implement
-# answer, then each review-loop fix answer, in call order; a run with no implement step has an unknown start) and no reviewer eval
-# was added before it. Any other accepted change cannot be replayed exactly, so nothing is printed.
+# answer, then each review-loop fix answer, in call order; a run with no implement step has an unknown start) and no earlier review
+# answer holds a finding with an eval. This copies settleDisputes (the count), addReviewEval, evalsCheckPrompt and disputePrompt of
+# workflows/run-wave.js, so change them together. Any other accepted change cannot be replayed exactly, so nothing is printed.
 # Exit: 0 printed, 1 the path is missing or holds no accepted list for the PR (nothing on stdout), 64 bad argument.
 set -u
 usage="usage: recover-evals.sh <journal.jsonl | transcript folder> <PR id>"

@@ -1817,6 +1817,7 @@ async function runPR(input) {
     const resume = input.resume
     result = {
       id: input.id, ready: false, reason: `run failed: ${(e && e.message) || String(e)}`,
+      // runPRSteps pushes its rows onto this same array, so keep it by reference.
       ...(resume && Array.isArray(resume.history) ? { history: resume.history } : {}),
       ...recordOut(rec), ...carriedOut(resumedDisputes(input), resumedDeviations(input)),
     }

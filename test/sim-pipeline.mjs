@@ -856,7 +856,7 @@ await check('A10-13 the workflow parallel keeps a throwing evals check a stop wi
   assert.equal(other.pr, 'C2')
   let y = null
   try { y = (await a10Hooked(resumeWith({ ...given, accepted: other }), hook, rethrowing)).prs[0] } catch (e) { y = null }
-  assert.ok(y === null || y.evalsMeta.accepted !== other)
+  assert.ok(y === null || !y.evalsMeta || !y.evalsMeta.accepted || y.evalsMeta.accepted.pr !== 'C2')
 })
 await check('E01-4 a quick PR with an object-form list builds, and its triage prompt shows no unaccepted list', async () => {
   const given = { evals: listOf('QS'), noErrorPath: 'x' }
