@@ -1313,11 +1313,12 @@ async function testsOnlyBranch(pr, round) {
   try { files = m ? JSON.parse(m[1]) : null } catch (e) { files = null }
   return Array.isArray(files) && files.length > 0 && files.every(f => typeof f === 'string' && TEST_FILE.test(f))
 }
-async function checkCall(pr, round) {
-  if (!verifies(pr)) return call('test', pr, testPrompt(pr, round), `test:${pr.id}#${round}`, { schema: TEST })
+async function checkCall(pr, round, phase) {
+  const opts = phase ? { phase } : {}
+  if (!verifies(pr)) return call('test', pr, testPrompt(pr, round), `test:${pr.id}#${round}`, { ...opts, schema: TEST })
   const testsOnly = await testsOnlyBranch(pr, round)
   testsOnlyState[pr.id] = testsOnly
-  const ask = () => call('verify', pr, verifyPrompt(pr, round, testsOnly), `verify:${pr.id}#${round}`, { schema: VERIFY })
+  const ask = () => call('verify', pr, verifyPrompt(pr, round, testsOnly), `verify:${pr.id}#${round}`, { ...opts, schema: VERIFY })
   const first = await ask()
   if (!first || (first.evals && first.evals.length)) return first
   log(`${pr.id} round ${round}: the verifier gave no eval results, asking once more`)
@@ -1621,11 +1622,13 @@ async function checkNewCode(pr, { tag, label, role, what, reviewPrompt }, histor
     const prompt = await reviewPrompt(round, prior, siblings)
     if (typeof prompt !== 'string') return { ok: false, reason: prompt.fail }
     const [test, review] = await parallel([
-      () => call('test', pr, testPrompt(pr, `${tag}${round}`), `test:${pr.id}#${tag}${round}`, { phase: ROLES[role].phase, schema: TEST }),
+      () => checkCall(pr, `${tag}${round}`, ROLES[role].phase),
       () => call(role, pr, prompt, `${label}:${pr.id}#${round}`, { schema: REVIEW }),
     ])
     if (!test || !review) return { ok: false, reason: `${what} failed to run` }
-    const outcome = testOutcome(pr, test)
+    const noEvals = noEvalResultsStop(test, `${tag}${round}`)
+    if (noEvals) return { ok: false, reason: `${what}: ${noEvals.reason}` }
+    const outcome = checkOutcome(pr, test)
     noteTest(pr, outcome)
     if (outcome.nothingRan) return { ok: false, reason: `${what}: tests did not run` }
     const split = splitFindings([[review.findings.concat(failedInvariants(review)), what], [outcome.findings, 'test']])
@@ -1636,7 +1639,8 @@ async function checkNewCode(pr, { tag, label, role, what, reviewPrompt }, histor
     log(`${pr.id} ${what} ${round}: tests ${outcome.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (outcome.pass && blocking.length === 0) return { ok: true, headSha: test.headSha || review.headSha }
     if (round === BOT_CHECK_ROUNDS) {
-      row.stop = exhausted(`${what}: `, BOT_CHECK_ROUNDS, BOT_CHECK_ROUNDS, 'botCheckRounds')
+      const notPassed = outcome.evals && outcome.evals.failed.length ? `; evals not passed: ${outcome.evals.failed.join(', ')}` : ''
+      row.stop = exhausted(`${what}: `, BOT_CHECK_ROUNDS, BOT_CHECK_ROUNDS, 'botCheckRounds') + notPassed
       return { ok: false, reason: row.stop, lastFindings: blocking }
     }
     prior = blocking
@@ -1996,6 +2000,15 @@ async function runPRSteps(input) {
     const lateMinors = []
     const stopped = (reason, more) => { stopMark(history, reason); return { id: pr.id, prNumber: n, ready: false, reason, history, ...more } }
     if (!PLUGIN_ROOT) return stopped('pluginRoot missing: the land-fix check needs it to run land-commits.sh')
+    const given = givenEvals(pr, rawEvals)
+    if (given) {
+      const rec = Array.isArray(given.list) ? usableRecord(pr, given.accepted) : null
+      const meta = rec && sameList(given.list, rec.evals) ? { noErrorPath: reasonOf(rec.noErrorPath), noReference: reasonOf(rec.noReference), algorithm: !!rec.algorithm } : given.meta
+      const bad = evalsVerdict(given.list, pr, meta)
+      if (bad) return stopped(`evals refused: ${bad}`)
+      pr = { ...pr, evals: given.list, evalsMeta: meta }
+      ciChecksState[pr.id] = await ciChecksOf(pr)
+    }
     const was = await readHead(pr, n, 'landhead')
     if (was.fail) return stopped(was.fail)
     const before = was.head

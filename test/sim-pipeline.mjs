@@ -178,7 +178,7 @@ const agentRaw = async (prompt, o) => {
   if (o.label.startsWith('implement')) return { pushed: true, branch: 'b', summary: 's', acceptanceTestPassed: true, worktree: wt(o) }
   if (o.label.startsWith('fix:')) return { summary: 's', worktree: wt(o), siblings: id === 'B1' ? [{ finding: 'the new regex anchor', checked: ['other anchors'], fixed: [] }] : [] }
   const round = o.label.split('#')[1] || ''
-  if (o.label.startsWith('verify')) return { pass: true, headSha: 'sha-' + id, checks: [{ name: 'lint', pass: true }], evals: [...prompt.matchAll(/^Eval (\S+) \[([^\]]*)\]/gm)].map(m => ({ id: m[1], result: 'pass', evidence: 'ok', breakCheck: /^(behaviour|error path)$/.test(m[2]) ? 'fails-without-change' : 'not-applicable' })) }
+  if (o.label.startsWith('verify')) return { pass: true, headSha: /^land/.test(round) && !land.testMoved.has(id) ? landHead[id].padEnd(40, 'c') : 'sha-' + id + (/^(docs|bots|land)/.test(round) ? '-' + round : ''), checks: [{ name: 'lint', pass: true }], evals: [...prompt.matchAll(/^Eval (\S+) \[([^\]]*)\]/gm)].map(m => ({ id: m[1], result: 'pass', evidence: 'ok', breakCheck: /^(behaviour|error path)$/.test(m[2]) ? 'fails-without-change' : 'not-applicable' })) }
   if (o.label.startsWith('test')) return { pass: true, headSha: /^land/.test(round) && !land.testMoved.has(id) ? landHead[id].padEnd(40, 'c') : 'sha-' + id + (/^(docs|bots|land)/.test(round) ? '-' + round : ''), checks: [{ name: 'lint', pass: true }] }
   if (o.label.startsWith('landreview')) return { summary: 's', findings: land.landBad.has(id) || (land.landBadOnce.has(id) && round === '1') ? [{ severity: 'major', title: 'the resolution drops the new flag', detail: 'd' }] : [{ severity: 'minor', title: 'land nit', detail: 'd' }] }
   if (o.label.startsWith('botreview')) return { summary: 's', findings: id === 'B1' && round === '1' ? [{ severity: 'major', title: 'the new regex anchor rejects valid input', detail: 'd' }, { severity: 'minor', title: 'round one nit', detail: 'd' }] : [{ severity: 'minor', title: 'late nit', detail: 'd' }], invariants: id === 'B1' && round === '1' ? [{ text: 'the gate refuses an unknown path', holds: false, evidence: 'it accepts one' }] : [], sweep: [] }
@@ -316,6 +316,101 @@ await check('a bot answer in words only needs no check', () => {
   assert.equal(r.W1.ready, true)
   assert.ok(!mainCalls.some(c => /^(botreview|test):W1#bots/.test(c.label)))
   assert.equal(r.W1.land.split(':')[1], 'sha-W1')
+})
+// K01: after a bot answer or a land fix changes code, a PR with an eval list gets the verifier on the new head, not the tester.
+const K_LIST = [
+  { id: 'C1-1', kind: 'behaviour', statement: 'C1-1 must hold', check: 'run C1-1; expect ok' },
+  { id: 'C1-2', kind: 'error path', statement: 'C1-2 must hold', check: 'run C1-2; expect ok' },
+]
+const kRun = async (prs, { cfg = [], verify } = {}) => {
+  for (const k of cfg) land[k[0]].add(k[1])
+  calls = []; cleanupCalls = []; timeline = []; logs = []
+  preflight = GOOD
+  try {
+    const out = await run({ ...base, prs }, async (p, o) => {
+      const res = await agent(p, o)
+      return verify && o.label.startsWith('verify:') ? verify(res, o) : res
+    }, parallel, log)
+    return Object.fromEntries(out.prs.map(x => [x.id, x]))
+  } finally { for (const k of cfg) land[k[0]].delete(k[1]) }
+}
+const kLabels = id => calls.map(c => c.label).filter(l => l.split(':')[1].split('#')[0] === id)
+const kBotPr = () => PRS.filter(p => p.id === 'C2').map(p => ({ ...p, evals: K_LIST }))
+const kLandPr = (extra = {}) => [{ id: 'LA', title: 't', branch: 'b-LA', landFix: true, prNumber: 8, ...extra }]
+const kFail = (ids, only) => (res, o) => only.test(o.label) ? { ...res, evals: res.evals.map(e => ids.includes(e.id) ? { ...e, result: 'fail', evidence: 'bad' } : e) } : res
+const kDrop = (id, only) => (res, o) => only.test(o.label) ? { ...res, evals: res.evals.filter(e => e.id !== id) } : res
+await check('K01-1: a bot answer that changed code gets a verifier call on the new head, no tester, and the diff reviewer still runs', async () => {
+  const x = await kRun(kBotPr())
+  assert.equal(x.C2.ready, true)
+  const labels = kLabels('C2')
+  assert.ok(labels.includes('verify:C2#bots1') && labels.includes('botreview:C2#1'))
+  assert.ok(!labels.includes('test:C2#bots1'))
+  const v = calls.find(c => c.label === 'verify:C2#bots1')
+  assert.equal(v.agentType, 'agent-pr-pipeline:verifier')
+  for (const e of K_LIST) assert.ok(v.prompt.includes(`Eval ${e.id} [`), e.id)
+})
+await check('K01-3: an eval that fails on the bot head makes the PR not ready after the bot-check rounds', async () => {
+  const x = await kRun(kBotPr(), { verify: kFail(['C1-1'], /#bots/) })
+  assert.equal(x.C2.ready, false)
+  assert.ok(x.C2.reason.includes('C1-1'), x.C2.reason)
+  const labels = kLabels('C2').filter(l => /#bots\d/.test(l) && /^(verify|fix)/.test(l))
+  assert.deepEqual(labels, ['verify:C2#bots1', 'fix:C2#bots1', 'verify:C2#bots2'])
+})
+await check('K01-3: an eval with no result on the bot head makes the PR not ready and names the id', async () => {
+  const x = await kRun(kBotPr(), { verify: kDrop('C1-2', /#bots/) })
+  assert.equal(x.C2.ready, false)
+  assert.ok(x.C2.reason.includes('C1-2'), x.C2.reason)
+})
+await check('K01-4: every eval passing on the bot head makes the PR ready, and the bots1 row has the results', async () => {
+  const x = await kRun(kBotPr())
+  assert.equal(x.C2.ready, true)
+  const row = x.C2.history.find(h => h.round === 'bots1')
+  assert.deepEqual(row.evals.passed, ['C1-1', 'C1-2'])
+  assert.deepEqual(row.evals.failed, [])
+})
+await check('K01-2: a land fix with output and the evals option gets a verifier call, no tester, and the land-fix reviewer', async () => {
+  const x = await kRun(kLandPr({ evals: K_LIST }), { cfg: [['landOutput', 'LA']] })
+  assert.equal(x.LA.ready, true)
+  const labels = kLabels('LA')
+  assert.ok(labels.includes('verify:LA#land1') && labels.includes('landreview:LA#1'))
+  assert.ok(!labels.includes('test:LA#land1'))
+  assert.ok(calls.find(c => c.label === 'verify:LA#land1').prompt.includes('Eval C1-2 ['))
+})
+await check('K01-3: an eval that fails on the land-fix head stops the PR before the bot wait', async () => {
+  const x = await kRun(kLandPr({ evals: K_LIST }), { cfg: [['landOutput', 'LA']], verify: kFail(['C1-2'], /#land/) })
+  assert.equal(x.LA.ready, false)
+  assert.ok(x.LA.reason.includes('C1-2'), x.LA.reason)
+  assert.ok(!calls.some(c => c.label === 'botwait:LA'))
+})
+const K_REFACTOR = [{ id: 'R1-1', kind: 'behaviour', statement: 'R1-1 must hold', check: 'run R1-1; expect ok' }]
+for (const [name, evals] of [
+  ['the object form with evalsMeta', { evals: K_REFACTOR, noErrorPath: 'pure refactor' }],
+  ['the accepted record alone', { evals: K_REFACTOR, accepted: { pr: 'LA', evals: K_REFACTOR, noErrorPath: 'pure refactor' } }],
+]) {
+  await check(`K01-R1-1: a land fix with ${name} and a noErrorPath reason gets a verifier call`, async () => {
+    const x = await kRun(kLandPr({ evals }), { cfg: [['landOutput', 'LA']] })
+    assert.equal(x.LA.ready, true, x.LA.reason)
+    assert.ok(kLabels('LA').includes('verify:LA#land1'))
+  })
+}
+await check('K01-R1-1: a land fix with a bare list and no reason is still refused', async () => {
+  const x = await kRun(kLandPr({ evals: K_REFACTOR }), { cfg: [['landOutput', 'LA']] })
+  assert.equal(x.LA.ready, false)
+  assert.ok(x.LA.reason.includes('evals refused'), x.LA.reason)
+})
+await check('K01-6: a land fix with no evals option keeps the tester', async () => {
+  const x = await kRun(kLandPr(), { cfg: [['landOutput', 'LA']] })
+  assert.equal(x.LA.ready, true)
+  const labels = kLabels('LA')
+  assert.ok(labels.includes('test:LA#land1'))
+  assert.ok(!labels.some(l => l.startsWith('verify:LA')))
+})
+await check('K01-7: a bot answer after a land fix with the evals option gets a verifier call, no tester', async () => {
+  const x = await kRun(kLandPr({ evals: K_LIST }), { cfg: [['landOutput', 'LA'], ['threads', 'LA']] })
+  assert.equal(x.LA.ready, true)
+  const labels = kLabels('LA')
+  assert.ok(labels.includes('verify:LA#bots1') && labels.includes('botreview:LA#1'))
+  assert.ok(!labels.includes('test:LA#bots1'))
 })
 await check('docs PR skips architecture and uses the docs reviewer', () => {
   assert.equal(r.D1.ready, true)
