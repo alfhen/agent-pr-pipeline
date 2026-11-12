@@ -190,7 +190,7 @@ Acceptance: `node --test test/break-check-mutation.test.mjs` and `node test/sim-
 
 **C01 The writer maps every bullet of the entry to its evals.** Round cap 3. Touches:
 - `workflows/run-wave.js` (see the table in Order and waves).
-- `scripts/recover-evals.sh` (the record and meta build, and the header comment).
+- `scripts/recover-evals.sh` (the record and meta build, and the header comment, which states that a given list read from a check prompt has no coverage).
 - `agents/evals-writer.md` (the fields of an eval, the cover rule, the refusal rule and the Return list).
 - `templates/plan.md` (the entry bullet placeholders and the Invariants line).
 - `skills/pr-pipeline/SKILL.md` (see the table).
@@ -209,9 +209,9 @@ This entry supersedes these sentences of A01 in `docs/plan-0.9.2.md`, and that f
 - The coverage is stored in the accepted record (`evalsMeta.accepted`) and nowhere else in the result. The top level of `evalsMeta` keeps its three fields.
 - The record's coverage is carried unchanged: in every later result, through a resume whose list equals the record, through a given list that builds a new record from an earlier record, and through an accepted dispute change.
 - `scripts/resume-args.sh` prints the coverage inside `resume.evals.accepted` with no change to the script, because it copies `evalsMeta` whole.
-- `scripts/recover-evals.sh` prints the coverage inside `evalsMeta.accepted` when the accepted writer answer (or the given list it read) holds one, and prints no coverage key when it holds none. It never refuses a writer answer for a missing coverage.
+- `scripts/recover-evals.sh` prints the coverage inside `evalsMeta.accepted` when the accepted writer answer holds one, and prints no coverage key when it holds none. A given list read from a check prompt has no coverage. It never refuses a writer answer for a missing coverage.
 - When a list goes to the evals check and has a coverage (the writer's, or its record's), the check prompt shows the items and asks for a judgment per item. When it has none, the check prompt is the same as on `main`.
-- The evals-check prompt keeps the step 2 sentence word for word, keeps the "Evals to check:" block in the shape `recover-evals.sh` reads, and never shows an eval statement of the record in the item text.
+- The evals-check prompt keeps the step 2 sentence word for word, keeps the "Evals to check:" block in the shape `recover-evals.sh` reads, and the code adds no eval statement of the record to the item text it shows.
 - Rule text that both the writer and the evals check must get is in `evalsRules`. Text only for the writer stays outside the span from "Rules for the list" to the Return line, so the two prompts still share one rule text (A06-2).
 - Two lists are still the same when their ids, kinds, statements and checks are equal. The coverage is not compared.
 - `templates/plan.md` says each behaviour and each invariant of an entry is its own bullet. Its Invariants line keeps the prefix "Invariants: ", and SKILL.md keeps the phrase "Invariants line".
@@ -229,12 +229,12 @@ Evals:
 | C01-5 | behaviour | The coverage carries unchanged through a resume, a given list that builds a new record, and an accepted dispute change. | Sim: three cases; in each the new result's `evalsMeta.accepted.coverage` equals the first record's coverage. |
 | C01-6 | regression | A given list, a resumed list, a reviewer eval and a land-fix list with no coverage are not refused for coverage. | The existing E01-5, A01-4, E02-3 resume, K01 land-fix and A01-17 cases pass with their assertions unchanged; A01-17 still counts one evals-check call on the resume. |
 | C01-7 | regression | The existing evals-check call counts and stop reasons do not change for lists that already pass. | The existing cases E01-2, E01-3, E01-4, A01-1, A01-2, A01-10, A01-11, A01-14, A01-15 and F652-2 pass with their assertions unchanged, with `withMeta` giving a valid coverage. |
-| C01-8 | behaviour | `recover-evals.sh` prints the writer's coverage in `evalsMeta.accepted` when the answer holds one, also after a replayed dispute change, and prints no coverage key when it holds none. | `test/evals-coverage.test.mjs` (new): an inline answer with a coverage, in each input form, run through `recover-evals.sh`; and the existing `expected-ok.json` case in `test/recover-evals.test.mjs` passes unchanged. |
-| C01-9 | behaviour | `resume-args.sh` prints the coverage inside `resume.evals.accepted`. | `test/evals-coverage.test.mjs` (new): a result whose record holds a coverage; the printed item holds it, and no key is added at the level of `resume`. |
+| C01-8 | behaviour | `recover-evals.sh` prints the writer's coverage in `evalsMeta.accepted` when the answer holds one, also after a replayed dispute change, and prints no coverage key when it holds none. A given list read from a check prompt has no coverage. | `test/evals-coverage.test.mjs` (new): an inline answer with a coverage, in each input form, run through `recover-evals.sh`; a given list read from a check prompt gives no coverage key; and the existing `expected-ok.json` case in `test/recover-evals.test.mjs` passes unchanged. |
+| C01-9 | regression | `resume-args.sh` prints the coverage inside `resume.evals.accepted`. | `test/evals-coverage.test.mjs` (new): a result whose record holds a coverage; the printed item holds it, and no key is added at the level of `resume`. This passes on `main` by design, because the script copies `evalsMeta` whole and C01 does not change it; it guards that the coverage still comes through. |
 | C01-10 | behaviour | The writer prompt and `agents/evals-writer.md` ask for the coverage map, and its item rule. | Sim: the `evals:C1` prompt holds the coverage rule and the Return line names `coverage`; `test/evals-coverage.test.mjs` (new) reads the agent file. |
 | C01-11 | regression | The writer and evals-check prompts still share one rule text, and the check prompt keeps its step 2 sentence and its "Evals to check:" block. | The existing A06-2 and E01-11 cases and the recover-evals A10 cases pass unchanged. |
 | C01-12 | behaviour | The plan template says each behaviour and each invariant is its own bullet and keeps the "Invariants: " prefix. | `test/evals-coverage.test.mjs` (new) reads `templates/plan.md`; the existing role-rules and skill-notes tests pass unchanged. |
-| C01-13 | error path | The item text in the check prompt holds no eval statement of the record. | Sim: the A01-14 setup with a coverage; the `evalsarch:` prompt does not match the statement of C1-1. |
+| C01-13 | regression | The code adds no eval statement of the record to the check prompt when it shows the coverage. | Sim: the A01-14 setup with a coverage; the `evalsarch:` prompt does not match the statement of C1-1. This passes on `main` by design, where the prompt shows no items; it guards that the code that shows the items adds no record statement. It does not cover the writer's own item text, which is free text. |
 
 Acceptance: `node test/sim-pipeline.mjs` and `node --test test/*.test.mjs` pass; C01-1 and C01-3 fail on `main`.
 
