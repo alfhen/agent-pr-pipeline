@@ -42,7 +42,7 @@ In:
 | A resume that signs off runs the minor pass | C04 | none | S |
 | Tests-only proof and "not run" | C05 | #705, #721, #729 | S |
 | A dropped pass keeps the fixes it did not fault | C08 | #701, #702 | M |
-| The writer maps the entry to its evals (amendment 1) | C01 | #698 | M |
+| The writer maps the entry to its evals (amendment 1) | C01 | none | M |
 | The size of a list is limited per coverage item (amendment 1) | C07 | none | S |
 | The evals check ranks its points (amendment 1) | C06 | none | M |
 
@@ -51,6 +51,7 @@ Not in:
 | Issue | Why it waits |
 | --- | --- |
 | #736, and the gate entries C02, C03 | Held for the maintainer (Held for the maintainer). |
+| #698 | The quick-fix parenthetical in `evalsRules`. A batch fix with the other wording minors, not part of the coverage map. |
 | #706 | A sim case that fails alone. A batch fix with the other sim minors. |
 | #708 | A ledger touch reason. `scripts/ledger.sh` is K07's, and the batches take the ledger minors together. |
 | #723, #724, #726, #727 | Wording and numbering in the A09 and A10 scripts. A batch fix. |
@@ -93,7 +94,7 @@ The entries edit different parts of `workflows/run-wave.js`:
 | C04 | `minorPassRuns` |
 | C05 | `refusedText`, `verifyPrompt` (only the tests-only break-check sentence), `VERIFY` (the `breakCheck` enum), `verifyOutcome` (the `testsOnly` branch), `breakCheckOf` (the new value), `TESTS_ONLY_LINE` and its rule in `openPrompt` (only the tests-only sentence) |
 | C08 (wave C2) | `MINORFIX` (the commit map), `MINORREVIEW` (a `fixes` field on each finding), `normalizeFindings` and `absorb` (only the copy of the `fixes` field), `minorFixPrompt` (one commit for each fix), `minorPass` (the `drop` branch and the result), `minorReviewPrompt` (the Return line), `minorRevertPrompt`, `minorRestore` (the partial-revert check through `scripts/minor-partial.sh`), and in `runPRSteps` only the `pass.outside` return |
-| C01 (wave D1) | `EVALS` (the `coverage` field and each eval's `inputFrom`), `evalsRules` (the coverage and input-shape sentences), `evalsPrompt` (step 3 and the Return line), `evalsCheckPrompt` (step 2), a new `coverageVerdict` after `evalsVerdict`, and in `writeEvals` only the line after `const bad = evalsVerdict(...)` in the writer loop, plus the matching line in the given-list branch |
+| C01 (wave D1) | `EVALS` (the `coverage` field and each eval's `inputFrom`), `evalsRules` (the coverage and input-shape sentences), `evalsPrompt` (step 3 and the Return line), `evalsCheckPrompt` (step 2), a new `coverageVerdict` after `evalsVerdict`, `makeRecord` (the record holds the coverage, so `recordOut` and `evalsOut` carry it in `evalsMeta.accepted` with no change of their own), and in `writeEvals` only the line after `const bad = evalsVerdict(...)` in the writer loop, plus the matching line in the given-list branch (the object form takes a `coverage` key, and the equal-to-record test ignores reviewer `-R` evals) |
 | C07 (wave D2) | the body of `coverageVerdict` (one new size rule at its end), and in `writeEvals` only the given-list branch line that calls `coverageVerdict` (the condition for a list equal to the record) |
 | C06 (wave D2) | `EVALSCHECK` (ranked points), `checkEvals` (its return), the `writeEvals` writer loop from the `const c = ...` line to the end of the loop, one new block after the loop (the fresh attempt), `evalsPrompt` (the `last` text), `evalsCheckPrompt` (step 3 and the Return line) |
 
@@ -104,19 +105,19 @@ The entries edit different parts of `workflows/run-wave.js`:
 | C04 | "The loop for one PR" step 7 (one sentence on a resume) |
 | C05 | "The loop for one PR" step 2 |
 | C08 (wave C2) | "The loop for one PR" step 7 (the drop sentences) |
-| C01 (wave D1) | "Step 1: write the plan" the "Evals." bullet |
-| C07 (wave D2) | "Step 1: write the plan" one sentence on the size at the end of the "Evals." bullet |
-| C06 (wave D2) | "When things go wrong" the `evals refused:` and `evals check:` row |
+| C01 (wave D1) | "Step 1: write the plan" the "Evals." bullet (the coverage), and "The loop for one PR" step 1 (the refusal sentence, written so that it names the kinds of refusal reason and the attempt count once) |
+| C07 (wave D2) | "Step 1: write the plan" the "Evals." bullet, only the clause "and at most 20 for a batch PR", which the size rule replaces |
+| C06 (wave D2) | "The loop for one PR" step 1 (the only D2 edit of that step: the corrections and the fresh attempt, and the three refusal kinds `coverage`, `size` and `correction`, whose names this plan fixes), and "When things go wrong" the `evals refused:` and `evals check:` row (the same three kinds) |
 
-C04 and C08 both edit step 7, in different waves. C01 and C07 both edit the "Evals." bullet, in different waves.
+C04 and C08 both edit step 7, in different waves. C01 and C07 both edit the "Evals." bullet, in different waves, and C01 and C06 both edit step 1, in different waves. C07 edits no step of the loop, so no two entries of one wave edit the same line.
 
 Parts of other shared files (amendment 1):
 
 | Entry | File and part |
 | --- | --- |
-| C01 | `agents/evals-writer.md` the coverage and input-shape rules; `templates/plan.md` the bullet rule; `skills/pr-pipeline/SKILL.md` "Step 1: write the plan" the "Evals." bullet; `test/sim-pipeline.mjs` the `withMeta` and `accepted1` helpers and the `OK_LIST`-style writer answers, changed in place to hold a coverage, and its new block after "E01-1 + E03a: the writer list that E01 accepted reaches the verifier, and a PR with no list goes to the tester"; `test/build-against-evals.test.mjs` and `test/evals-writer.test.mjs`, only their writer answers (`OK_LIST`), changed in place to hold a coverage; `test/evals-coverage.test.mjs` (new) |
-| C07 | `agents/evals-writer.md` the size sentence; `skills/pr-pipeline/SKILL.md` "Step 1: write the plan" one sentence on the size at the end of the "Evals." bullet; `test/sim-pipeline.mjs` the case "A06-7 a list of 21 evals is not refused by the check code", changed in place, and its new block after that case |
-| C06 | `agents/arch-reviewer.md` and `agents/product-reviewer.md` the evals-check rank rule; `agents/evals-writer.md` a new "Corrections" section; `skills/pr-pipeline/SKILL.md` "When things go wrong" the `evals refused:` and `evals check:` row; `test/sim-pipeline.mjs` the E01 cases that assert the calls of a stop after the last writer attempt, changed in place to expect the fresh attempt, and its new block after the C01 block; `test/evals-rank.test.mjs` (new) |
+| C01 | `agents/evals-writer.md` the coverage and input-shape rules; `templates/plan.md` the bullet rule; `scripts/recover-evals.sh` the part that builds the accepted record (it adds the coverage); `skills/pr-pipeline/SKILL.md` "Step 1: write the plan" the "Evals." bullet; `test/sim-pipeline.mjs` the `withMeta` and `accepted1` helpers and the `OK_LIST`-style writer answers, changed in place to hold a coverage, and its new block after "E01-1 + E03a: the writer list that E01 accepted reaches the verifier, and a PR with no list goes to the tester"; `test/build-against-evals.test.mjs` and `test/evals-writer.test.mjs`, only their writer answers (`OK_LIST`), changed in place to hold a coverage; `test/evals-coverage.test.mjs` (new; it also holds the round-trip cases of `scripts/resume-args.sh`, which copies `evalsMeta` whole and does not change) |
+| C07 | `agents/evals-writer.md` the size sentence, which replaces "and at most 20 evals for a batch PR"; `skills/pr-pipeline/SKILL.md` "Step 1: write the plan" the "Evals." bullet, only the clause "and at most 20 for a batch PR"; `test/evals-writer-rubric.test.mjs` the A06-3 rule, changed in place to assert the new rule instead of `20`; `test/sim-pipeline.mjs` the case "A06-7 a list of 21 evals is not refused by the check code", changed in place, and its new block after that case |
+| C06 | `agents/arch-reviewer.md` and `agents/product-reviewer.md` the evals-check rank rule; `agents/evals-writer.md` a new "Corrections" section; `skills/pr-pipeline/SKILL.md` "The loop for one PR" step 1 and "When things go wrong" the `evals refused:` and `evals check:` row; `scripts/recover-evals.sh` the part that picks the accepted list (the corrected list and the fresh attempt); `test/sim-pipeline.mjs` the E01 cases that assert the calls of a stop after the last writer attempt, changed in place to expect the fresh attempt, and its new block after the C01 block; `test/evals-rank.test.mjs` (new; it also holds the recovery cases) |
  In `test/sim-pipeline.mjs` each entry adds its cases as one block after the anchor case its Touches line names, and no two entries share an anchor.
 
 ## How the iteration runs
@@ -227,12 +228,12 @@ Acceptance: `node --test test/minor-partial.test.mjs` and `node test/sim-pipelin
 
 ### Wave D1
 
-**C01 The writer maps the entry to its evals (#698).** Round cap 3. Touches: `workflows/run-wave.js`, `agents/evals-writer.md`, `templates/plan.md`, `skills/pr-pipeline/SKILL.md`, `test/sim-pipeline.mjs`, `test/build-against-evals.test.mjs`, `test/evals-writer.test.mjs` (only the parts in the tables above), `test/evals-coverage.test.mjs` (new).
+**C01 The writer maps the entry to its evals.** Round cap 3. Touches: `workflows/run-wave.js`, `agents/evals-writer.md`, `templates/plan.md`, `skills/pr-pipeline/SKILL.md`, `test/sim-pipeline.mjs`, `test/build-against-evals.test.mjs`, `test/evals-writer.test.mjs` (only the parts in the tables above), `scripts/recover-evals.sh` (the accepted record only), `test/evals-coverage.test.mjs` (new). No other test file changes: a list given as a bare array or as an object with no `coverage` key is exempt (below), so the helpers `withEvals`, `EVS`, `resumeWith` and `a01Given`, `test/review-after-evals.test.mjs` and the cases of C04, C05 and C08 stay as they are.
 
 - A writer answer holds a coverage: a list of items, each with a short text and the ids of the evals that cover it.
 - The unit of a coverage item depends on the input:
   - for a plan entry, each bullet and each invariant;
-  - for a quick fix, each line of the trusted quick brief and of the Evals comment on the issue;
+  - for a quick fix, each line of the trusted quick brief;
   - for a batch entry, each issue the PR closes.
 - Code refuses a writer list before the evals check, with a reason that starts `evals refused: coverage`, when:
   - the coverage is missing or empty;
@@ -242,8 +243,11 @@ Acceptance: `node --test test/minor-partial.test.mjs` and `node test/sim-pipelin
 - The evals check's prompt shows the coverage and asks, for each item, whether its evals prove it, and whether a bullet, invariant, brief line or issue has no item.
 - Each eval whose check reads an input that a producer makes (a workflow result, a journal line, a GitHub REST answer, a script's output) names that producer in an `inputFrom` field. The evals check judges that the fixture has the producer's real shape.
 - `templates/plan.md` says: each behaviour and each invariant of an entry is its own bullet.
-- A given list (`prs[].evals`) or a resumed list that equals its accepted record needs no coverage, so a resume of a list accepted before 0.9.4 still runs.
-- A given or resumed list that differs from its record, or has no record, needs a coverage. It is refused the same way when the coverage is missing.
+- The accepted coverage is part of the accepted record. The result holds it in `evalsMeta.accepted.coverage`, `scripts/resume-args.sh` prints it in `resume.evals`, and `scripts/recover-evals.sh` prints it for a list it recovers from a journal. The object form of `prs[].evals` and `resume.evals` names it in a `coverage` key.
+- The evals check of a given list, a resumed list or a dispute change shows the coverage of the record, when the record has one.
+- A given or resumed list that equals its accepted record needs no coverage, so a resume of a list accepted before 0.9.4 still runs. Reviewer evals (ids with `-R`) are ignored in that comparison, so a resume of a run that added a reviewer eval is equal to its record.
+- A given or resumed list that has no `coverage` key and differs from its record, or has no record, is a list that the pipeline did not write. It is exempt from the coverage rule and from the size rule of C07, and goes to the evals check as it does today.
+- A given or resumed list that has a `coverage` key and differs from its record is checked for the same three points as a writer list, and is refused the same way.
 - Invariant: no writer list reaches the evals check without a coverage whose every item has an id in the list.
 
 Choice: may an eval belong to no coverage item? Pick: yes. A regression, time bound or size limit eval can serve the entry as a whole and no single bullet, and refusing it would push the writer to invent items.
@@ -258,26 +262,27 @@ Evals:
 | C01-2 | error path | A writer list with no coverage stops before any evals check, with a reason that starts `evals refused: coverage`. | Sim: a writer answer with no `coverage`, on its last attempt; the reason starts `evals refused: coverage`, and there is no `evalsarch:` call for that attempt. |
 | C01-3 | error path | An item with no id, and an item that names an id not in the list, are each refused the same way. | `test/evals-coverage.test.mjs`: two sim runs, one per case; each reason starts `evals refused: coverage`. |
 | C01-4 | behaviour | An eval named by no item does not refuse the list. | Sim: a coverage that leaves out one regression eval; the list reaches the check. |
-| C01-5 | behaviour | A resume whose list equals its record runs with no coverage. | Sim: the A01-1 resume setup with a list and record from before 0.9.4 (no coverage); no `evals refused:` stop, and the `verify:` prompt holds each id. |
-| C01-6 | error path | A given list that differs from its record and has no coverage is refused with the coverage reason. | Sim: `prs[].evals` with a changed list and no coverage; the reason starts `evals refused: coverage`. |
+| C01-5 | behaviour | A resume whose list equals its record, or equals it plus reviewer evals, runs with no coverage. | Sim: the A01-1 resume setup with a list and record from before 0.9.4 (no coverage), and the A01-17 setup with a `-R` eval added; no `evals refused:` stop, and the `verify:` prompt holds each id. |
+| C01-6 | error path | A given list that has a `coverage` and differs from its record is checked like a writer list. | Sim: `prs[].evals` as an object with a changed list and a coverage whose item names an id not in the list; the reason starts `evals refused: coverage`. |
 | C01-7 | behaviour | The writer prompt and `agents/evals-writer.md` name the three coverage units and the `inputFrom` rule, and the check prompt asks per item. | `test/evals-coverage.test.mjs`: reads the agent file and the `evals:C1` and `evalsarch:C1#1` prompts from a sim run. |
 | C01-8 | behaviour | `templates/plan.md` holds the rule that each behaviour and invariant is its own bullet. | The same test file reads the template. |
-| C01-9 | regression | The tests whose writer answers now hold a coverage pass, and the E01 and A01 cases pass. | `node --test test/*.test.mjs` and `node test/sim-pipeline.mjs` pass in full. |
+| C01-9 | regression | The tests whose writer answers now hold a coverage pass, a list given with no `coverage` key is exempt, and the E01, A01, C04, C05 and C08 cases pass. | `node --test test/*.test.mjs` and `node test/sim-pipeline.mjs` pass in full, and `git diff --name-only origin/HEAD...HEAD -- test scripts` lists only files that the Touches line names. |
+| C01-10 | behaviour | The accepted coverage round-trips. A run whose writer list has a coverage and whose review adds `C1-R1-1` gives a result whose `resume-args.sh` output, resumed, is not refused for coverage, and `recover-evals.sh` prints the same coverage. | `test/evals-coverage.test.mjs`: sim run, `scripts/resume-args.sh` on its output, a second sim run with that `resume.evals`; no `evals refused:` stop and a `verify:C1#1` call. Then `scripts/recover-evals.sh` on a journal fixture whose writer answer holds a coverage. |
 
 Acceptance: `node --test test/evals-coverage.test.mjs` and `node test/sim-pipeline.mjs` pass. C01-2 fails on `main`, because a list with no coverage reaches the check.
 
-Review points answered: "code cannot see the entry's bullets" (the third and fourth bullets, and the second choice: code checks structure only, and the claim is narrowed); "refuses every writer list with no coverage, which breaks two other test files" (Touches names both files, changed in place); "C01-6 says A01 cases pass unchanged" (C01-5 and C01-9: the helpers change in place, and a list equal to its record needs no coverage); "the same place as C07" (the wave split).
+Review points answered: "bare-array given lists have no coverage" (the exempt bullet and C01-9); "the coverage has no home" (the record bullet and C01-10); "code cannot see the entry's bullets" (the third and fourth bullets, and the second choice: code checks structure only, and the claim is narrowed); "refuses every writer list with no coverage, which breaks two other test files" (Touches names both files, changed in place); "C01-6 says A01 cases pass unchanged" (C01-5 and C01-9: the helpers change in place, and a list equal to its record needs no coverage); "the same place as C07" (the wave split).
 
 ### Wave D2
 
-**C07 The size of a list is limited per coverage item.** Round cap 2. Touches: `workflows/run-wave.js`, `agents/evals-writer.md`, `skills/pr-pipeline/SKILL.md`, `test/sim-pipeline.mjs` (only the parts in the tables above).
+**C07 The size of a list is limited per coverage item.** Round cap 2. Touches: `workflows/run-wave.js`, `agents/evals-writer.md`, `skills/pr-pipeline/SKILL.md`, `test/sim-pipeline.mjs`, `test/evals-writer-rubric.test.mjs` (only the parts in the tables above).
 
 - Code refuses a writer list, before the evals check, with a reason that starts `evals refused: size`, when it holds more evals than its limit, or when one coverage item names more than 6 evals.
 - The limit of a list is the larger of 6 and 3 times the number of its coverage items, and no single coverage item names more than 6 evals. So 7 items give a limit of 21, 12 items give 36, and 1 item gives 6.
 - Evals that a reviewer adds inside a run (ids with `-R`) are not counted.
 - A given or resumed list that equals its accepted record is not refused for its size, also when it holds reviewer evals. A list that was within the limit when it was accepted stays accepted.
-- A given list that differs from its record is counted the same way as a writer list, without its reviewer evals.
-- `agents/evals-writer.md` states the limit with the same rule, in the same words.
+- A given list that has a `coverage` and differs from its record is counted the same way as a writer list, without its reviewer evals. A given list with no `coverage` key is exempt, as in C01.
+- `agents/evals-writer.md` and the "Evals." bullet of SKILL.md state the limit with the same rule, in the same words, and the old sentence "at most 20 evals for a batch PR" is gone from both. A batch PR has no separate limit: its limit is the rule above.
 - The existing case "A06-7 a list of 21 evals is not refused by the check code" is changed in place: 21 evals over 7 coverage items pass. Its name says that a list within the limit is not refused.
 - Invariant: no list is refused for size because of evals that a reviewer added.
 
@@ -294,48 +299,50 @@ Evals:
 | C07-3 | error path | One item that names 7 evals is refused, also when the list is within its limit. | Sim: 3 items (limit 9), one naming 7 ids (9 evals in all); the reason starts `evals refused: size`. |
 | C07-4 | behaviour | Reviewer evals do not count: an accepted list at its limit with one reviewer eval added runs on. | Sim: an accepted list at its limit, and a reviewer eval added in round 1; no `evals refused:` stop. |
 | C07-5 | behaviour | A resume whose list equals its record is not refused, also with a reviewer eval in it. | Sim: the C07-4 result resumed with the A09 object form; no `evals refused: size`, and `verify:` runs. |
-| C07-6 | error path | A given list that differs from its record and is over the limit is refused. | Sim: `prs[].evals` over the limit with a changed eval; the reason starts `evals refused: size`. |
-| C07-7 | behaviour | The writer file holds the same rule. | Sim block: reads `agents/evals-writer.md` and finds the sentence "The limit of a list is the larger of 6 and 3 times the number of its coverage items, and no single coverage item names more than 6 evals." |
+| C07-6 | error path | A given list with a `coverage` that differs from its record and is over the limit is refused. | Sim: `prs[].evals` as an object with a coverage, over the limit, with a changed eval; the reason starts `evals refused: size`. |
+| C07-7 | behaviour | The writer file and SKILL.md hold the same rule, and the old limit of 20 is gone. | Sim block: reads `agents/evals-writer.md` and finds the sentence "The limit of a list is the larger of 6 and 3 times the number of its coverage items, and no single coverage item names more than 6 evals.", and finds no `at most 20 evals` in it or in SKILL.md; `test/evals-writer-rubric.test.mjs`, changed in place, passes with the new rule. |
 
-Acceptance: `node test/sim-pipeline.mjs` passes. C07-1 fails on `main` after C01, because no size rule exists.
+Acceptance: `node test/sim-pipeline.mjs` and `node --test test/evals-writer-rubric.test.mjs` pass. C07-1 fails on `main` after C01, because no size rule exists.
 
 Review points answered: "the 20-eval limit sits in the shared `evalsVerdict`, so reviewer-added evals are refused" (the reviewer bullets and C07-4); "refuses the resume of a list that C07-4 itself allows" (the record bullets and C07-5); "reverses the existing sim case A06-7 and has no sim file" (Touches names the sim file, and A06-7 is changed in place); "the same place as C01" (the wave split and the parts table); the assessment's point that a flat 20 refuses the batches (the numbers choice).
 
-**C06 The evals check ranks its points.** Round cap 3. Touches: `workflows/run-wave.js`, `agents/arch-reviewer.md`, `agents/product-reviewer.md`, `agents/evals-writer.md`, `skills/pr-pipeline/SKILL.md`, `test/sim-pipeline.mjs` (only the parts in the tables above), `test/evals-rank.test.mjs` (new).
+**C06 The evals check ranks its points.** Round cap 3. Touches: `workflows/run-wave.js`, `agents/arch-reviewer.md`, `agents/product-reviewer.md`, `agents/evals-writer.md`, `skills/pr-pipeline/SKILL.md`, `scripts/recover-evals.sh` (only the part that picks the accepted list), `test/sim-pipeline.mjs` (only the parts in the tables above), `test/evals-rank.test.mjs` (new).
 
 - The evals check returns each point with a rank, `contract` or `correction`, and with the coverage item it is about. The rules for each rank are in the reviewer files:
   - contract: an item is not proven, an item is missing, an eval cannot be checked from a clean clone, a claim about `main` is false, an edit falls outside Touches, or an input shape has no producer;
   - correction: a fix to an eval that otherwise proves its item.
-- Each correction names the eval id, the field, and one of two edit kinds: `add case`, with the case text, or `replace text`, with the old and the new text.
+- Each correction names the eval id, the field `check` (no other field can be corrected), and one of two edit kinds: `add case`, with the case text, or `replace text`, with the old and the new text.
 - On a writer list, a contract point refuses the list, as today.
 - On a writer list with correction points only, the writer applies each correction once. Code accepts the corrected list with no second evals check only when:
-  - for `add case`, the new check holds the old check unchanged plus the given case text, and the statement, kind and `inputFrom` are equal;
-  - for `replace text`, the old text is gone and the new text is in, in that field only;
-  - no other eval and no other field changed, and the coverage is unchanged.
+  - for `add case`, the new check equals the old check, a newline and the case text, with nothing else;
+  - for `replace text`, the old text occurs once in the old check, is less than half of it, and the new check equals the old check with that one occurrence replaced;
+  - the statement, kind, `inputFrom` and every other field of every eval are equal, no other eval changed, and the coverage is unchanged.
 - When a correction is not applied exactly, the list is refused with a reason that starts `evals refused: correction`, and the next writer attempt runs as today.
 - On a given list, a resumed list and a dispute change, any point refuses, as today. There is no writer there to apply a correction.
 - A verdict of `ok` with a contract point refuses. Two corrections to one field of one eval refuse.
 - After the last writer attempt is refused, one more writer attempt runs fresh, with no earlier list and with the refusal in its notes. Its list goes through the coverage rules and the evals check like any other. If it is refused, the PR stops as today.
 - The stop result keeps its fields and the `evalsMeta` shape. The corrections that were applied are listed in a new result field, `evalCorrections`.
-- A kind label that code can settle (whether an eval fails on `main`) is not an evals-check point. The verifier's break check reports a mismatch as a minor finding.
-- Invariant: no list that the evals check refused reaches the build except through an exactly applied correction, checked by code.
+- A kind label that code can settle (whether an eval fails on `main`) is not an evals-check point. The evals check does not raise it, and this entry changes no verifier part.
+- Recovery after a lost result finds the accepted list. A check answer with correction points only has verdict `ok`. The writer's apply answer has the label `evals:<pr>#c<n>`, and the fresh attempt has the label `evals:<pr>#f1`. `scripts/recover-evals.sh` prints the list of the apply answer when its edits meet the exact rules above, prints the list of an accepted fresh attempt like any other, and prints nothing for an apply answer that does not meet the rules.
+- Invariant: no list that the evals check refused reaches the build except through a correction that code compared exactly under the rules above: the `check` field only, one case added or one part replaced.
 
 Choice: how many fresh attempts? Pick: one. This is the hand rebuild that the stop rule did by hand in iteration 1, where it worked in 4 of 5 cases, and more attempts would spend the check each time.
 
-Choice: does a corrected list get a second check when a correction touches a coverage item's only eval? Pick: no. The edit kinds cannot change what an eval proves, because the statement and the kind stay equal and code checks it, so a second check adds cost and no safety.
+Choice: does a corrected list get a second check? Pick: no. A correction edits only the `check` field. It adds one case after the old check, or replaces a part that is less than half of it once, and code compares the result exactly. So the statement, the kind and most of the proof stay, and a second check adds cost and little safety. The part that a replacement can still change is the reviewer's to see: the PR body lists `evalCorrections`.
 
 Evals:
 
 | Id | Kind | What must be true | How to check |
 | --- | --- | --- | --- |
 | C06-1 | behaviour | A check answer with correction points only, applied exactly, gives an accepted list with no second `evalsarch:` call. | Sim: `evalsarch:C1#1` returns one `add case` correction; the writer's next answer adds the case; one `evalsarch:` call in all, `implement:C1` runs, and `evalCorrections` holds the correction. |
-| C06-2 | error path | A correction that replaces the whole check instead of adding the case is refused with `evals refused: correction`. | Sim: the writer answer replaces the check text; the reason or the next attempt's notes start `evals refused: correction`. |
-| C06-3 | error path | A correction that also changes another eval is refused the same way. | Sim: the writer changes a third eval's statement; refused. |
+| C06-2 | error path | A correction that is not an exact edit of the `check` field is refused with `evals refused: correction`: a `replace text` on `statement`, a new check with a line before or inside the old check, and a replacement of the whole check. | Sim, three cases: each answer is one of those; the reason or the next attempt's notes start `evals refused: correction`, and there is no accepted list. Each case is built so that the old check, the statement and the new text really are present. |
+| C06-3 | error path | A correction that also changes another eval or the coverage is refused the same way. | Sim: the writer changes a third eval's statement; and a case where the coverage changes; refused. |
 | C06-4 | behaviour | A contract point refuses the list, and a verdict `ok` with a contract point refuses too. | Sim: two cases; each gives a next writer attempt. |
 | C06-5 | error path | On a given list, a resumed list and a dispute change, a correction point refuses. | Sim: three cases (`prs[].evals`, `resume.evals`, a dispute `change`), each with an answer holding one correction; each is refused or ruled out as today. |
 | C06-6 | behaviour | After the last attempt is refused, one fresh attempt runs with the refusal in its notes, and a refusal of it stops the PR. | Sim: every check refuses; the writer labels are `evals:C1`, `evals:C1#w2` and one fresh attempt; the fresh prompt holds the last refusal and no earlier list; then a stop. |
 | C06-7 | regression | The stop result keeps `evalsMeta` and its fields. The E01 cases pass, the call-list ones changed in place only for the fresh attempt. | `node test/sim-pipeline.mjs` passes in full. |
 | C06-8 | behaviour | The reviewer files hold the two ranks and their rules, and the writer file holds the corrections rule. | `test/evals-rank.test.mjs` reads the three files. |
+| C06-9 | behaviour | Recovery prints the corrected list for an applied correction, prints the fresh attempt's list when it was accepted, and prints nothing for an apply answer that is not exact. | `test/evals-rank.test.mjs`: `scripts/recover-evals.sh` on three journal fixtures (labels `evals:C1`, `evalsarch:C1#1` with verdict `ok` and one correction, `evals:C1#c1`; a fresh `evals:C1#f1`; an inexact `#c1`). |
 
 Acceptance: `node --test test/evals-rank.test.mjs` and `node test/sim-pipeline.mjs` pass. C06-1 fails on `main`, because a correction gets a second check there.
 
