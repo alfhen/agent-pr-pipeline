@@ -2464,19 +2464,35 @@ await check('E03a-8: a later verifier round replaces the evals bucket', async ()
 })
 await check('E01-1 the open prompt gives the last result of each eval from the history rows and the verifier', async () => {
   const given = [ev('C1-1', 'behaviour'), ev('C1-2', 'error path'), ev('C1-3', 'regression')]
+  const late = [ev('C1-4', 'behaviour'), ev('C1-5', 'regression')]
   const row = (round, evals) => ({ round, testPass: true, failingChecks: [], blockersAndMajors: [], evals })
-  const history = [row(1, { passed: ['C1-1'], failed: ['C1-2', 'C1-3'], ci: [] })]
+  const history = [row(1, { passed: ['C1-1'], failed: ['C1-2', 'C1-3'], ci: ['C1-4'] })]
   const answer = vres({ evals: [{ id: 'C1-1', result: 'pass', evidence: 'ok' }, { id: 'C1-2', result: 'pass', evidence: 'ok' }, { id: 'C1-3', result: 'ci', ciCheck: 'ci' }] })
-  await hooked(only1('C1').map(p => ({ ...p, evals: given, resume: { history } })), verifyHook({ 1: answer, 2: answer }))
+  // The loop never leaves an id out of its newest verifier row, so the list grows after the verifier ran, as the review hook does here.
+  const grow = (p, o) => { if (o.label === 'review:C1#2') given.push(...late) }
+  const x = await hooked(only1('C1').map(p => ({ ...p, evals: given, resume: { history } })), (p, o) => verifyHook({ 1: answer, 2: answer }, grow)(p, o))
+  const newest = x.C1.history.filter(h => h.evals).at(-1).evals
+  assert.ok(![...newest.passed, ...newest.failed, ...newest.ci].includes('C1-4'), 'the newest row with evals lacks C1-4')
+  const verifierRow = calls.find(c => c.label === 'verify:C1#2')
+  assert.ok(verifierRow && !verifierRow.prompt.includes('C1-4') && !verifierRow.prompt.includes('C1-5'), 'the verifier row lacks the late ids')
   const rows = JSON.parse(/Eval rows: (\[.*\])/.exec(calls.find(c => c.label === 'open:C1').prompt)[1])
-  assert.deepEqual(rows.map(r => r.result), ['pass', 'pass', 'ci'])
+  const result = id => rows.find(r => r.id === id).result
+  assert.deepEqual(['C1-1', 'C1-2', 'C1-3'].map(result), ['pass', 'pass', 'ci'])
+  assert.equal(result('C1-4'), 'ci', 'an id the newest row leaves out keeps its result from an earlier row')
+  assert.equal(result('C1-5'), 'not checked', 'an id no row lists has no result')
 })
 await check('E01-1 + E03a: the writer list that E01 accepted reaches the verifier, and a PR with no list goes to the tester', async () => {
-  const list = listOf('C1')
-  await evalsRun([C1PR], () => withMeta(list))
+  const first = [ev('C1-1', 'behaviour'), ev('C1-2', 'error path'), ev('C1-9', 'regression')]
+  const list = [ev('C1-1', 'behaviour', { check: 'run the second draft; expect ok' }), ev('C1-2', 'error path'), ev('C1-3', 'regression')]
+  let drafts = 0
+  let checks = 0
+  await evalsRun([C1PR], () => withMeta(++drafts === 1 ? first : list), () => ++checks === 1 ? { verdict: 'needs-change', notes: 'one eval is weak' } : okCheck())
+  assert.ok(calls.some(c => c.label === 'evals:C1#w2'), 'the writer ran a second time')
+  assert.ok(first.some(e => e.id === 'C1-9') && !list.some(e => e.id === 'C1-9'))
   const v = calls.find(c => c.label === 'verify:C1#1')
   assert.ok(v, 'the accepted list sends the PR to the verifier')
   for (const e of list) assert.ok(v.prompt.includes(`Eval ${e.id} [`) && v.prompt.includes(e.check), `verify prompt lacks ${e.id}`)
+  assert.ok(!v.prompt.includes('C1-9'), 'the verifier holds no id that only the first draft had')
   assert.ok(!calls.some(c => c.label.startsWith('test:C1#')))
   await evalsRun([C1PR], noWriter, okCheck, { evals: false })
   assert.ok(calls.some(c => c.label === 'test:C1#1') && !calls.some(c => c.label.startsWith('verify:')))
