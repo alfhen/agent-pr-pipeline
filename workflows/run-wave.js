@@ -1814,7 +1814,13 @@ async function runPR(input) {
   } catch (e) {
     const rec = recordState[input.id]
     if (!rec) throw e
-    result = { id: input.id, ready: false, reason: `run failed: ${(e && e.message) || String(e)}`, ...recordOut(rec) }
+    const resume = input.resume
+    result = {
+      id: input.id, ready: false, reason: `run failed: ${(e && e.message) || String(e)}`,
+      // runPRSteps pushes its rows onto this same array, so keep it by reference.
+      ...(resume && Array.isArray(resume.history) ? { history: resume.history } : {}),
+      ...recordOut(rec), ...carriedOut(resumedDisputes(input), resumedDeviations(input)),
+    }
   } finally {
     const cleanup = await cleanupPR(input)
     if (result && cleanup.length) result.cleanup = cleanup
@@ -1896,6 +1902,8 @@ async function writeEvals(pr, raw) {
       return { stop: 'evals missing: the input holds the accepted record and no list', record: given.accepted }
     }
     const rec = usableRecord(pr, given.accepted)
+    // A throw out of the evals check must still return the given record.
+    if (rec) recordState[pr.id] = rec
     const bad = evalsVerdict(given.list, pr, given.meta)
     if (bad) return { stop: `evals refused: ${bad}`, record: rec, refused: given.list }
     if (rec && sameList(given.list, rec.evals)) return { evals: given.list, meta: { noErrorPath: reasonOf(rec.noErrorPath), noReference: reasonOf(rec.noReference), algorithm: !!rec.algorithm }, record: rec }
