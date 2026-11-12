@@ -1,7 +1,7 @@
 {
   "name": "agent-pr-pipeline",
   "description": "Build a release as small PRs: role agents implement, test from a clean clone, review, fix, update the docs, open the PR and answer the review bots; the main session merges.",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "author": { "name": "Alf Henderson" },
   "repository": "https://github.com/alfhen/agent-pr-pipeline",
   "license": "MIT",
