@@ -49,7 +49,7 @@ if [ "$item" = '"missing"' ]; then echo "resume-args: PR $id is not in $src" >&2
 
 if [ -n "$n" ]; then
   rounds=$(jq -r '[.resume.history // [] | .[] | objects | select(.round != "stop")] | length' <<<"$item")
-  if [ $((rounds + n)) -gt "$cap" ]; then
+  if [ $((rounds + 10#$n)) -gt $((10#$cap)) ]; then
     echo "WARN: the history has $rounds rounds and this run adds up to $n, more than the cap of $cap" >&2
   fi
 fi

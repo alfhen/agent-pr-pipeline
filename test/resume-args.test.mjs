@@ -123,6 +123,15 @@ test('A09-6 warns when the history rounds plus n are more than the cap', () => {
   assert.equal(w2.item.id, 'R1')
 })
 
+test('A09-6 leading-zero --max-rounds and --cap are read as decimal', () => {
+  const f = file(output([stopped('R1')]))
+  const w = ok(f, 'R1', '--max-rounds', '08', '--cap', '10')
+  assert.equal(w.item.id, 'R1')
+  assert.equal(w.stderr.split('\n').filter(l => l.startsWith('WARN')).length, 0)
+  const w2 = ok(f, 'R1', '--max-rounds', '08', '--cap', '02')
+  assert.equal(w2.stderr.split('\n').filter(l => l.startsWith('WARN')).length, 1)
+})
+
 test('A09-7 40 evals and 12 rounds come through whole and in order', () => {
   const p = stopped('B1')
   p.evals = mkEvals(40, 1200)
