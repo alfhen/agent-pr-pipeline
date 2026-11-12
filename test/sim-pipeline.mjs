@@ -382,6 +382,7 @@ await check('K07-9: a throw after a bot code change keeps codeChangedByBots on t
   assert.equal(x.ready, false)
   assert.match(x.reason, /^run failed:.*ci read crashed/)
   assert.equal(x.codeChangedByBots, true)
+  assert.ok(Number.isInteger(x.prNumber) && x.prNumber > 0, `prNumber ${x.prNumber}`)
 })
 await check('K07-10: a throw in the bot answer check keeps codeChangedByBots on the run failed result', async () => {
   calls = []; cleanupCalls = []; timeline = []; logs = []

@@ -228,7 +228,7 @@ const TESTS_ONLY_LINE_RULE = `This PR adds tests only. In a new PR body, put thi
 // the opener and the result then say the PR adds tests only.
 const testsOnlyState = {}
 const recordState = {}
-// Per PR: true once a bot answer changed code, so a result built after a throw still carries it.
+// Per PR: the PR number once a bot answer changed code, so a result built after a throw still carries both.
 const botChangedState = {}
 // Per PR: the break-check results of the last verifier round that gave any. A later round without them leaves it alone.
 const breakCheckState = {}
@@ -1702,7 +1702,7 @@ async function landFixCheck(pr, n, beforeSha, fixerSha, history, minors) {
 }
 
 const botCodeChanged = b => !!(b.answer && b.answer.codeChanged)
-const noteBots = (pr, b) => { if (botCodeChanged(b)) botChangedState[pr.id] = true; return b }
+const noteBots = (pr, n, b) => { if (botCodeChanged(b)) botChangedState[pr.id] = n; return b }
 
 async function bots(pr, n, headSha, issues, history, minors) {
   if (!PLUGIN_ROOT) return { ok: false, reason: 'pluginRoot missing: the bot step needs it to run the status script', headSha }
@@ -1718,7 +1718,7 @@ async function bots(pr, n, headSha, issues, history, minors) {
   const answer = await call('botAnswer', pr, answerPrompt(pr, n, issues, headSha), `botanswer:${pr.id}`, { schema: ANSWER })
   if (!answer) return { ok: false, reason: 'bot answer failed', headSha, wait }
   if (!answer.codeChanged) return { ok: true, headSha, wait, answer }
-  botChangedState[pr.id] = true
+  botChangedState[pr.id] = n
   const lateMinors = []
   const check = await botCheck(pr, n, headSha, answer, history, lateMinors, issues, minors)
   minors.push(...lateMinors)
@@ -1829,7 +1829,7 @@ async function runPR(input) {
       id: input.id, ready: false, reason: `run failed: ${(e && e.message) || String(e)}`,
       // runPRSteps pushes its rows onto this same array, so keep it by reference.
       ...(resume && Array.isArray(resume.history) ? { history: resume.history } : {}),
-      ...(botChangedState[input.id] ? { codeChangedByBots: true } : {}),
+      ...(botChangedState[input.id] ? { codeChangedByBots: true, prNumber: botChangedState[input.id] } : {}),
       ...recordOut(rec), ...carriedOut(resumedDisputes(input), resumedDeviations(input)),
     }
   } finally {
@@ -2023,7 +2023,7 @@ async function runPRSteps(input) {
     if (!r || !r.readyToMerge) return stopped('land fix not ready', { headSha: r && r.headSha, notes: r && r.notes })
     const check = await landFixCheck(pr, n, before, r.headSha, history, lateMinors)
     if (!check.ok) return stopped(check.reason, { headSha: r.headSha, lastFindings: check.lastFindings, worktree: check.worktree, notes: r.notes, lateMinors, untested: untestedOf(pr) })
-    const b = noteBots(pr, await bots(pr, n, check.headSha, [], history, lateMinors))
+    const b = noteBots(pr, n, await bots(pr, n, check.headSha, [], history, lateMinors))
     if (!b.ok) return stopped(b.reason, { headSha: b.headSha, codeChangedByBots: botCodeChanged(b), lastFindings: b.lastFindings, worktree: b.worktree, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     const sync = await syncUntested(pr, n, null)
     if (!sync.ok) return stopped(sync.reason, { headSha: b.headSha, codeChangedByBots: botCodeChanged(b), notes: r.notes, lateMinors, untested: untestedOf(pr) })
@@ -2112,7 +2112,7 @@ async function runPRSteps(input) {
   }
 
   if (redHead) untestedFor(pr).pass.push('bots not waited for or answered: the minor pass commits are still on the branch')
-  const b = redHead ? { ok: true, headSha: loop.headSha, lateMinors: [] } : noteBots(pr, await bots(pr, n, loop.headSha, opened.issuesCreated || [], history, minors))
+  const b = redHead ? { ok: true, headSha: loop.headSha, lateMinors: [] } : noteBots(pr, n, await bots(pr, n, loop.headSha, opened.issuesCreated || [], history, minors))
   if (!b.ok) return marked({ id: pr.id, ready: false, reason: b.reason, history, prNumber: n, headSha: b.headSha, codeChangedByBots: botCodeChanged(b), lastFindings: b.lastFindings, worktree: b.worktree, untested: untestedOf(pr), ...rerunFix(), ...evalsOut() })
   const { wait, answer } = b
   const headSha = b.headSha
