@@ -53,6 +53,7 @@ Not in:
 | The evals-check entries C06, C07 | Held (Held). |
 | #698 | The quick-fix wording of `evalsRules`. It has no bullet in C01, so it goes to a batch. |
 | C08 | Held (Held). |
+| An `inputFrom` eval field | No reader: `evalsText` and `verifyPrompt` do not show it. A candidate for a later entry that names its reader. |
 | #701, #702, #721 | Already fixed on `main` (Findings). |
 | #736, and the gate entries C02, C03 | Held for the maintainer (Held). |
 | #706 | A sim case that fails alone. A batch fix with the other sim minors. |
@@ -91,7 +92,7 @@ The entries edit different parts of `workflows/run-wave.js`:
 | --- | --- |
 | C04 | `minorPassRuns`, and in `minorPass` only the history push of the `minor1` row |
 | C05 | `refusedText`, `verifyPrompt` (only the tests-only break-check sentence), `VERIFY` (the `breakCheck` enum), `verifyOutcome` (the `testsOnly` branch), `breakCheckOf` (the new value), `TESTS_ONLY_LINE` and its rule in `openPrompt` (only the tests-only sentence) |
-| C01 (wave D1) | `EVALS` (the schema), `DISPUTE.eval` (only `inputFrom`), `evalsPrompt` (step 3 or 4 and the Return line, outside `evalsRules`), `evalsCheckPrompt`, `checkEvals` (a coverage parameter), a new writer-only coverage check, `writeEvals` (the writer loop, and the given branch that builds a new record), `makeRecord`, `setRecord` and the record comment above them, `settleDisputes` (only its `checkEvals` and `setRecord` calls) |
+| C01 (wave D1) | `EVALS` (the schema), `evalsPrompt` (step 3 or 4 and the Return line, outside `evalsRules`), `evalsCheckPrompt`, `checkEvals` (a coverage parameter), a new writer-only coverage check, `writeEvals` (the writer loop, and the given branch that builds a new record), `makeRecord`, `setRecord` and the record comment above them, `settleDisputes` (only its `checkEvals` and `setRecord` calls) |
 
 `skills/pr-pipeline/SKILL.md` has one line for each step of "The loop for one PR", so two edits of one step always conflict:
 
@@ -103,7 +104,7 @@ The entries edit different parts of `workflows/run-wave.js`:
 
 In `test/sim-pipeline.mjs` each entry adds its cases as one block after the anchor case its Touches line names, and no two entries share an anchor. C01 also changes two existing places in place, named in its Touches line.
 
-Other shared files: C01 alone touches `scripts/recover-evals.sh`, `agents/evals-writer.md`, `templates/plan.md`, `test/recover-evals.test.mjs`, `test/evals-writer.test.mjs` and `test/build-against-evals.test.mjs`. C05 alone touches `agents/verifier.md` and `agents/tester.md`.
+Other shared files: C01 alone touches `scripts/recover-evals.sh`, `agents/evals-writer.md`, `templates/plan.md`, `test/evals-coverage.test.mjs` (new), `test/evals-writer.test.mjs` and `test/build-against-evals.test.mjs`. C05 alone touches `agents/verifier.md` and `agents/tester.md`.
 
 ## How the iteration runs
 
@@ -195,12 +196,11 @@ Acceptance: `node --test test/break-check-mutation.test.mjs` and `node test/sim-
 - `skills/pr-pipeline/SKILL.md` (see the table).
 - `test/sim-pipeline.mjs`: changed in place, the helper `withMeta` (it builds every writer answer; it gives a default coverage made from the list ids, with item text that holds no eval statement), and in case "E01-1 a code PR gets its list before the implementer, and every later brief and the PR body hold it" only the `deepEqual` of `x.C1.evalsMeta` (the record gains its coverage). New cases go after "A01-17 a reviewer eval added inside a run is not in the record, so a resume with that list runs the check once".
 - `test/evals-writer.test.mjs` and `test/build-against-evals.test.mjs` (only `OK_LIST`, which gains a coverage).
-- `test/recover-evals.test.mjs` (new cases), `test/resume-args.test.mjs` (one new case).
+- `test/evals-coverage.test.mjs` (new): the cases of C01-8, C01-9, C01-10 and C01-12. It builds its recover-evals and resume-args inputs inline, as `test/recover-evals.test.mjs` does, so no fixture file is added. The existing `test/recover-evals.test.mjs` and `test/resume-args.test.mjs` are not edited.
 
-This entry supersedes these sentences of A01 in `docs/plan-0.9.2.md`, and that file is not edited: the record shape `{ pr, evals, noErrorPath, noReference, algorithm }` (the record gains `coverage`, and an eval may gain `inputFrom`); and "`metaOf` keeps its three fields, so the record never enters an evals-check prompt" (`metaOf` keeps its three fields, but the record's coverage now enters the evals-check prompt).
+This entry supersedes these sentences of A01 in `docs/plan-0.9.2.md`, and that file is not edited: the record shape `{ pr, evals, noErrorPath, noReference, algorithm }` (the record gains `coverage`); and "`metaOf` keeps its three fields, so the record never enters an evals-check prompt" (`metaOf` keeps its three fields, but the record's coverage now enters the evals-check prompt).
 
 - The evals writer returns a coverage map with its list: items, each naming the eval ids that cover it. An item is one bullet or one invariant of the entry; for a batch, one issue; for a quick fix, one line of the trusted brief.
-- An eval may name `inputFrom`: the producer of its fixture's input shape (for example a run-wave.js result, a journal line, a GitHub endpoint).
 - Code refuses a list that the writer returned when its coverage is missing or empty, when an item names no eval id, or when an item names an id that is not in the list.
 - This refusal applies to a writer's list only. A given list (`prs[].evals`), a resumed list (`resume.evals`), a reviewer eval added inside a run, a dispute change and a land-fix list are never refused for coverage, and keep the paths they have on `main`.
 - No eval is exempt by its id. An eval may belong to no item, whoever added it.
@@ -213,7 +213,7 @@ This entry supersedes these sentences of A01 in `docs/plan-0.9.2.md`, and that f
 - When a list goes to the evals check and has a coverage (the writer's, or its record's), the check prompt shows the items and asks for a judgment per item. When it has none, the check prompt is the same as on `main`.
 - The evals-check prompt keeps the step 2 sentence word for word, keeps the "Evals to check:" block in the shape `recover-evals.sh` reads, and never shows an eval statement of the record in the item text.
 - Rule text that both the writer and the evals check must get is in `evalsRules`. Text only for the writer stays outside the span from "Rules for the list" to the Return line, so the two prompts still share one rule text (A06-2).
-- Two lists are still the same when their ids, kinds, statements and checks are equal. `inputFrom` and the coverage are not compared.
+- Two lists are still the same when their ids, kinds, statements and checks are equal. The coverage is not compared.
 - `templates/plan.md` says each behaviour and each invariant of an entry is its own bullet. Its Invariants line keeps the prefix "Invariants: ", and SKILL.md keeps the phrase "Invariants line".
 
 Invariants: a writer list that reaches the evals check has a coverage in which every item names at least one eval id and every id is in the list. No list other than a writer's list is refused for coverage. The coverage of an accepted record is never changed after it is accepted, except by a later writer list that the evals check accepts.
@@ -229,11 +229,11 @@ Evals:
 | C01-5 | behaviour | The coverage carries unchanged through a resume, a given list that builds a new record, and an accepted dispute change. | Sim: three cases; in each the new result's `evalsMeta.accepted.coverage` equals the first record's coverage. |
 | C01-6 | regression | A given list, a resumed list, a reviewer eval and a land-fix list with no coverage are not refused for coverage. | The existing E01-5, A01-4, E02-3 resume, K01 land-fix and A01-17 cases pass with their assertions unchanged; A01-17 still counts one evals-check call on the resume. |
 | C01-7 | regression | The existing evals-check call counts and stop reasons do not change for lists that already pass. | The existing cases E01-2, E01-3, E01-4, A01-1, A01-2, A01-10, A01-11, A01-14, A01-15 and F652-2 pass with their assertions unchanged, with `withMeta` giving a valid coverage. |
-| C01-8 | behaviour | `recover-evals.sh` prints the writer's coverage in `evalsMeta.accepted` when the answer holds one, also after a replayed dispute change, and prints no coverage key when it holds none. | `test/recover-evals.test.mjs`: a new fixture with a coverage, in each input form; and the existing `expected-ok.json` case passes unchanged. |
-| C01-9 | behaviour | `resume-args.sh` prints the coverage inside `resume.evals.accepted`. | `test/resume-args.test.mjs`: a result whose record holds a coverage; the printed item holds it, and no key is added at the level of `resume`. |
-| C01-10 | behaviour | The writer prompt and `agents/evals-writer.md` ask for the coverage map, its item rule and `inputFrom`. | Sim: the `evals:C1` prompt holds the coverage rule and the Return line names `coverage`; a test reads the agent file. |
+| C01-8 | behaviour | `recover-evals.sh` prints the writer's coverage in `evalsMeta.accepted` when the answer holds one, also after a replayed dispute change, and prints no coverage key when it holds none. | `test/evals-coverage.test.mjs` (new): an inline answer with a coverage, in each input form, run through `recover-evals.sh`; and the existing `expected-ok.json` case in `test/recover-evals.test.mjs` passes unchanged. |
+| C01-9 | behaviour | `resume-args.sh` prints the coverage inside `resume.evals.accepted`. | `test/evals-coverage.test.mjs` (new): a result whose record holds a coverage; the printed item holds it, and no key is added at the level of `resume`. |
+| C01-10 | behaviour | The writer prompt and `agents/evals-writer.md` ask for the coverage map, and its item rule. | Sim: the `evals:C1` prompt holds the coverage rule and the Return line names `coverage`; `test/evals-coverage.test.mjs` (new) reads the agent file. |
 | C01-11 | regression | The writer and evals-check prompts still share one rule text, and the check prompt keeps its step 2 sentence and its "Evals to check:" block. | The existing A06-2 and E01-11 cases and the recover-evals A10 cases pass unchanged. |
-| C01-12 | behaviour | The plan template says each behaviour and each invariant is its own bullet and keeps the "Invariants: " prefix. | A test reads `templates/plan.md`; the existing role-rules and skill-notes tests pass unchanged. |
+| C01-12 | behaviour | The plan template says each behaviour and each invariant is its own bullet and keeps the "Invariants: " prefix. | `test/evals-coverage.test.mjs` (new) reads `templates/plan.md`; the existing role-rules and skill-notes tests pass unchanged. |
 | C01-13 | error path | The item text in the check prompt holds no eval statement of the record. | Sim: the A01-14 setup with a coverage; the `evalsarch:` prompt does not match the statement of C1-1. |
 
 Acceptance: `node test/sim-pipeline.mjs` and `node --test test/*.test.mjs` pass; C01-1 and C01-3 fail on `main`.
