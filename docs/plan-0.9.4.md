@@ -140,12 +140,14 @@ The list-acceptance criteria (at least 3 in 4 lists accepted on attempt 1, and n
 **C04 A resume that signs off runs the minor pass.** Round cap 2. Touches: `workflows/run-wave.js` (`minorPassRuns`), `test/sim-pipeline.mjs` (the existing case "minor pass: a skipImpl rerun or a resume runs no pass", which keeps its `skipImpl` half and drops its resume half; and cases after "minor pass: a major from the check does the same"), `skills/pr-pipeline/SKILL.md` (see the table).
 - A resume that signs off runs the minor pass, like a first run.
 - A `skipImpl` rerun, a docs PR and a plan PR still skip it.
+- A resume whose history already holds a minor-pass row (round `minor1`) runs no pass. A PR gets one pass, whether it runs once or is resumed, and SKILL.md and `AGENTS.md` keep saying so.
 Evals:
 
 | Id | Kind | What must be true | How to check |
 | --- | --- | --- | --- |
 | C04-1 | behaviour | A resume that signs off with a minor in a file in scope makes a `minorfix:` call. | Sim: `resume: { history, findings, evals }` with one minor; a `minorfix:C1` call. On `main` there is none. |
 | C04-2 | regression | A `skipImpl` rerun, a docs PR and a plan PR make no `minorfix:` call. | Sim: three cases. Each case holds a minor in a file in scope, so on a run that does the pass a `minorfix:` call happens and the case fails. |
+| C04-4 | error path | A resume whose history already holds a `minor1` row makes no `minorfix:` call, although a minor in a file in scope is carried. | Sim: `resume: { history: [{ round: 'minor1', testPass: true, failingChecks: [], blockersAndMajors: [] }], minors: [minorOf()] }` on a PR that signs off; no call matches `/^minorfix/`. Fails on a build that only drops `!pr.resume` from `minorPassRuns`. |
 | C04-3 | behaviour | SKILL.md step 7 says a resume that signs off runs the pass. | `grep -c` on the step line prints 1. |
 
 Acceptance: `node test/sim-pipeline.mjs` passes; C04-1 fails on `main` because `minorPassRuns` is false for a resume.
@@ -156,7 +158,7 @@ Acceptance: `node test/sim-pipeline.mjs` passes; C04-1 fails on `main` because `
 - `breakCheckOf` counts `fails-on-mutation` as proof, like `fails-without-change`.
 - `TESTS_ONLY_LINE` says the break check could not prove the tests can fail only when no eval has a mutation proof. With a proof it says which evals the mutation proved. The F659 cases and `test/verifier-agent.test.mjs` are updated to match, and keep the old sentence for the no-proof case.
 - A tests-only eval with no such statement stays not-applicable.
-- A tester that does not run a step because the step is outside its task reports it as `skipped: outside scope`, not as `refused`. `refused` is only for a permission check or a file that could not run.
+- A tester that does not run a step because the step is outside its task leaves that step out of `checks`. It adds no check entry and no new answer field, so `testOutcome` is unchanged and the step counts as neither passed, failed nor refused. `refused` is only for a permission check or a file that could not run.
 - SKILL.md step 2 says that a missing file the change adds is proof (#721), and a test pins the wording (#729).
 - The full-file fallback of a case that fails alone with the change does not give `fails-without-change` (#705).
 Evals:
@@ -165,7 +167,7 @@ Evals:
 | --- | --- | --- | --- |
 | C05-1 | behaviour | A tests-only verify answer with `fails-on-mutation` counts as a break-check fail in the history row, and the PR body line does not say "could not prove" for it. | Sim: a tests-only PR whose verifier answers `fails-on-mutation` for C1-1; the row's `breakCheck.fails` holds C1-1 and the open prompt holds the proof sentence. On `main` `breakCheck` is null for a tests-only PR. |
 | C05-2 | behaviour | The verify prompt of a tests-only PR asks for a named mutation for each "fails when removed" eval and the restore step. | Sim: the `verify:C1#1` prompt of a tests-only PR holds the rule. |
-| C05-3 | behaviour | `agents/tester.md` and `refusedText` say a step outside the task is `skipped: outside scope`, not `refused`. | `test/break-check-mutation.test.mjs`. |
+| C05-3 | behaviour | `agents/tester.md` and `refusedText` say a step outside the task is left out of `checks` and is not `refused`. | `test/break-check-mutation.test.mjs`. |
 | C05-4 | behaviour | SKILL.md step 2 holds the added-file proof sentence, and the test fails when it is removed. | The same test file. |
 | C05-5 | error path | A case that fails alone with the change and passes in the full file gives no `fails-without-change`. | The same test file, with the prompt text of `verifyPrompt`. |
 
@@ -182,6 +184,10 @@ Acceptance: `node --test test/break-check-mutation.test.mjs` and `node test/sim-
 - When the tests fail, or a blocker or major names no fix, the whole pass drops as today.
 - There is no third run: a finding on the second run drops the whole pass.
 - An outside-marked minor stays in the minors list when the pass drops for any reason (#702).
+- A blocker or major marked outside the pass ends the PR not ready with the `needs human:` prefix, on the first check and on the second. It is never counted as naming a fix, even when its `fixes` field is set.
+- The commit map is untrusted text. `run-wave.js` passes a sha to an io command or a prompt only when it is 40 lowercase hex and listed once, and each fix number only when it is in the claimed list. It does the same for the signed-off sha before any io call in the minor pass, `restoredHead` included. A value that fails the check drops the whole pass, and no command or prompt holds it. `scripts/minor-partial.sh` rejects any argument that is not 40 lowercase hex with exit 64, and checks that each kept sha lies in `<signedSha>..<head>` in order.
+- A kept pass needs the second tester run and the second check to be present and clean on the head the script accepted. A missing, failing or `unconfirmed` second run drops the whole pass.
+- A resume after a partial keep runs no pass (see C04).
 - The `needs human: untrusted path outside the minor pass:` stop keeps its prefix in every path (#701).
 - `AGENTS.md` step 6 says a pass reverts only the faulted fixes when the tests pass, and drops whole otherwise.
 Invariants: a kept pass fix was checked by a tester run and a check run on a head that holds it and no faulted fix, and the script checked that head.
@@ -197,6 +203,10 @@ Evals:
 | C08-6 | error path | A partial revert that the agent reports as done but whose head still holds the faulted fix drops the whole pass. | Sim: the reverter returns `reverted: true` with a head whose tree differs from the script's; `minorPass.kept` is false and no kept fix is listed. |
 | C08-7 | behaviour | `scripts/minor-partial.sh` accepts a head whose tree equals the kept-commits tree, and refuses a tree that holds the faulted fix and a cherry-pick conflict. | `test/minor-partial.test.mjs`: three cases on a scratch repo. |
 | C08-8 | behaviour | `AGENTS.md` step 6 holds the partial-revert sentence. | The same test file greps it. |
+| C08-10 | error path | A commit map with a sha that is not 40 lowercase hex never reaches an io command or a reverter prompt, and the whole pass drops. | Sim: the `minorfix:C1` answer has the sha `abc; touch x`; no `io:C1#...` call or `minorrevert:C1` prompt holds `touch x`, and `minorPass.kept` is false. `test/minor-partial.test.mjs` runs the script with `--evil` and with a 7-hex sha and expects exit 64. |
+| C08-11 | error path | A signed-off head that is not 40 hex starts no io call and no minor pass. | Sim: the tester answers `headSha: 'a; touch x'` in round 1, the PR signs off with a minor in scope; no `io:C1#minorsame` prompt holds `touch x` and no `minorfix:C1` call. |
+| C08-12 | error path | A major marked outside the pass ends the PR not ready even when it names a pass fix, on the first check and on the second. | Sim, two cases: `minorreview:C1` (then `minorreview:C1#2`) returns a major with `outsidePass: true` and `fixes: [2]`; `ready` is false, the reason matches `/^needs human: untrusted path outside the minor pass:/`, and there is no `open:C1` call. Fails on a build that reads `outside` only on the whole-drop branch. |
+| C08-13 | error path | A second run that is missing, failing or `unconfirmed` drops the whole pass, and a kept pass ties to the head the script accepted. | Sim: three cases for the second tester and check answers; `minorPass.kept` is false in each. One more case: the kept result holds the head the script accepted. |
 | C08-9 | behaviour | Two minor-check findings with one title, one faulting fix 1 and one faulting fix 3, merge into one finding that faults fixes 1 and 3. | Sim: the `minorreview:C1` answer has the two findings; the pass reverts fixes 1 and 3 and keeps fix 2. On `main` the answer has no `fixes` field to keep. |
 
 Acceptance: `node --test test/minor-partial.test.mjs` and `node test/sim-pipeline.mjs` pass; C08-1 fails on `main`.
