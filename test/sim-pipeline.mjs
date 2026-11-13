@@ -3934,6 +3934,14 @@ await check('BR6 a denial stays needs human: permission with and without a miles
     assert.equal(x.reason, 'needs human: permission', JSON.stringify(extra))
   }
 })
+await check('BR6 the verifier schema requires acceptance, and related when the related-tests step is on', async () => {
+  for (const [extra, related] of [[{}, true], [{ relatedTests: false }, false]]) {
+    let schema
+    await hooked(withEvals('C1'), (p, o) => { if (o.label === 'verify:C1#1') schema = o.schema }, extra)
+    for (const k of ['pass', 'checks', 'evals', 'acceptance']) assert.ok(schema.required.includes(k), `${k} not required with ${JSON.stringify(extra)}`)
+    assert.equal(schema.required.includes('related'), related, JSON.stringify(extra))
+  }
+})
 await check('milestone: a number works, and a quote in the title is escaped for jq and the shell', async () => {
   await hooked(only1('C1'), () => undefined, { milestone: 3 })
   assert.match(openOf('C1').prompt, /select\(\.title == "3"\)/)

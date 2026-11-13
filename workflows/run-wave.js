@@ -471,7 +471,7 @@ const VERIFY = {
     evals: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, result: { type: 'string', enum: ['pass', 'fail', 'ci'] }, evidence: { type: 'string' }, ciCheck: { type: 'string' }, test: { type: 'string' }, breakCheck: { type: 'string', enum: ['fails-without-change', 'passes-without-change', 'not-applicable', 'not-run'] }, breakWhy: { type: 'string' } }, required: ['id', 'result'] } },
     extra: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, pass: { type: 'boolean' }, evidence: { type: 'string' } }, required: ['name', 'pass'] } },
   },
-  required: ['pass', 'checks', 'evals'],
+  required: [...TEST.required, 'evals'],
 }
 const FILE = { type: 'string', description: 'Path relative to the repo root, with no line number' }
 const THEME = { type: 'string', description: 'A short name for the weakness behind a blocker or major, such as "bypass of the path check". Reuse the earlier name when the weakness is the same.' }
