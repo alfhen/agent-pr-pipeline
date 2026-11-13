@@ -7,6 +7,7 @@
 # <name>.<METHOD>.error (any method, GET included) holds a message: the call prints it and exits 1.
 # After a write, each line "from to" of <name>.<METHOD>.then copies fixture file from to to (state changes).
 # A query is logged (GET /path?ref=x), and a GET tries <name>@<query>.json before <name>.json (query fixtures, e.g. @ref=main).
+# A query with a "/" also tries the name with each "/" as "__" (?ref=refs/heads/main reads <name>@ref=refs__heads__main.json), after the literal name (a folder path).
 # Call sequences: when <name>.call1.json exists, the nth GET of that path reads <name>.call<n>.json (the last one repeats);
 # the count is kept in <name>.count in the fixture folder.
 # A path with no fixture exits 1, like a 404. Any other subcommand exits 1.
@@ -48,6 +49,8 @@ if [ "$method" = GET ]; then
     file="$dir/$name.call$n.json"
   elif [ -n "$query" ] && [ -f "$dir/$name@$query.json" ]; then
     file="$dir/$name@$query.json"
+  elif [ -n "$query" ] && [ -f "$dir/$name@${query//\//__}.json" ]; then
+    file="$dir/$name@${query//\//__}.json"
   fi
   if [ -f "$file" ]; then
     if [ "$paginate" = 1 ] && [ "$slurp" = 1 ]; then jq -s . "$file" | emit; else emit < "$file"; fi
