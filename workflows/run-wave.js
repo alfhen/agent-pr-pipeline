@@ -159,6 +159,7 @@ const absorb = (prev, f) => {
     if (f.suggestedFix && !(prev.suggestedFix || '').includes(f.suggestedFix)) prev.suggestedFix = prev.suggestedFix ? `${prev.suggestedFix}\n\nAlso: ${f.suggestedFix}` : f.suggestedFix
   }
 }
+const EVALS_MISSING = 'evals missing: the input holds the accepted record and no list'
 const REFUSED_LIST_TITLE = 'Refused eval list: '
 const resumeFindings = pr => ((pr.resume && pr.resume.findings) || []).filter(f => !(f && typeof f.title === 'string' && f.title.startsWith(REFUSED_LIST_TITLE)))
 // One item per file and normalized title, with the highest severity and every source. The result is sorted by file, so the fix prompt numbers match the history.
@@ -228,6 +229,8 @@ const TESTS_ONLY_LINE_RULE = `This PR adds tests only. In a new PR body, put thi
 // the opener and the result then say the PR adds tests only.
 const testsOnlyState = {}
 const recordState = {}
+// Per PR: the land-fix list and record taken at intake, so a result built after a throw still carries them.
+const landOutState = {}
 // Per PR: the PR number once a bot answer changed code, so a result built after a throw still carries both.
 const botChangedState = {}
 // Per PR: the break-check results of the last verifier round that gave any. A later round without them leaves it alone.
@@ -1847,14 +1850,16 @@ async function runPR(input) {
     result = await runPRSteps(input)
   } catch (e) {
     const rec = recordState[input.id]
-    if (!rec && !botChangedState[input.id]) throw e
+    const landOut = input.landFix ? landOutState[input.id] : null
+    if (!rec && !landOut && !botChangedState[input.id]) throw e
     const resume = input.resume
     result = {
       id: input.id, ready: false, reason: `run failed: ${(e && e.message) || String(e)}`,
       // runPRSteps pushes its rows onto this same array, so keep it by reference.
       ...(resume && Array.isArray(resume.history) ? { history: resume.history } : {}),
+      ...(input.landFix && input.prNumber ? { prNumber: input.prNumber } : {}),
       ...(botChangedState[input.id] ? { codeChangedByBots: true, prNumber: botChangedState[input.id] } : {}),
-      ...(rec ? recordOut(rec) : {}), ...carriedOut(resumedDisputes(input), resumedDeviations(input)),
+      ...(rec ? recordOut(rec) : {}), ...(landOut || {}), ...carriedOut(resumedDisputes(input), resumedDeviations(input)),
     }
   } finally {
     const cleanup = await cleanupPR(input)
@@ -1946,7 +1951,7 @@ async function writeEvals(pr, raw) {
   if (!given && (!EVALS_ON || pr.resume || pr.skipImpl)) return {}
   if (given) {
     if (given.accepted && (pr.resume || pr.skipImpl) && !(Array.isArray(given.list) && given.list.length)) {
-      return { stop: 'evals missing: the input holds the accepted record and no list', record: given.accepted }
+      return { stop: EVALS_MISSING, record: given.accepted }
     }
     const rec = usableRecord(pr, given.accepted)
     // A throw out of the evals check must still return the given record.
@@ -2020,7 +2025,10 @@ async function settleDisputes(pr, disputes, from) {
 }
 
 // A stop that pushed no row still closes the segment: the row carries the reason and no themes, so a resume starts clean.
-const roundsIn = history => history.filter(row => !(row && row.round === 'stop')).length
+const reviewRows = history => history.filter(row => row && Number.isInteger(row.round))
+const roundsIn = history => reviewRows(history).length
+// A resume can hold rows that are not review rounds, so the next number is the highest round plus one, never the row count.
+const lastRound = history => reviewRows(history).reduce((m, row) => Math.max(m, row.round), 0)
 const stopMark = (history, reason) => {
   const last = history[history.length - 1]
   if (last && !last.stop) history.push({ round: 'stop', stop: reason })
@@ -2041,17 +2049,27 @@ async function runPRSteps(input) {
     const n = pr.prNumber
     const history = []
     const lateMinors = []
-    const stopped = (reason, more) => { stopMark(history, reason); return { id: pr.id, prNumber: n, ready: false, reason, history, ...more } }
-    if (!PLUGIN_ROOT) return stopped('pluginRoot missing: the land-fix check needs it to run land-commits.sh')
+    let listOut = {}
+    delete landOutState[pr.id]
+    const stopped = (reason, more) => { stopMark(history, reason); return { id: pr.id, prNumber: n, ready: false, reason, history, ...listOut, ...more } }
     const given = givenEvals(pr, rawEvals)
     if (given) {
       const rec = Array.isArray(given.list) ? usableRecord(pr, given.accepted) : null
       const meta = rec && sameList(given.list, rec.evals) ? { noErrorPath: reasonOf(rec.noErrorPath), noReference: reasonOf(rec.noReference), algorithm: !!rec.algorithm } : given.meta
+      const keep = usableRecord(pr, given.accepted)
+      const stopOut = accepted => keep ? recordOut(keep) : { ...(Array.isArray(given.list) ? { evals: given.list } : {}), evalsMeta: { ...given.meta, ...(accepted ? { accepted } : {}) } }
+      if (given.accepted && !(Array.isArray(given.list) && given.list.length)) {
+        listOut = stopOut(given.accepted)
+        return stopped(EVALS_MISSING)
+      }
       const bad = evalsVerdict(given.list, pr, meta)
-      if (bad) return stopped(`evals refused: ${bad}`)
+      if (bad) { listOut = stopOut(null); return stopped(`evals refused: ${bad}`) }
+      listOut = { evals: given.list, evalsMeta: { ...meta, ...(rec ? { accepted: rec } : {}) } }
+      landOutState[pr.id] = listOut
       pr = { ...pr, evals: given.list, evalsMeta: meta }
-      ciChecksState[pr.id] = await ciChecksOf(pr)
     }
+    if (!PLUGIN_ROOT) return stopped('pluginRoot missing: the land-fix check needs it to run land-commits.sh')
+    if (given) ciChecksState[pr.id] = await ciChecksOf(pr)
     const was = await readHead(pr, n, 'landhead')
     if (was.fail) return stopped(was.fail)
     const before = was.head
@@ -2071,7 +2089,7 @@ async function runPRSteps(input) {
     return {
       id: pr.id, prNumber: n, ready: true, headSha: end.head, ...landing, untested: untestedOf(pr), notes: r.notes,
       ci: end.ci, approvedBy: end.approvedBy || b.wait.approvedBy || [], botNotes: b.wait.notes, codeChangedByBots: botCodeChanged(b),
-      lateMinors, history,
+      lateMinors, history, ...listOut,
     }
   }
   const history = pr.resume ? pr.resume.history || [] : []
@@ -2080,6 +2098,7 @@ async function runPRSteps(input) {
   let impl = { problems: '' }
   let rerunFixChanged
   const evalsOut = () => ({ ...(testsOnlyState[pr.id] ? { testsOnly: true } : {}), ...(breakCheckState[pr.id] ? { breakCheck: breakCheckState[pr.id] } : {}), ...(pr.evals ? { evals: pr.evals, evalsMeta: { ...pr.evalsMeta, accepted: pr.record }, evalDisputes: pr.evalDisputes, ...carriedOut([], pr.deviations) } : carriedOut([], pr.deviations)) })
+  const minorsOut = () => minors.length ? { minors: mergeDuplicates(minors) } : {}
   const rerunFix = () => rerunFixChanged === undefined ? {} : { rerunFixChanged }
   const decisionFindings = (pr.skipImpl || pr.resume) && (pr.architectureDecision || pr.productDecision)
     ? [{ severity: 'major', title: 'Apply the maintainer decision', detail: `Apply the maintainer decision given in the brief to the branch. If the branch already follows it, change nothing.${pr.architectureDecision ? ` Architecture decision: ${pr.architectureDecision}` : ''}${pr.productDecision ? ` Product decision: ${pr.productDecision}` : ''}` }]
@@ -2092,7 +2111,7 @@ async function runPRSteps(input) {
     const refused = rec && Array.isArray(written.refused) ? [{ severity: 'minor', title: `${REFUSED_LIST_TITLE}${written.stop}`, detail: JSON.stringify(written.refused) }] : []
     const findings = resumeFindings(pr).concat(refused)
     const listOut = rec ? recordOut(rec) : written.record ? { ...(given && Array.isArray(given.list) ? { evals: given.list } : {}), evalsMeta: { ...(given ? given.meta : {}), accepted: written.record } } : given ? { evals: given.list, evalsMeta: given.meta } : {}
-    return { id: pr.id, ready: false, reason: written.stop, history, ...(findings.length ? { lastFindings: findings } : {}), ...listOut, ...carriedOut(resumedDisputes(pr), resumedDeviations(pr)) }
+    return { id: pr.id, ready: false, reason: written.stop, history, ...(findings.length ? { lastFindings: findings } : {}), ...minorsOut(), ...listOut, ...carriedOut(resumedDisputes(pr), resumedDeviations(pr)) }
   }
   pr = { ...pr, deviations: resumedDeviations(pr) }
   if (written.evals) {
@@ -2100,21 +2119,25 @@ async function runPRSteps(input) {
     recordState[pr.id] = written.record
   }
   if (preFindings.length) {
-    const decisionFix = await call('fix', pr, fixPrompt(pr, null, preFindings, roundsIn(history)), `fix:${pr.id}#${roundsIn(history)}`, { schema: FIX })
+    const decisionFix = await call('fix', pr, fixPrompt(pr, null, preFindings, lastRound(history)), `fix:${pr.id}#${lastRound(history)}`, { schema: FIX })
     if (decisionFix && typeof decisionFix.changed === 'boolean') rerunFixChanged = decisionFix.changed
     const unsaved = unsavedStop(decisionFix)
-    if (unsaved) return marked({ id: pr.id, ready: false, reason: unsaved.reason, history, lastFindings: preFindings, worktree: unsaved.worktree, fixSummary: decisionFix.summary, ...rerunFix(), ...evalsOut() })
+    if (unsaved) return marked({ id: pr.id, ready: false, reason: unsaved.reason, history, lastFindings: preFindings, worktree: unsaved.worktree, fixSummary: decisionFix.summary, ...minorsOut(), ...rerunFix(), ...evalsOut() })
+    if (!decisionFindings.length && decisionFix && decisionFix.changed === false) {
+      const { max, cap } = roundsFor(pr)
+      return marked({ id: pr.id, ready: false, reason: `no progress: the fix changed nothing in the resume fix round, 0 of ${max} review rounds used (${cap})`, history, lastFindings: preFindings, fixSummary: decisionFix.summary, ...minorsOut(), ...rerunFix(), ...evalsOut() })
+    }
   } else if (!pr.skipImpl && !pr.resume) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (impl && !impl.pushed && pr.evals) await settleDisputes(pr, impl.disputes, 'implementer')
-    if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl, ...evalsOut() }
+    if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl, ...minorsOut(), ...evalsOut() }
     pr.deviations = (Array.isArray(impl.deviations) ? impl.deviations : []).filter(d => d && reasonOf(d.what))
     await settleDisputes(pr, impl.disputes, 'implementer')
   }
   if (verifies(pr)) ciChecksState[pr.id] = await ciChecksOf(pr)
   const loopState = { fixed: false, reviewed: false, themes: [], siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
-  let loop = await reviewLoop(pr, roundsIn(history) + 1, history, minors, loopState)
-  if (!loop.signedOff) return marked({ id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, ...(loop.fixSummary ? { fixSummary: loop.fixSummary } : {}), ...(loop.worktree ? { worktree: loop.worktree } : {}), escalation: loop.escalation, conflict: loop.conflict, architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
+  let loop = await reviewLoop(pr, lastRound(history) + 1, history, minors, loopState)
+  if (!loop.signedOff) return marked({ id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, ...(loop.fixSummary ? { fixSummary: loop.fixSummary } : {}), ...(loop.worktree ? { worktree: loop.worktree } : {}), escalation: loop.escalation, conflict: loop.conflict, architecture: loopState.reports, product: loopState.product, ...minorsOut(), ...rerunFix(), ...evalsOut() })
 
   let pass = { fixed: [], report: null }
   if (minorPassRuns(pr)) {
@@ -2124,13 +2147,13 @@ async function runPRSteps(input) {
   // Unchecked pass commits stay on the head, so a later test run on it fails for a reason no later agent can fix. Those steps
   // are skipped and listed as untested, and a person merges.
   const redHead = !!pass.revertFailed
-  if (pass.outside) return marked({ id: pr.id, ready: false, reason: `needs human: untrusted path outside the minor pass: ${pass.outside.map(f => f.title).join('; ')}`, history, lastFindings: pass.outside, minorPass: pass.report, untested: untestedOf(pr), architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
+  if (pass.outside) return marked({ id: pr.id, ready: false, reason: `needs human: untrusted path outside the minor pass: ${pass.outside.map(f => f.title).join('; ')}`, history, lastFindings: pass.outside, minorPass: pass.report, untested: untestedOf(pr), ...minorsOut(), architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
 
   let docs = null
   if (docsRuns(pr) && redHead) untestedFor(pr).pass.push('docs not updated: the minor pass commits are still on the branch')
   else if (docsRuns(pr)) {
     const d = await docsStep(pr, loop.headSha, history, minors)
-    if (!d.ok) return marked({ id: pr.id, ready: false, reason: d.reason, history, lastFindings: d.lastFindings, docs: d.docs, architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
+    if (!d.ok) return marked({ id: pr.id, ready: false, reason: d.reason, history, lastFindings: d.lastFindings, docs: d.docs, ...minorsOut(), architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
     loop.headSha = d.headSha
     docs = { changed: d.docs.changed, files: d.docs.files || [], summary: d.docs.summary }
   }
