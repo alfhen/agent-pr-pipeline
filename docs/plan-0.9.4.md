@@ -8,23 +8,23 @@
 - The plan review of the narrowed plan reached its cap of 2 rounds with 5 majors in each round, on C04, C05 and C08. The assessment session decided under the overnight rule: C08 is held too, C04 and C05 keep their two open points as build notes, and the findings that `main` already fixes are corrected. These edits were made by hand after the cap.
 - Amendment 1b: C01 alone, written from an impact pass (a read-only list of every existing test, fixture, script and doc sentence that C01 changes, in `.claude/assessment/drafts/impact-c01.md`). Amendment 1 (C01, C06 and C07) did not settle in its plan review (round 1: 2 blockers and 4 majors; round 2: 1 blocker and 9 majors), most of it on contradictions with existing tests. The assessment session decided under the overnight rule: C01 alone, with its open choices settled, and C06 and C07 held.
 - K07 (#631, wave B2 of `docs/plan-0.9.2.md`) is still in its run. This plan does not touch its parts of `workflows/run-wave.js` (`runPRSteps`, the not-ready exits after the bot answer; `evaluatePrompt`) or `scripts/ledger.sh`.
+- CodeRabbit reviewed this plan text five times with findings (two on #738, three on #745). C05 drew a finding in four of them, and C01 and C04 drew none in the last. The maintainer chose to move C05 to Held for 0.9.6, so 0.9.4 is C01 and C04.
 
 ## Summary in plain words
 
 Iteration 1 showed two large problems and some small ones. The large ones are the evals check (of 16 eval lists, 5 were accepted on the first attempt and 5 stopped for a person) and the merge gate (no bot can clear a PR since Gitar's free plan ran out). Their entries need more design work, so they are held for an amendment and for the maintainer.
 
-This plan builds two small ones and the main lever of the evals check:
+This plan builds one small one and the main lever of the evals check:
 
 - C04: a resume that signs off runs the minor pass, like a first run.
-- C05: a tests-only PR records its mutation proof, and a check is "not run" only when no role ran it.
 - C01: the evals writer returns a coverage map, one item for each bullet of the entry. Code refuses a writer list whose coverage is missing, empty, has an item with no eval id, or names an id that is not in the list. The evals check names each bullet of the entry that has no item. In iteration 1, 25 of the 40 points the evals check refused were a behaviour of the entry with no eval.
 
 Readers: the maintainer and the sessions that run the batches and Tagreeve. Out: new roles, new run-wave arguments, the batch fixes, the Wavewright rename. Each entry is one PR. A PR is done when its acceptance test passes in CI, an adversarial review reports no blockers or majors, and it is squash-merged.
 
 ## Goals this release serves
 
-- Automatic improvement (goal 7): C04 keeps minor fixes that a resume filed in iteration 1. C05 makes a tests-only proof part of the record, so a tests-only PR whose mutations ran needs no person for it.
-- Goal 8 share: every entry is work on the pipeline's own output, so the share is 3 of 3.
+- Automatic improvement (goal 7): C04 keeps minor fixes that a resume filed in iteration 1.
+- Goal 8 share: every entry is work on the pipeline's own output, so the share is 2 of 2.
 - My attention (goal 3): C01 makes code refuse a writer's list whose coverage is missing, empty, has an item with no eval id, or names an id that is not in the list, before the evals check. Whether the items are all the behaviours of the entry is the evals check's judgment: it names each bullet, invariant, issue or brief line with no item. So a list that misses a behaviour is refused in its first check, and fewer lists stop for a person.
 
 ## Findings
@@ -43,7 +43,6 @@ In:
 | Group | Entries | Issues | Size |
 | --- | --- | --- | --- |
 | A resume that signs off runs the minor pass | C04 | none | S |
-| Tests-only proof and "not run" | C05 | #705, #729 | S |
 | The coverage map | C01 | none | M |
 
 Not in:
@@ -56,6 +55,7 @@ Not in:
 | An `inputFrom` eval field | No reader: `evalsText` and `verifyPrompt` do not show it. A candidate for a later entry that names its reader. |
 | #701, #702, #721 | Already fixed on `main` (Findings). |
 | #736, and the gate entries C02, C03 | Held for the maintainer (Held). |
+| C05 and #705, #729 | Held for 0.9.6 (Held). |
 | #706 | A sim case that fails alone. A batch fix with the other sim minors. |
 | #708 | A ledger touch reason. `scripts/ledger.sh` is K07's, and the batches take the ledger minors together. |
 | #723, #724, #726, #727 | Wording and numbering in the A09 and A10 scripts. A batch fix. |
@@ -70,30 +70,29 @@ Not in:
 | C08 A dropped minor pass keeps the fixes its check did not fault | Partial keep of a minor pass. | Two open points after the plan-review cap: its invariant ties a kept fix to a scripted check of the head only on the partial path, not on the clean keep; and its premise named #701 and #702 as open, which `main` already fixes. It caught none of the filed minors of iteration 1. |
 | C02 The merge gate reads a clean bot review of the head (#736) | The gate while no bot approves. | It sets what clears the merge gate (whose reply counts, a check run with no App, the request rule). The maintainer decides first. |
 | C03 One review for each final head | The review budget. | It sets when a review is asked, and its draft step needs a call that the REST-only rule forbids. The maintainer decides first, with C02. |
-| C05 acceptance requirement (0.9.6) | An omitted acceptance step fails the check, and whether a step is required does not rest on the tester's own answer. | Held after CodeRabbit's review of #738: `workflows/run-wave.js` cannot read the plan entry, so the workflow has no source for whether an entry has an Acceptance line. Choice, no pick: (a) a field in the PR block that says the entry has an Acceptance line, which is a new run-wave input and so the maintainer's decision; or (b) a rule that the main session's notes quote the entry's Acceptance line, which is a rule for what the main session writes. Its eval was C05-6. |
+| C05 A tests-only PR records its proof, and "not run" means no role ran it (#705, #729) (0.9.6) | A mutation proof in the record of a tests-only PR, and "refused" only for a real refusal. | Held after CodeRabbit drew a finding on it in four of five reviews. Open points: (1) where the acceptance requirement enters, since `workflows/run-wave.js` cannot read the entry: a PR-block field (a new run-wave input, the maintainer's) or notes that quote the Acceptance line; (2) a passing baseline: the same test command must pass on the unchanged branch before a mutation counts (CodeRabbit 4559860342); (3) where a step the tester leaves out is recorded, with no new answer field today (CodeRabbit 4559860347); (4) a mutation run that fails to load is `not-run` with its cause, and the #719 exception does not apply to a mutation (CodeRabbit 4559171199, answered in the text that was C05-7); (5) the verifier's mutation may not touch the rule under test (it is named in `breakWhy`). It returns as an entry written from an impact pass, against BR6's change to the tests-only line. |
 | Eval producer field (0.9.6) | Each eval names the producer of its fixture's input shape (`inputFrom`), and the evals-check prompt shows it and judges it, so a fixture built on an input shape no producer makes is caught before the build. | The plan-review fixer took `inputFrom` out of C01 because nothing read it. It returns as its own entry with this named reader, written after an impact pass. |
 
 ## Order and waves
 
 ```mermaid
 flowchart LR
-  P[Plan PR] --> C1[Wave C1 on v0.9.3: C04 C05] --> R[Version PR, release 0.9.4] --> B[Iteration 2 batches on v0.9.4]
+  P[Plan PR] --> C1[Wave C1 on v0.9.3: C04] --> R[Version PR, release 0.9.4] --> B[Iteration 2 batches on v0.9.4]
   P --> D1[Wave D1 on v0.9.3: C01] --> R
 ```
 
-Summary: two small fixes in wave C1 and the coverage map in wave D1, which can run at the same time; then the version PR and the release.
+Summary: one small fix in wave C1 and the coverage map in wave D1, which can run at the same time; then the version PR and the release.
 
 Why this order:
 
 - The waves run on the installed v0.9.3. A fix must not judge itself, and `pluginRoot` is never `main`.
-- C01 shares no part of a file with C04 or C05 (the tables below), so waves C1 and D1 can run at the same time.
+- C01 shares no part of a file with C04 (the tables below), so waves C1 and D1 can run at the same time.
 
 The entries edit different parts of `workflows/run-wave.js`:
 
 | Entry | Parts of `workflows/run-wave.js` |
 | --- | --- |
 | C04 | `minorPassRuns`, and in `minorPass` only the history push of the `minor1` row |
-| C05 | `refusedText`, `verifyPrompt` (only the tests-only break-check sentence), `VERIFY` (the `breakCheck` enum), `verifyOutcome` (the `testsOnly` branch), `breakCheckOf` (the new value), `TESTS_ONLY_LINE` and its rule in `openPrompt` (only the tests-only sentence) |
 | C01 (wave D1) | `EVALS` (the schema), `evalsPrompt` (step 3 or 4 and the Return line, outside `evalsRules`), `evalsCheckPrompt`, `checkEvals` (a coverage parameter that only the writer loop passes), a new writer-only coverage check, `writeEvals` (the writer loop only), `makeRecord`, `setRecord` and the record comment above them, `settleDisputes` (only its `setRecord` call) |
 
 `skills/pr-pipeline/SKILL.md` has one line for each step of "The loop for one PR", so two edits of one step always conflict:
@@ -101,12 +100,11 @@ The entries edit different parts of `workflows/run-wave.js`:
 | Entry | Parts of SKILL.md |
 | --- | --- |
 | C04 | "The loop for one PR" step 7 (one sentence on a resume) |
-| C05 | "The loop for one PR" step 2 |
 | C01 (wave D1) | "The loop for one PR" step 1 (the refusal rules and the evals check sentence); "Step 1: write the plan" the Evals bullet and the Invariants text (keeping the phrase "Invariants line"); "Workflow arguments" the result paragraph (the record shape, and the sentence on a list that differs from the record) |
 
 In `test/sim-pipeline.mjs` each entry adds its cases as one block after the anchor case its Touches line names, and no two entries share an anchor. C01 also changes two existing places in place, named in its Touches line.
 
-Other shared files: C01 alone touches `scripts/recover-evals.sh`, `agents/evals-writer.md`, `templates/plan.md`, `test/evals-coverage.test.mjs` (new), `test/evals-writer.test.mjs` and `test/build-against-evals.test.mjs`. C05 alone touches `agents/verifier.md` and `agents/tester.md`.
+Other shared files: C01 alone touches `scripts/recover-evals.sh`, `agents/evals-writer.md`, `templates/plan.md`, `test/evals-coverage.test.mjs` (new), `test/evals-writer.test.mjs` and `test/build-against-evals.test.mjs`.
 
 ## How the iteration runs
 
@@ -114,16 +112,15 @@ Other shared files: C01 alone touches `scripts/recover-evals.sh`, `agents/evals-
 - `evals`, `breakCheck` and `docsUpdate` are on. The plan PR gets the product review and the architecture review.
 - Every entry touches a gated path. Until a gate change is released, each PR merges under the maintainer's standing rule of 2026-11-12: after a completed CodeRabbit review of the final head and green CI, with a merge record and a basis note. `merge-safety` does not run for them.
 - After each run: `scripts/after-run.sh` from v0.9.3. A resume uses only the arguments that `scripts/resume-args.sh` prints.
-- An evals-check stop gets one fresh rebuild with the refusal in the notes, as in iteration 1. The 0.9.4 tag needs C01: a second evals-check stop of C01 stops the iteration for the maintainer (overnight: for the assessment session). C04 and C05 ship in 0.9.4 when they are on `main`; the tag waits for them while they are still in their runs. A second evals-check stop of C04 or of C05 moves that entry to 0.9.6 with the held entries, and the tag goes without it. So no entry can block the tag by stopping twice, and the tag is never cut without the coverage map.
+- An evals-check stop gets one fresh rebuild with the refusal in the notes, as in iteration 1. The 0.9.4 tag needs C01: a second evals-check stop of C01 stops the iteration for the maintainer (overnight: for the assessment session). C04 ships in 0.9.4 when it is on `main`; the tag waits for it while it is still in its run. A second evals-check stop of C04 moves it to 0.9.6 with the held entries, and the tag goes without it. So no entry can block the tag by stopping twice, and the tag is never cut without the coverage map.
 - The builder session reports to the assessment session when the plan PR opens, at the end of each wave, when a PR stops for the second time, and when the release is cut.
 
 ## Pass criteria (written before the build)
 
 For the entries of this plan:
 
-1. **The four per-PR criteria of iteration 1** (a list before the build, a result for each eval id in the PR body, the break check ran, a ledger record with tokens by role) hold for C04 and C05.
+1. **The four per-PR criteria of iteration 1** (a list before the build, a result for each eval id in the PR body, the break check ran, a ledger record with tokens by role) hold for C04 and C01.
 2. **C04 on a real resume.** The first resume in the batches that signs off makes a minor pass, and its result has a `minorPass` field.
-3. **C05 on a real tests-only PR.** The first tests-only PR in the batches has a `fails-on-mutation` result for each eval whose statement says it fails when a rule is removed, and its PR body has no "refused" line for a check that a role ran.
 
 The list-acceptance criteria (at least 3 in 4 lists accepted on attempt 1, and no evals-check stop for a person, against iteration 1's base of 16 lists: 5 accepted on attempt 1, 6 on attempt 2, 5 stopped) apply to the batches. They are measured on the release that holds C01 (0.9.4), not on this plan's entries alone.
 
@@ -165,31 +162,6 @@ Evals:
 | C04-5 | error path | A resume after a run whose minor pass dropped before its check makes no `minorfix:` call, and a resume after a run that had no pass makes one. | Sim, three halves in one case. (a) The C04-1 setup, a resume whose history holds no `minor1` row and one minor in scope on a PR that signs off: a `minorfix:C1` call. (b) Run 1 has a minor in scope and `minorfix:C1` answers `changed: false`, then stops at a later step; a resume with the `history` and `minors` of that result on a PR that signs off: no call matches `/^minorfix/`. (c) The same with `test:C1#minor1` answering null in run 1. Half (a) fails on `main`, where a resume runs no pass, so the break check can prove the case. Halves (b) and (c) fail on a build that writes the row only after a completed check. |
 
 Acceptance: `node test/sim-pipeline.mjs` passes; C04-1 fails on `main` because `minorPassRuns` is false for a resume.
-
-**C05 A tests-only PR records its proof, and "not run" means no role ran it (#705, #729).** Round cap 2. Touches: `workflows/run-wave.js` (see the table), `agents/verifier.md` (the tests-only rule), `agents/tester.md` (the scope rule), `test/break-check-mutation.test.mjs` (new), `test/verifier-agent.test.mjs` (the tests-only sentence at line 58 changes with the rule), `test/sim-pipeline.mjs` (the F659 tests-only cases that pin the "could not prove" sentence change; and cases after the tests-only cases of #659), `skills/pr-pipeline/SKILL.md` (see the table).
-- On a tests-only PR the verifier runs, for each eval whose statement says it fails when a rule is removed, a named mutation of the code under test in its clone, and reports `breakCheck: fails-on-mutation` with the mutation in `breakWhy` when the case fails for any reason other than a load, import, syntax, missing-file or exit 127 error. It restores the file after each mutation.
-- A mutation run that fails with a load, import, syntax, missing-file or exit 127 error is `not-run`, with its cause in `breakWhy`. The cause goes to the PR's untested items, as a `not-run` break check does on the normal path, so such a PR gets no `:auto`. A `not-run` eval is never counted as a mutation proof.
-- A mutation edits code inside a file and never deletes a file, so the added-file exception of the break check (#719) does not apply to a mutation run.
-- The `VERIFY` schema allows `fails-on-mutation` in `breakCheck`. `verifyOutcome` keeps the value on a tests-only PR, where it sets it to null today.
-- `breakCheckOf` counts `fails-on-mutation` as proof, like `fails-without-change`.
-- `TESTS_ONLY_LINE` says the break check could not prove the tests can fail only when no eval has a mutation proof. With a proof it says which evals the mutation proved. The F659 cases and `test/verifier-agent.test.mjs` are updated to match, and keep the old sentence for the no-proof case.
-- A tests-only eval with no such statement stays not-applicable.
-- A tester that does not run a step because the step is outside its task leaves that step out of `checks`. It adds no check entry and no new answer field, so `testOutcome` is unchanged and the step counts as neither passed, failed nor refused. `refused` is only for a permission check or a file that could not run.
-- A test pins the SKILL.md step 2 sentence that a missing file the change adds is proof (#729). The sentence is already on `main` (#721).
-- The full-file fallback of a case that fails alone with the change does not give `fails-without-change` (#705).
-- Build note (open after the plan-review cap): a step the tester leaves out is recorded. Whether an omitted acceptance step fails the check is held for 0.9.6 (Held: C05 acceptance requirement).
-Evals:
-
-| Id | Kind | What must be true | How to check |
-| --- | --- | --- | --- |
-| C05-1 | behaviour | A tests-only verify answer with `fails-on-mutation` counts as a break-check fail in the history row, and the PR body line does not say "could not prove" for it. | Sim: a tests-only PR whose verifier answers `fails-on-mutation` for C1-1; the row's `breakCheck.fails` holds C1-1 and the open prompt holds the proof sentence. On `main` `breakCheck` is null for a tests-only PR. |
-| C05-2 | behaviour | The verify prompt of a tests-only PR asks for a named mutation for each "fails when removed" eval and the restore step. | Sim: the `verify:C1#1` prompt of a tests-only PR holds the rule. |
-| C05-3 | behaviour | `agents/tester.md` and `refusedText` say a step outside the task is left out of `checks` and is not `refused`. | `test/break-check-mutation.test.mjs`. |
-| C05-4 | regression | SKILL.md step 2 holds the added-file proof sentence, and the test fails when it is removed. | The same test file. The sentence already holds on `main`; the test is new. |
-| C05-5 | error path | A case that fails alone with the change and passes in the full file gives no `fails-without-change`. | The same test file, with the prompt text of `verifyPrompt`. |
-| C05-7 | error path | A tests-only mutation run that fails with a load, import or syntax error gives `not-run` with its cause, puts the cause in the untested items, and is not counted as a proof. | Sim: a tests-only PR whose verifier answers `not-run` with `breakWhy: 'syntax: ...'` for a "fails when removed" eval; the history row's `breakCheck.notRun` holds the id and `fails` does not, the result's `untested` holds the cause, and the open prompt keeps the "could not prove" line. `test/break-check-mutation.test.mjs`: the tests-only verify prompt and `agents/verifier.md` hold the not-run rule and its cause list, after the test checks that its prompt input is a tests-only prompt. On `main` the tests-only prompt holds no not-run rule. |
-
-Acceptance: `node --test test/break-check-mutation.test.mjs` and `node test/sim-pipeline.mjs` pass; C05-1 fails on `main`.
 
 ### Wave D1
 
@@ -248,14 +220,14 @@ Acceptance: `node test/sim-pipeline.mjs` and `node --test test/*.test.mjs` pass;
 
 ## Release
 
-- 0.9.4 is C01, C04 and C05. The tag waits for C01 from amendment 1b, and for C04 and C05 while they are still in their runs. It is tagged without C02 and C03, and with no live run (the maintainer waived it for 0.9.4).
-- The 0.9.4 tag needs C01: a second evals-check stop of C01 stops the iteration for the maintainer (overnight: for the assessment session). A second evals-check stop of C04 or of C05 moves that entry to 0.9.6 with the held entries, and the tag goes without it. So no entry can block the tag by stopping twice, and the tag is never cut without the coverage map.
-- No tag for C04 and C05 alone: each tag costs the maintainer a plugin reload.
-- The batches of iteration 2 (plan 0.9.5) ship as 0.9.5. The held entries C06, C07, C08, the gate entries C02 and C03, and the eval-producer field go to 0.9.6.
+- 0.9.4 is C01 and C04. The tag waits for C01 from amendment 1b, and for C04 while it is still in its run. It is tagged without C02 and C03, and with no live run (the maintainer waived it for 0.9.4).
+- The 0.9.4 tag needs C01: a second evals-check stop of C01 stops the iteration for the maintainer (overnight: for the assessment session). A second evals-check stop of C04 moves it to 0.9.6 with the held entries, and the tag goes without it. So no entry can block the tag by stopping twice, and the tag is never cut without the coverage map.
+- No tag for C04 alone: each tag costs the maintainer a plugin reload.
+- The batches of iteration 2 (plan 0.9.5) ship as 0.9.5. The held entries C05, C06, C07, C08, the gate entries C02 and C03, and the eval-producer field go to 0.9.6.
 
 ## Date estimate
 
-- Size: 3 PRs, this plan PR, and the version PR. About 5 to 8 million subagent tokens without cache reads (a planning figure, from iteration 1: 0.9M to 2.1M per PR).
+- Size: 2 PRs, this plan PR, and the version PR. About 5 to 8 million subagent tokens without cache reads (a planning figure, from iteration 1: 0.9M to 2.1M per PR).
 - The gate is the slow part: about one completed CodeRabbit review an hour, so about one merge an hour.
 - Dates: this plan PR on 2026-11-13; wave C1 on 2026-11-13; wave D1 (C01) on 2026-11-13 to 2026-11-14; the 0.9.4 release on 2026-11-14. **Range: 2026-11-14 to 2026-11-15.**
 - The whole of D10 to the Tagreeve start: 0.9.4 by about 2026-11-15; the batches of iteration 2 as 0.9.5; the held entries and the gate entries as 0.9.6 after the maintainer's decision; the batches of iteration 3 as 0.9.7 (7 batches in each iteration) at about one merge an hour, about 1.5 to 2 days each; then the Wavewright rename release. **Tagreeve start: about 2026-11-19 to 2026-11-21.**
@@ -266,7 +238,6 @@ Acceptance: `node test/sim-pipeline.mjs` and `node --test test/*.test.mjs` pass;
 - **Two plans in a row whose review grew worse on mechanism detail.** Plan 0.9.2 amendment 1 (1 blocker and 4 majors, then 2 majors, then 4 majors) and this plan's first draft (3 blockers and 9 majors, then 6 blockers and 13 majors). From now on every entry is in what-must-be-true form: each bullet says what holds after the change, and the mechanism is the build's. An open design choice is written as a choice with a pick.
 - **Four plan reviews did not settle inside the cap, and the reviews named unlisted contradictions with existing tests and code as the cause.** C01 is written from an impact pass done before the text: each existing test it changes is named in its Touches as changed in place, and each bullet is narrowed so it changes nothing else. This is the first test of that method.
 - **What the gap rule cannot do.** A named gap refuses a writer's list only through the verdict. A check that answers `ok` and writes a gap only in prose is not caught, and code cannot count gap refusals apart from other `needs-change` answers. A separate gaps field in the check answer would do both, but it changes the answer shape, the accept rule of `checkEvals` and `scripts/recover-evals.sh`. That is the fallback if the count matters.
-- **C05 trusts the verifier's mutation.** A mutation that does not touch the rule under test could still make the case fail. The verifier names the mutation in `breakWhy`, so the reviewer and the report can read it.
 - **The coverage map and plan review.** The idea of C01 may carry over to plan review: each goal and each finding of a plan mapped to an entry. A candidate for release 3's planner, not part of this release.
 
 ## Out of scope
