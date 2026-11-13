@@ -1823,14 +1823,14 @@ async function runPR(input) {
     result = await runPRSteps(input)
   } catch (e) {
     const rec = recordState[input.id]
-    if (!rec) throw e
+    if (!rec && !botChangedState[input.id]) throw e
     const resume = input.resume
     result = {
       id: input.id, ready: false, reason: `run failed: ${(e && e.message) || String(e)}`,
       // runPRSteps pushes its rows onto this same array, so keep it by reference.
       ...(resume && Array.isArray(resume.history) ? { history: resume.history } : {}),
       ...(botChangedState[input.id] ? { codeChangedByBots: true, prNumber: botChangedState[input.id] } : {}),
-      ...recordOut(rec), ...carriedOut(resumedDisputes(input), resumedDeviations(input)),
+      ...(rec ? recordOut(rec) : {}), ...carriedOut(resumedDisputes(input), resumedDeviations(input)),
     }
   } finally {
     const cleanup = await cleanupPR(input)
