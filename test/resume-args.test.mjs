@@ -185,3 +185,23 @@ test('A09-9 prints only copied fields over 60 seeded results', () => {
     assert.equal('prNumber' in item, 'prNumber' in p)
   }
 })
+
+test('BR2-9 the round count for --max-rounds counts only integer rounds', () => {
+  const history = [{ round: 1 }, { round: 2 }, { round: '2r' }, { round: 'minor1' }, { round: 'docs1' }, { round: 'docs2' }, { round: 'bots1' }, { round: 'stop', stop: 'x' }]
+  const f = file(output([{ id: 'R1', ready: false, reason: 'x', history }]))
+  const a = run(f, 'R1', '--max-rounds', '2', '--cap', '4')
+  assert.equal(a.status, 0)
+  assert.ok(!a.stderr.split('\n').some(l => l.startsWith('WARN')), a.stderr)
+  const b = run(f, 'R1', '--max-rounds', '2', '--cap', '3')
+  assert.equal(b.status, 0)
+  const warns = b.stderr.split('\n').filter(l => l.startsWith('WARN'))
+  assert.equal(warns.length, 1)
+  assert.match(warns[0], /history has 2 rounds/)
+})
+
+test('BR2-12 the minors of a stop result go to resume.minors', () => {
+  const m = [{ severity: 'minor', title: 'tiny nit' }]
+  const { item } = ok(file(output([{ id: 'M2', ready: false, reason: 'x', history: [{ round: 1 }], minors: m }])), 'M2')
+  assert.deepEqual(item.resume.minors, m)
+  assert.ok(!('minors' in ok(file(output([{ id: 'M3', ready: false, reason: 'x' }])), 'M3').item.resume))
+})

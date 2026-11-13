@@ -4626,13 +4626,14 @@ await check('E04-16: a stop in the docs check and one in the bot check each leav
   const docs = await hooked(only1('G3'), at('review', 'G3', { 1: themed('x1', 'gap') }))
   assert.match(docs.G3.reason, /^docs check: rounds exhausted/)
   assert.equal(docs.G3.history.at(-1).stop, docs.G3.reason)
-  const rd = await hooked(resumeFrom('G3', docs), at('review', 'G3', { 5: themed('x5', 'Gap') }))
-  assert.ok(called('fix:G3#5'))
+  const rd = await hooked(resumeFrom('G3', docs), at('review', 'G3', { 3: themed('x3', 'Gap') }))
+  assert.ok(called('review:G3#3') && !called('review:G3#5'))
+  assert.ok(called('fix:G3#3'))
   assert.notEqual(rd.G3.reason, 'needs human: scope')
   const bots = await hooked(only1('B1'), chain(at('review', 'B1', { 1: themed('x1', 'gap') }), (p, o) => o.label.startsWith('botreview:B1') ? reviewOf([f('major', 'late')]) : undefined))
   assert.match(bots.B1.reason, /^bot answer check: rounds exhausted/)
   assert.equal(bots.B1.history.at(-1).stop, bots.B1.reason)
-  const next = bots.B1.history.length + 1
+  const next = Math.max(...bots.B1.history.filter(row => Number.isInteger(row.round)).map(row => row.round)) + 1
   const rb = await hooked(resumeFrom('B1', bots), at('review', 'B1', { [next]: themed('x4', 'Gap') }))
   assert.ok(called(`fix:B1#${next}`))
   assert.notEqual(rb.B1.reason, 'needs human: scope')
@@ -4647,7 +4648,7 @@ await check('E04-17: a stop that pushes no row gets a marker row with no themes,
     const x = await hooked(only1(id), chain(at('review', id, { 1: themed('x1', 'gap') }), hook))
     assert.equal(x[id].reason, reason)
     assert.deepEqual(x[id].history.at(-1), { round: 'stop', stop: reason })
-    const n = x[id].history.filter(row => row.round !== 'stop').length + 1
+    const n = Math.max(...x[id].history.filter(row => Number.isInteger(row.round)).map(row => row.round)) + 1
     const y = await hooked(resumeFrom(id, x), at('review', id, { [n]: themed('again', 'Gap') }))
     assert.ok(called(`fix:${id}#${n}`), reason)
     assert.notEqual(y[id].reason, 'needs human: scope', reason)
@@ -4658,6 +4659,142 @@ await check('E04-17: a stop that pushes no row gets a marker row with no themes,
   const y = await hooked(resumeFrom('C1', x, { pr: { architectureDecision: 'use A' } }), at('review', 'C1', { 2: themed('x3', 'Gap') }))
   assert.ok(called('fix:C1#1') && called('fix:C1#2'))
   assert.notEqual(y.C1.reason, 'needs human: scope')
+})
+const br2Rec = { pr: 'LA', evals: K_LIST, noErrorPath: '', noReference: '', algorithm: false }
+const br2Args = (res, id) => {
+  const file = join(mkdtempSync(join(tmpdir(), 'br2-')), 'out.json')
+  writeFileSync(file, JSON.stringify({ result: { prs: [res] } }))
+  const ra = spawnSync('bash', ['scripts/resume-args.sh', file, id], { encoding: 'utf8' })
+  assert.equal(ra.status, 0, ra.stderr)
+  return JSON.parse(ra.stdout)
+}
+const br2Resume = (extra = {}) => ({ history: [{ round: 1 }, { round: 'stop', stop: 'x' }], minors: [], findings: [f('major', 'old')], ...extra })
+await check('BR2-1: a ready land-fix result carries the list it was given, and a land fix with no list returns none', async () => {
+  const c = await kRun(kLandPr(), { cfg: [['landOutput', 'LA']] })
+  assert.equal(c.LA.ready, true)
+  assert.equal(c.LA.evals, undefined)
+  const a = await kRun(kLandPr({ evals: K_LIST }), { cfg: [['landOutput', 'LA']] })
+  assert.equal(a.LA.ready, true)
+  assert.deepEqual(a.LA.evals, K_LIST)
+  assert.equal(typeof a.LA.evalsMeta, 'object')
+  const b = await kRun(kLandPr({ evals: { evals: K_LIST, accepted: br2Rec } }), { cfg: [['landOutput', 'LA']] })
+  assert.deepEqual(b.LA.evals, K_LIST)
+  assert.deepEqual(b.LA.evalsMeta.accepted, br2Rec)
+})
+await check('BR2-2: every land-fix stop carries the list and the accepted record', async () => {
+  const a = await kRun(kLandPr({ evals: K_LIST }), { cfg: [['landOutput', 'LA']], verify: kFail(['C1-2'], /#land/) })
+  const b = await k7Run(kLandPr({ evals: K_LIST }), { cfg: [['landOutput', 'LA'], ['threads', 'LA']] })
+  assert.match(b.LA.reason, /^bot answer check:/)
+  const c = await k7Run(kLandPr({ evals: K_LIST }), { cfg: [['landOutput', 'LA'], ['threads', 'LA'], ['ciFail', 'LA']], bad: false })
+  assert.match(c.LA.reason, /^CI failed on the head/)
+  const notReady = (p, o) => o.label === 'landfix:LA' ? { readyToMerge: false, notes: 'n' } : undefined
+  const d = await hooked(kLandPr({ evals: K_LIST }), notReady)
+  assert.equal(d.LA.reason, 'land fix not ready')
+  const e = await hooked(kLandPr({ evals: { evals: K_LIST, accepted: br2Rec } }), notReady)
+  for (const x of [a, b, c, d, e]) {
+    assert.equal(x.LA.ready, false)
+    assert.deepEqual(x.LA.evals, K_LIST)
+  }
+  assert.deepEqual(e.LA.evalsMeta.accepted, br2Rec)
+})
+await check('BR2-3: a land-fix run that throws returns a result with the list and the record', async () => {
+  for (const evals of [K_LIST, { evals: K_LIST, accepted: br2Rec }]) {
+    calls = []; preflight = GOOD
+    const out = await run({ ...base, prs: kLandPr({ evals }) }, async (p, o) => { if (o.label === 'landfix:LA') throw new Error('boom'); return agent(p, o) }, parallel, log)
+    const x = out.prs.find(p => p && p.id === 'LA')
+    assert.ok(x, 'no LA result')
+    assert.match(x.reason, /^run failed:.*boom/)
+    assert.deepEqual(x.evals, K_LIST)
+    if (!Array.isArray(evals)) assert.deepEqual(x.evalsMeta.accepted, br2Rec)
+  }
+})
+await check('BR2-4: a second land fix takes the list from the first result through resume-args.sh and gets the verifier', async () => {
+  const a = await kRun(kLandPr({ evals: K_LIST }), { cfg: [['landOutput', 'LA']] })
+  const item = br2Args(a.LA, 'LA')
+  assert.deepEqual(item.resume.evals.evals, K_LIST)
+  const b = await kRun(kLandPr({ evals: item.resume.evals }), { cfg: [['landOutput', 'LA']] })
+  assert.equal(b.LA.ready, true, b.LA.reason)
+  const l = kLabels('LA')
+  assert.ok(l.includes('verify:LA#land1') && !l.includes('test:LA#land1'))
+  assert.ok(!l.some(x => /^evals(arch|product):/.test(x)))
+})
+await check('BR2-5: a land fix with the record and no list stops with evals missing, and a refused list keeps the record', async () => {
+  for (const evals of [{ accepted: br2Rec }, { evals: [], accepted: br2Rec }]) {
+    const x = await kRun(kLandPr({ evals }), { cfg: [['landOutput', 'LA']] })
+    assert.equal(x.LA.ready, false)
+    assert.ok(!kLabels('LA').includes('landfix:LA'))
+    assert.match(x.LA.reason, /^evals missing:/)
+    assert.deepEqual(x.LA.evalsMeta.accepted, br2Rec)
+  }
+  const y = await kRun(kLandPr({ evals: { evals: K_REFACTOR, accepted: br2Rec } }), { cfg: [['landOutput', 'LA']] })
+  assert.match(y.LA.reason, /^evals refused:/)
+  assert.ok(!kLabels('LA').includes('landfix:LA'))
+  assert.deepEqual(y.LA.evalsMeta.accepted, br2Rec)
+})
+await check('BR2-6: a land-fix list that differs from the record is used as it is, with no evals check', async () => {
+  const other = [{ ...K_LIST[0], statement: 'C1-1 must hold, changed' }, K_LIST[1]]
+  const x = await kRun(kLandPr({ evals: { evals: other, accepted: br2Rec } }), { cfg: [['landOutput', 'LA']] })
+  assert.equal(x.LA.ready, true, x.LA.reason)
+  const l = kLabels('LA')
+  assert.ok(l.includes('verify:LA#land1') && !l.some(v => /^evals(arch|product)?:/.test(v)))
+})
+await check('BR2-18: the land-fix list rules do not get weaker', async () => {
+  const a = await kRun(kLandPr({ evals: K_REFACTOR }), { cfg: [['landOutput', 'LA']] })
+  assert.match(a.LA.reason, /^evals refused:/)
+  const b = await kRun(kLandPr({ evals: { evals: [] } }), { cfg: [['landOutput', 'LA']] })
+  assert.equal(b.LA.reason, 'evals refused: empty list')
+})
+await check('BR2-7: rounds counts integer rows, and a resume numbers the next round as the highest plus one', async () => {
+  const rows = [{ round: 1 }, { round: '1r' }, { round: 'minor1' }, { round: 'docs1' }, { round: 'stop', stop: 'x' }]
+  const c = await hooked([{ ...only1('C1')[0], resume: br2Resume({ history: rows }) }], () => undefined)
+  assert.equal(c.C1.ready, true)
+  assert.ok(called('review:C1#2') && !calls.some(k => /^review:C1#[3-9]$/.test(k.label)))
+  assert.equal(c.C1.rounds, 2)
+  await hooked([{ ...only1('C1')[0], resume: br2Resume({ history: [{ round: 2 }, { round: 'stop', stop: 'x' }] }) }], () => undefined)
+  assert.ok(called('review:C1#3') && !called('review:C1#2'))
+})
+await check('BR2-8: a resume after a docs-check stop starts its review at the next integer round', async () => {
+  const docs = await hooked(only1('G3'), at('review', 'G3', { 1: themed('x1', 'gap') }))
+  assert.match(docs.G3.reason, /^docs check: rounds exhausted/)
+  await hooked(resumeFrom('G3', docs), () => undefined)
+  assert.ok(called('review:G3#3') && !called('review:G3#5'))
+})
+await check('BR2-10: a resume whose pre-fix changes nothing stops with no progress and runs no reviewer', async () => {
+  const x = await hooked([{ ...only1('C1')[0], resume: br2Resume() }], (p, o) => o.label.startsWith('fix:C1') ? { summary: 's', changed: false } : undefined)
+  assert.equal(x.C1.ready, false)
+  assert.match(String(x.C1.reason), /^no progress:.*fix changed nothing/)
+  assert.deepEqual(x.C1.lastFindings.map(v => v.title), ['old'])
+  assert.equal(x.C1.rerunFixChanged, false)
+  assert.ok(!calls.some(c => /^(test|verify|review|arch|qa|product):C1#/.test(c.label)))
+  assert.equal(calls.filter(c => c.label.startsWith('fix:C1')).length, 1)
+})
+await check('BR2-11: the pre-fix stop does not catch a decision rerun or a fix that changed code', async () => {
+  await hooked([{ ...only1('C1')[0], architectureDecision: 'use A', resume: br2Resume() }], (p, o) => o.label === 'fix:C1#1' ? { summary: 's', changed: false } : undefined)
+  assert.ok(calls.some(c => /^review:C1#\d+$/.test(c.label)))
+  await hooked([{ ...only1('C1')[0], resume: br2Resume() }], (p, o) => o.label === 'fix:C1#1' ? { summary: 's', changed: true } : undefined)
+  assert.ok(calls.some(c => /^review:C1#\d+$/.test(c.label)))
+})
+await check('BR2-12: a stop before the open step carries the minor, and a resume gives it to the open step', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('minor', 'tiny nit'), f('major', 'x')]) : o.label === 'fix:C1#1' ? { summary: 's', changed: false } : undefined)
+  assert.match(x.C1.reason, /^no progress:/)
+  const item = br2Args(x.C1, 'C1')
+  assert.ok((item.resume.minors || []).some(m => m.title === 'tiny nit'), 'no tiny nit in resume.minors')
+  const y = await hooked([{ ...only1('C1')[0], resume: item.resume }], () => undefined)
+  assert.equal(y.C1.ready, true)
+  assert.ok(calls.some(c => /^(open|minorfix):C1$/.test(c.label) && c.prompt.includes('tiny nit')))
+})
+await check('BR2-13: a docs-check stop and a stop of a resumed run keep the accumulated minors', async () => {
+  const g = await hooked(only1('G3'), at('review', 'G3', { 1: reviewOf([f('major', 'x1', { theme: 'gap' }), f('minor', 'docs nit')]) }))
+  assert.match(g.G3.reason, /^docs check:/)
+  assert.ok((br2Args(g.G3, 'G3').resume.minors || []).some(m => m.title === 'docs nit'), 'no docs nit')
+  const c = await hooked([{ ...only1('C1')[0], resume: br2Resume({ minors: [f('minor', 'old nit')], findings: [] }) }], (p, o) => o.label === 'review:C1#2' ? reviewOf([f('major', 'y')]) : o.label === 'fix:C1#2' ? { summary: 's', changed: false } : undefined)
+  assert.match(c.C1.reason, /^no progress:/)
+  assert.ok((br2Args(c.C1, 'C1').resume.minors || []).some(m => m.title === 'old nit'), 'no old nit')
+})
+await check('BR2-14: a resume that stops at the evals intake returns the minors it was given', async () => {
+  const c = await hooked([{ ...only1('C1')[0], resume: br2Resume({ minors: [f('minor', 'old nit')], findings: [], evals: { accepted: { pr: 'C1', evals: EVS, noErrorPath: '' } } }) }], () => undefined)
+  assert.match(c.C1.reason, /^evals missing:/)
+  assert.ok((br2Args(c.C1, 'C1').resume.minors || []).some(m => m.title === 'old nit'), 'no old nit')
 })
 await check('E04-10: a reviewer eval with a repeated id, no check or a kind outside the seven is not added', async () => {
   const bad = [
