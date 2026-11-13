@@ -2158,8 +2158,10 @@ test('put pr-seen after a put blocked that failed on the building label writes n
   c_apply(s, r)
   assert.deepEqual(c_labelsOf(s, 5), ['needs-plan'])
   assert.equal(br_planRecs(s).length, 1)
+  assert.ok(br_planRecs(s)[0].body.startsWith('<!-- pipeline:routine needs-plan 5:5000 -->'))
   assert.equal(br_comments(s).length, 1)
   assert.ok(br_comments(s)[0].startsWith(br_COMMENT_1))
+  assert.equal(c_cnext(s, 'cloud-build').stdout.includes('"issue":5'), false)
 })
 
 test('put pr-seen at stage 0 on a triage-plan block only prints WOULD', () => {
@@ -2207,6 +2209,7 @@ test('put pr-seen that fails on a label write posts no comment, and a retry fini
   c_apply(s, r2)
   assert.deepEqual(c_labelsOf(s, 5), ['needs-plan'])
   assert.equal(br_planRecs(s).length, 1)
+  assert.ok(br_planRecs(s)[0].body.startsWith('<!-- pipeline:routine needs-plan 5:7001 -->'))
   assert.equal(br_comments(s).length, 1)
   assert.ok(br_comments(s)[0].startsWith(br_COMMENT_1))
 })

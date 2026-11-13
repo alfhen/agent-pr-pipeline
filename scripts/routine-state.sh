@@ -148,6 +148,7 @@ read -r -d '' PLAN_JQ <<'JQ'
 def lc: if type == "string" then ascii_downcase else "" end;
 def mx: if length == 0 then null else max end;
 def inl($a): . as $x | any($a[]; . == $x);
+def inlci($a): (ascii_downcase) as $x | any($a[]; ascii_downcase == $x);
 def ctime: [.created_at, (.updated_at // .created_at)] | map(select(. != null)) | mx;
 def within($s): (try (.at | fromdateiso8601) catch 0) > (now - $s);
 # A lost race leaves a second record of the key; only the first counts.
@@ -185,8 +186,8 @@ def hasl($l): .L | index($l) != null;
     | ($bs | last) as $ls
     | {n: $n, i: $i, comments: $c.comments, L: $L, r: $r, lu: $lu, hasUR: $hasUR, epoch: $epoch, trusted: $trusted,
        A: $A, authorPart: $authorPart, reason: $reason, newestOff: ($off | mx), hasPr: $c.hasPr,
-       skipped: (($L | any(inl($cfg.skipLabels))) or ($L | index("declined")) != null),
-       excluded: (($L | any(inl($cfg.skipLabels))) or ($L | index("declined")) != null or $c.hasPr),
+       skipped: (($L | any(inlci($cfg.skipLabels))) or ($L | index("declined")) != null),
+       excluded: (($L | any(inlci($cfg.skipLabels))) or ($L | index("declined")) != null or $c.hasPr),
        tr: $tr, trNew: ($tr != null and $tr.id > $epoch),
        att: ($bs | map(.key) | unique | length), ls: $ls, lb: ($r | map(select(.kind == "blocked")) | last), legacyBuilt: $legacyBuilt,
        inflight: ($bs | any(.key as $k | ($bl | any(.key == $k)) | not)),
@@ -485,8 +486,9 @@ cloud_next() {
       or any($recs[]; .kind == "build-started" and .n == $n))]' <<<"$issues")
     p=$(make_plan build "$issues") || exit $?
   else
+    # Must keep every issue a triage step of PLAN_JQ can name: issues at or above triageFrom, plus adopt candidates.
     issues=$(jq -c --argjson cfg "$routine_cfg" --slurpfile recs <(printf '%s' "$recs") '$recs[0] as $recs
-      | [.[] | .number as $n | select(any(.labels[]?; .name == "declined" or (.name | IN($cfg.skipLabels[]))) | not)
+      | [.[] | .number as $n | select(any(.labels[]?; .name == "declined" or (.name | ascii_downcase | IN($cfg.skipLabels[] | ascii_downcase))) | not)
         | select($n >= $cfg.triageFrom or any($recs[]; .kind == "triaged" and .n == $n and (.key | contains(":") | not)))]' <<<"$issues")
     p=$(make_plan triage "$issues") || exit $?
   fi
@@ -678,8 +680,15 @@ blocked_comment() { # issue reasonCode why -> prints the comment body
   jq -rn --arg f "$first" --arg w "$3" "$WHY_JQ"'$f + (if $w == "" then "" else "\n" + ($w | inert) end)'
 }
 
+post_block_comment() { # issue reasonCode built-key
+  local why
+  why=$(jq -r --arg k "$3" '[.[] | select(.kind == "built" and .key == $k)] | last | .rec.why // "" | if type == "string" then . else "" end' <<<"$recs")
+  gh api --method POST "repos/$repo/issues/$1/comments" -f body="$(blocked_comment "$1" "$2" "$why")" >/dev/null \
+    || echo "WARNING could not post the block comment on issue $1" >&2
+}
+
 put_blocked() {
-  local key bid why body
+  local key bid
   tracking_prelude
   key=$(started_key "$issue" "$run_id")
   [ -n "$key" ] || die 65 "no build-started record for issue $issue and run $run_id"
@@ -694,10 +703,7 @@ put_blocked() {
   # building comes off last: while it stays, a failed put is finished by put pr-seen.
   remove_labels "$issue" ready-to-build maintainer-approved building
   [ "$reason" = triage-plan ] || echo "NOTICE blocked $repo $issue $run_id $reason"
-  why=$(jq -r --arg k "$key" '[.[] | select(.kind == "built" and .key == $k)] | last | .rec.why // "" | if type == "string" then . else "" end' <<<"$recs")
-  body=$(blocked_comment "$issue" "$reason" "$why")
-  gh api --method POST "repos/$repo/issues/$issue/comments" -f body="$body" >/dev/null \
-    || echo "WARNING could not post the block comment on issue $issue" >&2
+  post_block_comment "$issue" "$reason" "$key"
 }
 
 put_needs_plan() {
@@ -710,7 +716,7 @@ put_needs_plan() {
 }
 
 put_pr_seen() {
-  local plan_recovery=false bid why
+  local plan_recovery=false bid
   issue_prelude build
   in_plan 'any(.prseen[]; . == $n)' || die 65 "issue $issue has no building label or no PR from its branch"
   would pr-seen "$issue"
@@ -728,10 +734,7 @@ put_pr_seen() {
   fi
   remove_labels "$issue" building
   if [ "$plan_recovery" = true ]; then
-    why=$(jq -r --argjson n "$issue" '. as $all | [.[] | select(.kind == "blocked" and .n == $n)] | last | .key as $k
-      | [$all[] | select(.kind == "built" and .key == $k)] | last | .rec.why // "" | if type == "string" then . else "" end' <<<"$recs")
-    gh api --method POST "repos/$repo/issues/$issue/comments" -f body="$(blocked_comment "$issue" triage-plan "$why")" >/dev/null 2>&1 \
-      || echo "WARNING could not post the block comment on issue $issue" >&2
+    post_block_comment "$issue" triage-plan "$(jq -r --argjson n "$issue" '[.[] | select(.kind == "blocked" and .n == $n)] | last | .key' <<<"$recs")"
   fi
   echo "ok pr-seen $issue"
 }
