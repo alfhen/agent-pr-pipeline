@@ -78,12 +78,13 @@ test('BR4-8 an agentType that matches no agent file is other and its text goes n
 
 test('BR4-6 the PR line that token-report.sh reads is the one prBlock writes', () => {
   const src = readFileSync(join(root, 'workflows/run-wave.js'), 'utf8')
-  const pr = src.split('\n').find(l => l.startsWith('const prBlock = '))
-  assert.ok(pr, 'prBlock not found')
-  assert.ok(pr.includes('`PR: ${pr.id} - '), 'prBlock must start with "PR: ${pr.id} - "')
+  const decl = src.split('\n').find(l => l.startsWith('const prBlock = '))
+  assert.ok(decl, 'prBlock not found')
+  const prBlock = new Function('decided', 'evalsText', `return ${decl.slice('const prBlock = '.length)}`)(() => '', () => '')
+  const prompt = prBlock({ id: 'A1', title: 't', branch: 'b', notes: 'n' })
   const head = readFileSync(TOKEN_REPORT, 'utf8').split('\nset -u')[0]
   assert.match(head, /prBlock/)
-  const w = world([{ type: 'agent-pr-pipeline:tester', lines: [line({ type: 'user', message: { content: 'PR: A1 - t\nBranch: b' } }), usage('m', 1)] }])
+  const w = world([{ type: 'agent-pr-pipeline:tester', lines: [line({ type: 'user', message: { content: prompt } }), usage('m', 1)] }])
   assert.deepEqual(w.run().tok.prs.map(p => p.id), ['A1'])
 })
 

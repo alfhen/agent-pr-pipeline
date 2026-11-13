@@ -6,7 +6,7 @@
 # the PRs that used more than TOKEN_REPORT_FLAG_MULTIPLE (default 2) times the median of the wave (needs 3 PRs).
 # The transcript total counts cache reads. Top roles, the per-PR figure and the PR flags use the weighted figure instead:
 # input 1, cache read 0.1, cache write 1.25, output 5, so a PR that only re-reads a big context is not the biggest one.
-# A transcript line that is not valid JSON is skipped, and a file with such a line counts once as incomplete; the report then says it is incomplete and flags no PR.
+# A transcript line that is not valid JSON is skipped. A file that is empty, has such a line, or is skipped by the second read counts once as incomplete; the report then says it is incomplete and flags no PR.
 # A missing transcript folder prints the totals only. A message id that repeats in a transcript counts once.
 # A role is the agents/*.md basename that ends the agentType (the longest wins, so apl-v0-8-0-arch-reviewer is arch-reviewer);
 # any other agentType is reported as other, so free text never reaches the report or the feedback evidence.
@@ -17,7 +17,7 @@
 # so it passes the denylist of file-feedback.sh like any other item.
 # --json writes, for ledger.sh, per PR: tokens by role (four counts), raw (the sum with cache reads), noCacheRead, weighted,
 # agent count, wall minutes (first to last timestamp over the PR's transcripts) and the cost of the minor pass (agents labelled
-# minorfix:, minorreview: and test:<id>#minor1). Without a transcript folder, or when a transcript line is unreadable, comparable is false.
+# minorfix:, minorreview: and test:<id>#minor1). Without a transcript folder, or when any transcript file is incomplete (empty, an unreadable line, or skipped), comparable is false.
 # Exit: 0 done, 1 the output file is missing or is not a workflow output, 64 bad argument.
 set -u
 usage="usage: token-report.sh <workflow output file> [<transcript folder>] [--feedback <file>] [--json <file>]"
