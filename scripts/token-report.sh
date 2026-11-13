@@ -6,11 +6,13 @@
 # the PRs that used more than TOKEN_REPORT_FLAG_MULTIPLE (default 2) times the median of the wave (needs 3 PRs).
 # The transcript total counts cache reads. Top roles, the per-PR figure and the PR flags use the weighted figure instead:
 # input 1, cache read 0.1, cache write 1.25, output 5, so a PR that only re-reads a big context is not the biggest one.
-# A transcript line that is not valid JSON is skipped; the report then says it is incomplete and flags no PR.
+# A transcript line that is not valid JSON is skipped, and a file with such a line counts once as incomplete; the report then says it is incomplete and flags no PR.
 # A missing transcript folder prints the totals only. A message id that repeats in a transcript counts once.
+# A role is the agents/*.md basename that ends the agentType (the longest wins, so apl-v0-8-0-arch-reviewer is arch-reviewer);
+# any other agentType is reported as other, so free text never reaches the report or the feedback evidence.
 # A PR is found from the description in the agent's meta file (<role>:<PR id>#<step>, as run-wave.js labels agents); the
 # labels wave and goals are no PR. Without a description it falls back to the indented or plain "PR: <id> - " line of the
-# first prompt. An agent with neither has no PR.
+# first prompt, the line that prBlock in workflows/run-wave.js writes. An agent with neither has no PR.
 # --feedback writes a feedback list to <file> ([] when no PR is flagged). The item holds numbers and role names only,
 # so it passes the denylist of file-feedback.sh like any other item.
 # --json writes, for ledger.sh, per PR: tokens by role (four counts), raw (the sum with cache reads), noCacheRead, weighted,
@@ -46,15 +48,21 @@ if [ -z "$dir" ] || [ ! -d "$dir" ]; then
 fi
 
 bad=0
+agents_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/agents"
+known=$(for a in "$agents_dir"/*.md; do [ -e "$a" ] && basename "$a" .md; done)
 rows=$(mktemp) || exit 1
 trap 'rm -f "$rows"' EXIT
 while IFS= read -r f; do
   meta="${f%.jsonl}.meta.json"
-  role=$(jq -r '.agentType // "unknown" | sub("^[^:]*:"; "")' "$meta" 2>/dev/null) || role=unknown
-  [ -n "$role" ] || role=unknown
+  atype=$(jq -r '.agentType // "" | strings' "$meta" 2>/dev/null) || atype=""
+  role=other
+  for k in $known; do
+    if { [ "$atype" = "$k" ] || [[ $atype == *[-:]"$k" ]]; } && { [ "$role" = other ] || [ ${#k} -gt ${#role} ]; }; then role=$k; fi
+  done
   desc=$(jq -r '.description // ""' "$meta" 2>/dev/null) || desc=""
-  jq -c . "$f" >/dev/null 2>&1 || bad=$((bad + 1))
-  [ -s "$f" ] || bad=$((bad + 1))
+  fbad=0
+  jq -c . "$f" >/dev/null 2>&1 || fbad=1
+  [ -s "$f" ] || fbad=1
   jq -R -c 'fromjson? // empty' "$f" | jq -c -s --arg role "$role" --arg desc "$desc" '
     ([.[] | select(.type == "user") | .message.content | strings] | first // "") as $first
     | ([to_entries[] | select(.value.message.usage != null) | {key: (.value.message.id // "line\(.key)"), value: .value.message.usage}] | from_entries | [.[]]) as $u
@@ -67,7 +75,8 @@ while IFS= read -r f; do
        cacheWrite: ([$u[] | .cache_creation_input_tokens // 0] | add // 0),
        cacheRead: ([$u[] | .cache_read_input_tokens // 0] | add // 0),
        output: ([$u[] | .output_tokens // 0] | add // 0),
-       messages: ($u | length)}' >> "$rows" 2>/dev/null || { echo "token-report: skipped unreadable $f" >&2; bad=$((bad + 1)); }
+       messages: ($u | length)}' >> "$rows" 2>/dev/null || { echo "token-report: skipped unreadable $f" >&2; fbad=1; }
+  bad=$((bad + fbad))
 done < <(find "$dir" -maxdepth 1 -name 'agent-*.jsonl' | sort)
 
 if [ ! -s "$rows" ]; then echo "transcripts: no agent files in the folder, totals only"; exit 0; fi
@@ -85,7 +94,7 @@ report=$(jq -s -r --argjson mult "$mult" --argjson bad "$bad" '
     ($roles[] | "\(.role) | \(.agents) | \(.input) | \(.cacheWrite) | \(.cacheRead) | \(.output) | \(.avgContext)"),
     "weighted per role (input 1, cache read 0.1, cache write 1.25, output 5): \($roles | map("\(.role) \(.weighted)") | join(", "))",
     "top roles (weighted): \($roles[:3] | map("\(.role) \(.weighted)") | join(", "))",
-    (if $bad > 0 then "transcripts: incomplete, \($bad) file(s) had unreadable lines" else empty end),
+    (if $bad > 0 then "transcripts: incomplete, \($bad) file(s) were unreadable or skipped" else empty end),
     ( [.[] | select(.pr != null)] | group_by(.pr) | map({pr: .[0].pr, total: (map(wt) | add)}) | sort_by(.total) ) as $prs
     | (if ($prs | length) > 0 then "weighted per PR: \($prs | map("\(.pr) \(.total)") | join(", "))" else empty end),
       (if $bad > 0 then "PR flags: none, the transcripts are incomplete"

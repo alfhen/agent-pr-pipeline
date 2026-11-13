@@ -269,7 +269,7 @@ test('L01-9 report counts a PR once over its records, a defect once, land fixes 
   assert.match(r.stdout, /^Defects found after sign-off: 1 PRs\.$/m)
   assert.match(r.stdout, /^Land fixes: 1 records on 1 PRs, counted apart from defects\.$/m)
   assert.match(r.stdout, /^Maintainer touches per PR: 0\.5, 1 in all\.$/m)
-  assert.match(r.stdout, /^Records with no tokens: 1 of 2 PRs\.$/m)
+  assert.match(r.stdout, /^PRs with no tokens: 1 of 2\.$/m)
 })
 
 test('L01-9 a stalled record joins only the next numbered record of its plan id, even when the id repeats', () => {
@@ -314,7 +314,7 @@ test('L01-10 hand records a hand fix and report prints the counts by kind', () =
   const s = setup()
   const r = run(s, 'hand', '42', 'process')
   assert.equal(r.status, 0, r.stderr)
-  assert.match(r.writes[0], /^POST \/repos\/o\/r\/issues\/7\/comments body=<!-- pipeline:ledger v1 hand-\d+ #42 -->\\n```json\\n.*"handFix":"process"/)
+  assert.match(r.writes[0], /^POST \/repos\/o\/r\/issues\/7\/comments body=<!-- pipeline:ledger v1 hand-\d+-[0-9a-f]{6} #42 -->\\n```json\\n.*"handFix":"process"/)
   assert.equal(run(s, 'hand', '42', 'other').status, 64)
   assert.equal(run(setup({ issue: false }), 'hand', '42', 'code').status, 65)
   const hand = (id, n, k) => rec(id, `hand-${id}`, `#${n}`, { kind: 'hand', handFix: k, pr: { id: `#${n}`, number: n }, rounds: null })
@@ -357,7 +357,7 @@ test('report --from reads the lines that backfill --dry-run printed', () => {
   assert.equal(r.status, 0, r.stderr)
   assert.match(r.stdout, /^Rounds per merged PR: median 4, over 2 PRs, and 0 PRs have no round count\.$/m)
   assert.match(r.stdout, /^Maintainer touches per PR: 0\.5, 1 in all\.$/m)
-  assert.match(r.stdout, /^Records with no tokens: 2 of 2 PRs\.$/m)
+  assert.match(r.stdout, /^PRs with no tokens: 2 of 2\.$/m)
 })
 
 test('list, report and hand with no ledger issue exit 65', () => {
@@ -409,4 +409,43 @@ test('a local record from a tokens file that is not comparable keeps the wave to
   const tokens = tmp(s, 'tokens.json', { comparable: false, totals: { totalTokens: 7000, agentCount: 5 }, prs: [] })
   const recs = records(run(s, 'put', out, '--run', 'wf_1', '--tokens', tokens, '--dry-run'))
   assert.ok(recs.length === 2 && recs.every(r => r.tokens.comparable === false && r.tokens.source === 'totals' && r.tokens.raw === null && r.tokens.agents === null && r.tokens.waveTotal === 7000 && r.tokens.waveAgents === 5))
+})
+
+test('BR4-1 a stop that starts with "no eval results:" counts as one maintainer touch', () => {
+  const reasons = ['no eval results: the verifier gave no eval results twice in round 2', 'needs human: scope']
+  const comments = reasons.map((reason, i) => rec(10 + i, 'wf_1', `P${i + 1}`, { pr: { id: `P${i + 1}`, number: i + 1 }, reason }))
+  const s = setup({ comments, pulls: [1, 2].map(n => mergedPr(n, '2026-11-02T00:00:00Z')), facts: { 1: { mode: 'auto' }, 2: { mode: 'auto' } } })
+  assert.match(run(s, 'report').stdout, /^Maintainer touches per PR: 1, 2 in all\.$/m)
+})
+
+test('BR4-2 the tokens line counts PRs and calls them PRs', () => {
+  const comments = [rec(10, 'wf_1', 'P1', { pr: { id: 'P1', number: 1 } }), rec(11, 'wf_2', 'P1', { pr: { id: 'P1', number: 1 } }), rec(12, 'wf_1', 'P2', { pr: { id: 'P2', number: 2 }, tokens: tok(100, 90) })]
+  const s = setup({ comments, pulls: [1, 2].map(n => mergedPr(n, '2026-11-02T00:00:00Z')), facts: { 1: {}, 2: {} } })
+  assert.equal(run(s, 'report').stdout.trim().split('\n').pop(), 'PRs with no tokens: 1 of 2.')
+})
+
+test('BR4-3 backfill reads the round count from a description text of 2 MB without passing it on the command line', () => {
+  const big = 'Tested. Review: no blockers or majors after round 3.\n' + '€'.repeat(700000)
+  const s = setup({ pulls: [mergedPr(41, '2026-10-01T00:00:00Z', big), mergedPr(42, '2026-10-02T00:00:00Z', 'Tested. No round line here.')], facts: { 41: {}, 42: {} } })
+  const r = run(s, 'backfill', '--dry-run')
+  assert.equal(r.status, 0, r.stderr)
+  assert.deepEqual(records(r).map(x => [x.pr.number, x.rounds]), [[41, 3], [42, null]])
+})
+
+test('BR4-4 two hand fixes for one PR in the same second get different keys and both are counted', () => {
+  const s = setup()
+  writeFileSync(join(s.bin, 'date'), '#!/bin/bash\nif [ "$*" = "+%s" ]; then echo 1700000000; else exec /bin/date "$@"; fi\n')
+  chmodSync(join(s.bin, 'date'), 0o755)
+  const posted = []
+  for (const k of ['code', 'process']) {
+    const r = run(s, 'hand', '42', k)
+    assert.equal(r.status, 0, r.stderr)
+    posted.push(r.writes[0])
+  }
+  const keys = posted.map(w => w.match(/pipeline:ledger v1 (\S+) (\S+) -->/).slice(1).join(' '))
+  assert.notEqual(keys[0], keys[1])
+  const bodies = posted.map(w => w.slice(w.indexOf(' body=') + 6).replaceAll('\\n', '\n'))
+  const comments = [rec(10, 'wf_1', 'P42', { pr: { id: 'P42', number: 42 } }), ...bodies.map((b, i) => comment(20 + i, b))]
+  const t = setup({ comments, pulls: [mergedPr(42, '2026-11-02T00:00:00Z')], facts: { 42: {} } })
+  assert.match(run(t, 'report').stdout, /^Hand fixes: 1 by code, 1 by process\.$/m)
 })

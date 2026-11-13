@@ -20,7 +20,7 @@ line=$(jq -er '
   | (if $ready then "opened"
      elif ($why | test("^quick fix: plan\\b")) then "triage-plan"
      elif ($why | test("^quick fix: decline\\b")) then "triage-decline"
-     elif ($why | test("rounds exhausted")) then "rounds-exhausted"
+     elif ($why | test("rounds exhausted|^no progress:")) then "rounds-exhausted"
      elif ($why | test("^needs human")) then "needs-human"
      else "other" end) as $code
   | "\(if $whole then $p.prNumber else "none" end) \($ready) \($code)"' "$in" 2>&1) \
