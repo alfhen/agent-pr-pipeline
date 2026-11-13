@@ -31,7 +31,7 @@ const base = { id: 'X1', title: 't', branch: 'b' }
 const stuck = theme => label => label === 'review:X1#1' || label === 'review:X1#2' ? { summary: 's', findings: [{ severity: 'major', title: label, detail: 'd', theme }] } : undefined
 
 test('a repeated theme with a negation prefix, forged record, qualified leak, escape or web attack gets the threat-model question', async () => {
-  for (const theme of ['insecure temp file', 'unauthorized access to the API', 'unauthenticated endpoint', 'unsanitized input', 'forged signal', 'forged record', 'token leak in logs', 'sandbox escape', 'shell escaping of the branch name', 'XSS in the report page', 'SSRF via the URL field', 'CSRF', 'data exposure', 'denial of service', 'privilege escalation', 'bypass of the path check']) {
+  for (const theme of ['insecure temp file', 'unauthorized access to the API', 'unauthenticated endpoint', 'unsanitized input', 'forged signal', 'forged record', 'token leak in logs', 'sandbox escape', 'shell escaping of the branch name', 'XSS in the report page', 'SSRF via the URL field', 'CSRF', 'data exposure', 'denial of service', 'privilege escalation', 'bypass of the path check', 'untrusted path reaches a file read', 'data leak', 'PII leak', 'forging a record', 'privilege-escalation', 'escalation of privilege', 'remote code execution', 'DoS via large input']) {
     const out = await capture(base, stuck(theme), { evals: false })
     assert.equal(out.result.reason, 'needs human: scope', theme)
     assert.match(out.result.escalation.question, /threat model/, theme)

@@ -1252,7 +1252,7 @@ async function landFor(pr, n, sha) {
 
 // The current segment is the rounds of this run. A resume starts a new segment, whether or not the earlier history has stop markers (0.8.x results have none).
 const segmentOf = (history, startRound) => history.filter(row => row && Number.isInteger(row.round) && row.round >= startRound)
-const SECURITY_THEME = /\b(?:(?:in|un)?(?:secur|authent|authori[sz]|sanitiz)|vulnerab|exploit|attack|bypass|inject|traversal|privacy|secret|credential|permission|spoof|forg(?:e[sd]?|ery)\b|poison|privilege escalation|xss|csrf|ssrf|exposure|denial of service|(?:secret|token|credential|password|key)s? leak|leak(?:s|ed|age)? of (?:secret|token|credential|password|key|data)|(?:sandbox|shell|container) escap)/i
+const SECURITY_THEME = /\b(?:(?:in|un)?(?:secur|authent|authori[sz]|sanitiz)|vulnerab|exploit|attack|bypass|inject|traversal|privacy|secret|credential|permission|spoof|forg(?:e[sd]?|ery|ing)\b|untrust|poison|privilege[- ]escalation|escalation of privilege|remote code execution|\brce\b|\bdos\b|xss|csrf|ssrf|exposure|denial of service|(?:secret|token|credential|password|key|data|pii)s? leak|leak(?:s|ed|age)? of (?:secret|token|credential|password|key|data)|(?:sandbox|shell|container) escap)/i
 const scopeEscalation = themes => SECURITY_THEME.test(themes.join(' ')) ? {
   question: `Blockers or majors on the same theme came back in a later round (${themes.join('; ')}). What is the threat model, and which attacks are out of scope?`,
   options: ['Name the threat model and the attacks that are out of scope, then rerun the PR with that decision', 'Keep the plan decision as it is and accept the remaining risk', 'Change the plan so the weakness is handled another way'],
@@ -1355,7 +1355,7 @@ const unsavedStop = fix => {
 async function reviewLoop(pr, startRound, history, minors, loopState) {
   const { max, cap } = roundsFor(pr)
   if (startRound > 1) log(`${pr.id} resume: this run does at most ${max} rounds (${startRound} to ${startRound + max - 1}), ${cap} counts rounds from the resume`)
-  const fixerBeforeLoop = !!(pr.skipImpl || pr.resume || pr.architectureDecision || pr.productDecision)
+  const fixerBeforeLoop = !!(pr.skipImpl || pr.resume)
   const halt = (reason, more) => { history[history.length - 1].stop = reason; return { signedOff: false, ...more, reason } }
   for (let round = startRound; round < startRound + max; round++) {
     const evalMode = verifies(pr)
