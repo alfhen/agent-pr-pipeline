@@ -966,7 +966,7 @@ If a permission check denies a command, stop: return blocked true, blockedReason
 
 ${prBlock(pr)}
 
-${testsOnlyState[pr.id] ? `${TESTS_ONLY_LINE_RULE}\n` : BREAK_CHECK ? 'This PR changes a file that is not a test. For a PR that is already open, remove the line that starts with "Tests only:" from its body when it is there.\n' : ''}Review history: ${JSON.stringify(rounds)}
+${testsOnlyState[pr.id] ? `${TESTS_ONLY_LINE_RULE}\n` : BREAK_CHECK && testsOnlyState[pr.id] === false ? `This PR changes a file that is not a test. For a PR that is already open, remove the line that starts with "${TESTS_ONLY_LINE.split(':')[0]}:" from its body when it is there. That line is part of what you may change.\n` : ''}Review history: ${JSON.stringify(rounds)}
 Architecture, product and docs: ${JSON.stringify(arch || [])}
 Untested items: ${JSON.stringify(untested)}
 Minors fixed in the minor pass: ${JSON.stringify(fixed.map(m => ({ title: m.title, file: m.file })), null, 1)}

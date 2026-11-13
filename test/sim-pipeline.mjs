@@ -3755,7 +3755,7 @@ await check('BR6 the opener is told to remove the tests-only line', async () => 
     assert.ok(!rm(p), 'a tests-only branch is told to remove the line')
   })
 })
-await check('BR6 a bot code change that adds a non-test file leaves no testsOnly true', async () => {
+await check('BR6 a bot code change that adds a non-test file keeps testsOnly false after the bot re-check', async () => {
   land.threads.add('C1')
   try {
     await withChanged(l => /bots/.test(l) ? ['test/a.test.mjs', 'src/a.js'] : ['test/a.test.mjs'], async () => {
