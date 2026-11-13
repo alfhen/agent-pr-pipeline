@@ -4,7 +4,7 @@
 
 - Written at night on 2026-11-12, from the D10 triage list and the open issues with no milestone on that date. Nothing is built.
 - This is D10 iteration 2: the batch fixes of the open `review-minor` and `pipeline-feedback` issues.
-- Release names: the batches of this plan ship as 0.9.5. The entries held from plan 0.9.4 (C06, C07, C08, C02, C03, and the eval-producer field) go to 0.9.6, not 0.9.5. The batches of iteration 3 ship as 0.9.7.
+- Release names: the batches of this plan ship as 0.9.5. The entries held from plan 0.9.4 (C05, C06, C07, C08, C02, C03, and the eval-producer field) go to 0.9.6, not 0.9.5. The batches of iteration 3 ship as 0.9.7.
 - The batches run with `pluginRoot` at v0.9.4 (C01 and C04 of plan 0.9.4). They start after the maintainer reloads the plugin for that release. They ship as 0.9.5. The held entries of plan 0.9.4 ship as 0.9.6, after 0.9.5, because `scripts/release.sh` takes the highest tag as its baseline.
 - The entries have no eval tables and no mechanism, by the assessment session's rule after four plan reviews in a row did not settle inside the cap. Plan review judges the grouping, the Touches split and the order only.
 - Before review, an impact pass checked each batch against `main` at ff1cfc7: the tests and docs its issues change, the parts it needs, part clashes inside a wave, and issues that are already fixed or need a design choice. This version applies it.
