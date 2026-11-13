@@ -17,7 +17,7 @@ This plan builds two small ones and the main lever of the evals check:
 
 - C04: a resume that signs off runs the minor pass, like a first run.
 - C05: a tests-only PR records its mutation proof, and a check is "not run" only when no role ran it.
-- C01: the evals writer returns a coverage map, one item for each bullet of the entry, and code refuses a writer list with an item that has no eval. In iteration 1, 25 of the 40 points the evals check refused were a behaviour of the entry with no eval.
+- C01: the evals writer returns a coverage map, one item for each bullet of the entry. Code refuses a writer list whose coverage is missing, empty, has an item with no eval id, or names an id that is not in the list. The evals check names each bullet of the entry that has no item. In iteration 1, 25 of the 40 points the evals check refused were a behaviour of the entry with no eval.
 
 Readers: the maintainer and the sessions that run the batches and Tagreeve. Out: new roles, new run-wave arguments, the batch fixes, the Wavewright rename. Each entry is one PR. A PR is done when its acceptance test passes in CI, an adversarial review reports no blockers or majors, and it is squash-merged.
 
@@ -25,7 +25,7 @@ Readers: the maintainer and the sessions that run the batches and Tagreeve. Out:
 
 - Automatic improvement (goal 7): C04 keeps minor fixes that a resume filed in iteration 1. C05 makes a tests-only proof part of the record, so a tests-only PR needs no person for it.
 - Goal 8 share: every entry is work on the pipeline's own output, so the share is 3 of 3.
-- My attention (goal 3): C01 makes a writer list that misses a bullet fail in code before the evals check, so fewer lists stop for a person.
+- My attention (goal 3): C01 makes code refuse a writer's list whose coverage is missing, empty, has an item with no eval id, or names an id that is not in the list, before the evals check. Whether the items are all the behaviours of the entry is the evals check's judgment: it names each bullet, invariant, issue or brief line with no item. So a list that misses a behaviour is refused in its first check, and fewer lists stop for a person.
 
 ## Findings
 
@@ -212,7 +212,7 @@ This entry supersedes these sentences of A01 in `docs/plan-0.9.2.md`, and that f
 - The record's coverage is carried unchanged: in every later result, through a resume whose list equals the record, through a given list that builds a new record from an earlier record, and through an accepted dispute change.
 - `scripts/resume-args.sh` prints the coverage inside `resume.evals.accepted` with no change to the script, because it copies `evalsMeta` whole.
 - `scripts/recover-evals.sh` prints the coverage inside `evalsMeta.accepted` when the accepted writer answer holds one, and prints no coverage key when it holds none. A given list read from a check prompt has no coverage. It never refuses a writer answer for a missing coverage.
-- When a list goes to the evals check and has a coverage (the writer's, or its record's), the check prompt shows the items and asks for a judgment per item. When it has none, the check prompt is the same as on `main`.
+- When a list goes to the evals check and has a coverage (the writer's, or its record's), the check prompt shows the items and asks for a judgment per item. It also asks the check to name each bullet, invariant, issue or brief line of the entry that has no item. A named gap refuses the list, as a needs-change does on `main`. Code does not check that the items are all the behaviours of the entry; that is the evals check's judgment. When a list has no coverage, the check prompt is the same as on `main`.
 - The evals-check prompt keeps the step 2 sentence word for word, keeps the "Evals to check:" block in the shape `recover-evals.sh` reads, and the code adds no eval statement of the record to the item text it shows.
 - Rule text that both the writer and the evals check must get is in `evalsRules`. Text only for the writer stays outside the span from "Rules for the list" to the Return line, so the two prompts still share one rule text (A06-2).
 - Two lists are still the same when their ids, kinds, statements and checks are equal. The coverage is not compared.
@@ -226,7 +226,7 @@ Evals:
 | --- | --- | --- | --- |
 | C01-1 | behaviour | A writer list with no coverage is refused with a reason that starts `evals refused: `, and no `evalsarch:` call is made for it. | Sim: a writer answer with no coverage on both attempts; the reason starts with `evals refused: ` and no call starts with `evalsarch:`. On `main` the list goes to the evals check. |
 | C01-2 | error path | A writer list with an item that names no eval id, or an id that is not in the list, is refused. | Sim: two cases, one for each fault; each is refused with `evals refused: `. The case checks that the coverage it gives really has the fault. |
-| C01-3 | behaviour | A writer list with a valid coverage goes to the evals check, and the check prompt shows each item. | Sim: the `evalsarch:C1#1` prompt holds the item text of each item. On `main` it holds no item. |
+| C01-3 | behaviour | A writer list with a valid coverage goes to the evals check, the check prompt shows each item, and it asks the check to name each bullet, invariant, issue or brief line of the entry that has no item. | Sim: the `evalsarch:C1#1` prompt holds the item text of each item and the question that asks for each bullet, invariant, issue or brief line with no item. On `main` it holds no item and no such question. |
 | C01-4 | behaviour | The accepted record holds the writer's coverage, and the top level of `evalsMeta` keeps three fields. | Sim: `x.C1.evalsMeta.accepted.coverage` equals the writer's coverage; the keys of `evalsMeta` other than `accepted` are `noErrorPath`, `noReference` and `algorithm`. |
 | C01-5 | behaviour | The coverage carries unchanged through a resume, a given list that builds a new record, and an accepted dispute change. | Sim: three cases; in each the new result's `evalsMeta.accepted.coverage` equals the first record's coverage. |
 | C01-6 | regression | A given list, a resumed list, a reviewer eval and a land-fix list with no coverage are not refused for coverage. | The existing E01-5, A01-4, E02-3 resume, K01 land-fix and A01-17 cases pass with their assertions unchanged; A01-17 still counts one evals-check call on the resume. |
