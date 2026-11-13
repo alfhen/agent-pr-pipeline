@@ -70,6 +70,7 @@ Not in:
 | C08 A dropped minor pass keeps the fixes its check did not fault | Partial keep of a minor pass. | Two open points after the plan-review cap: its invariant ties a kept fix to a scripted check of the head only on the partial path, not on the clean keep; and its premise named #701 and #702 as open, which `main` already fixes. It caught none of the filed minors of iteration 1. |
 | C02 The merge gate reads a clean bot review of the head (#736) | The gate while no bot approves. | It sets what clears the merge gate (whose reply counts, a check run with no App, the request rule). The maintainer decides first. |
 | C03 One review for each final head | The review budget. | It sets when a review is asked, and its draft step needs a call that the REST-only rule forbids. The maintainer decides first, with C02. |
+| C05 acceptance requirement (0.9.6) | An omitted acceptance step fails the check, and whether a step is required does not rest on the tester's own answer. | Held after CodeRabbit's review of #738: `workflows/run-wave.js` cannot read the plan entry, so the workflow has no source for whether an entry has an Acceptance line. Choice, no pick: (a) a field in the PR block that says the entry has an Acceptance line, which is a new run-wave input and so the maintainer's decision; or (b) a rule that the main session's notes quote the entry's Acceptance line, which is a rule for what the main session writes. Its eval was C05-6. |
 | Eval producer field (0.9.6) | Each eval names the producer of its fixture's input shape (`inputFrom`), and the evals-check prompt shows it and judges it, so a fixture built on an input shape no producer makes is caught before the build. | The plan-review fixer took `inputFrom` out of C01 because nothing read it. It returns as its own entry with this named reader, written after an impact pass. |
 
 ## Order and waves
@@ -174,8 +175,7 @@ Acceptance: `node test/sim-pipeline.mjs` passes; C04-1 fails on `main` because `
 - A tester that does not run a step because the step is outside its task leaves that step out of `checks`. It adds no check entry and no new answer field, so `testOutcome` is unchanged and the step counts as neither passed, failed nor refused. `refused` is only for a permission check or a file that could not run.
 - A test pins the SKILL.md step 2 sentence that a missing file the change adds is proof (#729). The sentence is already on `main` (#721).
 - The full-file fallback of a case that fails alone with the change does not give `fails-without-change` (#705).
-- Build note (open after the plan-review cap): a step the tester leaves out is recorded, and an omitted acceptance step fails the check.
-- Whether an acceptance step is required comes from the workflow, which knows from the entry whether it has an Acceptance line, and not from the tester's answer. A tester answer that leaves out the acceptance result when the entry has an Acceptance line fails the check. The mechanism is the build's.
+- Build note (open after the plan-review cap): a step the tester leaves out is recorded. Whether an omitted acceptance step fails the check is held for 0.9.6 (Held: C05 acceptance requirement).
 Evals:
 
 | Id | Kind | What must be true | How to check |
@@ -185,7 +185,6 @@ Evals:
 | C05-3 | behaviour | `agents/tester.md` and `refusedText` say a step outside the task is left out of `checks` and is not `refused`. | `test/break-check-mutation.test.mjs`. |
 | C05-4 | regression | SKILL.md step 2 holds the added-file proof sentence, and the test fails when it is removed. | The same test file. The sentence already holds on `main`; the test is new. |
 | C05-5 | error path | A case that fails alone with the change and passes in the full file gives no `fails-without-change`. | The same test file, with the prompt text of `verifyPrompt`. |
-| C05-6 | error path | A PR whose entry has an Acceptance line and whose tester answer has no acceptance result fails the check. | Sim: a PR whose notes hold an Acceptance line, and a `test:C1#1` answer with `pass: true`, every check passed and no `acceptance` field: the round is not a pass and the reason names the missing acceptance result. On `main` the round passes, because `testOutcome` reads the acceptance only from the tester's own answer. |
 
 Acceptance: `node --test test/break-check-mutation.test.mjs` and `node test/sim-pipeline.mjs` pass; C05-1 fails on `main`.
 
@@ -243,16 +242,10 @@ Acceptance: `node test/sim-pipeline.mjs` and `node --test test/*.test.mjs` pass;
 
 ## Release
 
-<<<<<<< ours
 - 0.9.4 is C01, C04 and C05. The tag waits for C01 from amendment 1b, and for C04 and C05 while they are still in their runs. It is tagged without C02 and C03, and with no live run (the maintainer waived it for 0.9.4).
 - The 0.9.4 tag needs C01: a second evals-check stop of C01 stops the iteration for the maintainer (overnight: for the assessment session). A second evals-check stop of C04 or of C05 moves that entry to 0.9.6 with the held entries, and the tag goes without it. So no entry can block the tag by stopping twice, and the tag is never cut without the coverage map.
 - No tag for C04 and C05 alone: each tag costs the maintainer a plugin reload.
 - The batches of iteration 2 (plan 0.9.5) ship as 0.9.5. The held entries C06, C07, C08, the gate entries C02 and C03, and the eval-producer field go to 0.9.6.
-=======
-- No tag for C04 and C05 alone. Each tag costs the maintainer a plugin reload, and these two do little for the batches.
-- 0.9.4 is C01, C04 and C05. The tag waits for C01 from amendment 1b, and for C04 and C05 while they are still in their runs. It is tagged without C02 and C03, and with no live run (the maintainer waived it for 0.9.4).
-- The 0.9.4 tag needs C01: a second evals-check stop of C01 stops the iteration for the maintainer (overnight: for the assessment session). A second evals-check stop of C04 or of C05 moves that entry to 0.9.6 with the held entries, and the tag goes without it. So no entry can block the tag by stopping twice, and the tag is never cut without the coverage map.
->>>>>>> theirs
 
 ## Date estimate
 
