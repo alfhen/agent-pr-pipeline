@@ -366,15 +366,17 @@ test('list, report and hand with no ledger issue exit 65', () => {
   assert.equal(run(setup(), 'put').status, 64)
 })
 
-test('E06-1 put writes an eval miss for a ready PR with codeChangedByBots, in the same run, and none otherwise', () => {
+test('E06-1 put writes one eval miss for a PR with codeChangedByBots, ready or not, and none otherwise', () => {
   const s = setup()
   const out = (id, o) => tmp(s, `out-${id}.json`, { result: { prs: [{ id, ready: true, prNumber: 42, history: [{ round: 1 }], ...o }] } })
   const miss = records(run(s, 'put', out('A', { codeChangedByBots: true }), '--run', 'wf_1', '--dry-run'))[0]
   assert.deepEqual(miss.evalMisses, [{ source: 'bot' }])
   assert.equal(records(run(s, 'put', out('B', { codeChangedByBots: false }), '--run', 'wf_1', '--dry-run'))[0].evalMisses.length, 0)
-  assert.equal(records(run(s, 'put', out('C', { codeChangedByBots: true, ready: false }), '--run', 'wf_1', '--dry-run'))[0].evalMisses.length, 0)
-  const given = records(run(s, 'put', out('D', { codeChangedByBots: true, evalMisses: [{ source: 'bot' }] }), '--run', 'wf_1', '--dry-run'))[0]
-  assert.equal(given.evalMisses.length, 1)
+  assert.equal(records(run(s, 'put', out('C', { codeChangedByBots: false, ready: false }), '--run', 'wf_1', '--dry-run'))[0].evalMisses.length, 0)
+  for (const ready of [true, false]) {
+    const given = records(run(s, 'put', out('D', { codeChangedByBots: true, ready, evalMisses: [{ source: 'bot' }] }), '--run', 'wf_1', '--dry-run'))[0]
+    assert.equal(given.evalMisses.length, 1)
+  }
 })
 
 test('E06-2 miss records a later defect and report counts the PR once with a bot miss as well', () => {

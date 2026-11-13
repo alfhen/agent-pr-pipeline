@@ -339,6 +339,84 @@ const kBotPr = () => PRS.filter(p => p.id === 'C2').map(p => ({ ...p, evals: K_L
 const kLandPr = (extra = {}) => [{ id: 'LA', title: 't', branch: 'b-LA', landFix: true, prNumber: 8, ...extra }]
 const kFail = (ids, only) => (res, o) => only.test(o.label) ? { ...res, evals: res.evals.map(e => ids.includes(e.id) ? { ...e, result: 'fail', evidence: 'bad' } : e) } : res
 const kDrop = (id, only) => (res, o) => only.test(o.label) ? { ...res, evals: res.evals.filter(e => e.id !== id) } : res
+// K07: a bot code change stays on the result at every exit after the bot answer.
+const k7Run = async (prs, { cfg = [], verify, bad = true } = {}) => {
+  for (const k of cfg) land[k[0]].add(k[1])
+  calls = []; cleanupCalls = []; timeline = []; logs = []
+  preflight = GOOD
+  try {
+    const out = await run({ ...base, prs }, async (p, o) => {
+      if (bad && o.label.startsWith('botreview:')) return { summary: 's', findings: [{ severity: 'major', title: 'bot fix breaks input', detail: 'd' }] }
+      const res = await agent(p, o)
+      return verify && o.label.startsWith('verify:') ? verify(res, o) : res
+    }, parallel, log)
+    return Object.fromEntries(out.prs.map(x => [x.id, x]))
+  } finally { for (const k of cfg) land[k[0]].delete(k[1]) }
+}
+await check('K07-2: a bot check that fails in every round after a code change leaves codeChangedByBots true', async () => {
+  const x = await k7Run(PRS.filter(p => p.id === 'C2'))
+  assert.equal(x.C2.ready, false)
+  assert.ok(x.C2.reason.startsWith('bot answer check:'), x.C2.reason)
+  assert.equal(x.C2.codeChangedByBots, true)
+  const y = await k7Run(kBotPr(), { bad: false, verify: kFail(['C1-1'], /#bots/) })
+  assert.equal(y.C2.ready, false)
+  assert.ok(y.C2.reason.includes('C1-1'), y.C2.reason)
+  assert.equal(y.C2.codeChangedByBots, true)
+})
+await check('K07-6: a land-fix run keeps codeChangedByBots when the bot check fails or CI is red', async () => {
+  const a = await k7Run(kLandPr(), { cfg: [['landOutput', 'LA'], ['threads', 'LA']] })
+  assert.equal(a.LA.ready, false)
+  assert.ok(a.LA.reason.startsWith('bot answer check:'), a.LA.reason)
+  assert.equal(a.LA.codeChangedByBots, true)
+  const b = await k7Run(kLandPr(), { cfg: [['landOutput', 'LA'], ['threads', 'LA'], ['ciFail', 'LA']], bad: false })
+  assert.equal(b.LA.ready, false)
+  assert.ok(b.LA.reason.startsWith('CI failed on the head'), b.LA.reason)
+  assert.equal(b.LA.codeChangedByBots, true)
+})
+await check('K07-9: a throw after a bot code change keeps codeChangedByBots on the run failed result', async () => {
+  calls = []; cleanupCalls = []; timeline = []; logs = []
+  preflight = GOOD
+  const hook = (p, o) => { if (o.label === 'io:C2#endci') throw new Error('ci read crashed') }
+  let opened
+  const out = await run({ ...base, prs: kBotPr() }, async (p, o) => { if (hook(p, o)) return; const res = await agent(p, o); if (o.label === 'open:C2') opened = res.prNumber; return res }, thunks => Promise.all(thunks.map(t => t())), log)
+  const x = out.prs.find(r => r.id === 'C2')
+  assert.equal(x.ready, false)
+  assert.match(x.reason, /^run failed:.*ci read crashed/)
+  assert.equal(x.codeChangedByBots, true)
+  assert.ok(opened > 0)
+  assert.equal(x.prNumber, opened)
+})
+await check('K07-11: with evals off and no list, a throw after a bot code change keeps codeChangedByBots and the PR number', async () => {
+  calls = []; cleanupCalls = []; timeline = []; logs = []
+  preflight = GOOD
+  let opened
+  const prs = PRS.filter(p => p.id === 'C2').map(({ evals, ...p }) => p)
+  const out = await run({ ...base, evals: false, prs }, async (p, o) => { if (o.label === 'io:C2#endci') throw new Error('ci read crashed'); const res = await agent(p, o); if (o.label === 'open:C2') opened = res.prNumber; return res }, thunks => Promise.all(thunks.map(t => t())), log)
+  const x = out.prs.find(r => r.id === 'C2')
+  assert.equal(x.ready, false)
+  assert.match(x.reason, /^run failed:.*ci read crashed/)
+  assert.equal(x.codeChangedByBots, true)
+  assert.ok(opened > 0)
+  assert.equal(x.prNumber, opened)
+  assert.equal(x.evals, undefined)
+})
+await check('K07-10: a throw in the bot answer check keeps codeChangedByBots on the run failed result', async () => {
+  calls = []; cleanupCalls = []; timeline = []; logs = []
+  preflight = GOOD
+  const out = await run({ ...base, prs: kBotPr() }, async (p, o) => { if (/^botreview:C2/.test(o.label)) throw new Error('review crashed'); return agent(p, o) }, thunks => Promise.all(thunks.map(t => t())), log)
+  const x = out.prs.find(r => r.id === 'C2')
+  assert.equal(x.ready, false)
+  assert.match(x.reason, /^run failed:.*review crashed/)
+  assert.equal(x.codeChangedByBots, true)
+})
+await check('K07-7: red CI after a bot code change keeps the field, and a words-only answer gives false', async () => {
+  const x = await k7Run(PRS.filter(p => p.id === 'C2'), { cfg: [['ciFail', 'C2']], bad: false })
+  assert.equal(x.C2.ready, false)
+  assert.equal(x.C2.codeChangedByBots, true)
+  const y = await k7Run(PRS.filter(p => p.id === 'W1'), { cfg: [['ciFail', 'W1']], bad: false })
+  assert.equal(y.W1.ready, false)
+  assert.equal(y.W1.codeChangedByBots, false)
+})
 await check('K01-1: a bot answer that changed code gets a verifier call on the new head, no tester, and the diff reviewer still runs', async () => {
   const x = await kRun(kBotPr())
   assert.equal(x.C2.ready, true)

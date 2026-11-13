@@ -16,7 +16,7 @@
 # writes nothing for a run and PR that has a record. list prints one JSON line per record: when two records have one run
 # and PR id, only the one with the lowest comment id counts, here and in report. put deletes its own record when it is
 # not the lowest after the post; a refused delete is logged and does not fail put.
-# An eval miss is a defect that no eval caught. put writes one for a PR that is ready and has codeChangedByBots true (the
+# An eval miss is a defect that no eval caught. put writes one for a PR that has codeChangedByBots true, ready or not (the
 # only place that rule lives); miss writes one for a defect traced to a merged PR later. report counts a PR once, however many.
 # backfill writes one record per merged PR that has none, with the facts GitHub holds and no tokens.
 # report reads the merge mode and the bot threads from GitHub for each merged PR, in one function that backfill uses too.
@@ -184,7 +184,7 @@ case "$cmd" in
                    else {ran: false, kept: null, why: null, weighted: null} end),
        codeChangedByBots: ($p.codeChangedByBots == true),
        evalMisses: (($p.evalMisses | if type == "array" then . else [] end) as $m
-                    | if $p.ready == true and $p.codeChangedByBots == true and ($m | any(.[]?; type == "object" and .source == "bot") | not) then $m + [{source: "bot"}] else $m end),
+                    | if $p.codeChangedByBots == true and ($m | any(.[]?; type == "object" and .source == "bot") | not) then $m + [{source: "bot"}] else $m end),
        tokens: $tok}' "$out" 2>&1) || die 65 "$out is not a workflow output with prs: $recs"
     [ -n "$recs" ] || exit 0
     if [ "$dry" = 1 ]; then find_issue; else need_issue; fi
