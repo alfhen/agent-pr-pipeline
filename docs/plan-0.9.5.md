@@ -45,13 +45,14 @@ Closes #594
 Closes #582
 
 **BR2 Land-fix results and stop returns.** File group: `workflows/run-wave.js`. After K07 (#737) is on `main`, because it edits the land-fix results K07 changes. Sim anchor: after "E04-17: a stop that pushes no row gets a marker row with no themes, and a resume runs a fix round".
-Touches: `workflows/run-wave.js` (`runPRSteps`: the land-fix branch and its results, and the pre-fix block of a resume; `roundsIn`; no return after the `open:` call, those belong to BR6), `scripts/resume-args.sh` (the round count), `test/resume-args.test.mjs`, `test/sim-pipeline.mjs` (the cases "E04-16" and "E04-17" changed in place, and one new block after the anchor), one new test file.
+Touches: `workflows/run-wave.js` (`runPRSteps`: the land-fix branch and its results, the pre-fix block of a resume, and the stop returns before the `open:` call, which carry the accumulated minors (#744); `roundsIn`; no return after the `open:` call, those belong to BR6), `scripts/resume-args.sh` (the round count, and `resume.minors` from the stop result's minors), `test/resume-args.test.mjs`, `test/sim-pipeline.mjs` (the cases "E04-16" and "E04-17" changed in place, and one new block after the anchor), one new test file.
 Build notes: #732 and #734 are one fix. For #733 the pick is: BR2 changes no code for a list that differs from the record. Today the land-fix branch takes such a list with its own meta after `evalsVerdict` alone, and runs no evals check. BR7 writes that in SKILL.md. The other half of #733 is in BR2: a land fix with an accepted record and no list stops with `evals missing:`, the same stop as `writeEvals`.
 Closes #734
 Closes #732
 Closes #733
 Closes #650
 Closes #604
+Closes #744
 
 **BR3 Routine state and settings.** File group: routine scripts. No sim block.
 Touches: `scripts/routine-state.sh`, `routine/config.jq`, `test/routine-settings.test.mjs`, `test/routine-state.test.mjs`, one new test file.
@@ -98,7 +99,7 @@ Closes #545
 | Batch | Parts of `workflows/run-wave.js` | Other files |
 | --- | --- | --- |
 | BR1 | `reviewLoop` (stops, themes, cap stop, the `pr.evals` compare), `SECURITY_THEME`, `scopeEscalation`, `archPrompt`, `verifyOutcome` | `agents/arch-reviewer.md`, `test/wave-prompts.test.mjs` (line 183) |
-| BR2 | `runPRSteps` (land-fix branch and results, the pre-fix block), `roundsIn` | `scripts/resume-args.sh`, `test/resume-args.test.mjs` |
+| BR2 | `runPRSteps` (land-fix branch and results, the pre-fix block, the stop returns before `open:`), `roundsIn` | `scripts/resume-args.sh`, `test/resume-args.test.mjs` |
 | BR3 | none | `scripts/routine-state.sh`, `routine/config.jq`, `test/routine-settings.test.mjs`, `test/routine-state.test.mjs` |
 | BR4 | `prBlock` | `scripts/ledger.sh`, `scripts/token-report.sh`, `scripts/wave-result.sh`, `test/ledger.test.mjs` |
 | BR5 | `minorScope` (comment) | `scripts/gate-files.sh`, `scripts/land-wave.sh`, `scripts/wait-ci.sh`, `scripts/release.sh`, `templates/pipeline.json`, `test/fake-gh`, `test/land.test.mjs`, `test/gate.test.mjs`, `test/release.test.mjs` |
@@ -177,10 +178,10 @@ These are not batch fixes. Each needs a design choice. They go to milestone 0.10
 
 ## Count
 
-- Open with no milestone, without the 2 bookkeeping issues: 138.
-- Plan 0.9.4 as narrowed and K07 close 3 (#705 and #729 by C05, #631 by K07). #701, #702 and #721 are already fixed on `main` and #640 too, so 4 close with a pointer. That leaves 131.
-- Of those: 23 need the maintainer; #736 waits for the C02 gate entry; 50 are in the 7 batches of iteration 2; 57 are in iteration 3.
-- If every batch of iterations 2 and 3 lands (107 issues) and the 23 move to a milestone: about 21 open (#736 and about 20 new filings at the iteration 1 rate). No margin.
+- Open with no milestone, without the 2 bookkeeping issues: 139 (138 when this plan was written, and #744, filed from CodeRabbit's review of #738, added to BR2).
+- Plan 0.9.4 as narrowed and K07 close 3 (#705 and #729 by C05, #631 by K07). #701, #702 and #721 are already fixed on `main` and #640 too, so 4 close with a pointer. That leaves 132.
+- Of those: 23 need the maintainer; #736 waits for the C02 gate entry; 51 are in the 7 batches of iteration 2; 57 are in iteration 3.
+- If every batch of iterations 2 and 3 lands (108 issues) and the 23 move to a milestone: about 21 open (#736 and about 20 new filings at the iteration 1 rate). No margin.
 - Without the deferrals: about 44.
 - The target is 25 or fewer. The batches are not tuned to meet it.
 
