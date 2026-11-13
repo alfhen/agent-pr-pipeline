@@ -1070,9 +1070,10 @@ await check('C01-14 an accepted dispute change leaves a record with no coverage'
   noCoverageKey(y)
 })
 await check('C01-14 a given or resumed list that differs from the record leaves a record with no coverage', async () => {
-  const list = listOf('C1')
-  const accepted = { evals: list, noErrorPath: '', noReference: '', algorithm: false, coverage: COV }
-  const changed = list.map(e => e.id === 'C1-1' ? { ...e, statement: 'C1-1 changed' } : e)
+  const R = await firstRecord()
+  const accepted = { ...R.evalsMeta.accepted, coverage: COV }
+  assert.deepEqual(accepted.coverage, COV)
+  const changed = R.evals.map(e => e.id === 'C1-1' ? { ...e, statement: 'C1-1 changed' } : e)
   const a = await evalsRun([{ ...C1PR, evals: { evals: changed, accepted } }], noWriter)
   assert.equal(archCalls().length, 1)
   assert.deepEqual(a.C1.evalsMeta.accepted.evals, changed)
