@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const simPath = fileURLToPath(new URL('./sim-pipeline.mjs', import.meta.url))
-const ids = [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 18]
+const ids = [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 18, 19, 20]
 
 test('BR2 sim cases all run and pass', () => {
   const env = { ...process.env, SIM_CASE_FILTER: 'BR2-' }

@@ -4798,6 +4798,21 @@ await check('BR2-14: a resume that stops at the evals intake returns the minors 
   assert.match(c.C1.reason, /^evals missing:/)
   assert.ok((br2Args(c.C1, 'C1').resume.minors || []).some(m => m.title === 'old nit'), 'no old nit')
 })
+await check('BR2-19: a land-fix run that throws without a bot change still carries prNumber', async () => {
+  calls = []; preflight = GOOD
+  const out = await run({ ...base, prs: kLandPr({ evals: K_LIST }) }, async (p, o) => { if (o.label === 'landfix:LA') throw new Error('boom'); return agent(p, o) }, parallel, log)
+  const x = out.prs.find(p => p && p.id === 'LA')
+  assert.match(x.reason, /^run failed:.*boom/)
+  assert.equal(x.prNumber, 8)
+})
+await check('BR2-20: the pluginRoot stop of a land fix keeps the list and the record', async () => {
+  const { pluginRoot, ...noRoot } = base
+  const x = await simulate({ ...noRoot, prs: kLandPr({ evals: { evals: K_LIST, accepted: br2Rec } }) })
+  assert.match(x.LA.reason, /^pluginRoot missing/)
+  assert.deepEqual(x.LA.evals, K_LIST)
+  assert.deepEqual(x.LA.evalsMeta.accepted, br2Rec)
+  assert.ok(!calls.some(c => /^(landfix|io):LA/.test(c.label)))
+})
 await check('E04-10: a reviewer eval with a repeated id, no check or a kind outside the seven is not added', async () => {
   const bad = [
     ['a repeated id', { kind: 'behaviour', statement: 's', check: 'c' }, withEvals('C1', [...EVS, ev('C1-R1-1', 'regression')])],

@@ -1851,6 +1851,7 @@ async function runPR(input) {
       id: input.id, ready: false, reason: `run failed: ${(e && e.message) || String(e)}`,
       // runPRSteps pushes its rows onto this same array, so keep it by reference.
       ...(resume && Array.isArray(resume.history) ? { history: resume.history } : {}),
+      ...(input.landFix && input.prNumber ? { prNumber: input.prNumber } : {}),
       ...(botChangedState[input.id] ? { codeChangedByBots: true, prNumber: botChangedState[input.id] } : {}),
       ...(rec ? recordOut(rec) : {}), ...(landOut || {}), ...carriedOut(resumedDisputes(input), resumedDeviations(input)),
     }
@@ -2045,7 +2046,6 @@ async function runPRSteps(input) {
     let listOut = {}
     delete landOutState[pr.id]
     const stopped = (reason, more) => { stopMark(history, reason); return { id: pr.id, prNumber: n, ready: false, reason, history, ...listOut, ...more } }
-    if (!PLUGIN_ROOT) return stopped('pluginRoot missing: the land-fix check needs it to run land-commits.sh')
     const given = givenEvals(pr, rawEvals)
     if (given) {
       const rec = Array.isArray(given.list) ? usableRecord(pr, given.accepted) : null
@@ -2061,8 +2061,9 @@ async function runPRSteps(input) {
       listOut = { evals: given.list, evalsMeta: { ...meta, ...(rec ? { accepted: rec } : {}) } }
       landOutState[pr.id] = listOut
       pr = { ...pr, evals: given.list, evalsMeta: meta }
-      ciChecksState[pr.id] = await ciChecksOf(pr)
     }
+    if (!PLUGIN_ROOT) return stopped('pluginRoot missing: the land-fix check needs it to run land-commits.sh')
+    if (given) ciChecksState[pr.id] = await ciChecksOf(pr)
     const was = await readHead(pr, n, 'landhead')
     if (was.fail) return stopped(was.fail)
     const before = was.head
