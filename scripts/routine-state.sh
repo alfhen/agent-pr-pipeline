@@ -157,7 +157,6 @@ def hasl($l): .L | index($l) != null;
 
 ($cfg.trustedAuthors | map(lc)) as $ta
 | $cfg.limits as $lim
-| ["ready-to-build", "needs-approval", "declined", "building", "build-failed", "needs-plan", "needs-maintainer"] as $stateLabels
 | def facts($c):
     $c.issue as $i | $i.number as $n
     | ([$i.labels[]? | .name]) as $L
@@ -427,7 +426,9 @@ has_pr_from() { # issue -> true or false: a PR by the account from claude/issue-
 }
 
 gather() { # issues-json-array -> one context object per issue
-  local n obj comments events appr rtb hash hp ctx='[]'
+  local n obj comments events appr rtb hash hp ctxfile
+  ctxfile=$(mktemp) || die 3 "cannot make a temporary file"
+  trap "rm -f '$ctxfile'" EXIT
   for n in $(jq -r '.[].number' <<<"$1"); do
     obj=$(jq -c --argjson n "$n" 'map(select(.number == $n))[0]' <<<"$1")
     comments=$(pages "repos/$repo/issues/$n/comments" | jq -c '[.[] | {id, created_at, updated_at, body, user: {login: .user.login}}]') || exit $?
@@ -439,15 +440,16 @@ gather() { # issues-json-array -> one context object per issue
     rtb=$(jq -c '[.[]? | objects | select(.event == "labeled" and .label.name == "ready-to-build") | .created_at | strings] | if length == 0 then null else max end' <<<"$events") || exit 3
     hash=$(text_hash "$obj")
     hp=$(has_pr_from "$n") || exit $?
-    ctx=$(jq -c --slurpfile o <(printf '%s' "$obj") --slurpfile c <(printf '%s' "$comments") --argjson a "$appr" --argjson r "$rtb" --arg h "$hash" --argjson p "$hp" \
-      '. + [{issue: $o[0], comments: $c[0], approval: $a, rtb: $r, hash: $h, hasPr: $p}]' <<<"$ctx")
+    jq -nc --slurpfile o <(printf '%s' "$obj") --slurpfile c <(printf '%s' "$comments") --argjson a "$appr" --argjson r "$rtb" --arg h "$hash" --argjson p "$hp" \
+      '{issue: $o[0], comments: $c[0], approval: $a, rtb: $r, hash: $h, hasPr: $p}' >>"$ctxfile" || exit 3
   done
-  printf '%s' "$ctx"
+  jq -sc . "$ctxfile"
 }
 
 # mode (triage|build|text) issues-json-array -> the plan; needs routine_cfg, recs and tracking
 make_plan() {
-  local ctx pulls='[]' start=null run prefix
+  local ctx pulls='[]' start=null run prefix stateLabels
+  stateLabels=$(jq -nc -f "$CONFIG" | jq -c .stateLabels) || die 3 "config.jq gave no labels"
   prefix=$(branch_prefix) || exit $?
   ctx=$(gather "$2") || exit $?
   if [ "$1" = build ]; then pulls=$(pages "repos/$repo/pulls?state=open&per_page=100" | jq -c '[.[] | {user: {login: .user.login}, head: {ref: .head.ref}}]') || exit $?; fi
@@ -455,7 +457,7 @@ make_plan() {
   run="$(utc_stamp)-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
   jq -nc --slurpfile ctx <(printf '%s' "$ctx") --slurpfile recs <(printf '%s' "$recs") --slurpfile cfg <(printf '%s' "$routine_cfg") \
     --slurpfile pulls <(printf '%s' "$pulls") --argjson start "$start" \
-    --arg user "$user" --arg prefix "$prefix" --arg repo "$repo" --arg run "$run" --arg mode "$1" --argjson stage "$stage" \
+    --arg user "$user" --arg prefix "$prefix" --arg repo "$repo" --arg run "$run" --arg mode "$1" --argjson stage "$stage" --argjson stateLabels "$stateLabels" \
     '$ctx[0] as $ctx | $recs[0] as $recs | $cfg[0] as $cfg | $pulls[0] as $pulls | '"$PLAN_JQ" \
     || die 3 "the plan failed"
 }
@@ -483,7 +485,9 @@ cloud_next() {
       or any($recs[]; .kind == "build-started" and .n == $n))]' <<<"$issues")
     p=$(make_plan build "$issues") || exit $?
   else
-    issues=$(jq -c --argjson cfg "$routine_cfg" '[.[] | select(any(.labels[]?; .name == "declined" or (.name | IN($cfg.skipLabels[]))) | not)]' <<<"$issues")
+    issues=$(jq -c --argjson cfg "$routine_cfg" --slurpfile recs <(printf '%s' "$recs") '$recs[0] as $recs
+      | [.[] | .number as $n | select(any(.labels[]?; .name == "declined" or (.name | IN($cfg.skipLabels[]))) | not)
+        | select($n >= $cfg.triageFrom or any($recs[]; .kind == "triaged" and .n == $n and (.key | contains(":") | not)))]' <<<"$issues")
     p=$(make_plan triage "$issues") || exit $?
   fi
   jq -c --argjson stage "$stage" 'if (.lines | length) == 0 then .idle elif $stage == 0 then .lines[] else .lines[0] end' <<<"$p"
@@ -687,7 +691,8 @@ put_blocked() {
   # triage-plan gets needs-plan, not build-failed; $exhausted reads the reason code of this record instead.
   # needs-plan goes on before the other labels come off, so a failure in between never leaves the issue with no state label.
   if [ "$reason" = triage-plan ]; then do_needs_plan "$issue" "$issue:$bid"; else add_labels "$issue" build-failed; fi
-  remove_labels "$issue" building ready-to-build maintainer-approved
+  # building comes off last: while it stays, a failed put is finished by put pr-seen.
+  remove_labels "$issue" ready-to-build maintainer-approved building
   [ "$reason" = triage-plan ] || echo "NOTICE blocked $repo $issue $run_id $reason"
   why=$(jq -r --arg k "$key" '[.[] | select(.kind == "built" and .key == $k)] | last | .rec.why // "" | if type == "string" then . else "" end' <<<"$recs")
   body=$(blocked_comment "$issue" "$reason" "$why")
@@ -705,15 +710,29 @@ put_needs_plan() {
 }
 
 put_pr_seen() {
+  local plan_recovery=false bid why
   issue_prelude build
   in_plan 'any(.prseen[]; . == $n)' || die 65 "issue $issue has no building label or no PR from its branch"
   would pr-seen "$issue"
   if jq -e --argjson n "$issue" 'any(.prseenFailed[]; . == $n)' <<<"$plan_json" >/dev/null; then add_labels "$issue" build-failed; fi
   if jq -e --argjson n "$issue" 'any(.prseenPlan[]; . == $n)' <<<"$plan_json" >/dev/null; then
-    add_labels "$issue" needs-plan
-    remove_labels "$issue" needs-approval
+    plan_recovery=true
+    bid=$(jq -r --argjson n "$issue" '[.[] | select(.kind == "blocked" and .n == $n)] | last | .id' <<<"$recs")
+    if jq -e --arg k "$issue:$bid" 'any(.[]; .kind == "needs-plan" and .key == $k)' <<<"$recs" >/dev/null; then
+      jq -e 'any(.labels[]?; .name == "needs-plan")' <<<"$issue_live" >/dev/null || add_labels "$issue" needs-plan
+      remove_labels "$issue" needs-approval
+    else
+      do_needs_plan "$issue" "$issue:$bid"
+    fi
+    remove_labels "$issue" ready-to-build maintainer-approved
   fi
   remove_labels "$issue" building
+  if [ "$plan_recovery" = true ]; then
+    why=$(jq -r --argjson n "$issue" '. as $all | [.[] | select(.kind == "blocked" and .n == $n)] | last | .key as $k
+      | [$all[] | select(.kind == "built" and .key == $k)] | last | .rec.why // "" | if type == "string" then . else "" end' <<<"$recs")
+    gh api --method POST "repos/$repo/issues/$issue/comments" -f body="$(blocked_comment "$issue" triage-plan "$why")" >/dev/null 2>&1 \
+      || echo "WARNING could not post the block comment on issue $issue" >&2
+  fi
   echo "ok pr-seen $issue"
 }
 

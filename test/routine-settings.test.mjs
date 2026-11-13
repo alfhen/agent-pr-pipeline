@@ -123,6 +123,14 @@ for (const f of ['stage', 'trustedAuthors', 'triageFrom', 'skipLabels', 'typeLab
 check('a typeLabels value that is a state label', { ...minimal, typeLabels: { bug: 'ready-to-build' } }, /typeLabels values must not be a fixed label/)
 check('a typeLabels value that is the routine label', { ...minimal, typeLabels: { feat: 'pipeline-routine' } }, /typeLabels values must not be a fixed label/)
 check('L01-12 a typeLabels value that is the ledger label', { ...minimal, typeLabels: { feat: 'pipeline-ledger' } }, /typeLabels values must not be a fixed label/)
+for (const v of ['Ready-To-Build', 'Needs-Plan', 'SIZE:s', 'Pipeline-Routine', 'PIPELINE-LEDGER']) {
+  check(`a typeLabels value that is a fixed label in other letter case (${v})`, { ...minimal, typeLabels: { bug: v } }, /typeLabels values must not be a fixed label/)
+}
+test('a mixed-case typeLabels value that is no fixed label is kept as written', () => {
+  const r = run(withRoutine({ ...minimal, typeLabels: { bug: 'Type:Bug' } }))
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(JSON.parse(r.stdout).routine.typeLabels.bug, 'Type:Bug')
+})
 
 test('a null optional key counts as not set', () => {
   const r = run(withRoutine({ ...minimal, stage: null, trustedAuthors: null, triageFrom: null, skipLabels: null, typeLabels: null, feedbackRepo: null, collectFrom: null, limits: null }))
