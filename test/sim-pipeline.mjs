@@ -4662,9 +4662,11 @@ await check('E04-17: a stop that pushes no row gets a marker row with no themes,
 })
 const br2Rec = { pr: 'LA', evals: K_LIST, noErrorPath: '', noReference: '', algorithm: false }
 const br2Args = (res, id) => {
-  const file = join(mkdtempSync(join(tmpdir(), 'br2-')), 'out.json')
+  const dir = mkdtempSync(join(tmpdir(), 'br2-'))
+  const file = join(dir, 'out.json')
   writeFileSync(file, JSON.stringify({ result: { prs: [res] } }))
   const ra = spawnSync('bash', ['scripts/resume-args.sh', file, id], { encoding: 'utf8' })
+  rmSync(dir, { recursive: true, force: true })
   assert.equal(ra.status, 0, ra.stderr)
   return JSON.parse(ra.stdout)
 }

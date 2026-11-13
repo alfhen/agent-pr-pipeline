@@ -159,6 +159,7 @@ const absorb = (prev, f) => {
     if (f.suggestedFix && !(prev.suggestedFix || '').includes(f.suggestedFix)) prev.suggestedFix = prev.suggestedFix ? `${prev.suggestedFix}\n\nAlso: ${f.suggestedFix}` : f.suggestedFix
   }
 }
+const EVALS_MISSING = 'evals missing: the input holds the accepted record and no list'
 const REFUSED_LIST_TITLE = 'Refused eval list: '
 const resumeFindings = pr => ((pr.resume && pr.resume.findings) || []).filter(f => !(f && typeof f.title === 'string' && f.title.startsWith(REFUSED_LIST_TITLE)))
 // One item per file and normalized title, with the highest severity and every source. The result is sorted by file, so the fix prompt numbers match the history.
@@ -228,6 +229,7 @@ const TESTS_ONLY_LINE_RULE = `This PR adds tests only. In a new PR body, put thi
 // the opener and the result then say the PR adds tests only.
 const testsOnlyState = {}
 const recordState = {}
+// Per PR: the land-fix list and record taken at intake, so a result built after a throw still carries them.
 const landOutState = {}
 // Per PR: the PR number once a bot answer changed code, so a result built after a throw still carries both.
 const botChangedState = {}
@@ -1942,7 +1944,7 @@ async function writeEvals(pr, raw) {
   if (!given && (!EVALS_ON || pr.resume || pr.skipImpl)) return {}
   if (given) {
     if (given.accepted && (pr.resume || pr.skipImpl) && !(Array.isArray(given.list) && given.list.length)) {
-      return { stop: 'evals missing: the input holds the accepted record and no list', record: given.accepted }
+      return { stop: EVALS_MISSING, record: given.accepted }
     }
     const rec = usableRecord(pr, given.accepted)
     // A throw out of the evals check must still return the given record.
@@ -2052,7 +2054,7 @@ async function runPRSteps(input) {
       const stopOut = accepted => keep ? recordOut(keep) : { ...(Array.isArray(given.list) ? { evals: given.list } : {}), evalsMeta: { ...given.meta, ...(accepted ? { accepted } : {}) } }
       if (given.accepted && !(Array.isArray(given.list) && given.list.length)) {
         listOut = stopOut(given.accepted)
-        return stopped('evals missing: the input holds the accepted record and no list')
+        return stopped(EVALS_MISSING)
       }
       const bad = evalsVerdict(given.list, pr, meta)
       if (bad) { listOut = stopOut(null); return stopped(`evals refused: ${bad}`) }
