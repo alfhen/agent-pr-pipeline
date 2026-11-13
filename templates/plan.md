@@ -65,8 +65,8 @@ flowchart LR
 ### Wave 1
 
 **A01 <Title> (#<n>).** Round cap <n>. Touches: `<file>`, `<file>`, `<test file>`, `<doc page the change affects>`, `CHANGELOG.md` (the A01 marker).
-- <What changes, in concrete terms: functions, messages, field names.>
-- <Edge cases and what the output says in each.>
+- <What changes, in concrete terms: functions, messages, field names. Each behaviour and each invariant of the entry is its own bullet, because the evals writer maps one item to each bullet.>
+- <Edge cases and what the output says in each, one bullet for each.>
 Invariants: <optional; required for an entry that adds a check (a gate, a guard, a refusal or a trust rule). One sentence per property that must hold for every input.>
 Algorithm: <yes when the entry adds or changes an algorithm; leave the line out otherwise. An algorithm entry needs a time bound, a size limit and a reference eval (a slow, simple version of the same function, compared on generated inputs), or a written reason for the reference.>
 Evals:

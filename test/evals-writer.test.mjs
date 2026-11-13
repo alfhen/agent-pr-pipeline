@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 
 const src = readFileSync(new URL('../workflows/run-wave.js', import.meta.url), 'utf8').replace('export const meta', 'const meta')
 const BRANCH = 'feat/unique-branch-7f3a9c'
-const OK_LIST = { evals: [{ id: 'X1-1', kind: 'behaviour', statement: 's1', check: 'c1' }, { id: 'X1-2', kind: 'error path', statement: 's2', check: 'c2' }] }
+const OK_LIST = { evals: [{ id: 'X1-1', kind: 'behaviour', statement: 's1', check: 'c1' }, { id: 'X1-2', kind: 'error path', statement: 's2', check: 'c2' }], coverage: [{ item: 'x', evals: ['X1-1', 'X1-2'] }] }
 const args = { repo: 'o/r', tmp: '/x', plan: 'docs/p.md', architecture: 'docs/design.md', goals: 'docs/goals.md', feedback: false, cleanup: false, prs: [{ id: 'X1', title: 't', branch: BRANCH }] }
 const run = new Function('args', 'agent', 'parallel', 'log', `return (async () => { ${src} })()`)
 

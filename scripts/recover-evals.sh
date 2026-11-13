@@ -7,6 +7,9 @@
 # `evals` is the record's list and `evalsMeta.accepted` is the record: the last list the evals check accepted. The list of the
 # first writer attempt whose reviewers all said ok is the start; a dispute `change` whose check said ok replaces its eval.
 # A writer attempt or a change that a reviewer refused or that a started reviewer never answered, and a `keep` ruling, are not the record.
+# `evalsMeta.accepted.coverage` is the coverage of the accepted writer answer. It is left out when that answer holds none, when any
+# accepted dispute change is replayed (a change can alter what an eval covers, even one that leaves its kind, statement and check as
+# they were), and for a given list read from a check prompt, which has no coverage. A missing coverage never refuses an answer.
 # A verifier result older than an accepted change of its eval is left out, unless the change left the eval's kind, statement and check as they were.
 # A list that the run was given in prs[].evals or resume.evals is never written to disk, so it cannot be recovered from a journal:
 # give it again. A transcript folder shows it in the accepted `evalsarch:<pr>#1` (or `evalsproduct:<pr>#1`) prompt, and the script
@@ -103,7 +106,7 @@ out=$(printf '%s' "$steps" | jq -e --arg pr "$pr" '
     | ([$s[] | select(.label | startswith("dispute:\($pr)#"))
          | {n: (.label | sub("^.*#"; "") | tonumber? // 0), answer, i}]
        | sort_by(.n)) as $disputes
-    | (reduce $disputes[] as $d ({list: $w.list, changed: {}, refuse: false};
+    | (reduce $disputes[] as $d ({list: $w.list, changed: {}, refuse: false, replayed: false};
         if $d.answer.ruling == "change" and ($d.answer.eval | type) == "object" and approved("d\($d.n)")
           then
             (if $hasImpl and $d.n >= 1 then $ids[$d.n - 1] else null end) as $did
@@ -113,6 +116,7 @@ out=$(printf '%s' "$steps" | jq -e --arg pr "$pr" '
               else
                 (.list | map(select(.id == $did)) | first) as $old
                 | .list |= map(if .id == $did then $d.answer.eval else . end)
+                | .replayed = true
                 | if ["kind", "statement", "check"] | all(. as $k | $old[$k] == $d.answer.eval[$k]) then . else .changed[$did] = $d.i end
               end
           else . end)) as $acc
@@ -124,7 +128,7 @@ out=$(printf '%s' "$steps" | jq -e --arg pr "$pr" '
       | {
           pr: $pr,
           evals: $record,
-          evalsMeta: ($meta + {accepted: ({pr: $pr, evals: $record} + $meta)}),
+          evalsMeta: ($meta + {accepted: ({pr: $pr, evals: $record} + $meta + (if $acc.replayed or ($m.coverage | type) != "array" or ($m.coverage | length) == 0 then {} else {coverage: $m.coverage} end))}),
           results: ([$s[] | select(.label | startswith("verify:\($pr)#")) | .i as $i | .answer.evals[]? | select(type == "object" and (.id | type) == "string" and ($changed[.id] == null or $i > $changed[.id]))]
                     | reduce .[] as $r ({}; .[$r.id] = $r))
         }

@@ -609,7 +609,8 @@ const evalsRun = async (prs, writer, check = okCheck, extra = {}) => {
 const evalLabels = id => calls.map(c => c.label).filter(l => l.split(':')[1].split('#')[0] === id)
 const C1PR = PRS.find(p => p.id === 'C1')
 const ALGO = { ...C1PR, algorithm: true }
-const withMeta = (list, meta = {}) => ({ evals: list, ...meta })
+const defaultCoverage = list => list.map(e => ({ item: `Item for ${e.id}`, evals: [e.id] }))
+const withMeta = (list, meta = {}) => ({ evals: list, coverage: defaultCoverage(list), ...meta })
 const ALGO_FULL = [ev('C1-1', 'behaviour'), ev('C1-2', 'error path'), ev('C1-3', 'time bound'), ev('C1-4', 'size limit'), ev('C1-5', 'reference')]
 const without = kind => ALGO_FULL.filter(e => e.kind !== kind)
 const evalsStop = r => r.reason && /^evals/.test(r.reason)
@@ -626,7 +627,7 @@ await check('E01-1 a code PR gets its list before the implementer, and every lat
   }
   assert.match(calls.find(c => c.label === 'open:C1').prompt, /"Evals" section/)
   assert.deepEqual(x.C1.evals, list)
-  assert.deepEqual(x.C1.evalsMeta, { noErrorPath: '', noReference: '', algorithm: false, accepted: { pr: 'C1', evals: list, noErrorPath: '', noReference: '', algorithm: false } })
+  assert.deepEqual(x.C1.evalsMeta, { noErrorPath: '', noReference: '', algorithm: false, accepted: { pr: 'C1', evals: list, noErrorPath: '', noReference: '', algorithm: false, coverage: defaultCoverage(list) } })
   assert.equal(calls.find(c => c.label === 'evals:C1').agentType, 'agent-pr-pipeline:evals-writer')
   assert.equal(calls.find(c => c.label === 'evals:C1').model, 'opus')
   assert.equal(calls.find(c => c.label === 'evalsarch:C1#1').agentType, 'agent-pr-pipeline:arch-reviewer')
@@ -951,6 +952,174 @@ await check('A01-17 a reviewer eval added inside a run is not in the record, so 
   const y = (await a01Result(resumeWith(asGiven(R), { minors: [], findings: [] }).map(p => ({ ...p, resume: { ...p.resume, history: R.history } })), () => undefined, { maxRounds: 1 })).C1
   assert.equal(calls.filter(c => c.label.startsWith('evalsarch:C1')).length, 1)
   assert.ok(y.evalsMeta.accepted.evals.some(e => e.id === 'C1-R1-1'))
+})
+// C01: the writer's coverage map.
+const COV = [{ item: 'COV-ONE the first bullet', evals: ['C1-1'] }, { item: 'COV-TWO the invariant', evals: ['C1-2'] }]
+const covWriter = (coverage = COV, list = listOf('C1')) => () => withMeta(list, { coverage })
+const c01Impl = disputes => (p, o) => o.label === 'implement:C1' ? { pushed: true, branch: 'b', summary: 's', acceptanceTestPassed: true, worktree: '/w', disputes } : undefined
+const c01Dispute = (disputes, answer, d1) => a01Chain(c01Impl(disputes), (p, o) => o.label === 'dispute:C1#1' ? answer : /^evalsarch:C1#d1/.test(o.label) ? d1 : undefined)
+const c01Rules = () => {
+  const lines = calls.find(c => c.label === 'evalsarch:C1#1').prompt.split('\n')
+  const item = lines.find(l => l.startsWith('Judge each item'))
+  const gap = lines.find(l => /has no item\?/.test(l))
+  assert.ok(item && gap, 'the writer run check prompt holds the item and gap questions')
+  return [item, gap]
+}
+const noCoverageKey = x => assert.equal('coverage' in x.evalsMeta.accepted, false)
+const refusedAtOnce = x => {
+  assert.equal(x.ready, false)
+  assert.match(x.reason, /^evals refused: /)
+  assert.deepEqual(evalLabels('C1'), ['evals:C1', 'evals:C1#w2'])
+  assert.ok(!calls.some(c => c.label.startsWith('evalsarch:C1') || c.label.startsWith('implement:C1')))
+}
+await check('C01-1 a writer list whose coverage is missing or empty is refused before the evals check', async () => {
+  for (const answer of [{ evals: listOf('C1') }, { evals: listOf('C1'), coverage: [] }]) {
+    assert.ok(!answer.coverage || answer.coverage.length === 0)
+    const x = await evalsRun([C1PR], () => answer)
+    refusedAtOnce(x.C1)
+  }
+})
+await check('C01-2 an item with no eval id, or with an id that is not in the list, is refused before the evals check', async () => {
+  const ids = listOf('C1').map(e => e.id)
+  const valid = { item: 'valid item', evals: ['C1-1', 'C1-2'] }
+  assert.ok(valid.evals.length > 0 && valid.evals.every(id => ids.includes(id)))
+  const none = { item: 'faulty item', evals: [] }
+  assert.equal(none.evals.length, 0)
+  const unknown = { item: 'faulty item', evals: ['C1-1', 'C1-9'] }
+  assert.ok(ids.includes('C1-1') && !ids.includes('C1-9'))
+  for (const faulty of [none, unknown]) refusedAtOnce((await evalsRun([C1PR], covWriter([valid, faulty]))).C1)
+  const y = await evalsRun([C1PR], () => ({ evals: [ev('C1-1', 'behaviour')] }))
+  assert.equal(y.C1.reason, 'evals refused: no error path')
+  assert.ok(!calls.some(c => c.label.startsWith('evalsarch:C1')))
+})
+await check('C01-3 the evals check of a writer list shows each item, asks for a judgment of each, and asks for the gaps', async () => {
+  const coverage = [{ item: 'ITEM-ALPHA-TEXT', evals: ['C1-1'] }, { item: 'ITEM-BETA-TEXT', evals: ['C1-1'] }]
+  const list = listOf('C1')
+  let seen = null
+  await a01Result([C1PR], (p, o) => { if (o.label === 'evalsarch:C1#1') seen = o }, { writer: covWriter(coverage, list) })
+  assert.ok(seen && calls.some(c => c.label === 'implement:C1'))
+  const prompt = calls.find(c => c.label === 'evalsarch:C1#1').prompt
+  for (const c of coverage) assert.ok(prompt.includes(c.item))
+  assert.ok(prompt.split('\n').some(l => /each item/i.test(l) && /cover/.test(l)))
+  const gap = prompt.split('\n').find(l => /bullet/.test(l) && /invariant/.test(l) && /issue/.test(l) && /brief line/.test(l) && /no item/.test(l))
+  assert.ok(gap)
+  assert.match(gap, /needs-change/)
+  assert.match(gap, /name each gap in the notes/)
+  for (const e of list) assert.equal(prompt.split(e.statement).length - 1, 1)
+  assert.match(prompt, /which behaviour, error path, Acceptance line or QA line of the entry has no eval\?/)
+  const block = prompt.split('Evals to check:\n')[1]
+  assert.deepEqual(JSON.parse(block.slice(0, block.indexOf('\n}') + 2)).evals, list)
+  assert.deepEqual(Object.keys(seen.schema.properties).sort(), ['notes', 'verdict'])
+  assert.deepEqual(seen.schema.required, ['verdict'])
+})
+await check('C01-4 the accepted record holds the coverage and nothing else in the result or in another prompt does', async () => {
+  const coverage = [{ item: 'UNIQ-FOUR-A', evals: ['C1-1'] }, { item: 'UNIQ-FOUR-B', evals: ['C1-2'] }]
+  const x = await evalsRun([C1PR], covWriter(coverage))
+  assert.deepEqual(x.C1.evalsMeta.accepted.coverage, coverage)
+  assert.deepEqual(Object.keys(x.C1.evalsMeta).sort(), ['accepted', 'algorithm', 'noErrorPath', 'noReference'])
+  const out = JSON.stringify(x.C1)
+  assert.ok(calls.some(c => c.label.startsWith('verify:C1')) && calls.some(c => c.label === 'open:C1'))
+  for (const c of coverage) {
+    assert.equal(out.split(c.item).length - 1, 1)
+    for (const call of calls.filter(k => k.label !== 'evalsarch:C1#1' && !k.label.startsWith('evaluate:'))) assert.ok(!call.prompt.includes(c.item), `${call.label} holds an item`)
+  }
+})
+const firstRecord = async () => {
+  const R = (await evalsRun([C1PR], covWriter())).C1
+  assert.deepEqual(R.evalsMeta.accepted.coverage, COV)
+  return R
+}
+await check('C01-5 the coverage carries through a resume and a given list that equal the record', async () => {
+  const R = await firstRecord()
+  const a = await evalsRun(resumeWith(asGiven(R)), noWriter)
+  assert.ok(!calls.some(c => c.label.startsWith('evalsarch:C1')))
+  assert.deepEqual(a.C1.evalsMeta.accepted.coverage, R.evalsMeta.accepted.coverage)
+  const b = await evalsRun([{ ...C1PR, evals: { evals: R.evals, accepted: R.evalsMeta.accepted } }], noWriter)
+  assert.ok(!calls.some(c => c.label.startsWith('evalsarch:C1')))
+  assert.deepEqual(b.C1.evalsMeta.accepted.coverage, COV)
+})
+await check('C01-5 the coverage carries through a dispute ruled keep, rejected, unsettled, or of an unknown id', async () => {
+  const newEval = ev('C1-1', 'behaviour', { statement: 'C1-1 after the dispute' })
+  const dispute = [{ id: 'C1-1', reason: 'wrong' }]
+  const cases = [
+    ['keep', c01Dispute(dispute, { ruling: 'keep', reason: 'k' })],
+    ['rejected', c01Dispute(dispute, { ruling: 'change', reason: 'c', eval: newEval }, { verdict: 'needs-change', notes: 'weaker' })],
+    ['unsettled', c01Dispute(dispute, null)],
+    ['rejected', c01Impl([{ id: 'C1-9', reason: 'wrong' }])],
+  ]
+  for (const [ruling, hook] of cases) {
+    const x = (await a01Result([C1PR], hook, { writer: covWriter() })).C1
+    assert.equal(x.evalDisputes[0].ruling, ruling)
+    assert.deepEqual(x.evals, listOf('C1'))
+    assert.deepEqual(x.evalsMeta.accepted.coverage, COV)
+  }
+  assert.ok(!calls.some(c => c.label.startsWith('dispute:')), 'the dispute of an unknown id makes no dispute call')
+})
+await check('C01-14 an accepted dispute change leaves a record with no coverage', async () => {
+  const dispute = [{ id: 'C1-1', reason: 'wrong' }]
+  const newEval = ev('C1-1', 'behaviour', { statement: 'C1-1 after the dispute' })
+  const x = (await a01Result([C1PR], c01Dispute(dispute, { ruling: 'change', reason: 'c', eval: newEval }, okCheck()), { writer: covWriter() })).C1
+  assert.equal(x.evalDisputes[0].ruling, 'change')
+  assert.equal(x.evalsMeta.accepted.evals.find(e => e.id === 'C1-1').statement, newEval.statement)
+  noCoverageKey(x)
+  const same = ev('C1-1', 'behaviour')
+  const y = (await a01Result([C1PR], c01Dispute(dispute, { ruling: 'change', reason: 'c', eval: same }, okCheck()), { writer: covWriter() })).C1
+  assert.equal(y.evalDisputes[0].ruling, 'change')
+  assert.ok(calls.some(c => c.label === 'evalsarch:C1#d1'))
+  assert.deepEqual(y.evalsMeta.accepted.evals, listOf('C1'))
+  noCoverageKey(y)
+})
+await check('C01-14 a given or resumed list that differs from the record leaves a record with no coverage', async () => {
+  const R = await firstRecord()
+  const accepted = { ...R.evalsMeta.accepted, coverage: COV }
+  assert.deepEqual(accepted.coverage, COV)
+  const changed = R.evals.map(e => e.id === 'C1-1' ? { ...e, statement: 'C1-1 changed' } : e)
+  const a = await evalsRun([{ ...C1PR, evals: { evals: changed, accepted } }], noWriter)
+  assert.equal(archCalls().length, 1)
+  assert.deepEqual(a.C1.evalsMeta.accepted.evals, changed)
+  noCoverageKey(a.C1)
+  const b = await evalsRun(resumeWith({ evals: changed, accepted }), noWriter)
+  assert.equal(archCalls().length, 1)
+  assert.deepEqual(b.C1.evalsMeta.accepted.evals, changed)
+  noCoverageKey(b.C1)
+})
+await check('C01-17 a coverage that was sent back is not in the record', async () => {
+  let n = 0
+  const writer = () => withMeta(listOf('C1'), { coverage: [{ item: ++n === 1 ? 'ATTEMPT-ONE item' : 'ATTEMPT-TWO item', evals: ['C1-1'] }] })
+  let k = 0
+  const x = await evalsRun([C1PR], writer, () => ++k === 1 ? { verdict: 'needs-change', notes: 'gap' } : okCheck())
+  assert.deepEqual(evalLabels('C1').slice(0, 4), ['evals:C1', 'evalsarch:C1#1', 'evals:C1#w2', 'evalsarch:C1#2'])
+  assert.deepEqual(x.C1.evalsMeta.accepted.coverage, [{ item: 'ATTEMPT-TWO item', evals: ['C1-1'] }])
+  assert.ok(!JSON.stringify(x.C1).includes('ATTEMPT-ONE'))
+})
+await check('C01-10 the writer prompt and schema ask for the coverage map', async () => {
+  let seen = null
+  await a01Result([C1PR], (p, o) => { if (o.label === 'evals:C1') seen = o }, { writer: covWriter() })
+  const p = calls.find(c => c.label === 'evals:C1').prompt
+  assert.match(p, /\nReturn evals, coverage, /)
+  assert.match(p, /An item is one bullet or one invariant of the entry, one issue for a batch, or one line of the brief for a quick fix/)
+  assert.match(p, /names in `evals` the ids of the evals that cover it/)
+  assert.ok(seen.schema.properties.coverage)
+})
+await check('C01-13 the check prompts of a dispute change, a given list and a resumed list show no coverage', async () => {
+  await evalsRun([C1PR], covWriter())
+  const [itemQ, gapQ] = c01Rules()
+  const R = await firstRecord()
+  const accepted = { ...R.evalsMeta.accepted, coverage: COV }
+  const changed = R.evals.map(e => e.id === 'C1-1' ? { ...e, statement: 'C1-1 changed' } : e)
+  const newEval = ev('C1-1', 'behaviour', { statement: 'C1-1 after the dispute' })
+  const runs = [
+    async () => { await a01Result([C1PR], c01Dispute([{ id: 'C1-1', reason: 'wrong' }], { ruling: 'change', reason: 'c', eval: newEval }, okCheck()), { writer: covWriter() }); return 'evalsarch:C1#d1' },
+    async () => { await evalsRun([{ ...C1PR, evals: { evals: changed, accepted } }], noWriter); return 'evalsarch:C1#1' },
+    async () => { await evalsRun(resumeWith({ evals: changed, accepted }), noWriter); return 'evalsarch:C1#1' },
+  ]
+  for (const run of runs) {
+    const label = await run()
+    const prompt = calls.find(c => c.label === label).prompt
+    for (const c of COV) assert.ok(!prompt.includes(c.item))
+    assert.ok(!prompt.includes(itemQ) && !prompt.includes(gapQ))
+    assert.ok(!prompt.includes('C1-1 must hold'))
+  }
 })
 await check('A01-5 a dispute change in a run with a reviewer eval is in the record with the reviewer eval, and a resume runs no evals check', async () => {
   const newEval = ev('C1-1', 'behaviour', { statement: 'C1-1 after the dispute' })
