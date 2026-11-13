@@ -3631,7 +3631,7 @@ await check('tester: the related files and projects reach the history, and the p
   assert.equal(fixCalls('C1').length, 0)
 })
 await check('tester: a report with no related field leaves the history without relatedTests', async () => {
-  const x = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint')] }))
+  const x = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint')] }), { relatedTests: false })
   assert.equal('relatedTests' in x.C1.history[0], false)
 })
 await check('tester: relatedTests false leaves step 3 out of the test prompt', async () => {
@@ -3738,7 +3738,147 @@ await check('a blocked opener keeps the PR number and the issues it already file
   const x = await hooked(only1('C1'), (p, o) => o.label === 'open:C1' ? { blocked: true, blockedReason: 'denied', commands: ['c'], prNumber: 5, issuesCreated: ['https://github.com/o/r/issues/9'] } : undefined)
   assert.equal(x.C1.reason, 'needs human: permission')
   assert.equal(x.C1.prNumber, 5)
-  assert.deepEqual(x.C1.issuesCreated, ['https://github.com/o/r/issues/9'])
+  assert.deepEqual(x.C1.issues, ['https://github.com/o/r/issues/9'])
+})
+await check('BR6 the opener is told to remove the tests-only line', async () => {
+  const rm = p => p.split('\n').some(l => l.includes('Tests only:') && /remove|delete/i.test(l))
+  await withChanged(['test/a.test.mjs', 'src/a.js'], async () => {
+    await hooked(withEvals('C1'), verifyHook({ 1: ROWS_PWC }))
+    const p = calls.find(c => c.label === 'open:C1').prompt
+    assert.ok(rm(p), 'no line of the open prompt says to remove the line that starts with Tests only:')
+    assert.doesNotMatch(p, /adds tests only/)
+  })
+  await withChanged(['test/a.test.mjs', 'src/x.e2e.test.ts'], async () => {
+    await hooked(withEvals('C1'), verifyHook({ 1: ROWS_PWC }))
+    const p = calls.find(c => c.label === 'open:C1').prompt
+    assert.ok(p.includes('"Tests only: the reported behaviour already holds'))
+    assert.ok(!rm(p), 'a tests-only branch is told to remove the line')
+  })
+})
+await check('BR6 a bot code change that adds a non-test file leaves no testsOnly true', async () => {
+  land.threads.add('C1')
+  try {
+    await withChanged(l => /bots/.test(l) ? ['test/a.test.mjs', 'src/a.js'] : ['test/a.test.mjs'], async () => {
+      const x = await hooked(withEvals('C1'), verifyHook({ 1: ROWS_PWC }))
+      assert.ok(calls.find(c => c.label === 'open:C1').prompt.includes('"Tests only: the reported behaviour already holds'))
+      assert.equal(x.C1.codeChangedByBots, true)
+      assert.notEqual(x.C1.testsOnly, true)
+    })
+  } finally { land.threads.delete('C1') }
+})
+await check('BR6 the bot and sync stops keep the opened-PR report fields', async () => {
+  const URL9 = 'https://github.com/o/r/issues/9'
+  const DOCS = { changed: false, files: [], summary: 'already right' }
+  land.threads.add('C1')
+  try {
+    const open = { prNumber: 7, prUrl: 'u7', issuesCreated: [URL9] }
+    const ans = () => (land.answered.add('C1'), { codeChanged: true, headSha: 'sha-a', closesIssues: [21], notes: 'n', worktree: '/wt' })
+    const want = { prUrl: 'u7', issues: [URL9], docs: DOCS, closesIssues: [21] }
+    const pick = r => ({ prUrl: r.prUrl, issues: r.issues, docs: r.docs, closesIssues: r.closesIssues })
+    const late = r => (r.lateMinors || []).map(m => m.title)
+    const a = (await hooked(only1('C1'), (p, o) => o.label === 'open:C1' ? open : o.label === 'botanswer:C1' ? ans() : /^botreview:C1#/.test(o.label) ? { summary: 's', findings: [{ severity: 'major', title: 'bad', detail: 'd' }, { severity: 'minor', title: 'late nit', detail: 'd' }], invariants: [], sweep: [] } : undefined)).C1
+    assert.match(a.reason, /^bot answer check: rounds exhausted/)
+    assert.deepEqual(pick(a), want)
+    assert.ok(late(a).includes('late nit'))
+    const b = (await hooked(only1('C1'), (p, o) => o.label === 'open:C1' ? open : o.label === 'botanswer:C1' ? ans() : o.label === 'test:C1#bots1' ? { pass: true, headSha: 'sha-C1-bots1', checks: [chk('lint'), { name: 'e2e', pass: false, refused: true }] } : o.label === 'open:C1#body' ? { updated: false } : undefined)).C1
+    assert.equal(b.ready, false)
+    assert.ok(calls.some(c => c.label === 'open:C1#body'))
+    assert.deepEqual(pick(b), want)
+    assert.ok(late(b).includes('late nit'))
+    const c = (await hooked(only1('C1'), (p, o) => o.label === 'open:C1' ? open : o.label === 'botwait:C1' ? null : undefined)).C1
+    assert.equal(c.reason, 'bot wait failed')
+    assert.deepEqual(c.lateMinors, [])
+    assert.equal(c.prUrl, 'u7')
+    assert.deepEqual(c.issues, [URL9])
+    assert.deepEqual(c.docs, DOCS)
+  } finally { land.threads.delete('C1') }
+})
+await check('BR6 the blocked and not-opened results keep the docs and the PR URL', async () => {
+  const DOCS = { changed: false, files: [], summary: 'already right' }
+  const a = (await hooked(only1('C1'), (p, o) => o.label === 'open:C1' ? { blocked: true, blockedReason: 'permission denied: gh api', commands: ['c'], prNumber: 5, prUrl: 'u5', issuesCreated: ['https://github.com/o/r/issues/9'] } : undefined)).C1
+  assert.deepEqual(a.docs, DOCS)
+  assert.equal(a.prUrl, 'u5')
+  const b = (await hooked(only1('C1'), (p, o) => o.label === 'open:C1' ? { issuesCreated: [] } : undefined)).C1
+  assert.equal(b.reason, 'PR not opened')
+  assert.deepEqual(b.docs, DOCS)
+})
+await check('BR6 related is required only when the related-tests step is on', async () => {
+  for (const [extra, want] of [[{}, true], [{ relatedTests: false }, false]]) {
+    let schema
+    await hooked(only1('C1'), (p, o) => { if (o.label === 'test:C1#1') schema = o.schema }, extra)
+    assert.equal(schema.required.includes('related'), want, JSON.stringify(extra))
+  }
+})
+await check('BR6 the tester reports the files left out', async () => {
+  let seen
+  const related = { files: ['test/a.e2e.test.ts'], projects: ['e2e'], leftOut: ['test/b.e2e.test.ts'] }
+  const x = await hooked(only1('C1'), (p, o) => { if (o.label !== 'test:C1#1') return; seen = { p, schema: o.schema }; return { pass: true, headSha: 'sha-C1', checks: [chk('lint')], related } })
+  const lo = seen.schema.properties.related.properties.leftOut
+  assert.ok(lo && lo.type === 'array' && lo.items && lo.items.type === 'string', 'no leftOut string array in the related schema')
+  assert.match(seen.p.split('\n').find(l => l.startsWith('Return ')), /leftOut/)
+  assert.deepEqual(x.C1.history[0].relatedTests.leftOut, related.leftOut)
+  let off
+  await hooked(only1('C1'), (p, o) => { if (o.label === 'test:C1#1') off = p }, { relatedTests: false })
+  assert.doesNotMatch(off, /leftOut/)
+})
+await check('BR6 acceptance is required in the tester schema', async () => {
+  for (const extra of [{}, { relatedTests: false }]) {
+    let schema
+    await hooked(only1('C1'), (p, o) => { if (o.label === 'test:C1#1') schema = o.schema }, extra)
+    for (const k of ['pass', 'checks', 'acceptance']) assert.ok(schema.required.includes(k), `${k} not required with ${JSON.stringify(extra)}`)
+  }
+})
+await check('BR6 a blocked result has issues and no issuesCreated', async () => {
+  const x = (await hooked(only1('C1'), (p, o) => o.label === 'open:C1' ? { blocked: true, blockedReason: 'denied', commands: ['c'], prNumber: 5, issuesCreated: ['https://github.com/o/r/issues/9'] } : undefined)).C1
+  assert.equal(x.reason, 'needs human: permission')
+  assert.deepEqual(x.issues, ['https://github.com/o/r/issues/9'])
+  assert.equal('issuesCreated' in x, false)
+})
+await check('BR6 a PR not opened keeps the issues already filed', async () => {
+  const x = (await hooked(only1('C1'), (p, o) => o.label === 'open:C1' ? { issuesCreated: ['https://github.com/o/r/issues/9'] } : undefined)).C1
+  assert.equal(x.reason, 'PR not opened')
+  assert.deepEqual(x.issues, ['https://github.com/o/r/issues/9'])
+  assert.equal('issuesCreated' in x, false)
+  const y = (await hooked(only1('C1'), (p, o) => o.label === 'open:C1' ? null : undefined)).C1
+  assert.equal(y.reason, 'PR not opened')
+})
+await check('BR6 the blocked sentence asks for prNumber and issuesCreated', async () => {
+  await hooked(only1('C1'), () => undefined)
+  const line = calls.find(c => c.label === 'open:C1').prompt.split('\n').find(l => l.includes('Never work around a denial'))
+  assert.match(line, /prNumber/)
+  assert.match(line, /issuesCreated/)
+  const role = readFileSync(new URL('../agents/pr-opener.md', import.meta.url), 'utf8').split('\n').find(l => l.includes('Never work around a denial'))
+  assert.match(role, /prNumber/)
+  assert.match(role, /issuesCreated/)
+})
+await check('BR6 the no-login stop has its own needs-human reason', async () => {
+  await hooked(only1('C1'), () => undefined)
+  const step3 = calls.find(c => c.label === 'open:C1').prompt.split('\n').find(l => l.startsWith('3. '))
+  const m = /reason "([^"]+)"/.exec(step3)
+  assert.ok(m, 'step 3 names no quoted reason')
+  const x = (await hooked(only1('C1'), (p, o) => o.label === 'open:C1' ? { blocked: true, blockedReason: m[1], commands: ['c'], prNumber: 7, issuesCreated: ['https://github.com/o/r/issues/9'] } : undefined)).C1
+  assert.match(x.reason, /^needs human: /)
+  assert.notEqual(x.reason, 'needs human: permission')
+  assert.equal(x.prNumber, 7)
+  assert.deepEqual(x.issues, ['https://github.com/o/r/issues/9'])
+  const role = readFileSync(new URL('../agents/pr-opener.md', import.meta.url), 'utf8')
+  assert.ok(role.split('\n').some(l => /login/i.test(l) && /blocked/.test(l)), 'agents/pr-opener.md has no line about the no-login stop')
+})
+await check('BR6 a reworded milestone stop still gives milestone not found', async () => {
+  await hooked(only1('C1'), () => undefined, { milestone: 'v1' })
+  const line = openOf('C1').prompt.split('\n').find(l => l.includes('milestones?per_page=100'))
+  const flags = Object.fromEntries([...line.matchAll(/`?(\w+)`? true/g)].map(m => [m[1], true]))
+  assert.equal(flags.blocked, true)
+  for (const br of ['milestone v1 not found', 'milestone v1 not found.', '"milestone v1 not found"', 'Milestone v1 was not found']) {
+    const x = (await hooked(only1('C1'), (p, o) => o.label === 'open:C1' ? { ...flags, blockedReason: br, commands: [] } : undefined, { milestone: 'v1' })).C1
+    assert.equal(x.reason, 'milestone not found', br)
+  }
+})
+await check('BR6 a denial stays needs human: permission with and without a milestone', async () => {
+  for (const extra of [{}, { milestone: 'v1' }]) {
+    const x = (await hooked(only1('C1'), (p, o) => o.label === 'open:C1' ? { blocked: true, blockedReason: 'permission denied: gh api -X POST repos/o/r/pulls', commands: ['c'] } : undefined, extra)).C1
+    assert.equal(x.reason, 'needs human: permission', JSON.stringify(extra))
+  }
 })
 await check('milestone: a number works, and a quote in the title is escaped for jq and the shell', async () => {
   await hooked(only1('C1'), () => undefined, { milestone: 3 })
