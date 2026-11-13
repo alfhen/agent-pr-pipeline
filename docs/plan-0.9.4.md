@@ -159,9 +159,9 @@ Evals:
 | --- | --- | --- | --- |
 | C04-1 | behaviour | A resume that signs off with a minor in a file in scope makes a `minorfix:` call. | Sim: `resume: { history, findings, evals }` with one minor; a `minorfix:C1` call. On `main` there is none. |
 | C04-2 | regression | A `skipImpl` rerun, a docs PR and a plan PR make no `minorfix:` call. | Sim: three cases. Each case holds a minor in a file in scope, so on a run that does the pass a `minorfix:` call happens and the case fails. |
-| C04-4 | error path | A resume whose history already holds a `minor1` row makes no `minorfix:` call, although a minor in a file in scope is carried. | Sim: `resume: { history: [{ round: 'minor1', testPass: true, failingChecks: [], blockersAndMajors: [] }], minors: [minorOf()] }` on a PR that signs off; no call matches `/^minorfix/`. Fails on a build that only drops `!pr.resume` from `minorPassRuns`. |
+| C04-4 | behaviour | A resume runs the pass only when its history holds no `minor1` row: with no such row a minor in a file in scope makes a `minorfix:` call, and with a `minor1` row it makes none. | Sim, two halves in one case. (a) The C04-1 setup, a resume with no `minor1` row and one minor in scope on a PR that signs off: a `minorfix:C1` call. (b) The same resume with `history: [{ round: 'minor1', testPass: true, failingChecks: [], blockersAndMajors: [] }]`: no call matches `/^minorfix/`. Half (a) fails on `main`, where a resume runs no pass, so the break check can prove the case. Half (b) fails on a build that only drops `!pr.resume` from `minorPassRuns`. |
 | C04-3 | behaviour | SKILL.md step 7 says a resume that signs off runs the pass. | `grep -c` on the step line prints 1. |
-| C04-5 | error path | A resume after a run whose minor pass dropped before its check makes no `minorfix:` call. | Sim, two cases: run 1 has a minor in scope and (a) `minorfix:C1` answers `changed: false`, (b) `test:C1#minor1` answers null; run 1 then stops at a later step. Resume with the `history` and `minors` of that result on a PR that signs off: no call matches `/^minorfix/`. Both fail on a build that writes the row only after a completed check. |
+| C04-5 | error path | A resume after a run whose minor pass dropped before its check makes no `minorfix:` call, and a resume after a run that had no pass makes one. | Sim, three halves in one case. (a) The C04-1 setup, a resume whose history holds no `minor1` row and one minor in scope on a PR that signs off: a `minorfix:C1` call. (b) Run 1 has a minor in scope and `minorfix:C1` answers `changed: false`, then stops at a later step; a resume with the `history` and `minors` of that result on a PR that signs off: no call matches `/^minorfix/`. (c) The same with `test:C1#minor1` answering null in run 1. Half (a) fails on `main`, where a resume runs no pass, so the break check can prove the case. Halves (b) and (c) fail on a build that writes the row only after a completed check. |
 
 Acceptance: `node test/sim-pipeline.mjs` passes; C04-1 fails on `main` because `minorPassRuns` is false for a resume.
 
@@ -175,6 +175,7 @@ Acceptance: `node test/sim-pipeline.mjs` passes; C04-1 fails on `main` because `
 - A test pins the SKILL.md step 2 sentence that a missing file the change adds is proof (#729). The sentence is already on `main` (#721).
 - The full-file fallback of a case that fails alone with the change does not give `fails-without-change` (#705).
 - Build note (open after the plan-review cap): a step the tester leaves out is recorded, and an omitted acceptance step fails the check.
+- Whether an acceptance step is required comes from the workflow, which knows from the entry whether it has an Acceptance line, and not from the tester's answer. A tester answer that leaves out the acceptance result when the entry has an Acceptance line fails the check. The mechanism is the build's.
 Evals:
 
 | Id | Kind | What must be true | How to check |
@@ -184,6 +185,7 @@ Evals:
 | C05-3 | behaviour | `agents/tester.md` and `refusedText` say a step outside the task is left out of `checks` and is not `refused`. | `test/break-check-mutation.test.mjs`. |
 | C05-4 | regression | SKILL.md step 2 holds the added-file proof sentence, and the test fails when it is removed. | The same test file. The sentence already holds on `main`; the test is new. |
 | C05-5 | error path | A case that fails alone with the change and passes in the full file gives no `fails-without-change`. | The same test file, with the prompt text of `verifyPrompt`. |
+| C05-6 | error path | A PR whose entry has an Acceptance line and whose tester answer has no acceptance result fails the check. | Sim: a PR whose notes hold an Acceptance line, and a `test:C1#1` answer with `pass: true`, every check passed and no `acceptance` field: the round is not a pass and the reason names the missing acceptance result. On `main` the round passes, because `testOutcome` reads the acceptance only from the tester's own answer. |
 
 Acceptance: `node --test test/break-check-mutation.test.mjs` and `node test/sim-pipeline.mjs` pass; C05-1 fails on `main`.
 
@@ -241,11 +243,7 @@ Acceptance: `node test/sim-pipeline.mjs` and `node --test test/*.test.mjs` pass;
 
 ## Release
 
-- 0.9.4 is C01, C04 and C05. The tag waits for C01 from amendment 1b, and for C04 and C05 while they are still in their runs. It is tagged without C02 and C03, and with no live run (the maintainer waived it for 0.9.4).
-- The 0.9.4 tag needs C01: a second evals-check stop of C01 stops the iteration for the maintainer (overnight: for the assessment session). A second evals-check stop of C04 or of C05 moves that entry to 0.9.6 with the held entries, and the tag goes without it. So no entry can block the tag by stopping twice, and the tag is never cut without the coverage map.
-- No tag for C04 and C05 alone: each tag costs the maintainer a plugin reload.
-- The batches of iteration 2 (plan 0.9.5) ship as 0.9.5. The held entries C06, C07, C08, the gate entries C02 and C03, and the eval-producer field go to 0.9.6.
-
+ours
 ## Date estimate
 
 - Size: 3 PRs, this plan PR, and the version PR. About 5 to 8 million subagent tokens without cache reads (a planning figure, from iteration 1: 0.9M to 2.1M per PR).
