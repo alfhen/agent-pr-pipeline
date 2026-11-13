@@ -74,15 +74,15 @@ test('C01-8 the record holds the coverage of the accepted writer answer', () => 
     { label: 'evals:C1#w2', answer: writer(list2, { coverage: cov2 }) }, { label: 'evalsarch:C1#2', answer: ok },
   ]
   const c = [
-    { label: 'evals:C1', answer: writer(list1, { coverage: cov1 }) }, { label: 'evalsarch:C1#1', answer: ok }, implOk,
-    ...disputed({ ruling: 'keep', reason: 'r' }),
+    { label: 'evals:C1', answer: writer(list1, { coverage: cov1 }) }, { label: 'evalsarch:C1#1', answer: ok }, { label: 'verify:C1#1', answer: verify }, implOk,
+    ...disputed({ ruling: 'change', reason: 'r', eval: change() }, refuse),
     { label: 'fix:C1#2', answer: { disputes: [{ id: 'C1-2' }] } },
-    { label: 'dispute:C1#2', answer: { ruling: 'change', reason: 'r', eval: ev('C1-2', 'error path', { statement: 'weaker' }) } },
-    { label: 'evalsarch:C1#d2', answer: refuse },
+    { label: 'dispute:C1#2', answer: { ruling: 'keep', reason: 'r' } },
   ]
   holds(b, 'evalsarch:C1#1', x => x.verdict === 'needs-change')
-  holds(c, 'dispute:C1#1', x => x.ruling === 'keep')
-  holds(c, 'evalsarch:C1#d2', x => x.verdict === 'needs-change')
+  holds(c, 'dispute:C1#1', x => x.ruling === 'change')
+  holds(c, 'evalsarch:C1#d1', x => x.verdict === 'needs-change')
+  holds(c, 'dispute:C1#2', x => x.ruling === 'keep')
   for (const form of FORMS) {
     for (const [steps, coverage] of [[a, cov1], [b, cov2], [c, cov1]]) {
       const o = out(build(form, steps))
