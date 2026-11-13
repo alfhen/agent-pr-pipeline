@@ -253,7 +253,7 @@ const verifyOutcome = (pr, verify) => {
   const byId = new Map()
   for (const r of verify.evals || []) if (!byId.has(r.id) || r.result === 'fail' || (r.breakCheck === 'passes-without-change' && byId.get(r.id).result === 'pass')) byId.set(r.id, r)
   const findings = []
-  const passed = []; const failed = []; const ci = []; const covered = []
+  const passed = []; const failed = []; const ci = []; const covered = []; const breakFailed = []
   for (const e of evalListOf(pr)) {
     const r = byId.get(e.id)
     if (r && r.result === 'pass') passed.push(e.id)
@@ -274,7 +274,7 @@ const verifyOutcome = (pr, verify) => {
       const r = byId.get(e.id)
       if (!r || r.result !== 'pass' || !BREAK_KINDS.includes(e.kind)) continue
       if (r.breakCheck === 'passes-without-change') {
-        passed.splice(passed.indexOf(e.id), 1); failed.push(e.id)
+        passed.splice(passed.indexOf(e.id), 1); failed.push(e.id); breakFailed.push(e.id)
         findings.push({ via: 'break check', severity: 'major', title: `eval ${e.id}: the test passes without the change`, detail: `Eval ${e.id} (${e.statement}) passed, but its test${r.test ? ` ${r.test}` : ''} also passes with the change removed, so it proves nothing. Make the test fail without the change.${r.breakWhy ? ` Evidence: ${r.breakWhy}` : ''}` })
       } else if (asked && r.breakCheck !== 'fails-without-change') {
         const why = r.breakCheck === 'not-run' ? r.breakWhy : r.breakCheck === 'not-applicable' ? `not-applicable is not valid for kind ${e.kind}` : ''
@@ -288,7 +288,7 @@ const verifyOutcome = (pr, verify) => {
   untestedFor(pr).evals = covered
   const breakCheck = asked && BREAK_CHECK && !testsOnly ? breakCheckOf(pr, byId) : null
   if (breakCheck) breakCheckState[pr.id] = breakCheck
-  return { ...base, ...(breakCheck ? { breakCheck } : {}), ...(testsOnly ? { testsOnly: true } : {}), findings: base.findings.concat(findings), pass: base.pass && findings.length === 0, evals: { passed, failed, ci } }
+  return { ...base, ...(breakCheck ? { breakCheck } : {}), ...(testsOnly ? { testsOnly: true } : {}), findings: base.findings.concat(findings), pass: base.pass && findings.length === 0, evals: { passed, failed, ci }, breakFailed }
 }
 const checkOutcome = (pr, result) => verifies(pr) ? verifyOutcome(pr, result) : testOutcome(pr, result)
 // Per PR: the refused checks of the last test round, the QA scenarios that did not run, the minor pass state no agent could confirm, and the evals a CI check covers.
@@ -821,12 +821,12 @@ Return headSha, a summary, every scenario you ran with its \`result\` (pass, fai
 ${prBlock(pr)}
 ${scenarios && scenarios.size ? `\nScenarios still open or untested. Use the same names, and run the open ones again (one left out stays open): ${JSON.stringify([...scenarios].map(([name, v]) => ({ name, state: v.state })))}` : ''}${last && last.length ? `\nYour findings from the last round (check each is really fixed):\n${JSON.stringify(last, null, 1)}` : ''}`
 
-const archPrompt = (pr, round, earlier = [], themes = []) => `${ctx(pr)}
+const archPrompt = (pr, round, earlier = [], themes = [], fixerMayHaveRun = round > 1) => `${ctx(pr)}
 
 Task: review the branch for architecture against ${ARCH}.
 Clone it: ${cloneTo(`arch-${pr.id}-r${round}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`.
 Return the verdict, a short summary, the new concepts, the findings (each with a severity and, for a blocker or major, a \`theme\`; a fits may list minors) and the escalation (for escalate).
-${round > 1 ? `The fixer has added commits since round 1 (\`git log --oneline origin/HEAD..HEAD\`; the first commits are the implementer's). Check each fixer commit against the decisions anywhere in the plan (the entry, Scope and Not in, Rules for every PR, Flagged concerns), the notes and the architecture document. A fixer commit that adds what a decided item rejected, or removes what it keeps, is \`escalate\`, never \`fits\`: the question for the maintainer is whether to keep the decision or change it.\n` : ''}
+${fixerMayHaveRun ? `The fixer may have added commits (\`git log --oneline origin/HEAD..HEAD\`; the first commits are the implementer's). Check each fixer commit against the decisions anywhere in the plan (the entry, Scope and Not in, Rules for every PR, Flagged concerns), the notes and the architecture document. A fixer commit that adds what a decided item rejected, or removes what it keeps, is \`escalate\`, never \`fits\`: the question for the maintainer is whether to keep the decision or change it.\n` : ''}
 ${themes.length ? `Themes of earlier blockers and majors. Reuse a name below when a finding is the same weakness:\n${JSON.stringify(themes)}\n` : ''}
 ${prBlock(pr)}${earlier.length ? `\n\nYour earlier reports on this PR. The plan changed since. Check each earlier \`fits\` against the new head, and report it as a finding if it no longer holds:\n${JSON.stringify(earlier, null, 1)}` : ''}`
 
@@ -1252,7 +1252,7 @@ async function landFor(pr, n, sha) {
 
 // The current segment is the rounds of this run. A resume starts a new segment, whether or not the earlier history has stop markers (0.8.x results have none).
 const segmentOf = (history, startRound) => history.filter(row => row && Number.isInteger(row.round) && row.round >= startRound)
-const SECURITY_THEME = /\b(secur|vulnerab|exploit|attack|bypass|inject|traversal|privacy|secret|credential|authent|authori[sz]|permission|sanitiz|spoof|forger|poison|escalat)/i
+const SECURITY_THEME = /\b(?:(?:in|un)?(?:secur|authent|authori[sz]|sanitiz)|vulnerab|exploit|attack|bypass|inject|traversal|privacy|secret|credential|permission|spoof|forg(?:e[sd]?|ery|ing)\b|untrust|poison|privilege[- ]escalation|escalation of privilege|remote code execution|\brce\b|\bdos\b|xss|csrf|ssrf|exposure|denial of service|(?:secret|token|credential|password|key|data|pii)s? leak|leak(?:s|ed|age)? of (?:secret|token|credential|password|key|data)|(?:sandbox|shell|container) escap)/i
 const scopeEscalation = themes => SECURITY_THEME.test(themes.join(' ')) ? {
   question: `Blockers or majors on the same theme came back in a later round (${themes.join('; ')}). What is the threat model, and which attacks are out of scope?`,
   options: ['Name the threat model and the attacks that are out of scope, then rerun the PR with that decision', 'Keep the plan decision as it is and accept the remaining risk', 'Change the plan so the weakness is handled another way'],
@@ -1355,6 +1355,7 @@ const unsavedStop = fix => {
 async function reviewLoop(pr, startRound, history, minors, loopState) {
   const { max, cap } = roundsFor(pr)
   if (startRound > 1) log(`${pr.id} resume: this run does at most ${max} rounds (${startRound} to ${startRound + max - 1}), ${cap} counts rounds from the resume`)
+  const fixerBeforeLoop = !!(pr.skipImpl || pr.resume)
   const halt = (reason, more) => { history[history.length - 1].stop = reason; return { signedOff: false, ...more, reason } }
   for (let round = startRound; round < startRound + max; round++) {
     const evalMode = verifies(pr)
@@ -1363,7 +1364,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     const wantQa = qaRuns(pr) && (!loopState.reviewed || loopState.qaOpen.length > 0)
     const reviewers = () => [
       () => call('review', pr, reviewPrompt(pr, round, history, loopState.siblings, true, true), `review:${pr.id}#${round}`, { schema: REVIEW }),
-      () => wantArch ? call('arch', pr, archPrompt(pr, round, pr.kind === 'plan' ? loopState.reports : [], [...new Set(history.flatMap(h => h.themes || []))]), `arch:${pr.id}#${round}`, { schema: ARCHREV }) : Promise.resolve(null),
+      () => wantArch ? call('arch', pr, archPrompt(pr, round, pr.kind === 'plan' ? loopState.reports : [], [...new Set(history.flatMap(h => h.themes || []))], round > 1 || fixerBeforeLoop), `arch:${pr.id}#${round}`, { schema: ARCHREV }) : Promise.resolve(null),
       () => wantProduct ? call('product', pr, productPrompt(pr, round), `product:${pr.id}#${round}`, { schema: PRODUCT }) : Promise.resolve(null),
       () => wantQa ? call('qa', pr, qaPrompt(pr, round, loopState.qaOpen, loopState.qaScenarios), `qa:${pr.id}#${round}`, { schema: QA }) : Promise.resolve(null),
     ]
@@ -1426,7 +1427,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     const conflict = pr.kind !== 'plan' && blocking.find(f => /^plan conflict:/i.test(f.title))
     if (conflict) {
       delete row.themes
-      return halt('needs human: plan conflict', { conflict: `${conflict.title}: ${conflict.detail}` })
+      return halt('needs human: plan conflict', { conflict: `${conflict.title}: ${conflict.detail}`, lastFindings: blocking })
     }
     log(`${pr.id} round ${round}: tests ${outcome.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (outcome.pass && blocking.length === 0) return { signedOff: true, headSha: test.headSha || review.headSha }
@@ -1446,16 +1447,22 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
     const unsaved = unsavedStop(fix)
     if (unsaved) return halt(unsaved.reason, { lastFindings: blocking, lastTest: test, fixSummary: fix.summary, worktree: unsaved.worktree })
-    const listChanged = fix ? await settleDisputes(pr, fix.disputes, 'fixer') : false
+    const listBefore = pr.evals
+    if (fix) await settleDisputes(pr, fix.disputes, 'fixer')
+    const failedNow = (outcome.evals && outcome.evals.failed) || []
+    const listChanged = !!listBefore && pr.evals.some((e, i) => e !== listBefore[i] && failedNow.includes(e.id))
     if (pr.kind !== 'plan' && fix && fix.planConflict) {
       delete row.themes
-      return halt('needs human: plan conflict', { conflict: fix.planConflict })
+      return halt('needs human: plan conflict', { conflict: fix.planConflict, lastFindings: blocking })
     }
     if (listChanged) row.listChanged = true
     if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
     if (fix && fix.changed === false && !listChanged) {
       const failedEvals = (outcome.evals && outcome.evals.failed) || []
-      const named = failedEvals.length ? `; eval ${failedEvals.join(', ')} failed and may not be checkable from a clean clone` : ''
+      const brokenEvals = outcome.breakFailed || []
+      const realEvals = failedEvals.filter(id => !brokenEvals.includes(id))
+      const named = (realEvals.length ? `; eval ${realEvals.join(', ')} failed and may not be checkable from a clean clone` : '')
+        + (brokenEvals.length ? `; eval ${brokenEvals.join(', ')}: its test passes without the change` : '')
       const stop = { signedOff: false, reason: `no progress: the fix changed nothing in round ${round}, ${round - startRound + 1} of ${max} used (${cap})${named}`, lastFindings: blocking, lastTest: test, fixSummary: fix.summary }
       if (blocking.length > 0) return halt(stop.reason, stop)
       // Only failing checks are left, so the failure may be a flaky check: run the checks once more. It shows a flake only on the same head, which is checked after the rerun.
@@ -1472,7 +1479,6 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
       if (!sameHead) return halt(`head moved: the checks ran on ${test.headSha} and then on ${again.headSha}, so the rerun cannot show that the failure was flaky`, { ...stop, lastTest: again })
       if (second.pass && evalMode && !ran) {
         // No reviewer has seen this head: the next round's verifier passes and the reviewers run.
-        if (round === startRound + max - 1) return halt(`no reviewer round: the checks passed on the rerun in the last round, ${max} of ${max} used (${cap})`, stop)
         continue
       }
       if (second.pass) return { signedOff: true, headSha: again.headSha || test.headSha || (review && review.headSha) }
