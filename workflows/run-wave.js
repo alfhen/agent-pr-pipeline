@@ -425,6 +425,11 @@ const EVALS = {
         required: ['id', 'kind', 'statement', 'check'],
       },
     },
+    coverage: {
+      type: 'array',
+      description: 'One item for each bullet or invariant of the entry (a batch: each issue; a quick fix: each line of the brief), with the ids of the evals that cover it',
+      items: { type: 'object', properties: { item: { type: 'string' }, evals: { type: 'array', items: { type: 'string' } } }, required: ['item', 'evals'] },
+    },
     algorithm: { type: 'boolean' },
     noErrorPath: { type: 'string', description: 'Why the entry has no error path; empty when the list has an error path eval' },
     noReference: { type: 'string', description: 'Why no simple reference version exists; empty when the list has a reference eval' },
@@ -730,12 +735,20 @@ Task: write the evals for this PR. Nothing is built yet.
 2. Read ${GOALS}, ${SPEC ? `${SPEC}, ` : ''}${ref(pr)} (the entry of this PR, with its Touches, Acceptance, QA, Invariants, Round cap and Algorithm lines, and its Evals table when it has one) and the code the entry touches.
 3. Write the list as your instructions say. When the behaviour of an entry already holds on the default branch, give those evals kind regression and say so in notes. An Evals table in the entry is input: keep or improve each row under its id and add the rows it lacks.
 4. Each eval must be checkable from a clean clone of the branch, before the PR is open. Leave out what is not: the PR body or title, Closes lines, labels, bot comments or approvals, CI results, a merge, a release and any other pipeline step after the build. Notes that name such a thing still reach the opener, so they need no eval.
+5. Return \`coverage\` with the list. An item is one bullet or one invariant of the entry, one issue for a batch, or one line of the brief for a quick fix. Each item says in a sentence what it asks for, and names in \`evals\` the ids of the evals that cover it. A list whose coverage is missing or empty, has an item with no eval id, or names an id that is not in the list is refused.
 ${evalsRules}
-Return evals, algorithm, noErrorPath, noReference and notes.
+Return evals, coverage, algorithm, noErrorPath, noReference and notes.
 
 ${evalsBlock(pr)}${last ? `\n\nThis is attempt ${attempt}. Your last list was sent back: ${last.reason}\nYour last list:\n${JSON.stringify(last.evals, null, 1)}\n${last.rule ? 'A rule decides this, so the list itself must change; notes cannot change it.' : 'Change the list to meet this, or say in notes why it already does.'}` : ''}`
 
-const evalsCheckPrompt = (pr, list, meta, who, round, writerNotes) => `${ctx(pr)}
+const coverageText = coverage => `
+
+The writer's coverage (each item, with the ids of the evals that cover it):
+${JSON.stringify(coverage, null, 1)}
+Judge each item: do the evals it names cover it?
+Which bullet, invariant, issue or brief line of the entry has no item? Each such gap means verdict \`needs-change\`, and you name each gap in the notes.`
+
+const evalsCheckPrompt = (pr, list, meta, who, round, writerNotes, coverage) => `${ctx(pr)}
 
 Task: check the list of evals for this PR${who === 'product' ? ' against the product goals' : ' against the architecture'}. Nothing is built yet, so you check the list and the entry, not code.
 1. Clone the default branch: ${evalsClone(`evals-${who}-${pr.id}-r${round}`, pr)} and cd there. Read ${who === 'product' ? GOALS : ARCH}, then ${ref(pr)} (the entry of this PR).
@@ -747,7 +760,7 @@ Return verdict (\`ok\` or \`needs-change\`) and notes: one line for each gap or 
 ${evalsBlock(pr)}
 
 Evals to check:
-${JSON.stringify({ evals: list, ...meta }, null, 1)}${writerNotes ? `\n\nThe writer's notes (an answer to an earlier needs-change; accept it when it is reasoned and true):\n${writerNotes}` : ''}`
+${JSON.stringify({ evals: list, ...meta }, null, 1)}${coverage ? coverageText(coverage) : ''}${writerNotes ? `\n\nThe writer's notes (an answer to an earlier needs-change; accept it when it is reasoned and true):\n${writerNotes}` : ''}`
 
 const relatedStep = RELATED_TESTS ? `3. Then run the e2e and docs test files that import or name the modules the PR touches and are not in that list. Find them with a search (\`git grep -l -E\` for each touched module's file name and exported names, over every tracked test file in the repo, such as \`*.test.*\` and \`*.spec.*\` files in any folder, and the paths the test config's projects include, docs folders too). Run at most ${RELATED_MAX}, the files that import a touched module directly first, and name the files you left out in the check, because CI runs them. Never run the whole suite. For each file, read the repo's test config and package scripts to find the command and test project that own it (for example \`--project <name>\` in a vitest workspace), also when that project is left out of the default test command, and name the command in the check. Do not use \`${E2E_COMMAND}\` for a file outside its project. Report a file or project you could not select, or one the environment cannot run (for example a missing browser), as a check with \`refused\`: true, never as passed or failed. Name each extra file in the check, and say which test projects you ran.\n` : ''
 const refusedText = '`refused`: true for a command that a permission check denied, or for a file or project you could not run, so it did not run'
@@ -1881,8 +1894,20 @@ const givenEvals = (pr, raw) => {
   return { list: obj.evals, meta: metaOf(obj, pr), accepted: !Array.isArray(g) && obj.accepted && typeof obj.accepted === 'object' ? obj.accepted : null }
 }
 
-// The record is the last list the evals check accepted: { pr, evals, noErrorPath, noReference, algorithm }. It is never part of metaOf, so no evals-check prompt shows it.
-const makeRecord = (pr, list, meta) => ({ pr: pr.id, evals: list, noErrorPath: meta.noErrorPath, noReference: meta.noReference, algorithm: meta.algorithm })
+// Only a writer's list is refused for coverage. Every other path builds its record with no coverage, because a coverage is true only for the list it was accepted with.
+function coverageVerdict(coverage, list) {
+  if (!Array.isArray(coverage) || !coverage.length) return 'no coverage'
+  const ids = new Set(list.map(e => e.id))
+  for (const c of coverage) {
+    const named = c && Array.isArray(c.evals) ? c.evals : []
+    if (!named.length) return 'a coverage item names no eval'
+    if (named.some(id => !ids.has(id))) return 'a coverage item names an id that is not in the list'
+  }
+  return null
+}
+
+// The record is the last list the evals check accepted: { pr, evals, noErrorPath, noReference, algorithm, coverage? }. It is never part of metaOf, so no evals-check prompt shows it.
+const makeRecord = (pr, list, meta, coverage) => ({ pr: pr.id, evals: list, noErrorPath: meta.noErrorPath, noReference: meta.noReference, algorithm: meta.algorithm, ...(coverage ? { coverage } : {}) })
 const setRecord = (pr, list, meta) => { pr.record = makeRecord(pr, list, meta); recordState[pr.id] = pr.record }
 const usableRecord = (pr, rec) => rec && rec.pr === pr.id && Array.isArray(rec.evals) && rec.evals.length ? rec : null
 const recordOut = rec => ({ evals: rec.evals, evalsMeta: { noErrorPath: reasonOf(rec.noErrorPath), noReference: reasonOf(rec.noReference), algorithm: !!rec.algorithm, accepted: rec } })
@@ -1894,10 +1919,10 @@ const resumedDisputes = pr => resumedList(pr, 'evalDisputes', d => d && typeof d
 const resumedDeviations = pr => resumedList(pr, 'deviations', d => d && reasonOf(d.what))
 const carriedOut = (disputes, deviations) => ({ ...(disputes && disputes.length ? { evalDisputes: disputes } : {}), ...(deviations && deviations.length ? { deviations } : {}) })
 
-async function checkEvals(pr, list, meta, round, writerNotes) {
+async function checkEvals(pr, list, meta, round, writerNotes, coverage) {
   const [arch, product] = await parallel([
-    () => archRuns(pr) ? call('evalsArch', pr, evalsCheckPrompt(pr, list, meta, 'architecture', round, writerNotes), `evalsarch:${pr.id}#${round}`, { schema: EVALSCHECK }) : Promise.resolve(undefined),
-    () => productRuns(pr) ? call('evalsProduct', pr, evalsCheckPrompt(pr, list, meta, 'product', round, writerNotes), `evalsproduct:${pr.id}#${round}`, { schema: EVALSCHECK }) : Promise.resolve(undefined),
+    () => archRuns(pr) ? call('evalsArch', pr, evalsCheckPrompt(pr, list, meta, 'architecture', round, writerNotes, coverage), `evalsarch:${pr.id}#${round}`, { schema: EVALSCHECK }) : Promise.resolve(undefined),
+    () => productRuns(pr) ? call('evalsProduct', pr, evalsCheckPrompt(pr, list, meta, 'product', round, writerNotes, coverage), `evalsproduct:${pr.id}#${round}`, { schema: EVALSCHECK }) : Promise.resolve(undefined),
   ])
   const notes = []
   for (const [who, r] of [['architecture', arch], ['product', product]]) {
@@ -1933,10 +1958,10 @@ async function writeEvals(pr, raw) {
     try { w = await call('evals', pr, evalsPrompt(pr, attempt, last), attempt === 1 ? `evals:${pr.id}` : `evals:${pr.id}#w${attempt}`, { schema: EVALS }) } catch (e) { w = null }
     if (!w || !Array.isArray(w.evals)) return { stop: 'evals writer failed' }
     const meta = metaOf(w, pr)
-    const bad = evalsVerdict(w.evals, pr, meta)
-    const c = bad ? null : await checkEvals(pr, w.evals, meta, attempt, w.notes)
+    const bad = evalsVerdict(w.evals, pr, meta) || coverageVerdict(w.coverage, w.evals)
+    const c = bad ? null : await checkEvals(pr, w.evals, meta, attempt, w.notes, w.coverage)
     if (c && c.down) return { stop: `evals check: ${c.down}` }
-    if (!bad && !c.notes) return { evals: w.evals, meta, record: makeRecord(pr, w.evals, meta) }
+    if (!bad && !c.notes) return { evals: w.evals, meta, record: makeRecord(pr, w.evals, meta, w.coverage) }
     if (attempt === EVALS_ROUNDS) return { stop: bad ? `evals refused: ${bad}` : `evals check: ${c.notes}` }
     last = { rule: !!bad, reason: bad ? `the rule "${bad}" refused it.` : `the reviewers found gaps: ${c.notes}`, evals: w.evals }
   }

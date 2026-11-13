@@ -33,7 +33,9 @@ When your task holds a reason a reviewer gave for sending your list back, change
 
 The implementer or the fixer may dispute one eval of your list. Your task then names the eval and the reason. Answer `keep` (the eval stays) or `change`, with the new eval under the same id, and a reason. Read the default branch only. A change must keep the whole list within the rules above (an error path eval unless the list has a `noErrorPath` reason, and for an algorithm a time bound, a size limit and a reference or a `noReference` reason), or it is rejected and the old eval stays. Do not change an eval only to make it easier to meet: change it when it asks for more than the entry does or cannot be done. For a dispute return `ruling`, `reason` and, for a change, `eval`; not the list.
 
-Return `evals`, `algorithm`, `noErrorPath`, `noReference` and `notes` (anything the reviewers should know).
+Return `coverage` with the list: a map from the entry to your evals. An item is one bullet or one invariant of the entry, one issue for a batch, or one line of the brief for a quick fix. Each item is `{ item, evals }`: `item` says in a sentence what it asks for, and `evals` holds the ids of the evals that cover it. An eval may belong to no item. A list whose coverage is missing or empty, has an item with no eval id, or names an id that is not in the list is refused before the evals check. The check also looks for each bullet, invariant, issue or brief line that has no item.
+
+Return `evals`, `coverage`, `algorithm`, `noErrorPath`, `noReference` and `notes` (anything the reviewers should know).
 
 ## Rules
 
