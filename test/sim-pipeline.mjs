@@ -377,22 +377,27 @@ await check('K07-9: a throw after a bot code change keeps codeChangedByBots on t
   calls = []; cleanupCalls = []; timeline = []; logs = []
   preflight = GOOD
   const hook = (p, o) => { if (o.label === 'io:C2#endci') throw new Error('ci read crashed') }
-  const out = await run({ ...base, prs: kBotPr() }, async (p, o) => { if (hook(p, o)) return; return agent(p, o) }, thunks => Promise.all(thunks.map(t => t())), log)
+  let opened
+  const out = await run({ ...base, prs: kBotPr() }, async (p, o) => { if (hook(p, o)) return; const res = await agent(p, o); if (o.label === 'open:C2') opened = res.prNumber; return res }, thunks => Promise.all(thunks.map(t => t())), log)
   const x = out.prs.find(r => r.id === 'C2')
   assert.equal(x.ready, false)
   assert.match(x.reason, /^run failed:.*ci read crashed/)
   assert.equal(x.codeChangedByBots, true)
-  assert.ok(Number.isInteger(x.prNumber) && x.prNumber > 0, `prNumber ${x.prNumber}`)
+  assert.ok(opened > 0)
+  assert.equal(x.prNumber, opened)
 })
 await check('K07-11: with evals off and no list, a throw after a bot code change keeps codeChangedByBots and the PR number', async () => {
   calls = []; cleanupCalls = []; timeline = []; logs = []
   preflight = GOOD
-  const out = await run({ ...base, prs: PRS.filter(p => p.id === 'C2') }, async (p, o) => { if (o.label === 'io:C2#endci') throw new Error('ci read crashed'); return agent(p, o) }, thunks => Promise.all(thunks.map(t => t())), log)
+  let opened
+  const prs = PRS.filter(p => p.id === 'C2').map(({ evals, ...p }) => p)
+  const out = await run({ ...base, evals: false, prs }, async (p, o) => { if (o.label === 'io:C2#endci') throw new Error('ci read crashed'); const res = await agent(p, o); if (o.label === 'open:C2') opened = res.prNumber; return res }, thunks => Promise.all(thunks.map(t => t())), log)
   const x = out.prs.find(r => r.id === 'C2')
   assert.equal(x.ready, false)
   assert.match(x.reason, /^run failed:.*ci read crashed/)
   assert.equal(x.codeChangedByBots, true)
-  assert.ok(Number.isInteger(x.prNumber) && x.prNumber > 0, `prNumber ${x.prNumber}`)
+  assert.ok(opened > 0)
+  assert.equal(x.prNumber, opened)
   assert.equal(x.evals, undefined)
 })
 await check('K07-10: a throw in the bot answer check keeps codeChangedByBots on the run failed result', async () => {
