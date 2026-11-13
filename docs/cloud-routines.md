@@ -41,13 +41,13 @@ State is held by GitHub labels, which the maintainer sees, and by records, which
 | State | How it starts | What ends it |
 | --- | --- | --- |
 | init needed | The repo has no tracking issue. | `routine-state.sh <repo> init`. Until then every run prints `init needed` and stops. |
-| new | An open issue with no state label, no trusted `triaged` record, not a PR, not labelled with a `skipLabels` label, number at least `triageFrom`. | Triage. |
+| new | An open issue with no state label, no trusted `triaged` record, not a PR, not labelled with a `skipLabels` label, number at least `triageFrom`. | Triage. An issue below `triageFrom` is only looked at for `adopt`, when it has a `triaged` record from the local routine. |
 | untrusted | The author is outside `trustedAuthors`. Labels `needs-approval` and `untrusted-author`. | The maintainer adds `maintainer-approved`, or closes the issue. A changed body or a later outside comment revokes the approval. |
 | ready-to-build | Triage: build, size S or M, risk below high, trusted or approved. | Build starts, or the maintainer removes the label. |
 | needs-approval | Size L, risk high, a plan, an untrusted author or a revoked approval. | The maintainer adds `maintainer-approved`, or closes the issue. |
 | needs-plan | An approved issue of size L, risk high or decision plan, or a build that stopped with the reason code `triage-plan`. That block adds no `build-failed`. | The maintainer plans it in a main session and removes the label. After a `triage-plan` block, a new maintainer approval gives a new build, or ends in `needs-maintainer` when the attempts are used. The label stays until the maintainer removes it. |
 | declined | Triage: invalid. A comment gives the reason. | The maintainer closes the issue, or removes `declined` and the record. |
-| building | `put build-started`. | A PR from `claude/issue-<n>` exists, or the block step. |
+| building | `put build-started`. | A PR from `claude/issue-<n>` exists, or the block step. After a `triage-plan` block, the label comes off last. If the block stops half way, `put pr-seen` finishes it: it writes the `needs-plan` record when it is missing, sets the labels to `needs-plan` only, and posts the block comment once, after the label changes. |
 | build-failed | The last attempt has no PR and a `built` record or a record older than `buildHours`, except for the reason code `triage-plan`. | The maintainer adds `maintainer-approved` again, or closes the issue. |
 | PR open | The wave opened a PR. | The maintainer merges or closes it. It counts for `openPRs` while open. |
 | needs-maintainer | The attempts reached `buildAttempts`. | The maintainer only. |
@@ -57,7 +57,7 @@ State is held by GitHub labels, which the maintainer sees, and by records, which
 | paused | The label `routine-paused` is on the tracking issue. | The maintainer removes the label. |
 | lost race | Two runs post `build-started` for the same issue and attempt. | The run whose record is newer stops at once. The older one builds. |
 
-The fixed labels are `ready-to-build`, `needs-approval`, `maintainer-approved`, `declined`, `building`, `build-failed`, `needs-plan`, `needs-maintainer`, `untrusted-author`, `routine-paused`, `size:S`, `size:M` and `size:L`. `routine/config.jq` prints them.
+The fixed labels are `ready-to-build`, `needs-approval`, `maintainer-approved`, `declined`, `building`, `build-failed`, `needs-plan`, `needs-maintainer`, `untrusted-author`, `routine-paused`, `size:S`, `size:M` and `size:L`. `routine/config.jq` prints them, and the labels that mark a state (`stateLabels`). `routine-state.sh` reads the state labels from there.
 
 ## Stages
 
@@ -102,7 +102,7 @@ The settings are the `routine` block of `.github/pipeline.json` on the default b
 | `trustedAuthors` | Logins whose issues triage reads at once. The maintainer is always in it. Never a bot. |
 | `triageFrom` | The first issue number triage looks at. Set it above the old backlog. |
 | `skipLabels` | Issues with one of these labels are not triaged. Default `review-minor`. `pipeline-routine` and `pipeline-ledger` are always added. |
-| `typeLabels` | Maps `bug`, `feat`, `docs`, `chore` and `test` to the repo's label names. Each default is the type name. A value must not be one of the pipeline's own labels, like `ready-to-build` or `building`. |
+| `typeLabels` | Maps `bug`, `feat`, `docs`, `chore` and `test` to the repo's label names. Each default is the type name. A value must not be one of the pipeline's own labels, like `ready-to-build` or `building`. The check ignores letter case, so `Ready-To-Build` is refused too. Other values are kept as written. |
 | `feedbackRepo`, `collectFrom` | Where feedback is filed, and which other repos the collect routine reads. |
 | `waveArgs` | Fixed `run-wave` choices for unattended runs. `goals` and `checks` are required. `repo`, `tmp`, `pluginRoot`, `agentPrefix`, `prs`, `plan`, `feedback`, `feedbackRepo`, `resumeFromRunId` and `cleanup` are refused. |
 | `limits` | Daily and per-run limits, below. |
