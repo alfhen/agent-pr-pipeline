@@ -683,7 +683,7 @@ blocked_comment() { # issue reasonCode why -> prints the comment body
 post_block_comment() { # issue reasonCode built-key
   local why
   why=$(jq -r --arg k "$3" '[.[] | select(.kind == "built" and .key == $k)] | last | .rec.why // "" | if type == "string" then . else "" end' <<<"$recs")
-  gh api --method POST "repos/$repo/issues/$1/comments" -f body="$(blocked_comment "$1" "$2" "$why")" >/dev/null \
+  gh api --method POST "repos/$repo/issues/$1/comments" -f body="$(blocked_comment "$1" "$2" "$why")" >/dev/null 2>&1 \
     || echo "WARNING could not post the block comment on issue $1" >&2
 }
 
