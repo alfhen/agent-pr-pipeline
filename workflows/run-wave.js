@@ -160,6 +160,7 @@ const absorb = (prev, f) => {
     if (f.suggestedFix && !(prev.suggestedFix || '').includes(f.suggestedFix)) prev.suggestedFix = prev.suggestedFix ? `${prev.suggestedFix}\n\nAlso: ${f.suggestedFix}` : f.suggestedFix
   }
 }
+const EVALS_MISSING = 'evals missing: the input holds the accepted record and no list'
 const REFUSED_LIST_TITLE = 'Refused eval list: '
 const resumeFindings = pr => ((pr.resume && pr.resume.findings) || []).filter(f => !(f && typeof f.title === 'string' && f.title.startsWith(REFUSED_LIST_TITLE)))
 // One item per file and normalized title, with the highest severity and every source. The result is sorted by file, so the fix prompt numbers match the history.
@@ -229,6 +230,8 @@ const TESTS_ONLY_LINE_RULE = `This PR adds tests only. In a new PR body, put thi
 // the opener and the result then say the PR adds tests only.
 const testsOnlyState = {}
 const recordState = {}
+// Per PR: the land-fix list and record taken at intake, so a result built after a throw still carries them.
+const landOutState = {}
 // Per PR: the PR number once a bot answer changed code, so a result built after a throw still carries both.
 const botChangedState = {}
 // Per PR: the break-check results of the last verifier round that gave any. A later round without them leaves it alone.
@@ -254,7 +257,7 @@ const verifyOutcome = (pr, verify) => {
   const byId = new Map()
   for (const r of verify.evals || []) if (!byId.has(r.id) || r.result === 'fail' || (r.breakCheck === 'passes-without-change' && byId.get(r.id).result === 'pass')) byId.set(r.id, r)
   const findings = []
-  const passed = []; const failed = []; const ci = []; const covered = []
+  const passed = []; const failed = []; const ci = []; const covered = []; const breakFailed = []
   for (const e of evalListOf(pr)) {
     const r = byId.get(e.id)
     if (r && r.result === 'pass') passed.push(e.id)
@@ -275,7 +278,7 @@ const verifyOutcome = (pr, verify) => {
       const r = byId.get(e.id)
       if (!r || r.result !== 'pass' || !BREAK_KINDS.includes(e.kind)) continue
       if (r.breakCheck === 'passes-without-change') {
-        passed.splice(passed.indexOf(e.id), 1); failed.push(e.id)
+        passed.splice(passed.indexOf(e.id), 1); failed.push(e.id); breakFailed.push(e.id)
         findings.push({ via: 'break check', severity: 'major', title: `eval ${e.id}: the test passes without the change`, detail: `Eval ${e.id} (${e.statement}) passed, but its test${r.test ? ` ${r.test}` : ''} also passes with the change removed, so it proves nothing. Make the test fail without the change.${r.breakWhy ? ` Evidence: ${r.breakWhy}` : ''}` })
       } else if (asked && r.breakCheck !== 'fails-without-change') {
         const why = r.breakCheck === 'not-run' ? r.breakWhy : r.breakCheck === 'not-applicable' ? `not-applicable is not valid for kind ${e.kind}` : ''
@@ -289,7 +292,7 @@ const verifyOutcome = (pr, verify) => {
   untestedFor(pr).evals = covered
   const breakCheck = asked && BREAK_CHECK && !testsOnly ? breakCheckOf(pr, byId) : null
   if (breakCheck) breakCheckState[pr.id] = breakCheck
-  return { ...base, ...(breakCheck ? { breakCheck } : {}), ...(testsOnly ? { testsOnly: true } : {}), findings: base.findings.concat(findings), pass: base.pass && findings.length === 0, evals: { passed, failed, ci } }
+  return { ...base, ...(breakCheck ? { breakCheck } : {}), ...(testsOnly ? { testsOnly: true } : {}), findings: base.findings.concat(findings), pass: base.pass && findings.length === 0, evals: { passed, failed, ci }, breakFailed }
 }
 const checkOutcome = (pr, result) => verifies(pr) ? verifyOutcome(pr, result) : testOutcome(pr, result)
 // Per PR: the refused checks of the last test round, the QA scenarios that did not run, the minor pass state no agent could confirm, and the evals a CI check covers.
@@ -822,12 +825,12 @@ Return headSha, a summary, every scenario you ran with its \`result\` (pass, fai
 ${prBlock(pr)}
 ${scenarios && scenarios.size ? `\nScenarios still open or untested. Use the same names, and run the open ones again (one left out stays open): ${JSON.stringify([...scenarios].map(([name, v]) => ({ name, state: v.state })))}` : ''}${last && last.length ? `\nYour findings from the last round (check each is really fixed):\n${JSON.stringify(last, null, 1)}` : ''}`
 
-const archPrompt = (pr, round, earlier = [], themes = []) => `${ctx(pr)}
+const archPrompt = (pr, round, earlier = [], themes = [], fixerMayHaveRun = round > 1) => `${ctx(pr)}
 
 Task: review the branch for architecture against ${ARCH}.
 Clone it: ${cloneTo(`arch-${pr.id}-r${round}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`.
 Return the verdict, a short summary, the new concepts, the findings (each with a severity and, for a blocker or major, a \`theme\`; a fits may list minors) and the escalation (for escalate).
-${round > 1 ? `The fixer has added commits since round 1 (\`git log --oneline origin/HEAD..HEAD\`; the first commits are the implementer's). Check each fixer commit against the decisions anywhere in the plan (the entry, Scope and Not in, Rules for every PR, Flagged concerns), the notes and the architecture document. A fixer commit that adds what a decided item rejected, or removes what it keeps, is \`escalate\`, never \`fits\`: the question for the maintainer is whether to keep the decision or change it.\n` : ''}
+${fixerMayHaveRun ? `The fixer may have added commits (\`git log --oneline origin/HEAD..HEAD\`; the first commits are the implementer's). Check each fixer commit against the decisions anywhere in the plan (the entry, Scope and Not in, Rules for every PR, Flagged concerns), the notes and the architecture document. A fixer commit that adds what a decided item rejected, or removes what it keeps, is \`escalate\`, never \`fits\`: the question for the maintainer is whether to keep the decision or change it.\n` : ''}
 ${themes.length ? `Themes of earlier blockers and majors. Reuse a name below when a finding is the same weakness:\n${JSON.stringify(themes)}\n` : ''}
 ${prBlock(pr)}${earlier.length ? `\n\nYour earlier reports on this PR. The plan changed since. Check each earlier \`fits\` against the new head, and report it as a finding if it no longer holds:\n${JSON.stringify(earlier, null, 1)}` : ''}`
 
@@ -1253,7 +1256,7 @@ async function landFor(pr, n, sha) {
 
 // The current segment is the rounds of this run. A resume starts a new segment, whether or not the earlier history has stop markers (0.8.x results have none).
 const segmentOf = (history, startRound) => history.filter(row => row && Number.isInteger(row.round) && row.round >= startRound)
-const SECURITY_THEME = /\b(secur|vulnerab|exploit|attack|bypass|inject|traversal|privacy|secret|credential|authent|authori[sz]|permission|sanitiz|spoof|forger|poison|escalat)/i
+const SECURITY_THEME = /\b(?:(?:in|un)?(?:secur|authent|authori[sz]|sanitiz)|vulnerab|exploit|attack|bypass|inject|traversal|privacy|secret|credential|permission|spoof|forg(?:e[sd]?|ery|ing)\b|untrust|poison|privilege[- ]escalation|escalation of privilege|remote code execution|\brce\b|\bdos\b|xss|csrf|ssrf|exposure|denial of service|(?:secret|token|credential|password|key|data|pii)s? leak|leak(?:s|ed|age)? of (?:secret|token|credential|password|key|data)|(?:sandbox|shell|container) escap)/i
 const scopeEscalation = themes => SECURITY_THEME.test(themes.join(' ')) ? {
   question: `Blockers or majors on the same theme came back in a later round (${themes.join('; ')}). What is the threat model, and which attacks are out of scope?`,
   options: ['Name the threat model and the attacks that are out of scope, then rerun the PR with that decision', 'Keep the plan decision as it is and accept the remaining risk', 'Change the plan so the weakness is handled another way'],
@@ -1356,6 +1359,7 @@ const unsavedStop = fix => {
 async function reviewLoop(pr, startRound, history, minors, loopState) {
   const { max, cap } = roundsFor(pr)
   if (startRound > 1) log(`${pr.id} resume: this run does at most ${max} rounds (${startRound} to ${startRound + max - 1}), ${cap} counts rounds from the resume`)
+  const fixerBeforeLoop = !!(pr.skipImpl || pr.resume)
   const halt = (reason, more) => { history[history.length - 1].stop = reason; return { signedOff: false, ...more, reason } }
   for (let round = startRound; round < startRound + max; round++) {
     const evalMode = verifies(pr)
@@ -1364,7 +1368,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     const wantQa = qaRuns(pr) && (!loopState.reviewed || loopState.qaOpen.length > 0)
     const reviewers = () => [
       () => call('review', pr, reviewPrompt(pr, round, history, loopState.siblings, true, true), `review:${pr.id}#${round}`, { schema: REVIEW }),
-      () => wantArch ? call('arch', pr, archPrompt(pr, round, pr.kind === 'plan' ? loopState.reports : [], [...new Set(history.flatMap(h => h.themes || []))]), `arch:${pr.id}#${round}`, { schema: ARCHREV }) : Promise.resolve(null),
+      () => wantArch ? call('arch', pr, archPrompt(pr, round, pr.kind === 'plan' ? loopState.reports : [], [...new Set(history.flatMap(h => h.themes || []))], round > 1 || fixerBeforeLoop), `arch:${pr.id}#${round}`, { schema: ARCHREV }) : Promise.resolve(null),
       () => wantProduct ? call('product', pr, productPrompt(pr, round), `product:${pr.id}#${round}`, { schema: PRODUCT }) : Promise.resolve(null),
       () => wantQa ? call('qa', pr, qaPrompt(pr, round, loopState.qaOpen, loopState.qaScenarios), `qa:${pr.id}#${round}`, { schema: QA }) : Promise.resolve(null),
     ]
@@ -1427,7 +1431,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     const conflict = pr.kind !== 'plan' && blocking.find(f => /^plan conflict:/i.test(f.title))
     if (conflict) {
       delete row.themes
-      return halt('needs human: plan conflict', { conflict: `${conflict.title}: ${conflict.detail}` })
+      return halt('needs human: plan conflict', { conflict: `${conflict.title}: ${conflict.detail}`, lastFindings: blocking })
     }
     log(`${pr.id} round ${round}: tests ${outcome.pass ? 'pass' : 'fail'}, ${blocking.length} blockers/majors`)
     if (outcome.pass && blocking.length === 0) return { signedOff: true, headSha: test.headSha || review.headSha }
@@ -1447,16 +1451,22 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     row.blockersAndMajors = foldSameAs(blocking, fix && fix.sameAs).map(findingLine)
     const unsaved = unsavedStop(fix)
     if (unsaved) return halt(unsaved.reason, { lastFindings: blocking, lastTest: test, fixSummary: fix.summary, worktree: unsaved.worktree })
-    const listChanged = fix ? await settleDisputes(pr, fix.disputes, 'fixer') : false
+    const listBefore = pr.evals
+    if (fix) await settleDisputes(pr, fix.disputes, 'fixer')
+    const failedNow = (outcome.evals && outcome.evals.failed) || []
+    const listChanged = !!listBefore && pr.evals.some((e, i) => e !== listBefore[i] && failedNow.includes(e.id))
     if (pr.kind !== 'plan' && fix && fix.planConflict) {
       delete row.themes
-      return halt('needs human: plan conflict', { conflict: fix.planConflict })
+      return halt('needs human: plan conflict', { conflict: fix.planConflict, lastFindings: blocking })
     }
     if (listChanged) row.listChanged = true
     if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
     if (fix && fix.changed === false && !listChanged) {
       const failedEvals = (outcome.evals && outcome.evals.failed) || []
-      const named = failedEvals.length ? `; eval ${failedEvals.join(', ')} failed and may not be checkable from a clean clone` : ''
+      const brokenEvals = outcome.breakFailed || []
+      const realEvals = failedEvals.filter(id => !brokenEvals.includes(id))
+      const named = (realEvals.length ? `; eval ${realEvals.join(', ')} failed and may not be checkable from a clean clone` : '')
+        + (brokenEvals.length ? `; eval ${brokenEvals.join(', ')}: its test passes without the change` : '')
       const stop = { signedOff: false, reason: `no progress: the fix changed nothing in round ${round}, ${round - startRound + 1} of ${max} used (${cap})${named}`, lastFindings: blocking, lastTest: test, fixSummary: fix.summary }
       if (blocking.length > 0) return halt(stop.reason, stop)
       // Only failing checks are left, so the failure may be a flaky check: run the checks once more. It shows a flake only on the same head, which is checked after the rerun.
@@ -1473,7 +1483,6 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
       if (!sameHead) return halt(`head moved: the checks ran on ${test.headSha} and then on ${again.headSha}, so the rerun cannot show that the failure was flaky`, { ...stop, lastTest: again })
       if (second.pass && evalMode && !ran) {
         // No reviewer has seen this head: the next round's verifier passes and the reviewers run.
-        if (round === startRound + max - 1) return halt(`no reviewer round: the checks passed on the rerun in the last round, ${max} of ${max} used (${cap})`, stop)
         continue
       }
       if (second.pass) return { signedOff: true, headSha: again.headSha || test.headSha || (review && review.headSha) }
@@ -1524,8 +1533,8 @@ async function ciChecksOf(pr) {
   return Array.isArray(names) && names.every(n => typeof n === 'string') ? names : []
 }
 
-// The files the PR changes, gated ones included but never a floor path, read by one script from the default branch's settings. Null when
-// they cannot be read, and the pass then does not run.
+// The files the PR changes except the fixed floor, read by gate-files.sh --scope from the branch compare. Null when they cannot be read,
+// and the pass then does not run.
 async function minorScope(pr) {
   if (!PLUGIN_ROOT) return null
   const io = await ioCall(pr, `io:${pr.id}#minorscope`, 'gate-files.sh', `${REPO} --scope ${pr.branch}`)
@@ -1843,14 +1852,16 @@ async function runPR(input) {
     result = await runPRSteps(input)
   } catch (e) {
     const rec = recordState[input.id]
-    if (!rec && !botChangedState[input.id]) throw e
+    const landOut = input.landFix ? landOutState[input.id] : null
+    if (!rec && !landOut && !botChangedState[input.id]) throw e
     const resume = input.resume
     result = {
       id: input.id, ready: false, reason: `run failed: ${(e && e.message) || String(e)}`,
       // runPRSteps pushes its rows onto this same array, so keep it by reference.
       ...(resume && Array.isArray(resume.history) ? { history: resume.history } : {}),
+      ...(input.landFix && input.prNumber ? { prNumber: input.prNumber } : {}),
       ...(botChangedState[input.id] ? { codeChangedByBots: true, prNumber: botChangedState[input.id] } : {}),
-      ...(rec ? recordOut(rec) : {}), ...carriedOut(resumedDisputes(input), resumedDeviations(input)),
+      ...(rec ? recordOut(rec) : {}), ...(landOut || {}), ...carriedOut(resumedDisputes(input), resumedDeviations(input)),
     }
   } finally {
     const cleanup = await cleanupPR(input)
@@ -1942,7 +1953,7 @@ async function writeEvals(pr, raw) {
   if (!given && (!EVALS_ON || pr.resume || pr.skipImpl)) return {}
   if (given) {
     if (given.accepted && (pr.resume || pr.skipImpl) && !(Array.isArray(given.list) && given.list.length)) {
-      return { stop: 'evals missing: the input holds the accepted record and no list', record: given.accepted }
+      return { stop: EVALS_MISSING, record: given.accepted }
     }
     const rec = usableRecord(pr, given.accepted)
     // A throw out of the evals check must still return the given record.
@@ -2016,7 +2027,10 @@ async function settleDisputes(pr, disputes, from) {
 }
 
 // A stop that pushed no row still closes the segment: the row carries the reason and no themes, so a resume starts clean.
-const roundsIn = history => history.filter(row => !(row && row.round === 'stop')).length
+const reviewRows = history => history.filter(row => row && Number.isInteger(row.round))
+const roundsIn = history => reviewRows(history).length
+// A resume can hold rows that are not review rounds, so the next number is the highest round plus one, never the row count.
+const lastRound = history => reviewRows(history).reduce((m, row) => Math.max(m, row.round), 0)
 const stopMark = (history, reason) => {
   const last = history[history.length - 1]
   if (last && !last.stop) history.push({ round: 'stop', stop: reason })
@@ -2037,17 +2051,27 @@ async function runPRSteps(input) {
     const n = pr.prNumber
     const history = []
     const lateMinors = []
-    const stopped = (reason, more) => { stopMark(history, reason); return { id: pr.id, prNumber: n, ready: false, reason, history, ...more } }
-    if (!PLUGIN_ROOT) return stopped('pluginRoot missing: the land-fix check needs it to run land-commits.sh')
+    let listOut = {}
+    delete landOutState[pr.id]
+    const stopped = (reason, more) => { stopMark(history, reason); return { id: pr.id, prNumber: n, ready: false, reason, history, ...listOut, ...more } }
     const given = givenEvals(pr, rawEvals)
     if (given) {
       const rec = Array.isArray(given.list) ? usableRecord(pr, given.accepted) : null
       const meta = rec && sameList(given.list, rec.evals) ? { noErrorPath: reasonOf(rec.noErrorPath), noReference: reasonOf(rec.noReference), algorithm: !!rec.algorithm } : given.meta
+      const keep = usableRecord(pr, given.accepted)
+      const stopOut = accepted => keep ? recordOut(keep) : { ...(Array.isArray(given.list) ? { evals: given.list } : {}), evalsMeta: { ...given.meta, ...(accepted ? { accepted } : {}) } }
+      if (given.accepted && !(Array.isArray(given.list) && given.list.length)) {
+        listOut = stopOut(given.accepted)
+        return stopped(EVALS_MISSING)
+      }
       const bad = evalsVerdict(given.list, pr, meta)
-      if (bad) return stopped(`evals refused: ${bad}`)
+      if (bad) { listOut = stopOut(null); return stopped(`evals refused: ${bad}`) }
+      listOut = { evals: given.list, evalsMeta: { ...meta, ...(rec ? { accepted: rec } : {}) } }
+      landOutState[pr.id] = listOut
       pr = { ...pr, evals: given.list, evalsMeta: meta }
-      ciChecksState[pr.id] = await ciChecksOf(pr)
     }
+    if (!PLUGIN_ROOT) return stopped('pluginRoot missing: the land-fix check needs it to run land-commits.sh')
+    if (given) ciChecksState[pr.id] = await ciChecksOf(pr)
     const was = await readHead(pr, n, 'landhead')
     if (was.fail) return stopped(was.fail)
     const before = was.head
@@ -2067,7 +2091,7 @@ async function runPRSteps(input) {
     return {
       id: pr.id, prNumber: n, ready: true, headSha: end.head, ...landing, untested: untestedOf(pr), notes: r.notes,
       ci: end.ci, approvedBy: end.approvedBy || b.wait.approvedBy || [], botNotes: b.wait.notes, codeChangedByBots: botCodeChanged(b),
-      lateMinors, history,
+      lateMinors, history, ...listOut,
     }
   }
   const history = pr.resume ? pr.resume.history || [] : []
@@ -2076,6 +2100,7 @@ async function runPRSteps(input) {
   let impl = { problems: '' }
   let rerunFixChanged
   const evalsOut = () => ({ ...(testsOnlyState[pr.id] ? { testsOnly: true } : {}), ...(breakCheckState[pr.id] ? { breakCheck: breakCheckState[pr.id] } : {}), ...(pr.evals ? { evals: pr.evals, evalsMeta: { ...pr.evalsMeta, accepted: pr.record }, evalDisputes: pr.evalDisputes, ...carriedOut([], pr.deviations) } : carriedOut([], pr.deviations)) })
+  const minorsOut = () => minors.length ? { minors: mergeDuplicates(minors) } : {}
   const rerunFix = () => rerunFixChanged === undefined ? {} : { rerunFixChanged }
   const decisionFindings = (pr.skipImpl || pr.resume) && (pr.architectureDecision || pr.productDecision)
     ? [{ severity: 'major', title: 'Apply the maintainer decision', detail: `Apply the maintainer decision given in the brief to the branch. If the branch already follows it, change nothing.${pr.architectureDecision ? ` Architecture decision: ${pr.architectureDecision}` : ''}${pr.productDecision ? ` Product decision: ${pr.productDecision}` : ''}` }]
@@ -2088,7 +2113,7 @@ async function runPRSteps(input) {
     const refused = rec && Array.isArray(written.refused) ? [{ severity: 'minor', title: `${REFUSED_LIST_TITLE}${written.stop}`, detail: JSON.stringify(written.refused) }] : []
     const findings = resumeFindings(pr).concat(refused)
     const listOut = rec ? recordOut(rec) : written.record ? { ...(given && Array.isArray(given.list) ? { evals: given.list } : {}), evalsMeta: { ...(given ? given.meta : {}), accepted: written.record } } : given ? { evals: given.list, evalsMeta: given.meta } : {}
-    return { id: pr.id, ready: false, reason: written.stop, history, ...(findings.length ? { lastFindings: findings } : {}), ...listOut, ...carriedOut(resumedDisputes(pr), resumedDeviations(pr)) }
+    return { id: pr.id, ready: false, reason: written.stop, history, ...(findings.length ? { lastFindings: findings } : {}), ...minorsOut(), ...listOut, ...carriedOut(resumedDisputes(pr), resumedDeviations(pr)) }
   }
   pr = { ...pr, deviations: resumedDeviations(pr) }
   if (written.evals) {
@@ -2096,21 +2121,25 @@ async function runPRSteps(input) {
     recordState[pr.id] = written.record
   }
   if (preFindings.length) {
-    const decisionFix = await call('fix', pr, fixPrompt(pr, null, preFindings, roundsIn(history)), `fix:${pr.id}#${roundsIn(history)}`, { schema: FIX })
+    const decisionFix = await call('fix', pr, fixPrompt(pr, null, preFindings, lastRound(history)), `fix:${pr.id}#${lastRound(history)}`, { schema: FIX })
     if (decisionFix && typeof decisionFix.changed === 'boolean') rerunFixChanged = decisionFix.changed
     const unsaved = unsavedStop(decisionFix)
-    if (unsaved) return marked({ id: pr.id, ready: false, reason: unsaved.reason, history, lastFindings: preFindings, worktree: unsaved.worktree, fixSummary: decisionFix.summary, ...rerunFix(), ...evalsOut() })
+    if (unsaved) return marked({ id: pr.id, ready: false, reason: unsaved.reason, history, lastFindings: preFindings, worktree: unsaved.worktree, fixSummary: decisionFix.summary, ...minorsOut(), ...rerunFix(), ...evalsOut() })
+    if (!decisionFindings.length && decisionFix && decisionFix.changed === false) {
+      const { max, cap } = roundsFor(pr)
+      return marked({ id: pr.id, ready: false, reason: `no progress: the fix changed nothing in the resume fix round, 0 of ${max} review rounds used (${cap})`, history, lastFindings: preFindings, fixSummary: decisionFix.summary, ...minorsOut(), ...rerunFix(), ...evalsOut() })
+    }
   } else if (!pr.skipImpl && !pr.resume) {
     impl = await call('impl', pr, implPrompt(pr), `implement:${pr.id}`, { schema: IMPL })
     if (impl && !impl.pushed && pr.evals) await settleDisputes(pr, impl.disputes, 'implementer')
-    if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl, ...evalsOut() }
+    if (!impl || !impl.pushed) return { id: pr.id, ready: false, reason: 'implementation not pushed', impl, ...minorsOut(), ...evalsOut() }
     pr.deviations = (Array.isArray(impl.deviations) ? impl.deviations : []).filter(d => d && reasonOf(d.what))
     await settleDisputes(pr, impl.disputes, 'implementer')
   }
   if (verifies(pr)) ciChecksState[pr.id] = await ciChecksOf(pr)
   const loopState = { fixed: false, reviewed: false, themes: [], siblings: [], reports: [], product: quickProduct, qa: [], qaOpen: [], qaScenarios: new Map() }
-  let loop = await reviewLoop(pr, roundsIn(history) + 1, history, minors, loopState)
-  if (!loop.signedOff) return marked({ id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, ...(loop.fixSummary ? { fixSummary: loop.fixSummary } : {}), ...(loop.worktree ? { worktree: loop.worktree } : {}), escalation: loop.escalation, conflict: loop.conflict, architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
+  let loop = await reviewLoop(pr, lastRound(history) + 1, history, minors, loopState)
+  if (!loop.signedOff) return marked({ id: pr.id, ready: false, reason: loop.reason, history, lastFindings: loop.lastFindings, ...(loop.fixSummary ? { fixSummary: loop.fixSummary } : {}), ...(loop.worktree ? { worktree: loop.worktree } : {}), escalation: loop.escalation, conflict: loop.conflict, architecture: loopState.reports, product: loopState.product, ...minorsOut(), ...rerunFix(), ...evalsOut() })
 
   let pass = { fixed: [], report: null }
   if (minorPassRuns(pr)) {
@@ -2120,13 +2149,13 @@ async function runPRSteps(input) {
   // Unchecked pass commits stay on the head, so a later test run on it fails for a reason no later agent can fix. Those steps
   // are skipped and listed as untested, and a person merges.
   const redHead = !!pass.revertFailed
-  if (pass.outside) return marked({ id: pr.id, ready: false, reason: `needs human: untrusted path outside the minor pass: ${pass.outside.map(f => f.title).join('; ')}`, history, lastFindings: pass.outside, minorPass: pass.report, untested: untestedOf(pr), architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
+  if (pass.outside) return marked({ id: pr.id, ready: false, reason: `needs human: untrusted path outside the minor pass: ${pass.outside.map(f => f.title).join('; ')}`, history, lastFindings: pass.outside, minorPass: pass.report, untested: untestedOf(pr), ...minorsOut(), architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
 
   let docs = null
   if (docsRuns(pr) && redHead) untestedFor(pr).pass.push('docs not updated: the minor pass commits are still on the branch')
   else if (docsRuns(pr)) {
     const d = await docsStep(pr, loop.headSha, history, minors)
-    if (!d.ok) return marked({ id: pr.id, ready: false, reason: d.reason, history, lastFindings: d.lastFindings, docs: d.docs, architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
+    if (!d.ok) return marked({ id: pr.id, ready: false, reason: d.reason, history, lastFindings: d.lastFindings, docs: d.docs, ...minorsOut(), architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
     loop.headSha = d.headSha
     docs = { changed: d.docs.changed, files: d.docs.files || [], summary: d.docs.summary }
   }

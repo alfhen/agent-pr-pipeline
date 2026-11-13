@@ -221,11 +221,11 @@ case "$cmd" in
       [ -n "$p" ] || continue
       n=$(jq -r .number <<<"$p")
       facts=$(github_facts "$n") || exit $?
-      rec=$(jq -nc --arg repo "$repo" --argjson p "$p" --argjson f "$facts" '
+      rec=$(jq -c --arg repo "$repo" --argjson f "$facts" '. as $p |
         first(($p.body | capture("(?i)\\bno blockers or majors after round (?<n>[0-9]+)")), ($p.body | capture("(?i)(?<n>[0-9]+)(?: review)? rounds?\\b")), ($p.body | capture("(?i)\\brounds?:\\s*(?<n>[0-9]+)")), {n: null}) as $m
         | {v: 1, repo: $repo, run: "backfill", pluginVersion: null, kind: "backfill", pr: {id: "pr-\($p.number)", number: $p.number},
            ready: true, reason: null, rounds: ($m.n | if . == null then null else tonumber end), evals: null, minorPass: null,
-           codeChangedByBots: null, evalMisses: [], tokens: null, github: $f}') || die 3 "could not build the record of #$n"
+           codeChangedByBots: null, evalMisses: [], tokens: null, github: $f}' <<<"$p") || die 3 "could not build the record of #$n"
       if [ "$dry" = 1 ]; then echo "$rec"; continue; fi
       cid=$(post_record backfill "pr-$n" "$rec") || die 3 "could not post the record of #$n"
       echo "ledger: wrote the record of #$n (comment $cid)"
@@ -234,7 +234,7 @@ case "$cmd" in
 
   hand)
     need_issue
-    ts=$(date +%s)
+    ts=$(date +%s)-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')
     rec=$(jq -nc --arg repo "$repo" --argjson n "$hpr" --arg k "$hkind" '{v: 1, repo: $repo, run: "hand", pluginVersion: null, kind: "hand", handFix: $k,
       pr: {id: "#\($n)", number: $n}, ready: null, reason: null, rounds: null, evals: null, minorPass: null, codeChangedByBots: null, evalMisses: [], tokens: null}')
     cid=$(post_record "hand-$ts" "#$hpr" "$rec") || die 3 "could not post the hand fix"
@@ -292,7 +292,7 @@ case "$cmd" in
           weighted: ([$g[].tokens.weighted | numbers] | if length > 0 then add else null end),
           noCache: ([$g[].tokens.noCacheRead | numbers] | if length > 0 then add else null end),
           rounds: ([$g[] | select(.kind != "land-fix" and .kind != "hand" and .kind != "miss") | .rounds | numbers] | if length > 0 then max else null end),
-          touches: (([$g[] | .reason | strings | select(test("^(needs human:|no progress:|rounds exhausted: the fix changed nothing|checks failed twice:|head moved:|head unknown:|evals check:|evals refused:|fix not saved:|evals missing:|run failed:)"))] | length) + (if $f.mergeMode == "person" then 1 else 0 end)),
+          touches: (([$g[] | .reason | strings | select(test("^(needs human:|no eval results:|no progress:|rounds exhausted: the fix changed nothing|checks failed twice:|head moved:|head unknown:|evals check:|evals refused:|fix not saved:|evals missing:|run failed:)"))] | length) + (if $f.mergeMode == "person" then 1 else 0 end)),
           miss: any($g[]; (.evalMisses | arrays | length) > 0),
           defect: any($g[]; .codeChangedByBots == true or ((.evalMisses | arrays | length) > 0)),
           landFixes: ([$g[] | select(.kind == "land-fix")] | length),
@@ -314,5 +314,5 @@ case "$cmd" in
         "Hand fixes: \([$rows[].hands[] | select(. == "code")] | length) by code, \([$rows[].hands[] | select(. == "process")] | length) by process.",
         "Bot threads: \([$rows[].botThreads] | add // 0) in all.",
         "Records left out because no later record of the PR has a number: \($unjoined).",
-        "Records with no tokens: \([$rows[] | select(.weighted == null)] | length) of \($n) PRs."' || die 3 "could not build the report" ;;
+        "PRs with no tokens: \([$rows[] | select(.weighted == null)] | length) of \($n)."' || die 3 "could not build the report" ;;
 esac

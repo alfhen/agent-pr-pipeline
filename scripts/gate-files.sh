@@ -28,7 +28,7 @@ if [ "$pr" = "--head" ]; then
 fi
 if [ "$pr" = "--ci-checks" ]; then
   branch=$(gh api "repos/$R" --jq .default_branch 2>&1) || { echo "GATE ERROR: cannot read the default branch ($branch)"; exit 3; }
-  settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=$branch" 2>&1)
+  settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=refs/heads/$branch" 2>&1)
   if [ $? -ne 0 ]; then
     case $settings in
       *"HTTP 404"*) echo 'CICHECKS ["ci"]'; exit 0 ;;
@@ -72,7 +72,7 @@ else
   [ "$(jq length <<<"$list")" -lt 3000 ] || err "3000 changed files or more, the list may be cut"
 fi
 
-floor='[".github/**","**/.claude","**/.claude/**","**/AGENTS.md","**/CLAUDE.md","**/CLAUDE.local.md","docs/goals.md"]'
+floor='[".github",".github/**","**/.claude","**/.claude/**","**/AGENTS.md","**/CLAUDE.md","**/CLAUDE.local.md","docs/goals.md"]'
 scopefloor=$floor
 # matches <gates> [flags] [free]: the changed files a gate matches, joined; with "free", the files no gate matches, as a JSON array.
 matches() { jq -r --argjson gates "$1" --arg flags "${2:-}" --arg free "${3:-}" '
@@ -91,7 +91,7 @@ if [ -n "$scope" ]; then
   free=$(matches "$scopefloor" i free) || err "cannot match the changed files"
   echo "SCOPE $free"; exit 0
 fi
-settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=$branch" 2>&1)
+settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=refs/heads/$branch" 2>&1)
 if [ $? -ne 0 ]; then
   case $settings in
     *"HTTP 404"*) settings=$(cat "$here/../templates/pipeline.json" 2>/dev/null) || err "no settings file and no template" ;;

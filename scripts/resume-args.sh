@@ -3,9 +3,9 @@
 # Prints the id, prNumber and resume to add to the PR's own prs[] item (it has no branch or title): { id, prNumber, resume: { history, minors, findings, evals, designRules,
 # evalDisputes, deviations } }. Every field is copied from the input as it is, and a field the input lacks is left out.
 # resume.evals is the object form { evals, ...evalsMeta }, so the accepted record is resume.evals.accepted. A workflow result
-# keeps its minors in lateMinors and its findings in lastFindings. A large list is never typed by hand, so use this script.
-# --max-rounds and --cap together print one WARN line on stderr when the rounds in the history (rows whose round is not
-# "stop") plus n are more than c. The item is still printed.
+# keeps its minors in minors (a stop before the open step) or lateMinors, and its findings in lastFindings. A large list is never typed by hand, so use this script.
+# --max-rounds and --cap together print one WARN line on stderr when the rounds in the history (rows whose round is an
+# integer) plus n are more than c. The item is still printed.
 # Exit: 0 printed, 1 the PR id is not in the input, 64 bad argument, 65 the input is missing, not JSON, or not a result.
 # Nothing is printed on stdout unless the exit is 0.
 set -u
@@ -30,7 +30,7 @@ item=$(jq -ce --arg id "$id" '
   def idpart: {id: .id} + (if has("prNumber") then {prNumber} else {} end);
   def resume($p): {}
     + (if $p | has("history") then {history: $p.history} else {} end)
-    + (if $p | has("lateMinors") then {minors: $p.lateMinors} else {} end)
+    + (if $p | has("minors") then {minors: $p.minors} elif $p | has("lateMinors") then {minors: $p.lateMinors} else {} end)
     + (if $p | has("lastFindings") then {findings: $p.lastFindings} else {} end)
     + (if ($p | has("evals")) or (($p.evalsMeta | type) == "object")
        then {evals: ((if $p | has("evals") then {evals: $p.evals} else {} end) + (($p.evalsMeta | objects) // {}))} else {} end)
@@ -48,7 +48,7 @@ item=$(jq -ce --arg id "$id" '
 if [ "$item" = '"missing"' ]; then echo "resume-args: PR $id is not in $src" >&2; exit 1; fi
 
 if [ -n "$n" ]; then
-  rounds=$(jq -r '[.resume.history // [] | .[] | objects | select(.round != "stop")] | length' <<<"$item")
+  rounds=$(jq -r '[.resume.history // [] | .[] | objects | select(.round | type == "number" and . == floor)] | length' <<<"$item")
   if [ $((rounds + 10#$n)) -gt $((10#$cap)) ]; then
     echo "WARN: the history has $rounds rounds and this run adds up to $n, more than the cap of $cap" >&2
   fi

@@ -70,6 +70,15 @@ test('release: every check passes, the release pins the checked sha', () => {
   assert.match(r.out, /ok: all 1 commits since v0\.2\.0/)
 })
 
+test('release: the settings and the workflows are read with a full branch ref', () => {
+  const r = release(setup(), '--dry-run')
+  assert.equal(r.code, 0, r.out)
+  for (const p of ['.github/pipeline.json', '.github/workflows', '.github/workflows/release.yml']) {
+    assert.ok(r.log.includes(`GET /repos/o/r/contents/${p}?ref=refs/heads/main`), `${p}\n${r.log.join('\n')}`)
+  }
+  assert.equal(r.log.some((l) => /\?ref=main$/.test(l)), false)
+})
+
 test('release: --dry-run prints each check and the release, and calls no write endpoint', () => {
   const r = release(setup(), '--dry-run')
   assert.equal(r.code, 0, r.out)

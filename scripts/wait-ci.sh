@@ -16,10 +16,13 @@ MAX_TRIES=3; RETRY_WAIT=2
 polls=$((10#$minutes)); [ "$polls" -gt 9 ] && polls=9; [ "$polls" -lt 1 ] && polls=1
 
 # One read of the head, its check runs and its statuses. A failed request or a reply that is not JSON sets why and returns 1.
+# gh's stderr goes to a file, never to the output: its last line is added to the give-up message after a prefix, so no output line starts with the "{" of a JSON error.
+errf=$(mktemp) || { echo "wait-ci: cannot make a temporary file" >&2; exit 3; }
+trap 'rm -f "$errf"' EXIT
 read_ci() {
-  head=$(gh api "repos/$R/pulls/$pr" --jq .head.sha 2>/dev/null) && [ -n "$head" ] || { why="cannot read #$pr"; return 1; }
-  runs=$(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100" 2>/dev/null | jq -s -c '[.[].check_runs[] | {name, status, conclusion}]' 2>/dev/null; exit "${PIPESTATUS[0]}") && [ -n "$runs" ] || { why="cannot read check runs"; return 1; }
-  sts=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100" 2>/dev/null | jq -s -c '[.[].statuses[] | {context, state}]' 2>/dev/null; exit "${PIPESTATUS[0]}") && [ -n "$sts" ] || { why="cannot read statuses"; return 1; }
+  head=$(gh api "repos/$R/pulls/$pr" --jq .head.sha 2>"$errf") && [ -n "$head" ] || { why="cannot read #$pr"; return 1; }
+  runs=$(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100" 2>"$errf" | jq -s -c '[.[].check_runs[] | {name, status, conclusion}]' 2>/dev/null; exit "${PIPESTATUS[0]}") && [ -n "$runs" ] || { why="cannot read check runs"; return 1; }
+  sts=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100" 2>"$errf" | jq -s -c '[.[].statuses[] | {context, state}]' 2>/dev/null; exit "${PIPESTATUS[0]}") && [ -n "$sts" ] || { why="cannot read statuses"; return 1; }
   return 0
 }
 
@@ -29,7 +32,7 @@ while :; do
   while :; do
     tries=$((tries+1))
     read_ci && break
-    [ "$tries" -ge "$MAX_TRIES" ] && { echo "wait-ci: $why, gave up after $tries tries" >&2; exit 3; }
+    [ "$tries" -ge "$MAX_TRIES" ] && { last=$(grep -v '^[[:space:]]*$' "$errf" | tail -n 1); echo "wait-ci: $why, gave up after $tries tries${last:+ (last error: $last)}" >&2; exit 3; }
     echo "wait-ci: $why, try $tries of $MAX_TRIES failed, trying again in ${RETRY_WAIT}s" >&2; sleep "$RETRY_WAIT"
   done
   first=false; [ "$head" != "$prev" ] && first=true; prev=$head

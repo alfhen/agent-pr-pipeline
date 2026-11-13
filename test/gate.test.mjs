@@ -526,6 +526,39 @@ test('gate --scope: in the plugin repo a gated code file is listed and the floor
   assert.deepEqual(JSON.parse(r.out.trim().replace(/^SCOPE /, '')), ['scripts/gate-files.sh', 'src/a.js', 'workflows/run-wave.js'])
 })
 
+test('gate --scope: runs without the plugin manifest read', () => {
+  const s = setup({ files: null, scripts: true })
+  rmSync(join(s.scriptDir, 'plugin-repo.sh'))
+  put(s.fx, `${P}__compare__main...feat__x.json`, { files: [{ filename: 'src/a.js' }] })
+  const r = run(s, 'gate-files.sh', ['o/r', '--scope', 'feat/x'])
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /^SCOPE \["src\/a.js"\]/)
+})
+
+test('gate: the gates and the ci checks are read with a full branch ref', () => {
+  const ref = 'GET /repos/o/r/contents/.github/pipeline.json?ref=refs/heads/main'
+  const a = run(setup({ files: 'clean' }), 'gate-files.sh', ['o/r', '7'])
+  assert.ok(a.log.includes(ref), a.log.join('\n'))
+  const b = run(setup({ files: null }), 'gate-files.sh', ['o/r', '--ci-checks'])
+  assert.ok(b.log.includes(ref), b.log.join('\n'))
+  assert.equal([...a.log, ...b.log].some((l) => /\?ref=main$/.test(l)), false)
+})
+
+test('floor: a bare .github path is gated in any letter case, .githubx is not', () => {
+  for (const f of ['.github', '.GITHUB']) {
+    const r = floorRun([{ filename: f }])
+    assert.equal(r.code, 1, f)
+    assert.match(r.out, /GATED #7: floor: .*\.github/i)
+  }
+  const x = floorRun([{ filename: '.githubx' }])
+  assert.equal(x.code, 0)
+  assert.match(x.out, /not gated #7/)
+})
+
+test('floor: the template gates hold a bare .github path', () => {
+  assert.ok(JSON.parse(readFileSync(join(root, 'templates/pipeline.json'), 'utf8')).gates.includes('.github'))
+})
+
 test('gate --scope: does not read the gate settings', () => {
   const s = setup({ files: null, settings: 'error' })
   put(s.fx, `${P}__compare__main...feat__x.json`, { files: [{ filename: 'src/a.js' }] })
