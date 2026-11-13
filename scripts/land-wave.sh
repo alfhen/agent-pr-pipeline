@@ -71,6 +71,7 @@ parse_arg() {
   pr=${arg%%:*}; rest=${arg#*:}; sha=${rest%%:*}; suffix=auto_none
   [ "$rest" != "$sha" ] && suffix=${rest#*:}
   [ "$pr" != "$arg" ] && [ -n "$sha" ] && { [ "$suffix" = auto_none ] || [ "$suffix" = auto ]; } || { echo "need <pr>:<sha> or <pr>:<sha>:auto, got $arg"; exit 2; }
+  [[ "$pr" =~ ^[0-9]+$ ]] || { echo "need a PR number in $arg"; exit 2; }
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "need the full 40-character commit id in $arg: a short id cannot match the PR head. Use the land value from the workflow result as it is."; exit 2; }
 }
 # Every argument is checked before the first gh call, so a bad one cannot stop the run after an earlier PR has merged.

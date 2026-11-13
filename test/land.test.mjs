@@ -336,7 +336,7 @@ test('land: the known flakes are read with a full branch ref', () => {
 
 test('land: a bad argument after a valid one stops the run before any gh call', () => {
   const s = landSetup({ checks: [[passed('e2e')]] })
-  for (const [bad, text] of [[`8:aaaaaaa:auto`, /need the full 40-character commit id in 8:aaaaaaa:auto/], [`8:${SHA}:bogus`, /need <pr>:<sha> or <pr>:<sha>:auto/]]) {
+  for (const [bad, text] of [[`8:aaaaaaa:auto`, /need the full 40-character commit id in 8:aaaaaaa:auto/], [`8:${SHA}:bogus`, /need <pr>:<sha> or <pr>:<sha>:auto/], [`x:${SHA}:auto`, /need a PR number in x:/]]) {
     const r = run(s, 'land-wave.sh', ['o/r', `7:${SHA}:auto`, bad])
     assert.equal(r.code, 2, r.out)
     assert.match(r.out, text)

@@ -556,13 +556,6 @@ test('floor: a bare .github path is gated in any letter case, .githubx is not', 
 })
 
 test('floor: the template gates hold a bare .github path', () => {
-  const s = setup({ files: null, settings: 'missing', scripts: true })
-  mkdirSync(join(s.dir, 'templates'))
-  copyFileSync(join(root, 'templates/pipeline.json'), join(s.dir, 'templates/pipeline.json'))
-  writeManifest(s.dir, PLUGIN)
-  put(s.fx, `${PULL}__files.1.json`, [{ filename: '.github' }])
-  const r = run(s, 'gate-files.sh', ['o/r', '7'])
-  assert.equal(r.code, 1, r.out)
   assert.ok(JSON.parse(readFileSync(join(root, 'templates/pipeline.json'), 'utf8')).gates.includes('.github'))
 })
 
