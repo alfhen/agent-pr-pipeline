@@ -1523,8 +1523,8 @@ async function ciChecksOf(pr) {
   return Array.isArray(names) && names.every(n => typeof n === 'string') ? names : []
 }
 
-// The files the PR changes, gated ones included but never a floor path, read by one script from the default branch's settings. Null when
-// they cannot be read, and the pass then does not run.
+// The files the PR changes except the fixed floor, read by gate-files.sh --scope from the branch compare. Null when they cannot be read,
+// and the pass then does not run.
 async function minorScope(pr) {
   if (!PLUGIN_ROOT) return null
   const io = await ioCall(pr, `io:${pr.id}#minorscope`, 'gate-files.sh', `${REPO} --scope ${pr.branch}`)

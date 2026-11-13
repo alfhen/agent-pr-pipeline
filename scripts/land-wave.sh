@@ -53,7 +53,7 @@ wait_rerun_started() {
 flake_runs() {
   local base settings flakes
   base=$(gh api "repos/$R" --jq .default_branch 2>/dev/null) || return 0
-  settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=$base" 2>&1)
+  settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=refs/heads/$base" 2>&1)
   if [ $? -ne 0 ]; then
     case $settings in
       *"HTTP 404"*) settings=$(cat "$here/../templates/pipeline.json" 2>/dev/null) || return 0 ;;
@@ -67,11 +67,16 @@ flake_runs() {
       else [$bad[] | (.details_url // "") | capture("/actions/runs/(?<id>[0-9]+)") | .id] | unique | .[] end' 2>/dev/null
 }
 here=$(dirname "$0")
-for arg in "$@"; do
+parse_arg() {
   pr=${arg%%:*}; rest=${arg#*:}; sha=${rest%%:*}; suffix=auto_none
   [ "$rest" != "$sha" ] && suffix=${rest#*:}
   [ "$pr" != "$arg" ] && [ -n "$sha" ] && { [ "$suffix" = auto_none ] || [ "$suffix" = auto ]; } || { echo "need <pr>:<sha> or <pr>:<sha>:auto, got $arg"; exit 2; }
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "need the full 40-character commit id in $arg: a short id cannot match the PR head. Use the land value from the workflow result as it is."; exit 2; }
+}
+# Every argument is checked before the first gh call, so a bad one cannot stop the run after an earlier PR has merged.
+for arg in "$@"; do parse_arg; done
+for arg in "$@"; do
+  parse_arg
   auto=""; [ "$suffix" = auto ] && auto=--auto
   wait_ci
   for _ in $(seq 1 "$mtries"); do

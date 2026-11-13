@@ -48,7 +48,7 @@ const landSetup = ({ checks, settings = 'flake', onHead = null, attempt = 1 }) =
   checks.forEach((c, i) => put(fx, `${P}__commits__${SHA}__check-runs.call${i + 1}.json`, { check_runs: c }))
   put(fx, `${P}__commits__${SHA}__status.json`, { state: 'success', statuses: [] })
   put(fx, `${P}__actions__runs__55.json`, { run_attempt: attempt })
-  put(fx, `${CONTENTS}@ref=main.json`, fixture(`pipeline-${settings}.json`))
+  put(fx, `${CONTENTS}@ref=refs__heads__main.json`, fixture(`pipeline-${settings}.json`))
   if (onHead) put(fx, `${CONTENTS}@ref=${SHA}.json`, fixture(`pipeline-${onHead}.json`))
   put(fx, `${PULL}__reviews.json`, [{ id: 1, user: { login: 'gitar-bot[bot]' }, state: 'APPROVED', body: '', commit_id: SHA, submitted_at: '2026-01-01T10:00:00Z' }])
   put(fx, `${PULL}__comments.json`, [])
@@ -103,7 +103,7 @@ test('land: one known flake and one other failure are not rerun', () => {
 test('land: a list that exists only on the PR head is not used', () => {
   const s = landSetup({ checks: [[failed('e2e')]], settings: 'none', onHead: 'flake' })
   assert.deepEqual(JSON.parse(readFileSync(join(s.fx, `${CONTENTS}@ref=${SHA}.json`), 'utf8')).knownFlakes, ['e2e'])
-  assert.deepEqual(JSON.parse(readFileSync(join(s.fx, `${CONTENTS}@ref=main.json`), 'utf8')).knownFlakes, [])
+  assert.deepEqual(JSON.parse(readFileSync(join(s.fx, `${CONTENTS}@ref=refs__heads__main.json`), 'utf8')).knownFlakes, [])
   const r = land(s)
   assert.equal(r.code, 3, r.out)
   assert.equal(reruns(r).length, 0)
@@ -118,7 +118,7 @@ test('land: a head that was rerun before is not rerun again', () => {
 
 test('land: a repo with no settings file has no known flakes', () => {
   const s = landSetup({ checks: [[failed('e2e')]] })
-  rmSync(join(s.fx, `${CONTENTS}@ref=main.json`))
+  rmSync(join(s.fx, `${CONTENTS}@ref=refs__heads__main.json`))
   const r = land(s)
   assert.equal(r.code, 3, r.out)
   assert.equal(reruns(r).length, 0)
@@ -126,7 +126,7 @@ test('land: a repo with no settings file has no known flakes', () => {
 
 test('land: a repo with no settings file takes its known flakes from the template next to the scripts', () => {
   const s = landSetup({ checks: [[failed('e2e')], [failed('e2e')], [passed('e2e')]] })
-  rmSync(join(s.fx, `${CONTENTS}@ref=main.json`))
+  rmSync(join(s.fx, `${CONTENTS}@ref=refs__heads__main.json`))
   const copy = join(s.dir, 'plugin')
   cpSync(join(root, 'scripts'), join(copy, 'scripts'), { recursive: true })
   mkdirSync(join(copy, 'templates'))
@@ -204,7 +204,7 @@ test('version: an unchanged version passes even when it equals the tag', () => {
 
 test('gate: routine/run.sh and routine/bin/gh are held by the repo gates', () => {
   const s = base()
-  put(s.fx, `${CONTENTS}@ref=main.json`, readFileSync(join(root, '.github/pipeline.json'), 'utf8'))
+  put(s.fx, `${CONTENTS}@ref=refs__heads__main.json`, readFileSync(join(root, '.github/pipeline.json'), 'utf8'))
   put(s.fx, `${PULL}__files.json`, fixture('routine-files.json'))
   const r = run(s, 'gate-files.sh', ['o/r', '7'])
   assert.equal(r.code, 1, r.out)
@@ -326,6 +326,22 @@ test('merge-pr: a Closes line that is only in a branch commit is not sent', () =
   const call = r.log.find((l) => /^PUT .*pulls\/7\/merge/.test(l))
   assert.match(call, /commit_message=Adds it\.$/)
   assert.doesNotMatch(call, /999/)
+})
+
+test('land: the known flakes are read with a full branch ref', () => {
+  const r = land(landSetup({ checks: [[failed('e2e')], [failed('e2e')], [passed('e2e')]] }))
+  assert.ok(r.log.includes('GET /repos/o/r/contents/.github/pipeline.json?ref=refs/heads/main'), r.log.join('\n'))
+  assert.equal(r.log.some((l) => /\?ref=main$/.test(l)), false)
+})
+
+test('land: a bad argument after a valid one stops the run before any gh call', () => {
+  const s = landSetup({ checks: [[passed('e2e')]] })
+  for (const [bad, text] of [[`8:aaaaaaa:auto`, /need the full 40-character commit id in 8:aaaaaaa:auto/], [`8:${SHA}:bogus`, /need <pr>:<sha> or <pr>:<sha>:auto/]]) {
+    const r = run(s, 'land-wave.sh', ['o/r', `7:${SHA}:auto`, bad])
+    assert.equal(r.code, 2, r.out)
+    assert.match(r.out, text)
+    assert.equal(r.log.length, 0)
+  }
 })
 
 test('land: a short commit id is refused before any wait or merge', () => {

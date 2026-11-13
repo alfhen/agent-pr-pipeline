@@ -4,6 +4,7 @@
     "docs/plan-*.md",
     "AGENTS.md",
     "CLAUDE.md",
+    ".github",
     ".github/**",
     ".claude/**",
     "**/package.json",

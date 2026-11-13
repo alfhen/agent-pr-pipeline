@@ -23,7 +23,7 @@ branch=$(gh api "repos/$R" --jq .default_branch 2>&1) || stop "cannot read the d
 sha=$(gh api "repos/$R/commits/$branch" --jq .sha 2>&1) || stop "cannot read the head of $branch ($sha)"
 user=$(gh api user --jq .login 2>&1) || stop "cannot read GET /user ($user)"
 
-settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=$branch" 2>&1)
+settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=refs/heads/$branch" 2>&1)
 if [ $? -ne 0 ]; then
   is404 "$settings" && settings='{}' || stop "cannot read .github/pipeline.json ($settings)"
 fi
@@ -31,12 +31,12 @@ if [ "$(jq -r '.autoRelease == true' <<<"$settings" 2>/dev/null)" = true ]; then
 else miss "autoRelease is not true in .github/pipeline.json on $branch"; fi
 
 trigger=""
-wf=$(gh api "repos/$R/contents/.github/workflows?ref=$branch" 2>&1)
+wf=$(gh api "repos/$R/contents/.github/workflows?ref=refs/heads/$branch" 2>&1)
 if [ $? -ne 0 ]; then
   is404 "$wf" || stop "cannot list the workflows ($wf)"
 else
   for path in $(jq -r '.[] | select(.name | test("\\.ya?ml$")) | .path' <<<"$wf"); do
-    text=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/$path?ref=$branch" 2>&1) || stop "cannot read $path ($text)"
+    text=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/$path?ref=refs/heads/$branch" 2>&1) || stop "cannot read $path ($text)"
     # Only a release key directly under on, or a tags key directly under push, counts: a workflow_dispatch input may share the name.
     if awk '
       /^(on|"on"|true):/ { f = 1; base = -1; top = ""; rest = $0; sub(/^[^:]*:[ \t]*/, "", rest)
