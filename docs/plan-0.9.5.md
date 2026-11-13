@@ -5,7 +5,7 @@
 - Written at night on 2026-11-12, from the D10 triage list and the open issues with no milestone on that date. Nothing is built.
 - This is D10 iteration 2: the batch fixes of the open `review-minor` and `pipeline-feedback` issues.
 - Release names: the batches of this plan ship as 0.9.5. The entries held from plan 0.9.4 (C06, C07, C08, C02, C03, and the eval-producer field) go to 0.9.6, not 0.9.5. The batches of iteration 3 ship as 0.9.7.
-- The batches run with `pluginRoot` at the release that holds the entries of plan 0.9.4. They start after the maintainer reloads the plugin for that release.
+- The batches run with `pluginRoot` at v0.9.4 (C01 and C04 of plan 0.9.4). They start after the maintainer reloads the plugin for that release. They ship as 0.9.5. The held entries of plan 0.9.4 ship as 0.9.6, after 0.9.5, because `scripts/release.sh` takes the highest tag as its baseline.
 - The entries have no eval tables and no mechanism, by the assessment session's rule after four plan reviews in a row did not settle inside the cap. Plan review judges the grouping, the Touches split and the order only.
 - Before review, an impact pass checked each batch against `main` at ff1cfc7: the tests and docs its issues change, the parts it needs, part clashes inside a wave, and issues that are already fixed or need a design choice. This version applies it.
 
@@ -82,7 +82,7 @@ Closes #518
 Closes #592
 Closes #688
 
-**BR6 The open step and the tester result.** File group: `workflows/run-wave.js`. It builds on C05 of plan 0.9.4. After K07 (#737) is on `main`, because K07 adds `botChangedState[pr.id] = true` in `bots()` at the point where BR6 clears the tests-only state. BR6 clears `testsOnlyState` there, next to K07's line, so one place handles a bot code change. Sim anchor: after "a blocked opener keeps the PR number and the issues it already filed".
+**BR6 The open step and the tester result.** File group: `workflows/run-wave.js`. After K07 (#737) is on `main`, because K07 adds `botChangedState[pr.id] = true` in `bots()` at the point where BR6 clears the tests-only state. BR6 clears `testsOnlyState` there, next to K07's line, so one place handles a bot code change. Sim anchor: after "a blocked opener keeps the PR number and the issues it already filed". C05 is held for 0.9.6, so BR6 changes the tests-only line of `openPrompt` and `TESTS_ONLY_LINE_RULE` for #666 on `main` as it is. C05 is later written against this result.
 Touches: `workflows/run-wave.js` (`runPRSteps`: every return after the `open:` call, which are the blocked-open return, the `PR not opened` return, `!b.ok` and `!sync.ok`, up to `const n = opened.prNumber` and the ready `result` fields; `OPEN`; `MILESTONE_STEP`; `openPrompt` (step 3, the blocked sentence and the tests-only line); `TESTS_ONLY_LINE_RULE`; `evalsOut` (the `testsOnly` field only); `TEST`; `relatedText`; `testPrompt` (Return line); `bots()`, only to clear the tests-only state after a bot code change), `agents/pr-opener.md`, `test/wave-prompts.test.mjs` (the cases "the opener names its REST calls and edits the marked checklist comment" and "a missing milestone has its own reason", both changed in place), `test/sim-pipeline.mjs` (the cases "tester: a report with no related field leaves the history without relatedTests", "a blocked opener keeps the PR number and the issues it already filed", "the opener prompt says to stop on a denied command and return the commands" and "open prompt: a milestone adds the lookup and the not-found stop, and none adds neither" changed in place, and one new block after the anchor), one new test file.
 Build notes: the #549 reason starts with `needs human:`. For #610, BR6 builds the opened-PR report fields (issues, prUrl, closesIssues, docs, lateMinors) once after the opener returns and uses them in every return it owns, so `issues` and `issuesCreated` (#534, #533) come from the same place. BR2 builds no such helper.
 Closes #666
@@ -137,7 +137,6 @@ Closes #507
 ## Dependencies
 
 - BR2, BR4 and BR6 wait for K07 (#737) on `main`.
-- BR6 builds on C05 of plan 0.9.4.
 - BR5 leaves `scripts/bot-approval.jq` and `scripts/bot-status.sh` to C02. C02 waits for the maintainer.
 - BR7 waits for wave 1, because it writes the SKILL.md notes that wave 1 carries.
 - All batches wait for the release that holds the entries of plan 0.9.4, and for the maintainer's plugin reload.
@@ -179,10 +178,11 @@ These are not batch fixes. Each needs a design choice. They go to milestone 0.10
 ## Count
 
 - Open with no milestone, without the 2 bookkeeping issues: 139 (138 when this plan was written, and #744, filed from CodeRabbit's review of #738, added to BR2).
-- Plan 0.9.4 as narrowed and K07 close 3 (#705 and #729 by C05, #631 by K07). #701, #702 and #721 are already fixed on `main` and #640 too, so 4 close with a pointer. That leaves 132.
+- Plan 0.9.4 (C01, C04) and K07 close 1 (#631 by K07); #705 and #729 go with C05 to 0.9.6. #701, #702 and #721 are already fixed on `main` and #640 too, so 4 close with a pointer. That leaves 134.
 - Of those: 23 need the maintainer; #736 waits for the C02 gate entry; 51 are in the 7 batches of iteration 2; 57 are in iteration 3.
 - If every batch of iterations 2 and 3 lands (108 issues) and the 23 move to a milestone: about 21 open (#736 and about 20 new filings at the iteration 1 rate). No margin.
 - Without the deferrals: about 44.
+- Both end counts assume 0.9.6 lands inside D10 and closes #705 and #729.
 - The target is 25 or fewer. The batches are not tuned to meet it.
 
 ## Iteration 3 (short list)
