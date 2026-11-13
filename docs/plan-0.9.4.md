@@ -23,7 +23,7 @@ Readers: the maintainer and the sessions that run the batches and Tagreeve. Out:
 
 ## Goals this release serves
 
-- Automatic improvement (goal 7): C04 keeps minor fixes that a resume filed in iteration 1. C05 makes a tests-only proof part of the record, so a tests-only PR needs no person for it.
+- Automatic improvement (goal 7): C04 keeps minor fixes that a resume filed in iteration 1. C05 makes a tests-only proof part of the record, so a tests-only PR whose mutations ran needs no person for it.
 - Goal 8 share: every entry is work on the pipeline's own output, so the share is 3 of 3.
 - My attention (goal 3): C01 makes code refuse a writer's list whose coverage is missing, empty, has an item with no eval id, or names an id that is not in the list, before the evals check. Whether the items are all the behaviours of the entry is the evals check's judgment: it names each bullet, invariant, issue or brief line with no item. So a list that misses a behaviour is refused in its first check, and fewer lists stop for a person.
 
@@ -94,7 +94,7 @@ The entries edit different parts of `workflows/run-wave.js`:
 | --- | --- |
 | C04 | `minorPassRuns`, and in `minorPass` only the history push of the `minor1` row |
 | C05 | `refusedText`, `verifyPrompt` (only the tests-only break-check sentence), `VERIFY` (the `breakCheck` enum), `verifyOutcome` (the `testsOnly` branch), `breakCheckOf` (the new value), `TESTS_ONLY_LINE` and its rule in `openPrompt` (only the tests-only sentence) |
-| C01 (wave D1) | `EVALS` (the schema), `evalsPrompt` (step 3 or 4 and the Return line, outside `evalsRules`), `evalsCheckPrompt`, `checkEvals` (a coverage parameter), a new writer-only coverage check, `writeEvals` (the writer loop, and the given branch that builds a new record), `makeRecord`, `setRecord` and the record comment above them, `settleDisputes` (only its `checkEvals` and `setRecord` calls) |
+| C01 (wave D1) | `EVALS` (the schema), `evalsPrompt` (step 3 or 4 and the Return line, outside `evalsRules`), `evalsCheckPrompt`, `checkEvals` (a coverage parameter that only the writer loop passes), a new writer-only coverage check, `writeEvals` (the writer loop only), `makeRecord`, `setRecord` and the record comment above them, `settleDisputes` (only its `setRecord` call) |
 
 `skills/pr-pipeline/SKILL.md` has one line for each step of "The loop for one PR", so two edits of one step always conflict:
 
@@ -102,7 +102,7 @@ The entries edit different parts of `workflows/run-wave.js`:
 | --- | --- |
 | C04 | "The loop for one PR" step 7 (one sentence on a resume) |
 | C05 | "The loop for one PR" step 2 |
-| C01 (wave D1) | "The loop for one PR" step 1 (the refusal rules and the evals check sentence); "Step 1: write the plan" the Evals bullet and the Invariants text (keeping the phrase "Invariants line") |
+| C01 (wave D1) | "The loop for one PR" step 1 (the refusal rules and the evals check sentence); "Step 1: write the plan" the Evals bullet and the Invariants text (keeping the phrase "Invariants line"); "Workflow arguments" the result paragraph (the record shape, and the sentence on a list that differs from the record) |
 
 In `test/sim-pipeline.mjs` each entry adds its cases as one block after the anchor case its Touches line names, and no two entries share an anchor. C01 also changes two existing places in place, named in its Touches line.
 
@@ -167,7 +167,9 @@ Evals:
 Acceptance: `node test/sim-pipeline.mjs` passes; C04-1 fails on `main` because `minorPassRuns` is false for a resume.
 
 **C05 A tests-only PR records its proof, and "not run" means no role ran it (#705, #729).** Round cap 2. Touches: `workflows/run-wave.js` (see the table), `agents/verifier.md` (the tests-only rule), `agents/tester.md` (the scope rule), `test/break-check-mutation.test.mjs` (new), `test/verifier-agent.test.mjs` (the tests-only sentence at line 58 changes with the rule), `test/sim-pipeline.mjs` (the F659 tests-only cases that pin the "could not prove" sentence change; and cases after the tests-only cases of #659), `skills/pr-pipeline/SKILL.md` (see the table).
-- On a tests-only PR the verifier runs, for each eval whose statement says it fails when a rule is removed, a named mutation of the code under test in its clone, and reports `breakCheck: fails-on-mutation` with the mutation in `breakWhy` when the case fails. It restores the file after each mutation.
+- On a tests-only PR the verifier runs, for each eval whose statement says it fails when a rule is removed, a named mutation of the code under test in its clone, and reports `breakCheck: fails-on-mutation` with the mutation in `breakWhy` when the case fails for any reason other than a load, import, syntax, missing-file or exit 127 error. It restores the file after each mutation.
+- A mutation run that fails with a load, import, syntax, missing-file or exit 127 error is `not-run`, with its cause in `breakWhy`. The cause goes to the PR's untested items, as a `not-run` break check does on the normal path, so such a PR gets no `:auto`. A `not-run` eval is never counted as a mutation proof.
+- A mutation edits code inside a file and never deletes a file, so the added-file exception of the break check (#719) does not apply to a mutation run.
 - The `VERIFY` schema allows `fails-on-mutation` in `breakCheck`. `verifyOutcome` keeps the value on a tests-only PR, where it sets it to null today.
 - `breakCheckOf` counts `fails-on-mutation` as proof, like `fails-without-change`.
 - `TESTS_ONLY_LINE` says the break check could not prove the tests can fail only when no eval has a mutation proof. With a proof it says which evals the mutation proved. The F659 cases and `test/verifier-agent.test.mjs` are updated to match, and keep the old sentence for the no-proof case.
@@ -185,6 +187,7 @@ Evals:
 | C05-3 | behaviour | `agents/tester.md` and `refusedText` say a step outside the task is left out of `checks` and is not `refused`. | `test/break-check-mutation.test.mjs`. |
 | C05-4 | regression | SKILL.md step 2 holds the added-file proof sentence, and the test fails when it is removed. | The same test file. The sentence already holds on `main`; the test is new. |
 | C05-5 | error path | A case that fails alone with the change and passes in the full file gives no `fails-without-change`. | The same test file, with the prompt text of `verifyPrompt`. |
+| C05-7 | error path | A tests-only mutation run that fails with a load, import or syntax error gives `not-run` with its cause, puts the cause in the untested items, and is not counted as a proof. | Sim: a tests-only PR whose verifier answers `not-run` with `breakWhy: 'syntax: ...'` for a "fails when removed" eval; the history row's `breakCheck.notRun` holds the id and `fails` does not, the result's `untested` holds the cause, and the open prompt keeps the "could not prove" line. `test/break-check-mutation.test.mjs`: the tests-only verify prompt and `agents/verifier.md` hold the not-run rule and its cause list, after the test checks that its prompt input is a tests-only prompt. On `main` the tests-only prompt holds no not-run rule. |
 
 Acceptance: `node --test test/break-check-mutation.test.mjs` and `node test/sim-pipeline.mjs` pass; C05-1 fails on `main`.
 
@@ -200,7 +203,7 @@ Acceptance: `node --test test/break-check-mutation.test.mjs` and `node test/sim-
 - `test/evals-writer.test.mjs` and `test/build-against-evals.test.mjs` (only `OK_LIST`, which gains a coverage).
 - `test/evals-coverage.test.mjs` (new): the cases of C01-8, C01-9, C01-10 and C01-12. It builds its recover-evals and resume-args inputs inline, as `test/recover-evals.test.mjs` does, so no fixture file is added. The existing `test/recover-evals.test.mjs` and `test/resume-args.test.mjs` are not edited.
 
-This entry supersedes these sentences of A01 in `docs/plan-0.9.2.md`, and that file is not edited: the record shape `{ pr, evals, noErrorPath, noReference, algorithm }` (the record gains `coverage`); and "`metaOf` keeps its three fields, so the record never enters an evals-check prompt" (`metaOf` keeps its three fields, but the record's coverage now enters the evals-check prompt).
+This entry supersedes one sentence of A01 in `docs/plan-0.9.2.md`, and that file is not edited: the record shape `{ pr, evals, noErrorPath, noReference, algorithm }` (the record gains `coverage`). The A01 sentence "`metaOf` keeps its three fields, so the record never enters an evals-check prompt" stays true: a check prompt shows only a writer's coverage, never the record's.
 
 - The evals writer returns a coverage map with its list: items, each naming the eval ids that cover it. An item is one bullet or one invariant of the entry; for a batch, one issue; for a quick fix, one line of the trusted brief.
 - Code refuses a list that the writer returned when its coverage is missing or empty, when an item names no eval id, or when an item names an id that is not in the list.
@@ -209,16 +212,19 @@ This entry supersedes these sentences of A01 in `docs/plan-0.9.2.md`, and that f
 - The coverage refusal is checked after the existing rule checks of a writer list pass and before the evals check runs. It never starts an evals-check call.
 - A coverage refusal gives the reason prefix `evals refused: ` like the other rule refusals, so the ledger counts it as one maintainer touch with no change to `scripts/ledger.sh`.
 - The coverage is stored in the accepted record (`evalsMeta.accepted`) and nowhere else in the result. The top level of `evalsMeta` keeps its three fields.
-- The record's coverage is carried unchanged: in every later result, through a resume whose list equals the record, through a given list that builds a new record from an earlier record, and through an accepted dispute change.
+- The record's coverage is carried unchanged in every later result and through a resume or a given list whose list equals the record.
+- An accepted dispute change keeps the record's coverage. A change replaces one eval under the same id and removes no eval (`settleDisputes` builds the new list with `{ ...w.eval, id }`, and a ruling with no new eval is rejected), so every id of the coverage stays in the list.
+- A given or resumed list that differs from the record builds a new record with no coverage.
 - `scripts/resume-args.sh` prints the coverage inside `resume.evals.accepted` with no change to the script, because it copies `evalsMeta` whole.
 - `scripts/recover-evals.sh` prints the coverage inside `evalsMeta.accepted` when the accepted writer answer holds one, and prints no coverage key when it holds none. A given list read from a check prompt has no coverage. It never refuses a writer answer for a missing coverage.
-- When a list goes to the evals check and has a coverage (the writer's, or its record's), the check prompt shows the items and asks for a judgment per item. It also asks the check to name each bullet, invariant, issue or brief line of the entry that has no item. A named gap refuses the list, as a needs-change does on `main`. Code does not check that the items are all the behaviours of the entry; that is the evals check's judgment. When a list has no coverage, the check prompt is the same as on `main`.
+- The coverage is shown and judged in one place only: the evals check of a writer's list. Its check prompt shows the items and asks for a judgment per item. It also asks the check to name each bullet, invariant, issue or brief line of the entry that has no item, and says that a named gap means verdict `needs-change`, with the gap named in the notes. The existing verdict carries the gap, and the answer shape does not change. Code does not check that the items are all the behaviours of the entry; that is the evals check's judgment.
+- The check prompts of a dispute change, a given list and a resumed list are the same as on `main`, also when the record holds a coverage.
 - The evals-check prompt keeps the step 2 sentence word for word, keeps the "Evals to check:" block in the shape `recover-evals.sh` reads, and the code adds no eval statement of the record to the item text it shows.
 - Rule text that both the writer and the evals check must get is in `evalsRules`. Text only for the writer stays outside the span from "Rules for the list" to the Return line, so the two prompts still share one rule text (A06-2).
 - Two lists are still the same when their ids, kinds, statements and checks are equal. The coverage is not compared.
 - `templates/plan.md` says each behaviour and each invariant of an entry is its own bullet. Its Invariants line keeps the prefix "Invariants: ", and SKILL.md keeps the phrase "Invariants line".
 
-Invariants: a writer list that reaches the evals check has a coverage in which every item names at least one eval id and every id is in the list. No list other than a writer's list is refused for coverage. The coverage of an accepted record is never changed after it is accepted, except by a later writer list that the evals check accepts.
+Invariants: a writer list that reaches the evals check has a coverage in which every item names at least one eval id and every id is in the list. No list other than a writer's list is refused for coverage. The coverage of an accepted record is never changed after it is accepted, except that a later writer list that the evals check accepts replaces it, and a given or resumed list that differs from the record builds a new record with no coverage. Only the evals check of a writer's list shows a coverage.
 
 Evals:
 
@@ -228,7 +234,7 @@ Evals:
 | C01-2 | error path | A writer list with an item that names no eval id, or an id that is not in the list, is refused. | Sim: two cases, one for each fault; each is refused with `evals refused: `. The case checks that the coverage it gives really has the fault. |
 | C01-3 | behaviour | A writer list with a valid coverage goes to the evals check, the check prompt shows each item, and it asks the check to name each bullet, invariant, issue or brief line of the entry that has no item. | Sim: the `evalsarch:C1#1` prompt holds the item text of each item and the question that asks for each bullet, invariant, issue or brief line with no item. On `main` it holds no item and no such question. |
 | C01-4 | behaviour | The accepted record holds the writer's coverage, and the top level of `evalsMeta` keeps three fields. | Sim: `x.C1.evalsMeta.accepted.coverage` equals the writer's coverage; the keys of `evalsMeta` other than `accepted` are `noErrorPath`, `noReference` and `algorithm`. |
-| C01-5 | behaviour | The coverage carries unchanged through a resume, a given list that builds a new record, and an accepted dispute change. | Sim: three cases; in each the new result's `evalsMeta.accepted.coverage` equals the first record's coverage. |
+| C01-5 | behaviour | The coverage carries unchanged through a resume whose list equals the record and through an accepted dispute change, and a given list that differs from the record builds a new record with no coverage. | Sim: three cases. A resume with the record's list and an accepted dispute change each give a new `evalsMeta.accepted.coverage` equal to the first record's coverage. A given list that replaces one eval id gives a record with no `coverage` key. On `main` there is no coverage. |
 | C01-6 | regression | A given list, a resumed list, a reviewer eval and a land-fix list with no coverage are not refused for coverage. | The existing E01-5, A01-4, E02-3 resume, K01 land-fix and A01-17 cases pass with their assertions unchanged; A01-17 still counts one evals-check call on the resume. |
 | C01-7 | regression | The existing evals-check call counts and stop reasons do not change for lists that already pass. | The existing cases E01-2, E01-3, E01-4, A01-1, A01-2, A01-10, A01-11, A01-14, A01-15 and F652-2 pass with their assertions unchanged, with `withMeta` giving a valid coverage. |
 | C01-8 | behaviour | `recover-evals.sh` prints the writer's coverage in `evalsMeta.accepted` when the answer holds one, also after a replayed dispute change, and prints no coverage key when it holds none. A given list read from a check prompt has no coverage. | `test/evals-coverage.test.mjs` (new): an inline answer with a coverage, in each input form, run through `recover-evals.sh`; a given list read from a check prompt gives no coverage key; and the existing `expected-ok.json` case in `test/recover-evals.test.mjs` passes unchanged. |
@@ -236,7 +242,7 @@ Evals:
 | C01-10 | behaviour | The writer prompt and `agents/evals-writer.md` ask for the coverage map, and its item rule. | Sim: the `evals:C1` prompt holds the coverage rule and the Return line names `coverage`; `test/evals-coverage.test.mjs` (new) reads the agent file. |
 | C01-11 | regression | The writer and evals-check prompts still share one rule text, and the check prompt keeps its step 2 sentence and its "Evals to check:" block. | The existing A06-2 and E01-11 cases and the recover-evals A10 cases pass unchanged. |
 | C01-12 | behaviour | The plan template says each behaviour and each invariant is its own bullet and keeps the "Invariants: " prefix. | `test/evals-coverage.test.mjs` (new) reads `templates/plan.md`; the existing role-rules and skill-notes tests pass unchanged. |
-| C01-13 | regression | The code adds no eval statement of the record to the check prompt when it shows the coverage. | Sim: the A01-14 setup with a coverage; the `evalsarch:` prompt does not match the statement of C1-1. This passes on `main` by design, where the prompt shows no items; it guards that the code that shows the items adds no record statement. It does not cover the writer's own item text, which is free text. |
+| C01-13 | regression | The check prompts of a dispute change, a given list and a resumed list are the same as on `main`, also when the record holds a coverage. | Sim: three cases with a record that holds a coverage (an accepted dispute change, a given list that differs from the record, a resumed list that differs from it); each `evalsarch:` prompt shows no item of the record and no gap question, and does not match the statement of C1-1. This passes on `main` by design, where no prompt shows items; it guards that only a writer's list shows a coverage. |
 
 Acceptance: `node test/sim-pipeline.mjs` and `node --test test/*.test.mjs` pass; C01-1 and C01-3 fail on `main`.
 
@@ -259,6 +265,7 @@ Acceptance: `node test/sim-pipeline.mjs` and `node --test test/*.test.mjs` pass;
 - **Three plan reviews in a row did not settle inside the cap.** The narrowed plan stayed flat (5 majors, then 5) on C04, C05 and C08. The next plan, the batch plan of iteration 2, carries no mechanism and no eval tables: a batch entry is the issues it closes, its file group, its Touches by part and its wave.
 - **Two plans in a row whose review grew worse on mechanism detail.** Plan 0.9.2 amendment 1 (1 blocker and 4 majors, then 2 majors, then 4 majors) and this plan's first draft (3 blockers and 9 majors, then 6 blockers and 13 majors). From now on every entry is in what-must-be-true form: each bullet says what holds after the change, and the mechanism is the build's. An open design choice is written as a choice with a pick.
 - **Four plan reviews did not settle inside the cap, and the reviews named unlisted contradictions with existing tests and code as the cause.** C01 is written from an impact pass done before the text: each existing test it changes is named in its Touches as changed in place, and each bullet is narrowed so it changes nothing else. This is the first test of that method.
+- **What the gap rule cannot do.** A named gap refuses a writer's list only through the verdict. A check that answers `ok` and writes a gap only in prose is not caught, and code cannot count gap refusals apart from other `needs-change` answers. A separate gaps field in the check answer would do both, but it changes the answer shape, the accept rule of `checkEvals` and `scripts/recover-evals.sh`. That is the fallback if the count matters.
 - **C05 trusts the verifier's mutation.** A mutation that does not touch the rule under test could still make the case fail. The verifier names the mutation in `breakWhy`, so the reviewer and the report can read it.
 - **The coverage map and plan review.** The idea of C01 may carry over to plan review: each goal and each finding of a plan mapped to an entry. A candidate for release 3's planner, not part of this release.
 
