@@ -3917,7 +3917,7 @@ await check('minor pass: a resume after a pass that dropped before its check run
   assert.ok(calls.some(c => c.label === 'minorfix:C1'))
   const ends = [
     { fix: { changed: false, fixed: [] } },
-    { extra: (p, o) => o.label === 'test:C1#minor1' ? null : undefined, nullTest: true },
+    { nullTest: true },
   ]
   for (const end of ends) {
     const hook = (p, o) => {
@@ -3947,16 +3947,13 @@ await check('minor pass: every pass that starts leaves one minor1 row, and one t
   }
   for (const [name, hook] of Object.entries(ends)) {
     const x = await hooked(only1('C1'), hook)
-    assert.notEqual(x.C1.minorPass, null, name)
+    assert.equal(x.C1.minorPass && x.C1.minorPass.ran, true, name)
     assert.equal(minorRows(x).length, 1, name)
+    if (name === 'fixer changed nothing') assert.ok(!('testPass' in minorRows(x)[0]), name)
   }
   minorScope.files.C1 = ['src/other.js']
-  const hook = (p, o) => {
-    const r = passHook()(p, o)
-    if (o.label === 'review:C1#1') assert.ok(r.findings.some(m => m.file === 'src/a.js'))
-    return r
-  }
-  const x = await hooked(only1('C1'), hook)
+  assert.ok(passHook()(null, { label: 'review:C1#1' }).findings.some(m => m.file === 'src/a.js'))
+  const x = await hooked(only1('C1'), passHook())
   assert.equal(x.C1.minorPass, null)
   assert.equal(minorRows(x).length, 0)
   delete minorScope.files.C1

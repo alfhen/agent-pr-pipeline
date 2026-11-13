@@ -1579,7 +1579,7 @@ async function minorPass(pr, signedSha, history, minors) {
     return { headSha: await branchHead(pr) || head || signedSha, fixed: [], report: { ran: true, kept: false, why: `${why}; the revert failed` }, revertFailed: true }
   }
   // Every pass that starts leaves one row, so a resume never runs a second pass.
-  const row = { round: 'minor1', testPass: false, failingChecks: [], blockersAndMajors: [] }
+  const row = { round: 'minor1', failingChecks: [], blockersAndMajors: [] }
   history.push(row)
   const fix = await call('minorFix', pr, minorFixPrompt(pr, candidates, signedSha, files), `minorfix:${pr.id}`, { schema: MINORFIX })
   if (!fix || !fix.changed) {
