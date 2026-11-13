@@ -323,7 +323,9 @@ const noteQa = (pr, loopState, qa) => {
 const reviewStep = pr => (pr.kind === 'plan' || pr.kind === 'docs') ? STEPS.reviewDocs : STEPS.review
 const productRuns = pr => A.productReview !== false && (pr.kind === 'plan' || (A.productReview === 'all' && pr.kind !== 'docs'))
 const docsRuns = pr => pr.kind !== 'docs' && pr.kind !== 'plan' && A.docsUpdate !== false && pr.docsUpdate !== false
-const minorPassRuns = pr => pr.kind !== 'docs' && pr.kind !== 'plan' && !pr.skipImpl && !pr.resume
+// A resume whose history holds a minor1 row already had its one pass.
+const hasMinorRow = pr => !!(pr.resume && (pr.resume.history || []).some(r => r && r.round === 'minor1'))
+const minorPassRuns = pr => pr.kind !== 'docs' && pr.kind !== 'plan' && !pr.skipImpl && !hasMinorRow(pr)
 const DOCS_ROUNDS = A.docsRounds || 2
 const BOT_CHECK_ROUNDS = A.botCheckRounds || 2
 const qaRuns = pr => pr.kind !== 'docs' && pr.kind !== 'plan' && A.qa !== false && pr.qa !== false && (A.qa === 'all' || !!pr.qa)
@@ -1576,6 +1578,9 @@ async function minorPass(pr, signedSha, history, minors) {
     log(`${pr.id} minor pass could not be reverted: ${why}`)
     return { headSha: await branchHead(pr) || head || signedSha, fixed: [], report: { ran: true, kept: false, why: `${why}; the revert failed` }, revertFailed: true }
   }
+  // Every pass that starts leaves one row, so a resume never runs a second pass.
+  const row = { round: 'minor1', testPass: false, failingChecks: [], blockersAndMajors: [] }
+  history.push(row)
   const fix = await call('minorFix', pr, minorFixPrompt(pr, candidates, signedSha, files), `minorfix:${pr.id}`, { schema: MINORFIX })
   if (!fix || !fix.changed) {
     return drop(fix ? 'the fixer changed nothing' : 'the fixer failed', fix && fix.headSha)
@@ -1593,7 +1598,7 @@ async function minorPass(pr, signedSha, history, minors) {
   } else {
     const outcome = testOutcome(pr, test)
     split = splitFindings([[review.findings.concat(failedInvariants(review)), 'minor-check'], [outcome.findings, 'test']])
-    history.push(historyRow('minor1', outcome, split.blocking, split.conflicts))
+    Object.assign(row, historyRow('minor1', outcome, split.blocking, split.conflicts))
     log(`${pr.id} minor check: tests ${outcome.pass ? 'pass' : 'fail'}, ${split.blocking.length} blockers/majors`)
     if (outcome.nothingRan) why = 'tests did not run'
     else if (!outcome.pass) why = `tests failed: ${outcome.failed.map(c => c.name).join(', ') || 'acceptance test did not run'}`
