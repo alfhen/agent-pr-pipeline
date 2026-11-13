@@ -3805,11 +3805,10 @@ await check('minor pass: a file with a line number or ./ prefix still matches th
   assert.ok(calls.some(c => c.label === 'minorfix:C1'))
   assert.equal(x.C1.ready, true)
 })
-await check('minor pass: a skipImpl rerun or a resume runs no pass', async () => {
-  for (const extra of [{ skipImpl: true }, { resume: { history: [], minors: [minorOf()] } }]) {
-    await hooked(only1('C1').map(p => ({ ...p, ...extra })), passHook())
-    assert.ok(!calls.some(c => /^minor(fix|review|revert)/.test(c.label)), JSON.stringify(Object.keys(extra)))
-  }
+await check('minor pass: a skipImpl rerun runs no pass', async () => {
+  await hooked(only1('C1').map(p => ({ ...p, skipImpl: true })), passHook())
+  assert.ok(calls.some(c => c.label === 'review:C1#1'))
+  assert.ok(!calls.some(c => /^minor(fix|review|revert)/.test(c.label)))
 })
 await check('minor pass: a PR with no minor in a file runs no fixer', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('minor', 'no file')]) : undefined)
@@ -3890,6 +3889,74 @@ await check('minor pass: a major from the check does the same', async () => {
   assert.equal(x.C1.ready, true)
   assert.equal(x.C1.minorPass.kept, false)
   assert.equal(x.C1.land.split(':')[1], 'sha-revert')
+})
+const resumeOf = (history = [], minors = [minorOf()]) => only1('C1').map(p => ({ ...p, resume: { history, minors, findings: [] } }))
+const minorRows = x => x.C1.history.filter(r => r.round === 'minor1')
+await check('minor pass: a resume that signs off runs the pass', async () => {
+  const prs = resumeOf()
+  assert.ok(prs[0].resume.minors.some(m => m.file === 'src/a.js'))
+  const x = await hooked(prs, passHook())
+  assert.ok(calls.some(c => c.label === 'minorfix:C1'))
+  assert.equal(x.C1.ready, true)
+  assert.deepEqual(x.C1.minorPass, { ran: true, kept: true, fixed: ['rename helper'] })
+})
+await check('minor pass: a resume runs the pass only when its history has no minor1 row', async () => {
+  await hooked(resumeOf(), passHook())
+  assert.ok(calls.some(c => c.label === 'minorfix:C1'))
+  const history = [{ round: 'minor1', testPass: true, failingChecks: [], blockersAndMajors: [] }]
+  assert.ok(history.some(r => r.round === 'minor1'))
+  const prs = resumeOf(history)
+  assert.ok(prs[0].resume.minors.some(m => m.file === 'src/a.js'))
+  const x = await hooked(prs, passHook())
+  assert.equal(x.C1.ready, true)
+  assert.ok(!calls.some(c => /^minorfix/.test(c.label)))
+  assert.equal(x.C1.minorPass, null)
+})
+await check('minor pass: a resume after a pass that dropped before its check runs no second pass', async () => {
+  await hooked(resumeOf(), passHook())
+  assert.ok(calls.some(c => c.label === 'minorfix:C1'))
+  const ends = [
+    { fix: { changed: false, fixed: [] } },
+    { nullTest: true },
+  ]
+  for (const end of ends) {
+    const hook = (p, o) => {
+      if (end.nullTest && o.label === 'test:C1#minor1') return null
+      if (o.label === 'docs:C1' || o.label === 'open:C1') return null
+      return passHook({ fix: end.fix })(p, o)
+    }
+    const x1 = await hooked(only1('C1'), hook)
+    assert.equal(x1.C1.ready, false)
+    assert.equal(minorRows(x1).length, 1)
+    const prs = resumeOf(x1.C1.history)
+    assert.ok(prs[0].resume.minors.some(m => m.file === 'src/a.js'))
+    const x2 = await hooked(prs, (p, o) => o.label === 'review:C1#3' ? reviewOf([]) : undefined)
+    assert.ok(!calls.some(c => /^minorfix/.test(c.label)))
+    assert.equal(x2.C1.minorPass, null)
+  }
+})
+await check('minor pass: every pass that starts leaves one minor1 row, and one that does not leaves none', async () => {
+  const ends = {
+    'fixer null': (p, o) => o.label === 'minorfix:C1' ? null : passHook()(p, o),
+    'fixer changed nothing': passHook({ fix: { changed: false, fixed: [] } }),
+    'tester null': (p, o) => o.label === 'test:C1#minor1' ? null : passHook()(p, o),
+    'reviewer null': (p, o) => o.label === 'minorreview:C1' ? null : passHook()(p, o),
+    'tests fail': passHook({ testPass: false }),
+    'check major': passHook({ findings: [f('major', 'breaks the cli')] }),
+    kept: passHook(),
+  }
+  for (const [name, hook] of Object.entries(ends)) {
+    const x = await hooked(only1('C1'), hook)
+    assert.equal(x.C1.minorPass && x.C1.minorPass.ran, true, name)
+    assert.equal(minorRows(x).length, 1, name)
+    if (name === 'fixer changed nothing') assert.ok(!('testPass' in minorRows(x)[0]), name)
+  }
+  minorScope.files.C1 = ['src/other.js']
+  assert.ok(passHook()(null, { label: 'review:C1#1' }).findings.some(m => m.file === 'src/a.js'))
+  const x = await hooked(only1('C1'), passHook())
+  assert.equal(x.C1.minorPass, null)
+  assert.equal(minorRows(x).length, 0)
+  delete minorScope.files.C1
 })
 await check('minor pass: the check prompt allows an untrusted-path finding outside the pass diff and names the mark', async () => {
   await hooked(only1('C1'), passHook())
