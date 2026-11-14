@@ -129,7 +129,7 @@ test('the opener names its REST calls and edits the marked checklist comment', (
   assert.match(src, /skip the lookup of open issues; otherwise list them/)
   assert.match(src, /never read an issue by another author, and skip a finding/)
   assert.match(src, /select\(\.user\.login == "<login>" and \(\.body \| startswith\("\$\{MINORS_MARKER\}"\)\)\) \| \.id/)
-  assert.match(src, /return blocked true with the reason "no login"/)
+  assert.match(src, /return blocked true with the reason "\$\{NO_LOGIN\}", prNumber, issuesCreated/)
   assert.match(src, /gh api "repos\/\$\{REPO\}\/pulls\?head=\$\{REPO\.split\('\/'\)\[0\]\}:\$\{pr\.branch\}&state=open"/)
 })
 
@@ -149,7 +149,8 @@ test('the QA schema takes file and fileIssue', () => {
 })
 
 test('a missing milestone has its own reason', () => {
-  assert.match(src, /opened\.blockedReason === MILESTONE_MISSING \? 'milestone not found'/)
+  assert.match(src, /A\.milestone && opened\.milestoneMissing \? 'milestone not found'/)
+  assert.match(src, /return blocked true and milestoneMissing true, with blockedReason/)
 })
 
 test('the opener keeps the body of a reused PR and changes only the Review line and the Untested section', () => {
