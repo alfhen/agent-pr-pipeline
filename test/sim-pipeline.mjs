@@ -5054,7 +5054,6 @@ await check('E04-8: resume.designRules reach the verifier, the reviewer and the 
 // F652: an eval must be checkable from a clean clone; the fixer disputes one no code change can meet.
 const prEval = ev('C1-3', 'behaviour', { statement: 'PR body has `Closes #55` on its own line', check: 'read the PR body; expect the line' })
 const PR_REFUSAL = 'evals refused: eval C1-3 checks the PR, not the code'
-const PR_TEXT_RULE = /\b(?:PR|pull request)\s+(?:body|title|description)\b|\bcloses?\s+#\d+|\bcloses line\b/i
 await check('F652-2 a writer list with a PR body eval is refused with the reason, and the second attempt without it reaches the verifier', async () => {
   const x = await evalsRun([C1PR], o => withMeta(o.label === 'evals:C1' ? listOf('C1').concat(prEval) : listOf('C1')))
   assert.equal(x.C1.ready, true)
@@ -5084,6 +5083,7 @@ const disputeFlow = ruling => (p, o) => o.label === 'verify:C1#1' ? failingC11
   : o.label === 'fix:C1#1' ? { summary: 'nothing to change', changed: false, disputes: [{ id: 'C1-1', reason: 'no code change can satisfy it' }] }
   : o.label === 'dispute:C1#1' ? ruling : undefined
 // C10: three writer attempts, and the PR-text rule reads the statement only.
+const PR_TEXT_RULE = /\b(?:PR|pull request)\s+(?:body|title|description)\b|\bcloses?\s+#\d+|\bcloses line\b/i
 const TRIGGER = 'Closes #1'
 const codeEval = (id, where) => ev(id, 'behaviour', where === 'statement'
   ? { statement: `scripts/ledger.sh backfill reads a record that says ${TRIGGER}`, check: 'node --test test/ledger.test.mjs; expect pass' }
@@ -5164,7 +5164,7 @@ await check('C10-11 a resumed list, a reviewer eval and a land-fix list accept a
   const b2 = await review(codeEval('C1-3', 'check'))
   assert.ok(b2.C1.evals.some(e => e.id === 'C1-R1-1'))
   const land = where => kRun(kLandPr({ evals: K_LIST.concat(codeEval('C1-3', where)) }), { cfg: [['landOutput', 'LA']] })
-  assert.match((await land('statement')).LA.reason, /^evals refused: eval/)
+  assert.match((await land('statement')).LA.reason, /^evals refused: eval C1-3 checks the PR, not the code/)
   assert.ok(!refusedForText((await land('check')).LA))
 })
 await check('C10-12 a list that the evals check sends back three times stops the PR with the notes', async () => {
