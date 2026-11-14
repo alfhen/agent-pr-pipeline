@@ -4049,9 +4049,9 @@ await check('A1-4 a resumed PR that throws keeps the minors it was given and the
 await check('A1-5 the minors of a run failed result go through mergeDuplicates', async () => {
   const hook = (p, o) => {
     if (o.label === 'review:C1#1') return reviewOf([f('major', 'x'), f('minor', 'Repeated nit')])
-    if (o.label === 'review:C1#2') return reviewOf([f('minor', 'repeated  NIT!', { fileIssue: true })])
+    if (o.label === 'review:C1#2') return reviewOf([f('major', 'y'), f('minor', 'repeated  NIT!', { fileIssue: true })])
     if (o.label === 'fix:C1#1') return { summary: 's', changed: true }
-    if (o.label === 'open:C1') throw new Error('open died')
+    if (o.label === 'fix:C1#2') throw new Error('fix died')
   }
   const x = (await hooked(only1('C1'), hook)).C1
   assert.match(x.reason, /^run failed:/)
