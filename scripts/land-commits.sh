@@ -65,6 +65,8 @@ done
 if [ -n "$out" ]; then
   clean=$(printf '%s' "$out" | iconv -f utf-8 -t utf-8 -c 2>/dev/null) || true
   [ -n "$clean" ] || fail "cannot make the output valid UTF-8"
+  # iconv -c exits 1 whenever it drops a byte, so a stop part way shows only as lost ASCII.
+  [ "$(printf '%s' "$out" | LC_ALL=C tr -cd '\000-\177' | tr -d '\n' | cksum)" = "$(printf '%s' "$clean" | LC_ALL=C tr -cd '\000-\177' | tr -d '\n' | cksum)" ] || fail "cannot make the output valid UTF-8"
   out=$clean
 fi
 if [ -z "$out" ]; then

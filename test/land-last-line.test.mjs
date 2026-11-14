@@ -94,6 +94,16 @@ test('a git warning on a successful clone stays out of the output and the sum', 
   assert.equal(last, want)
 })
 
+test('an iconv that stops part way prints no matching last line', () => {
+  const f = fixture(false)
+  const shim = join(f.dir, 'ishim'); mkdirSync(shim)
+  writeFileSync(join(shim, 'iconv'), '#!/bin/sh\nhead -c 20; cat >/dev/null; exit 1\n')
+  chmodSync(join(shim, 'iconv'), 0o755)
+  const r = runIo(f, { PATH: `${shim}:${process.env.PATH}` })
+  assert.match(r.stdout, /pipeline-io: exit 1/)
+  assert.doesNotMatch(r.stdout, /land-commits: (sum|no code)/)
+})
+
 test('bytes that are not valid UTF-8 are dropped before the sum', () => {
   const f = fixture(false, Buffer.from([0x78, 0xe9, 0x79, 0x0a, 0x74, 0x77, 0x6f, 0x0a]))
   const r = spawnSync('bash', [join(root, 'scripts/io.sh'), 'land-commits.sh', 'o/r', f.before, f.after, join(f.dir, 'tmp')], {
