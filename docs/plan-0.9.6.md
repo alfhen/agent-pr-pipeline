@@ -294,7 +294,7 @@ Acceptance: `node test/sim-pipeline.mjs` and `node --test test/*.test.mjs` pass;
 - The version PR and the tag are made as for 0.9.4: the version PR sets the version, puts the new tag on top of `.claude-plugin/releases.txt` and writes the manifest (`.claude-plugin/files.txt`), as #751 did. Then the driving session runs `scripts/release.sh`, which makes the release only when its checks pass, and the repo's CI publishes.
 - A second evals-check stop of an entry stops that entry for the maintainer. He decides: tag with the other entry, or wait. The driving session recommends the tag with one entry, because the two entries do not need each other and the next plan is built on this release.
 - After the tag the maintainer runs `claude plugin update agent-pr-pipeline@agent-pr-pipeline` and `/reload-plugins`. The first wave on 0.9.6 then measures pass criteria 2 to 4.
-- With 0.9.6 installed, the wave arguments need no `evalsRounds` 3 and no bar in `context`.
+- With 0.9.6 installed, the wave arguments need no `evalsRounds` 3 when C10 is in the release, and no bar in `context` when C12 is in the release. When the release leaves an entry out, the override of that entry stays in the wave arguments.
 
 ## Date estimate
 
