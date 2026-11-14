@@ -68,6 +68,7 @@ for (const word of ['log', 'diff-tree', '--parents', '--name-only']) {
     const real = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim()
     writeFileSync(join(shim, 'git'), `#!/bin/bash\nfor a in "$@"; do [ "$a" = "${word}" ] && exit 1; done\nexec ${real} "$@"\n`)
     chmodSync(join(shim, 'git'), 0o755)
+    assert.match(runIo(f).stdout, /land-commits: sum /)
     const r = runIo(f, { PATH: `${shim}:${process.env.PATH}` })
     assert.doesNotMatch(r.stdout, /land-commits: (sum|no code)/)
   })

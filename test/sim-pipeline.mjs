@@ -2347,6 +2347,7 @@ await check('bots: a short sha that the reported head extends is accepted and th
   assert.equal(y.headSha, FULL_HEAD)
 })
 await check('bots: an empty sha or one the reported head does not extend stops the PR with head moved', async () => {
+  assert.doesNotMatch((await botsWithShort([], 'abc1234')).reason || '', /^bot status: head moved/)
   for (const sha of ['', 'fff9999']) {
     const x = await botsWithShort([], sha)
     assert.equal(x.ready, false)
