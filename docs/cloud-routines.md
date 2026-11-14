@@ -125,7 +125,7 @@ All limits are per repo. They have defaults and an upper bound of 20 (`buildHour
 
 A run has no hard time bound in the cloud. `buildHours` only decides when a silent build counts as failed. The account limits of Claude Code apply on top.
 
-One run handles every step up to a limit of 20 passes. The limit is fixed in `routine/cloud/triage.md` and `routine/cloud/build.md`. It is not a setting, `routine-state.sh` does not check it, and it holds by prompt text. After a `put` of a short step (`adopt`, `untrusted`, `revoke`, `pr-seen`, `block`, `exhausted`, `needs-plan`), the routine reads a new `next`. A build goes back to `next` too, and the run stops at the next `build` or `would-build` step, at `idle`, `wait`, `paused` or `init needed`, and on a `put` that exits non-zero or prints `WOULD`.
+One run handles every step up to a limit of 20 passes. The limit is fixed in `routine/cloud/triage.md` and `routine/cloud/build.md`. It is not a setting, `routine-state.sh` does not check it, and it holds by prompt text. A triage run stops after one `triage` step. After a `put` of `adopt`, `untrusted` or `revoke`, the triage routine reads a new `next`. After a `put` of `pr-seen`, `revoke`, `block`, `exhausted` or `needs-plan`, the build routine reads a new `next`. A build run goes back to `next` after a `build` step too, and the build routine stops at the next `build` or `would-build` step, at `idle`, `wait`, `paused` or `init needed`, and on a `put` that exits non-zero or prints `WOULD`.
 
 ## The pin and the setup script
 
