@@ -3368,11 +3368,13 @@ await check('#91: a refused check starts no fix round and is on the untested lis
 await check('#769: a changed-file read that throws on both attempts does not stop the PR and keeps the normal break check', async () => {
   const hook = (p, o) => { if (/^io:C1#changed/.test(o.label)) throw new Error('read crashed'); return verifyHook({ 1: ROWS_PWC })(p, o) }
   const x = await hooked(withEvals('C1'), hook)
-  assert.ok(x.C1.history, 'the PR has a result')
   assert.doesNotMatch(String(x.C1.stopped || x.C1.reason || ''), /run failed/)
   assert.doesNotMatch(calls.find(c => c.label === 'verify:C1#1').prompt, /A script found/)
   assert.equal(x.C1.testsOnly, undefined)
-  assert.doesNotMatch((calls.find(c => c.label === 'open:C1') || { prompt: '' }).prompt, REMOVE_RULE)
+  assert.ok(x.C1.history[0].evals.failed.includes('X-1'))
+  const open = calls.find(c => c.label === 'open:C1')
+  assert.ok(open, 'the open call ran')
+  assert.doesNotMatch(open.prompt, REMOVE_RULE)
 })
 await check('#91: an extra check with refused true starts no fix round and is untested; one without refused still fails', async () => {
   const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ extra: [{ name: 'preview', pass: false, refused: true, evidence: 'EADDRINUSE' }] }) }))
@@ -3380,6 +3382,9 @@ await check('#91: an extra check with refused true starts no fix round and is un
   assert.ok(x.C1.untested.includes('extra check preview (refused)'))
   await hooked(withEvals('C1'), verifyHook({ 1: vres({ extra: [{ name: 'preview', pass: false, evidence: 'bad' }] }) }))
   assert.ok(calls.some(c => c.label.startsWith('fix:C1')))
+  const y = await hooked(withEvals('C1'), verifyHook({ 1: vres({ extra: [{ name: 'preview', pass: true, refused: true, evidence: 'EADDRINUSE' }] }) }))
+  assert.equal(calls.filter(c => c.label.startsWith('fix:C1')).length, 0)
+  assert.ok(y.C1.untested.includes('extra check preview (refused)'))
 })
 await check('severity: a review major titled [minor] x is one major line, a conflict and a clean title for the fixer', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)

@@ -308,7 +308,7 @@ const verifyOutcome = (pr, verify) => {
     }
   }
   for (const x of (verify.extra || []).slice(0, 3)) {
-    if (!x.pass && x.refused) covered.push(`extra check ${x.name} (refused)`)
+    if (x.refused) covered.push(`extra check ${x.name} (refused)`)
     else if (!x.pass) findings.push({ via: 'extra check', severity: 'major', title: `extra check failed: ${x.name}`, detail: x.evidence || '' })
   }
   untestedFor(pr).evals = covered
@@ -1351,7 +1351,7 @@ async function settleReviewEvals(pr, round, findings) {
   return open.map(w => w.f)
 }
 
-// True when every changed file is a test or Markdown and one is a test, false when a file is neither, null when the read failed or the list is empty. Only false may remove the tests-only line of an open PR.
+// True when every changed file is a test or a docs Markdown file and one is a test, false when a file is neither, null when the read failed or the list is empty. Only false may remove the tests-only line of an open PR.
 async function testsOnlyBranch(pr, round) {
   if (!BREAK_CHECK || !PLUGIN_ROOT) return null
   let io = null
@@ -1361,7 +1361,7 @@ async function testsOnlyBranch(pr, round) {
   try { files = m ? JSON.parse(m[1]) : null } catch (e) { files = null }
   if (!Array.isArray(files) || files.length === 0 || !files.every(f => typeof f === 'string')) return null
   // A Markdown file is never a test, so one under a test folder counts only by the docs rule.
-  const isTest = f => !/\.md$/i.test(f) && !PROMPT_FILE.test(f) && TEST_FILE.test(f)
+  const isTest = f => !/\.md$/i.test(f) && TEST_FILE.test(f)
   return files.every(f => isTest(f) || (!PROMPT_FILE.test(f) && DOC_FILE.test(f))) && files.some(isTest)
 }
 async function checkCall(pr, round, phase) {
