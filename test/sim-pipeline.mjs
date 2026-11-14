@@ -112,7 +112,7 @@ const agentRaw = async (prompt, o) => {
   if (o.label.startsWith('io:') && /#landcommits\d*$/.test(o.label)) {
     if (land.landFail.has(id)) return { exitCode: 1, output: 'land-commits: cannot read ' + 'b'.repeat(40) }
     landHead[id] = prompt.match(/land-commits\.sh \S+ \S+ (\S+)/)[1]
-    return { exitCode: 0, output: land.landOutput.has(id) ? 'merge abc\n+resolved line\n' : '' }
+    return { exitCode: 0, output: land.landOutput.has(id) ? withLandSum('merge abc\n+resolved line') : NO_CODE_LINE }
   }
   if (o.label.startsWith('io:') && o.label.endsWith('#cichecks')) {
     return ciAnswer.down.has(id) ? { exitCode: 3, output: 'GATE ERROR: cannot read .github/pipeline.json' } : { exitCode: 0, output: 'CICHECKS ' + JSON.stringify(ciAnswer.names) }
@@ -204,6 +204,8 @@ const agentRaw = async (prompt, o) => {
 // The entry that a put prompt asks the agent to write: the text between the two fences.
 const putText = prompt => /\n(`{3,})\n([\s\S]*?)\n\1\n/.exec(prompt)[2]
 // A pipeline-io answer as the real agent returns it: the script's text between the two io.sh lines. The fake's own exitCode stays in the answer and must be ignored.
+const NO_CODE_LINE = 'land-commits: no code added by the land fix'
+const withLandSum = text => { const [crc, bytes] = spawnSync('cksum', { input: text, encoding: 'utf8' }).stdout.trim().split(/\s+/); return `${text}\nland-commits: sum ${crc}:${bytes}` }
 const ioWrap = (label, out) => out && label.startsWith('io:') && typeof out.exitCode === 'number' && !out.raw
   ? { exitCode: out.exitCode, output: `pipeline-io: begin\n${out.output}${out.output ? '\n' : ''}pipeline-io: exit ${out.exitCode}` } : out
 const agent = async (prompt, o) => {
@@ -2264,6 +2266,95 @@ await check('land fix: a short sha from the fixer is completed from the PR head,
   assert.equal(bad.LA.ready, false)
   assert.equal(bad.LA.reason, `land-fix check: head moved (${'d'.repeat(40)} is not the fixer's abc)`)
   assert.ok(!calls.some(c => /^(test|landreview|botwait):LA|^io:LA#landcommits/.test(c.label)))
+})
+// Batch C: the last line of land-commits.sh, and the full head in bots().
+const landIo = (id, answer, round = 1) => async (p, o) => {
+  const out = await agent(p, o)
+  return o.label === `io:${id}#landcommits${round}` ? { exitCode: 0, output: answer, raw: true } : out
+}
+const landPr = id => ({ id, title: 't', branch: 'b-' + id, landFix: true, prNumber: 8 })
+const FULL_ANSWER = withLandSum('merge abc\n+resolved line\n+two\n+three')
+const CUT_ANSWER = FULL_ANSWER.replace('+two\n', '')
+const BAD_LAST_LINE = [
+  ['empty', 'pipeline-io: begin\npipeline-io: exit 0'],
+  ['without a last line', 'pipeline-io: begin\nmerge abc\n+resolved line\npipeline-io: exit 0'],
+  ['cut in the middle', `pipeline-io: begin\n${CUT_ANSWER}\npipeline-io: exit 0`],
+  ['the no-code line after other lines', `pipeline-io: begin\ncommit ${'a'.repeat(40)}\n${NO_CODE_LINE}\npipeline-io: exit 0`],
+]
+for (const [name, answer] of BAD_LAST_LINE) {
+  await check(`land fix: a round 1 answer that is ${name} stops the PR with no tester or reviewer`, async () => {
+    const id = 'LB'
+    land.landOutput.add(id)
+    try {
+      const x = (await runWith({ ...base, prs: [landPr(id)] }, landIo(id, answer))).prs[0]
+      assert.equal(x.ready, false)
+      assert.match(x.reason, /^land-fix check failed/)
+      assert.ok(!calls.some(c => new RegExp(`^(test|landreview|botwait):${id}`).test(c.label)))
+    } finally { land.landOutput.delete(id) }
+  })
+}
+await check('land fix: the no-code line as the whole answer ends the check, and a full answer with a matching last line is reviewed', async () => {
+  const a = (await runWith({ ...base, prs: [landPr('LB')] }, landIo('LB', `pipeline-io: begin\n${NO_CODE_LINE}\npipeline-io: exit 0`))).prs[0]
+  assert.equal(a.ready, true, a.reason)
+  assert.ok(!calls.some(c => /^(test|landreview|fix):LB/.test(c.label)))
+  const b = (await runWith({ ...base, prs: [landPr('LB2')] }, landIo('LB2', `pipeline-io: begin\n${FULL_ANSWER}\npipeline-io: exit 0`))).prs[0]
+  assert.equal(b.ready, true, b.reason)
+  assert.ok(calls.some(c => c.label === 'test:LB2#land1'))
+  assert.match(calls.find(c => c.label === 'landreview:LB2#1').prompt, /\+resolved line/)
+})
+for (const [name, answer] of BAD_LAST_LINE) {
+  await check(`land fix: a round 2 answer that is ${name} stops the PR with no round 2 reviewer`, async () => {
+    const id = 'LB3'
+    land.landOutput.add(id); land.landBadOnce.add(id)
+    try {
+      const x = (await runWith({ ...base, prs: [landPr(id)] }, landIo(id, answer, 2))).prs[0]
+      assert.equal(x.ready, false)
+      assert.match(x.reason, /^land-fix check failed/)
+      assert.ok(calls.some(c => c.label === `landreview:${id}#1`) && calls.some(c => c.label === `io:${id}#landcommits2`))
+      assert.ok(!calls.some(c => c.label === `landreview:${id}#2` || c.label === `botwait:${id}`))
+    } finally { land.landOutput.delete(id); land.landBadOnce.delete(id) }
+  })
+}
+await check('land fix: a large answer goes to the tester and the reviewer, and the reviewer is told to compare the last line', async () => {
+  mkdirSync(largeTmp, { recursive: true })
+  const answer = realIo(100000)
+  const x = await largeLand(answer, 'LK5')
+  rmSync(largeTmp, { recursive: true, force: true })
+  assert.doesNotMatch(x.reason || '', /^land-fix check failed/)
+  const rev = calls.find(c => c.label === 'landreview:LK5#1').prompt
+  assert.ok(rev.includes(/saved at (\S+)/.exec(answer)[1]))
+  assert.match(rev, /last line/)
+  assert.match(rev, /cksum/)
+  assert.ok(calls.some(c => c.label === 'test:LK5#land1'))
+})
+const FULL_HEAD = 'abc1234' + 'e'.repeat(33)
+const botsWithShort = async (pending, headSha) => {
+  calls = []
+  const hook = async (p, o) => {
+    if (o.label === 'io:C2#botstatus') { lastHead.C2 = FULL_HEAD; return ioWrap(o.label, { exitCode: 0, output: JSON.stringify({ head: FULL_HEAD, approvedBy: ['gitar-bot'], seenHead: ['gitar-bot'], openThreads: 1, pending, reviewBodies: 0 }) }) }
+    const out = await agent(p, o)
+    return /^(test|review):C2/.test(o.label) && out && typeof out === 'object' && 'headSha' in out ? { ...out, headSha } : out
+  }
+  return (await run({ ...base, prs: PRS.filter(p => p.id === 'C2') }, hook, parallel, log)).prs[0]
+}
+await check('bots: a short sha that the reported head extends is accepted and the full head is used', async () => {
+  const x = await botsWithShort([], 'abc1234')
+  assert.doesNotMatch(x.reason || '', /^bot status: head moved/)
+  assert.equal(calls.find(c => c.label === 'botanswer:C2').prompt.match(/pipeline-bot-answer head=(\S+)/)[1], FULL_HEAD)
+  assert.equal(calls.find(c => c.label === 'botreview:C2#1').prompt.match(/rounds are `git diff (\S+)\.\.HEAD/)[1], FULL_HEAD)
+  const y = await botsWithShort(['Gitar'], 'abc1234')
+  assert.match(y.reason, /^bot checks still running/)
+  assert.equal(y.headSha, FULL_HEAD)
+})
+await check('bots: an empty sha or one the reported head does not extend stops the PR with head moved', async () => {
+  assert.doesNotMatch((await botsWithShort([], 'abc1234')).reason || '', /^bot status: head moved/)
+  for (const sha of ['', 'fff9999']) {
+    const x = await botsWithShort([], sha)
+    assert.equal(x.ready, false)
+    assert.match(x.reason, /^bot status: head moved/)
+    assert.ok(!calls.some(c => c.label === 'botanswer:C2'))
+    assert.equal(x.land, undefined)
+  }
 })
 await check('land fix: without pluginRoot the fixer does not run', async () => {
   const { pluginRoot, ...noRoot } = base

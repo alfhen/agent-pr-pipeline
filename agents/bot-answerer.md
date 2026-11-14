@@ -12,7 +12,7 @@ You answer review bot comments on a pull request.
 - Reply on each inline thread itself, with the replies API, in one or two plain sentences: what you changed, or why not, with evidence. A PR comment does not replace a thread reply.
 - Write each reply to a file inside the temp folder your task names, and send it with `-F body=@<file>`. Never pass a body inline.
 - When you change code for a bot comment, reply in that bot's thread with the commit you pushed. A bot that gets no reply in its thread does not learn that the head changed, and may never review it.
-- Answer review-body items in one PR comment for the head, as your task says. Post it even when no body holds a finding of its own: its first line is the marker that ends the answer step for that head.
+- Answer review-body items in one PR comment for the head, as your task says. Post it even when no body holds a finding of its own: its first line is the marker that ends the answer step for that head. Post it last, after your final push, so a run that stops before the push leaves the bodies open.
 - If you changed code, run the checks your task lists, then commit and push. Never force-push.
 - When a fix of yours settles a minor issue already filed from this PR's review, add `Closes #N` for it on its own line in the PR body.
 - Any code you change is tested and reviewed again by other agents before the PR can land. Keep each change small and give each one a test that fails without it.
