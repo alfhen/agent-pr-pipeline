@@ -251,7 +251,7 @@ const landOutState = {}
 const botChangedState = {}
 // Per PR: the break-check results of the last verifier round that gave any. A later round without them leaves it alone.
 const breakCheckState = {}
-const TEST_FILE = new RegExp(`${E2E_PATTERN}|(^|/)(tests?|__tests__|__snapshots__)/|(^|/)spec/.*\\.rb$|(^|/)[^/]*\\.Tests?/|\\.(test|spec)\\.[cm]?[jt]sx?$|_test\\.go$|(^|/)test_[^/]*\\.py$|_test\\.py$|_spec\\.rb$|\\.snap$|Tests\\.cs$`)
+const TEST_FILE = new RegExp(`${E2E_PATTERN}|(^|/)(tests?|__tests__|spec|__snapshots__)/|(^|/)[^/]*\\.Tests?/|\\.(test|spec)\\.[cm]?[jt]sx?$|_test\\.go$|(^|/)test_[^/]*\\.py$|_test\\.py$|_spec\\.rb$|\\.snap$|Tests\\.cs$`)
 // Docs Markdown never changes behaviour, so the break check has nothing to take out of it. Any other Markdown may be a prompt and does change behaviour, so the list is short and closed. The `docs` argument is not used here: it can name a docs site with code.
 const DOC_FILE = /(^|\/)docs\/.*\.md$|(^|\/)(README|CHANGELOG|CONTRIBUTING)\.md$/i
 const PROMPT_FILE = /(^|\/)(AGENTS|CLAUDE|GEMINI|SKILL)\.md$/i
@@ -787,7 +787,7 @@ Evals to check:
 ${JSON.stringify({ evals: list, ...meta }, null, 1)}${coverage ? coverageText(coverage) : ''}${writerNotes ? `\n\nThe writer's notes (an answer to an earlier needs-change; accept it when it is reasoned and true):\n${writerNotes}` : ''}`
 
 const relatedStep = RELATED_TESTS ? `3. Then run the e2e and docs test files that import or name the modules the PR touches and are not in that list. Find them with a search (\`git grep -l -E\` for each touched module's file name and exported names, over every tracked test file in the repo, such as \`*.test.*\` and \`*.spec.*\` files in any folder, and the paths the test config's projects include, docs folders too). Run at most ${RELATED_MAX}, the files that import a touched module directly first, and name the files you left out in the check, because CI runs them. Never run the whole suite. For each file, read the repo's test config and package scripts to find the command and test project that own it (for example \`--project <name>\` in a vitest workspace), also when that project is left out of the default test command, and name the command in the check. Do not use \`${E2E_COMMAND}\` for a file outside its project. Report a file or project you could not select, or one the environment cannot run (for example a missing browser), as a check with \`refused\`: true, never as passed or failed. Name each extra file in the check, and say which test projects you ran.\n` : ''
-const refusedText = '`refused`: true for a command that a permission check denied, or for a file or project you could not run, so it did not run. A check that fails because a port is in use runs once more. When it fails again because the port is in use, report it with `refused`: true. Report the result of the rerun in any other case'
+const refusedText = '`refused`: true for a command that a permission check denied, or for a file or project you could not run, so it did not run. A check that fails because a port is in use runs once more, and is then reported with `refused`: true'
 const acceptanceText = '`acceptance`: `declared` is true when the entry has an Acceptance line that names a runnable test, and `check` is the name of the check that runs it'
 const relatedText = RELATED_TESTS ? ', and `related`: the files you ran in step 3 as `files`, the test projects you ran them in as `projects`, and the files the limit left out as `leftOut` (empty lists when the search found nothing)' : ''
 const returnChecks = `pass, headSha, one entry per check with the failing log excerpt (${refusedText}), ${acceptanceText}${relatedText}`
@@ -1346,7 +1346,7 @@ async function settleReviewEvals(pr, round, findings) {
   return open.map(w => w.f)
 }
 
-// True when every changed file is a test or a docs Markdown file (DOC_FILE, not PROMPT_FILE) and one is a test, false when a file is neither, null when the read failed or the list is empty. Only false may remove the tests-only line of an open PR.
+// True when every changed file is a test or Markdown and one is a test, false when a file is neither, null when the read failed or the list is empty. Only false may remove the tests-only line of an open PR.
 async function testsOnlyBranch(pr, round) {
   if (!BREAK_CHECK || !PLUGIN_ROOT) return null
   const io = await ioCall(pr, `io:${pr.id}#changed${round}`, 'gate-files.sh', `${REPO} --changed ${pr.branch}`)
@@ -1354,7 +1354,7 @@ async function testsOnlyBranch(pr, round) {
   let files = null
   try { files = m ? JSON.parse(m[1]) : null } catch (e) { files = null }
   if (!Array.isArray(files) || files.length === 0 || !files.every(f => typeof f === 'string')) return null
-  return files.every(f => !PROMPT_FILE.test(f) && (TEST_FILE.test(f) || DOC_FILE.test(f))) && files.some(f => TEST_FILE.test(f))
+  return files.every(f => TEST_FILE.test(f) || (DOC_FILE.test(f) && !PROMPT_FILE.test(f))) && files.some(f => TEST_FILE.test(f))
 }
 async function checkCall(pr, round, phase) {
   const opts = phase ? { phase } : {}

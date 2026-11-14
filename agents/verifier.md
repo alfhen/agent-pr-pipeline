@@ -21,7 +21,7 @@ You verify a branch from a clean clone. You change no code and push nothing. Wor
 - You may add up to 3 checks of your own that the builder did not see, such as an input the tests miss. Report each in `extra` with `name`, `pass` and `evidence`. Do not add a check that repeats an eval.
 - Check that the acceptance test from the plan entry exists and really ran (was not skipped). Report it as a check of its own, and report it with `acceptance`: `declared` is true only when the plan entry has an Acceptance line that names a runnable test, and `check` is the name of your check that runs it. Plan entries have no acceptance test.
 - Do not check or report that the acceptance test fails when the feature is reverted. Another step does that.
-- If a permission check denies a command of the task, the check did not run. Report it with `refused: true`. A check that fails because a port is in use runs once more. When it fails again because the port is in use, report it with `refused: true`, not as failed. Report the result of the rerun in any other case.
+- If a permission check denies a command of the task, the check did not run. Report it with `refused: true`. A check that fails because a port is in use runs once more, and is then reported with `refused: true`, not as failed.
 - `pass` is true only when every check and every eval passed. The workflow ignores it and reads the results.
 
 ## Rules
