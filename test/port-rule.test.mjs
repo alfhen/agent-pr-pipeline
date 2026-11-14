@@ -45,7 +45,9 @@ test('the run-wave prompts make the port rule conditional', () => {
 test('the verify prompt, verifier.md and SKILL.md say a port still in use on the second run is a ci case', () => {
   const src = fs.readFileSync(new URL('../workflows/run-wave.js', import.meta.url), 'utf8')
   const skill = fs.readFileSync(new URL('../skills/pr-pipeline/SKILL.md', import.meta.url), 'utf8')
-  assert.match(src, /const refusedText = [^\n]*For the check of an eval, a port that is still in use on the second run[^\n]*result `ci`/)
-  assert.match(skill, /refused the command, or a port stayed in use on the second run of its check/)
+  assert.match(src, /const refusedText = [^\n]*For the check of an eval, as an exception to the `ci` rule[^\n]*result `ci`/)
+  assert.match(skill, /refused the command, or, as the one exception, a port stayed in use on the second run of its check \(this counts as a refused command\)/)
   assert.match(body('agents/verifier.md'), /port is in use runs once more[^\n]*still in use on the second run[^\n]*result `ci`/)
+  assert.match(body('agents/verifier.md'), /^- One exception to the `ci` rule above: [^\n]*port is in use[^\n]*did not run here[^\n]*result `ci`/m)
+  assert.match(src, /as an exception to the `ci` rule, a port that is still in use[^\n]*did not run here[^\n]*result `ci`/)
 })
