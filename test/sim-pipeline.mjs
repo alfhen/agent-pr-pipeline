@@ -3216,8 +3216,8 @@ await check('#665: tests plus Markdown files are tests only, and the verify sent
     assert.equal(x.ready, true)
   }
 })
-await check('#665: Markdown only, a non-Markdown file under docs, or another file is not tests only', async () => {
-  for (const [files, extra] of [[['README.md'], {}], [['docs/a.md', 'CHANGELOG.md'], {}], [['test/a.test.mjs', 'site/index.js'], { docs: ['site'] }], [['test/a.test.mjs', 'docs/page.js'], {}], [['test/a.test.mjs', 'notes.txt'], {}]]) {
+await check('#665: Markdown only, a non-Markdown file under docs, a prompt Markdown file, or another file is not tests only', async () => {
+  for (const [files, extra] of [[['README.md'], {}], [['docs/a.md', 'CHANGELOG.md'], {}], [['test/a.test.mjs', 'site/index.js'], { docs: ['site'] }], [['test/a.test.mjs', 'docs/page.js'], {}], [['test/a.test.mjs', 'notes.txt'], {}], [['test/a.test.mjs', 'agents/verifier.md'], {}], [['test/a.test.mjs', 'skills/pr-pipeline/SKILL.md'], {}]]) {
     const { x, v } = await runOnFiles(files, extra)
     assert.equal(x.testsOnly, undefined, files.join())
     assert.doesNotMatch(v, /A script found/, files.join())

@@ -252,8 +252,8 @@ const botChangedState = {}
 // Per PR: the break-check results of the last verifier round that gave any. A later round without them leaves it alone.
 const breakCheckState = {}
 const TEST_FILE = new RegExp(`${E2E_PATTERN}|(^|/)(tests?|__tests__|spec|__snapshots__)/|(^|/)[^/]*\\.Tests?/|\\.(test|spec)\\.[cm]?[jt]sx?$|_test\\.go$|(^|/)test_[^/]*\\.py$|_test\\.py$|_spec\\.rb$|\\.snap$|Tests\\.cs$`)
-// Markdown never changes behaviour, so the break check has nothing to take out of it. The `docs` argument is not used here: it can name a docs site with code.
-const DOC_FILE = /\.md$/
+// Docs Markdown never changes behaviour, so the break check has nothing to take out of it. Markdown elsewhere (agents/, skills/) is a prompt and does change behaviour. The `docs` argument is not used here: it can name a docs site with code.
+const DOC_FILE = /^[^/]+\.md$|(^|\/)docs\/.*\.md$|(^|\/)(README|CHANGELOG|CONTRIBUTING)\.md$/i
 // Repo policy, read once per PR from the default branch. The PR cannot set it, so a `ci` result needs a name the repo trusts.
 const ciChecksState = {}
 // The only place that reads a verifier's answer. Its own `pass` is ignored, like the tester's. An eval id with no result, or a `ci`
