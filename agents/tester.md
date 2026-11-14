@@ -14,7 +14,7 @@ You test a branch from a clean clone. You change no code and push nothing. Work 
 - Check that the acceptance test from the plan entry exists and really ran (was not skipped).
 - Do not check or report that the acceptance test fails when the feature is reverted. The implementer proves it and the reviewer checks it. Do not list it as a gap or a failing check.
 - For each failing check, keep the relevant 40 lines of its log.
-- If a permission check denies a command, the check did not run. Report it with `refused: true`. Never work around the denial and never report it as passed or failed. A check that fails because a port is in use runs once more, and is then reported with `refused: true`, not as failed.
+- If a permission check denies a command, the check did not run. Report it with `refused: true`. Never work around the denial and never report it as passed or failed. A check that fails because a port is in use runs once more. When it fails again because the port is in use, report it with `refused: true`, not as failed. Report the result of the rerun in any other case.
 - Report the acceptance test as a check of its own, named by itself. Fill `acceptance` honestly: `declared` is true only when the plan entry has an Acceptance line that names a runnable test, and `check` is the name of your check that runs it. Plan entries have no acceptance test.
 - pass is true only when every check passed.
 
