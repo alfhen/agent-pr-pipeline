@@ -43,7 +43,7 @@ case "$cmd" in
     refusal=$(refused "$tmp") && { echo "KEPT $1 refused: $refusal"; exit 0; }
     if [ "$id" = --all ]; then
       while IFS= read -r -d '' d; do
-        kept "$d" && continue
+        if kept "$d"; then echo "KEPT ${d//$'\n'/ } kept for a blocked PR"; continue; fi
         if rm -rf "$d"; then echo "REMOVED ${d//$'\n'/ }"; else echo "KEPT ${d//$'\n'/ } cannot delete"; fi
       done < <(find "$tmp" -mindepth 1 -maxdepth 1 -type d -print0)
       # NUL-separated so a newline in a name cannot yield a path relative to the cwd. Only the wave end removes these: another PR of the wave may still read one. find -type f skips symbolic links. The name pattern must match the mktemp template io-large.XXXXXX in scripts/io.sh and IO_LARGE_NAME in workflows/run-wave.js. Newlines in printed names become spaces so a name cannot forge a line.
@@ -56,7 +56,7 @@ case "$cmd" in
       shopt -s nullglob
       for d in "$tmp"/*-"$id"-* "$tmp"/*-"$id"; do
         [ -d "$d" ] && [ ! -L "$d" ] || continue
-        kept "$d" && continue
+        if kept "$d"; then echo "KEPT $d kept for a blocked PR"; continue; fi
         if rm -rf "$d"; then echo "REMOVED $d"; else echo "KEPT $d cannot delete"; fi
       done
     fi

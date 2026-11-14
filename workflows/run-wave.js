@@ -1892,10 +1892,13 @@ async function runPR(input) {
     const landOut = input.landFix ? landOutState[input.id] : null
     const resume = input.resume
     const history = input.landFix ? (resume && resume.history) : (historyState[input.id] || (resume && resume.history))
-    const found = input.landFix ? null : (minorsState[input.id] || (resume && resume.minors))
+    const raw = input.landFix ? null : (minorsState[input.id] || (resume && resume.minors))
+    const found = Array.isArray(raw) ? raw.filter(m => m && typeof m === 'object') : null
     const minors = Array.isArray(found) && found.length ? mergeDuplicates(found) : null
+    let msg = 'unknown error'
+    try { msg = (e && e.message) || String(e) } catch (_) {}
     result = {
-      id: input.id, ready: false, reason: `run failed: ${(e && e.message) || String(e)}`,
+      id: input.id, ready: false, reason: `run failed: ${msg}`,
       ...(Array.isArray(history) ? { history } : {}),
       ...(minors ? { minors } : {}),
       ...(input.landFix && input.prNumber ? { prNumber: input.prNumber } : {}),
