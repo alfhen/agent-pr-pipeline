@@ -637,7 +637,7 @@ await check('E01-2 a list with no error path eval and no reason is refused; afte
   const x = await evalsRun([C1PR], () => withMeta([ev('C1-1', 'behaviour')]))
   assert.equal(x.C1.ready, false)
   assert.equal(x.C1.reason, 'evals refused: no error path')
-  assert.deepEqual(evalLabels('C1'), ['evals:C1', 'evals:C1#w2'])
+  assert.deepEqual(evalLabels('C1'), ['evals:C1', 'evals:C1#w2', 'evals:C1#w3'])
   assert.match(calls.find(c => c.label === 'evals:C1#w2').prompt, /refused it/)
   const y = await evalsRun([C1PR], () => withMeta([ev('C1-1', 'behaviour')]), okCheck, { evalsRounds: 1 })
   assert.deepEqual(evalLabels('C1'), ['evals:C1'])
@@ -689,7 +689,7 @@ await check('E01-4 a needs-change from the evals check goes back to the writer o
   assert.equal(x.C1.ready, true)
 })
 await check('E01-4 a second needs-change stops the PR with the notes', async () => {
-  const x = await evalsRun([C1PR], () => withMeta(listOf('C1')), () => ({ verdict: 'needs-change', notes: 'no eval for the QA line' }))
+  const x = await evalsRun([C1PR], () => withMeta(listOf('C1')), () => ({ verdict: 'needs-change', notes: 'no eval for the QA line' }), { evalsRounds: 2 })
   assert.equal(x.C1.reason, 'evals check: architecture: no eval for the QA line')
   assert.ok(!evalLabels('C1').includes('implement:C1'))
 })
@@ -969,7 +969,7 @@ const noCoverageKey = x => assert.equal('coverage' in x.evalsMeta.accepted, fals
 const refusedAtOnce = x => {
   assert.equal(x.ready, false)
   assert.match(x.reason, /^evals refused: /)
-  assert.deepEqual(evalLabels('C1'), ['evals:C1', 'evals:C1#w2'])
+  assert.deepEqual(evalLabels('C1'), ['evals:C1', 'evals:C1#w2', 'evals:C1#w3'])
   assert.ok(!calls.some(c => c.label.startsWith('evalsarch:C1') || c.label.startsWith('implement:C1')))
 }
 await check('C01-1 a writer list whose coverage is missing or empty is refused before the evals check', async () => {
@@ -5248,7 +5248,7 @@ await check('F652-2 a writer list with a PR body eval is refused with the reason
   assert.doesNotMatch(v.prompt, /Closes #55/)
 })
 await check('F652-2 an eval that names the PR title, a Closes line or the pull request body is refused; so is a given list', async () => {
-  const bads = [ev('C1-3', 'behaviour', { check: 'gh pr view --json body; expect Closes #5' }), ev('C1-3', 'behaviour', { statement: 'The PR title starts with fix' }), ev('C1-3', 'behaviour', { statement: 'the pull request body lists tests' })]
+  const bads = [ev('C1-3', 'behaviour', { statement: 'The line Closes #5 is on its own line' }), ev('C1-3', 'behaviour', { statement: 'The PR title starts with fix' }), ev('C1-3', 'behaviour', { statement: 'the pull request body lists tests' })]
   for (const bad of bads) {
     const x = await evalsRun([C1PR], () => withMeta(listOf('C1').concat(bad)), okCheck, { evalsRounds: 1 })
     assert.equal(x.C1.reason, PR_REFUSAL, JSON.stringify(bad))
@@ -5266,6 +5266,97 @@ const failingC11 = { pass: true, headSha: 'sha-C1', checks: [{ name: 'lint', pas
 const disputeFlow = ruling => (p, o) => o.label === 'verify:C1#1' ? failingC11
   : o.label === 'fix:C1#1' ? { summary: 'nothing to change', changed: false, disputes: [{ id: 'C1-1', reason: 'no code change can satisfy it' }] }
   : o.label === 'dispute:C1#1' ? ruling : undefined
+// C10: three writer attempts, and the PR-text rule reads the statement only.
+const PR_TEXT_RULE = /\b(?:PR|pull request)\s+(?:body|title|description)\b|\bcloses?\s+#\d+|\bcloses line\b/i
+const TRIGGER = 'Closes #1'
+const codeEval = (id, where) => ev(id, 'behaviour', where === 'statement'
+  ? { statement: `scripts/ledger.sh backfill reads a record that says ${TRIGGER}`, check: 'node --test test/ledger.test.mjs; expect pass' }
+  : { statement: 'scripts/ledger.sh backfill writes one record for each merged PR', check: `backfill a merged record whose text is "${TRIGGER}"; expect one record` })
+const checkOnly = codeEval('C1-3', 'check')
+const inStatement = codeEval('C1-3', 'statement')
+const refusedForText = x => typeof x.reason === 'string' && x.reason.startsWith('evals refused')
+await check('C10-1 with no evalsRounds argument a refused list is asked for three times, then the PR stops', async () => {
+  const x = await evalsRun([C1PR], () => withMeta([ev('C1-1', 'behaviour')]))
+  assert.deepEqual(evalLabels('C1'), ['evals:C1', 'evals:C1#w2', 'evals:C1#w3'])
+  const p3 = calls.find(c => c.label === 'evals:C1#w3').prompt
+  assert.ok(p3.includes('refused it') && p3.includes('This is attempt 3'))
+  assert.equal(x.C1.ready, false)
+  assert.equal(x.C1.reason, 'evals refused: no error path')
+})
+await check('C10-2 a list that the evals check sends back twice is built on attempt 3', async () => {
+  let n = 0
+  const x = await evalsRun([C1PR], () => withMeta(listOf('C1')), () => ++n < 3 ? { verdict: 'needs-change', notes: 'a gap' } : okCheck())
+  assert.deepEqual(evalLabels('C1').slice(0, 7), ['evals:C1', 'evalsarch:C1#1', 'evals:C1#w2', 'evalsarch:C1#2', 'evals:C1#w3', 'evalsarch:C1#3', 'implement:C1'])
+  assert.ok(!/^evals/.test(x.C1.reason || ''))
+})
+await check('C10-3 an evalsRounds value of 1 or 2 gives one or two writer calls', async () => {
+  for (const n of [1, 2]) {
+    const x = await evalsRun([C1PR], () => withMeta([ev('C1-1', 'behaviour')]), okCheck, { evalsRounds: n })
+    assert.deepEqual(evalLabels('C1'), ['evals:C1', 'evals:C1#w2'].slice(0, n))
+    assert.equal(x.C1.reason, 'evals refused: no error path')
+  }
+})
+await check('C10-4 an eval about code is accepted when only its check holds a trigger phrase', async () => {
+  assert.match(inStatement.statement, PR_TEXT_RULE)
+  assert.doesNotMatch(checkOnly.statement, PR_TEXT_RULE)
+  assert.ok(checkOnly.check.includes(TRIGGER))
+  const a = await evalsRun([C1PR], () => withMeta(listOf('C1').concat(inStatement)), okCheck, { evalsRounds: 1 })
+  assert.equal(a.C1.reason, PR_REFUSAL)
+  const b = await evalsRun([C1PR], () => withMeta(listOf('C1').concat(checkOnly)), okCheck, { evalsRounds: 1 })
+  assert.ok(evalLabels('C1').includes('implement:C1'))
+  assert.ok(!refusedForText(b.C1))
+})
+await check('C10-5 an eval whose statement holds a trigger phrase is refused in a writer list and in a given list', async () => {
+  const a = await evalsRun([C1PR], () => withMeta(listOf('C1').concat(prEval)), okCheck, { evalsRounds: 1 })
+  assert.equal(a.C1.reason, PR_REFUSAL)
+  assert.ok(!evalLabels('C1').includes('implement:C1'))
+  const b = await evalsRun([{ ...C1PR, evals: listOf('C1').concat(prEval) }], noWriter)
+  assert.equal(b.C1.reason, PR_REFUSAL)
+  assert.ok(!evalLabels('C1').includes('implement:C1'))
+})
+await check('C10-6 a writer whose statement holds a trigger phrase on every attempt stops after the third attempt', async () => {
+  const x = await evalsRun([C1PR], () => withMeta(listOf('C1').concat(prEval)))
+  assert.equal(x.C1.ready, false)
+  assert.equal(x.C1.reason, PR_REFUSAL)
+  assert.deepEqual(evalLabels('C1').filter(l => l.startsWith('evals:')), ['evals:C1', 'evals:C1#w2', 'evals:C1#w3'])
+  assert.ok(!evalLabels('C1').some(l => l.startsWith('evalsarch:') || l.startsWith('implement:')))
+})
+await check('C10-7 a given list and a dispute change are accepted when a trigger phrase is only in a check', async () => {
+  const a0 = await evalsRun([{ ...C1PR, evals: listOf('C1').concat(inStatement) }], noWriter)
+  assert.equal(a0.C1.reason, PR_REFUSAL)
+  const a = await evalsRun([{ ...C1PR, evals: listOf('C1').concat(checkOnly) }], noWriter)
+  assert.ok(!refusedForText(a.C1))
+  assert.ok(evalLabels('C1').includes('implement:C1'))
+  const changed = where => ev('C1-1', 'behaviour', codeEval('C1-1', where))
+  const bad = await disputeRun(listOf('C1'), disputeFlow({ ruling: 'change', reason: 'r', eval: changed('statement') }))
+  assert.equal(bad.C1.evalDisputes[0].ruling, 'rejected')
+  assert.equal(bad.C1.evalDisputes[0].why, 'eval C1-1 checks the PR, not the code')
+  const good = await disputeRun(listOf('C1'), disputeFlow({ ruling: 'change', reason: 'r', eval: changed('check') }))
+  assert.equal(good.C1.evalDisputes[0].ruling, 'change')
+  assert.equal(good.C1.evals.find(e => e.id === 'C1-1').check, changed('check').check)
+})
+await check('C10-11 a resumed list, a reviewer eval and a land-fix list accept a check-only trigger and refuse a statement one', async () => {
+  const withIt = where => listOf('C1').concat(codeEval('C1-3', where))
+  assert.match(codeEval('C1-3', 'statement').statement, PR_TEXT_RULE)
+  const r1 = await evalsRun(resumeWith(withIt('statement')), noWriter)
+  assert.equal(r1.C1.reason, 'evals refused: eval C1-3 checks the PR, not the code')
+  const r2 = await evalsRun(resumeWith(withIt('check')), noWriter)
+  assert.ok(!refusedForText(r2.C1))
+  const review = e => hooked(withEvals('C1'), at('review', 'C1', { 1: reviewOf([f('major', 'gap', { eval: { kind: e.kind, statement: e.statement, check: e.check } })]) }))
+  const b1 = await review(codeEval('C1-3', 'statement'))
+  assert.ok(!b1.C1.evals.some(e => e.id === 'C1-R1-1'))
+  const b2 = await review(codeEval('C1-3', 'check'))
+  assert.ok(b2.C1.evals.some(e => e.id === 'C1-R1-1'))
+  const land = where => kRun(kLandPr({ evals: K_LIST.concat(codeEval('C1-3', where)) }), { cfg: [['landOutput', 'LA']] })
+  assert.match((await land('statement')).LA.reason, /^evals refused: eval C1-3 checks the PR, not the code/)
+  assert.ok(!refusedForText((await land('check')).LA))
+})
+await check('C10-12 a list that the evals check sends back three times stops the PR with the notes', async () => {
+  const x = await evalsRun([C1PR], () => withMeta(listOf('C1')), () => ({ verdict: 'needs-change', notes: 'no eval for the QA line' }))
+  assert.equal(x.C1.reason, 'evals check: architecture: no eval for the QA line')
+  assert.ok(evalLabels('C1').includes('evalsarch:C1#3'))
+  assert.ok(!evalLabels('C1').includes('implement:C1'))
+})
 await check('F652-3 a failing eval and a fixer dispute with no push go to the writer, not to the no-progress stop', async () => {
   const newEval = ev('C1-1', 'behaviour', { statement: 'C1-1 checkable from the branch' })
   const x = await disputeRun(listOf('C1'), disputeFlow({ ruling: 'change', reason: 'not checkable', eval: newEval }))

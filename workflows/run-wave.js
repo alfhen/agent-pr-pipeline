@@ -45,7 +45,7 @@ const FEEDBACK = A.feedback !== false
 const CLEANUP = A.cleanup !== false
 const FEEDBACK_REPO = A.feedbackRepo || 'alfhen/agent-pr-pipeline'
 const EVALS_ON = A.evals !== false
-const EVALS_ROUNDS = A.evalsRounds || 2
+const EVALS_ROUNDS = A.evalsRounds || 3
 const BREAK_CHECK = A.breakCheck !== false
 const MILESTONE = A.milestone ? ` -F milestone=<number>` : ''
 const MILESTONE_TITLE = String(A.milestone || '')
@@ -755,7 +755,7 @@ Task: write the evals for this PR. Nothing is built yet.
 1. Clone the default branch: ${evalsClone(`evals-${pr.id}`, pr)} and cd there. Read the default branch only; never read or check out a PR branch.
 2. Read ${GOALS}, ${SPEC ? `${SPEC}, ` : ''}${ref(pr)} (the entry of this PR, with its Touches, Acceptance, QA, Invariants, Round cap and Algorithm lines, and its Evals table when it has one) and the code the entry touches.
 3. Write the list as your instructions say. When the behaviour of an entry already holds on the default branch, give those evals kind regression and say so in notes. An Evals table in the entry is input: keep or improve each row under its id and add the rows it lacks.
-4. Each eval must be checkable from a clean clone of the branch, before the PR is open. Leave out what is not: the PR body or title, Closes lines, labels, bot comments or approvals, CI results, a merge, a release and any other pipeline step after the build. Notes that name such a thing still reach the opener, so they need no eval.
+4. Each eval must be checkable from a clean clone of the branch, before the PR is open. Leave out what is not: the PR body or title, Closes lines, labels, bot comments or approvals, CI results, a merge, a release and any other pipeline step after the build. Notes that name such a thing still reach the opener, so they need no eval. An eval for code that reads pull request text names that code in its statement and puts the fixture text in its check.
 5. Return \`coverage\` with the list. An item is one bullet or one invariant of the entry, one issue for a batch, or one line of the brief for a quick fix. Each item says in a sentence what it asks for, and names in \`evals\` the ids of the evals that cover it. A list whose coverage is missing or empty, has an item with no eval id, or names an id that is not in the list is refused.
 ${evalsRules}
 Return evals, coverage, algorithm, noErrorPath, noReference and notes.
@@ -1905,7 +1905,7 @@ function evalsVerdict(list, pr, meta) {
     if (!EVAL_KINDS.includes(e.kind)) return `eval ${e.id} has no valid kind`
     if (!reasonOf(e.statement)) return `eval ${e.id} has no statement`
     if (!reasonOf(e.check)) return `eval ${e.id} has no check`
-    if (PR_TEXT.test(`${e.statement}\n${e.check}`)) return `eval ${e.id} checks the PR, not the code`
+    if (PR_TEXT.test(e.statement)) return `eval ${e.id} checks the PR, not the code`
   }
   const has = kind => list.some(e => e.kind === kind)
   if (!has('error path') && !reasonOf(m.noErrorPath)) return 'no error path'
