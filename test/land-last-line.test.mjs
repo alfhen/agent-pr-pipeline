@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, mkdirSync, chmodSync, readFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, mkdirSync, chmodSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -17,8 +17,11 @@ const git = (cwd, ...args) => {
 const NO_CODE = 'land-commits: no code added by the land fix'
 
 // clean: main adds another file. Otherwise both sides edit line 1 and the merge is resolved by hand.
+const dirs = []
+process.on('exit', () => { for (const d of dirs) rmSync(d, { recursive: true, force: true }) })
 const fixture = clean => {
   const dir = mkdtempSync(join(tmpdir(), 'land-last-'))
+  dirs.push(dir)
   const remote = join(dir, 'r.git'); const w = join(dir, 'w')
   git(dir, 'init', '-q', '--bare', '-b', 'main', remote)
   git(dir, 'clone', '-q', remote, w)

@@ -12,7 +12,8 @@
 # LAND_COMMITS_REMOTE: a local path used in place of the GitHub URL, for tests.
 R=$1; before=$2; after=$3; tmp=$4
 [ -n "$tmp" ] || { echo "usage: land-commits.sh <owner/repo> <before> <after> <tmp dir>"; exit 2; }
-fail() { echo "land-commits: $1" >&2; exit 1; }
+exec 3>&2
+fail() { echo "land-commits: $1" >&3; exit 1; }
 blob() { git rev-parse -q --verify "$1:$2" 2>/dev/null || echo none; }
 for sha in "$before" "$after"; do
   [[ "$sha" =~ ^[0-9a-f]{7,40}$ ]] || fail "not a commit sha: $sha"
@@ -26,6 +27,8 @@ git rev-parse --quiet --verify origin/HEAD >/dev/null || fail "the clone has no 
 git rev-parse --quiet --verify "$before^{commit}" >/dev/null || fail "cannot read $before"
 git rev-parse --quiet --verify "$after^{commit}" >/dev/null || fail "cannot read $after"
 
+# Git warnings must not reach the output, which is summed.
+exec 2>/dev/null
 out=""
 add() { out+="$1"$'\n'; }
 logged=$(git log --no-merges --reverse -p --format='commit %H%n%s' "$before..$after" --not origin/HEAD) || fail "cannot list the commits"
