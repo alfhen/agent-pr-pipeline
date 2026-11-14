@@ -308,7 +308,8 @@ const verifyOutcome = (pr, verify) => {
     }
   }
   for (const x of (verify.extra || []).slice(0, 3)) {
-    if (!x.pass) findings.push({ via: 'extra check', severity: 'major', title: `extra check failed: ${x.name}`, detail: x.evidence || '' })
+    if (!x.pass && x.refused) covered.push(`extra check ${x.name} (refused)`)
+    else if (!x.pass) findings.push({ via: 'extra check', severity: 'major', title: `extra check failed: ${x.name}`, detail: x.evidence || '' })
   }
   untestedFor(pr).evals = covered
   const breakCheck = asked && BREAK_CHECK && !testsOnly ? breakCheckOf(pr, byId) : null
@@ -490,7 +491,7 @@ const VERIFY = {
   properties: {
     ...TEST.properties,
     evals: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, result: { type: 'string', enum: ['pass', 'fail', 'ci'] }, evidence: { type: 'string' }, ciCheck: { type: 'string' }, test: { type: 'string' }, breakCheck: { type: 'string', enum: ['fails-without-change', 'passes-without-change', 'not-applicable', 'not-run'] }, breakWhy: { type: 'string' } }, required: ['id', 'result'] } },
-    extra: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, pass: { type: 'boolean' }, evidence: { type: 'string' } }, required: ['name', 'pass'] } },
+    extra: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, pass: { type: 'boolean' }, refused: { type: 'boolean' }, evidence: { type: 'string' } }, required: ['name', 'pass'] } },
   },
   required: [...TEST.required, 'evals'],
 }
@@ -1353,12 +1354,15 @@ async function settleReviewEvals(pr, round, findings) {
 // True when every changed file is a test or Markdown and one is a test, false when a file is neither, null when the read failed or the list is empty. Only false may remove the tests-only line of an open PR.
 async function testsOnlyBranch(pr, round) {
   if (!BREAK_CHECK || !PLUGIN_ROOT) return null
-  const io = await ioCall(pr, `io:${pr.id}#changed${round}`, 'gate-files.sh', `${REPO} --changed ${pr.branch}`)
+  let io = null
+  try { io = await ioCall(pr, `io:${pr.id}#changed${round}`, 'gate-files.sh', `${REPO} --changed ${pr.branch}`) } catch (e) { return null }
   const m = io && io.exitCode === 0 ? /^CHANGED (\[.*\])$/m.exec(io.output) : null
   let files = null
   try { files = m ? JSON.parse(m[1]) : null } catch (e) { files = null }
   if (!Array.isArray(files) || files.length === 0 || !files.every(f => typeof f === 'string')) return null
-  return files.every(f => !PROMPT_FILE.test(f) && (TEST_FILE.test(f) || DOC_FILE.test(f))) && files.some(f => !PROMPT_FILE.test(f) && TEST_FILE.test(f))
+  // A Markdown file is never a test, so one under a test folder counts only by the docs rule.
+  const isTest = f => !/\.md$/i.test(f) && !PROMPT_FILE.test(f) && TEST_FILE.test(f)
+  return files.every(f => isTest(f) || (!PROMPT_FILE.test(f) && DOC_FILE.test(f))) && files.some(isTest)
 }
 async function checkCall(pr, round, phase) {
   const opts = phase ? { phase } : {}

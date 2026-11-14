@@ -3299,7 +3299,7 @@ await check('#664: a plain Go, Python, Ruby or C# source file beside a test keep
   }
 })
 await check('#665: tests plus Markdown files are tests only, and the verify sentence names Markdown', async () => {
-  for (const files of [['test/a.test.mjs', 'README.md'], ['test/a.test.mjs', 'docs/notes.md', 'CHANGELOG.md'], ['pkg/a_test.go', 'docs/guide/setup.md'], ['test/a.test.mjs', 'CONTRIBUTING.md'], ['test/a.test.mjs', 'pkg/docs/x.md'], ['test/a.test.mjs', 'pkg/README.md'], ['test/a.test.mjs', 'lib/CONTRIBUTING.md'], ['test/a.test.mjs', 'readme.md'], ['test/a.test.mjs', 'Changelog.md'], ['test/a.test.mjs', 'README.MD'], ['test/a.test.mjs', 'docs/Notes.MD']]) {
+  for (const files of [['test/a.test.mjs', 'README.md'], ['test/a.test.mjs', 'docs/notes.md', 'CHANGELOG.md'], ['pkg/a_test.go', 'docs/guide/setup.md'], ['test/a.test.mjs', 'CONTRIBUTING.md'], ['test/a.test.mjs', 'pkg/docs/x.md'], ['test/a.test.mjs', 'pkg/README.md'], ['test/a.test.mjs', 'lib/CONTRIBUTING.md'], ['test/a.test.mjs', 'readme.md'], ['test/a.test.mjs', 'Changelog.md'], ['test/a.test.mjs', 'README.MD'], ['test/a.test.mjs', 'docs/Notes.MD'], ['pkg/a_test.go', 'tests/README.md']]) {
     const { x, v } = await runOnFiles(files)
     assert.equal(x.testsOnly, true, files.join())
     assert.match(v, /A script found that every file the PR changes is a test[^.]*not-applicable[^.]*`tests only: no change to take out`/, files.join())
@@ -3310,7 +3310,7 @@ await check('#665: tests plus Markdown files are tests only, and the verify sent
   }
 })
 await check('#665: Markdown only, a non-Markdown file under docs, a prompt Markdown file, or another file is not tests only', async () => {
-  for (const [files, extra] of [[['README.md'], {}], [['docs/a.md', 'CHANGELOG.md'], {}], [['test/a.test.mjs', 'site/index.js'], { docs: ['site'] }], [['test/a.test.mjs', 'docs/page.js'], {}], [['test/a.test.mjs', 'notes.txt'], {}], [['test/a.test.mjs', 'agents/verifier.md'], {}], [['test/a.test.mjs', 'tests/CLAUDE.md'], {}], [['test/a.test.mjs', 'test/AGENTS.md'], {}], [['test/a.test.mjs', 'tests/fixtures/AGENTS.md'], {}], [['test/a.test.mjs', 'src/__snapshots__/AGENTS.md'], {}], [['test/a.test.mjs', 'docs/CLAUDE.local.md'], {}], [['test/a.test.mjs', 'CLAUDE.local.md'], {}], [['test/a.test.mjs', 'skills/pr-pipeline/SKILL.md'], {}], [['test/a.test.mjs', 'GEMINI.md'], {}], [['test/a.test.mjs', 'AGENTS.md'], {}], [['test/a.test.mjs', 'CLAUDE.md'], {}], [['test/a.test.mjs', 'pkg/AGENTS.md'], {}], [['test/a.test.mjs', 'docs/GEMINI.md'], {}], [['test/a.test.mjs', 'docs/deep/AGENTS.md'], {}], [['test/a.test.mjs', 'docs/x/SKILL.md'], {}], [['test/a.test.mjs', 'pkg/docs/CLAUDE.md'], {}], [['test/a.test.mjs', 'docs/agents.md'], {}], [['test/a.test.mjs', 'docs/Claude.md'], {}], [['test/a.test.mjs', 'skills/pr-pipeline/reference.md'], {}], [['test/a.test.mjs', 'NOTES.md'], {}], [['test/a.test.mjs', 'src/notes.md'], {}], [['test/a.test.mjs', 'README.md', 'NOTES.md'], {}], [['test/a.test.mjs', 'spec/openapi.yaml'], {}], [['test/a.test.mjs', 'spec/api/schema.json'], {}], [['test/a.test.mjs', 'agents/docs/reviewer.md'], {}], [['test/a.test.mjs', 'skills/x/docs/notes.md'], {}], [['test/a.test.mjs', '.claude/commands/ship.md'], {}], [['test/a.test.mjs', 'docs/prompts/review.md'], {}], [['test/a.test.mjs', 'agents/README.md'], {}]]) {
+  for (const [files, extra] of [[['README.md'], {}], [['docs/a.md', 'CHANGELOG.md'], {}], [['test/a.test.mjs', 'site/index.js'], { docs: ['site'] }], [['test/a.test.mjs', 'docs/page.js'], {}], [['test/a.test.mjs', 'notes.txt'], {}], [['test/a.test.mjs', 'agents/verifier.md'], {}], [['test/a.test.mjs', 'tests/CLAUDE.md'], {}], [['test/a.test.mjs', 'test/AGENTS.md'], {}], [['test/a.test.mjs', 'tests/fixtures/AGENTS.md'], {}], [['test/a.test.mjs', 'src/__snapshots__/AGENTS.md'], {}], [['test/a.test.mjs', 'docs/CLAUDE.local.md'], {}], [['test/a.test.mjs', 'CLAUDE.local.md'], {}], [['test/a.test.mjs', 'skills/pr-pipeline/SKILL.md'], {}], [['test/a.test.mjs', 'GEMINI.md'], {}], [['test/a.test.mjs', 'AGENTS.md'], {}], [['test/a.test.mjs', 'CLAUDE.md'], {}], [['test/a.test.mjs', 'pkg/AGENTS.md'], {}], [['test/a.test.mjs', 'docs/GEMINI.md'], {}], [['test/a.test.mjs', 'docs/deep/AGENTS.md'], {}], [['test/a.test.mjs', 'docs/x/SKILL.md'], {}], [['test/a.test.mjs', 'pkg/docs/CLAUDE.md'], {}], [['test/a.test.mjs', 'docs/agents.md'], {}], [['test/a.test.mjs', 'docs/Claude.md'], {}], [['test/a.test.mjs', 'skills/pr-pipeline/reference.md'], {}], [['test/a.test.mjs', 'NOTES.md'], {}], [['test/a.test.mjs', 'src/notes.md'], {}], [['test/a.test.mjs', 'README.md', 'NOTES.md'], {}], [['test/a.test.mjs', 'spec/openapi.yaml'], {}], [['test/a.test.mjs', 'spec/api/schema.json'], {}], [['test/a.test.mjs', 'agents/docs/reviewer.md'], {}], [['test/a.test.mjs', 'skills/x/docs/notes.md'], {}], [['test/a.test.mjs', '.claude/commands/ship.md'], {}], [['test/a.test.mjs', 'docs/prompts/review.md'], {}], [['test/a.test.mjs', 'agents/README.md'], {}], [['pkg/a_test.go', 'tests/review.md'], {}], [['pkg/a_test.go', 'test/fixtures/sample.md'], {}]]) {
     const { x, v } = await runOnFiles(files, extra)
     assert.equal(x.testsOnly, undefined, files.join())
     assert.doesNotMatch(v, /A script found/, files.join())
@@ -3364,6 +3364,22 @@ await check('#91: a refused check starts no fix round and is on the untested lis
   const y = await hooked(withEvals('C1'), verifyHook({ 1: vres({ checks: port.checks }) }))
   assert.equal(calls.filter(c => c.label.startsWith('fix:C1')).length, 0)
   assert.ok(y.C1.untested.includes('docs preview e2e (refused)'))
+})
+await check('#769: a changed-file read that throws on both attempts does not stop the PR and keeps the normal break check', async () => {
+  const hook = (p, o) => { if (/^io:C1#changed/.test(o.label)) throw new Error('read crashed'); return verifyHook({ 1: ROWS_PWC })(p, o) }
+  const x = await hooked(withEvals('C1'), hook)
+  assert.ok(x.C1.history, 'the PR has a result')
+  assert.doesNotMatch(String(x.C1.stopped || x.C1.reason || ''), /run failed/)
+  assert.doesNotMatch(calls.find(c => c.label === 'verify:C1#1').prompt, /A script found/)
+  assert.equal(x.C1.testsOnly, undefined)
+  assert.doesNotMatch((calls.find(c => c.label === 'open:C1') || { prompt: '' }).prompt, REMOVE_RULE)
+})
+await check('#91: an extra check with refused true starts no fix round and is untested; one without refused still fails', async () => {
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ extra: [{ name: 'preview', pass: false, refused: true, evidence: 'EADDRINUSE' }] }) }))
+  assert.equal(calls.filter(c => c.label.startsWith('fix:C1')).length, 0)
+  assert.ok(x.C1.untested.includes('extra check preview (refused)'))
+  await hooked(withEvals('C1'), verifyHook({ 1: vres({ extra: [{ name: 'preview', pass: false, evidence: 'bad' }] }) }))
+  assert.ok(calls.some(c => c.label.startsWith('fix:C1')))
 })
 await check('severity: a review major titled [minor] x is one major line, a conflict and a clean title for the fixer', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)
