@@ -1174,7 +1174,7 @@ await check('A10-1 a throw out of the evals check of a resume returns the given 
   assert.deepEqual(x.evalsMeta.accepted, R.evalsMeta.accepted)
   assert.deepEqual(x.evals, R.evalsMeta.accepted.evals)
 })
-await check('A10-2 a run failed result of a resume carries its history, disputes and deviations; a fresh run carries the list only', async () => {
+await check('A10-2 a run failed result of a resume that holds a record carries its history, disputes and deviations; a fresh run carries the list only', async () => {
   const R = await accepted1()
   const H = { round: 1, testPass: true, failingChecks: [], blockersAndMajors: [] }
   const hook = a01Chain(a01Review('C1', 2, [a01Finding('cache race')]), (p, o) => { if (o.label === 'verify:C1#3') throw new Error('verifier crashed') })
@@ -2496,14 +2496,16 @@ await check('the denylist holds finding files, docs files, branches and path suf
   await simulate({ ...base, prs: only('C1', 'P1') })
   assert.ok(!logs.some(m => /no changed paths/.test(m)))
 })
-await check('a PR whose run throws is null in the result, and the other PRs and the evaluator still run', async () => {
+await check('a PR whose run throws has a run failed result, and the other PRs and the evaluator still run', async () => {
   calls = []
   preflight = GOOD
   const out = await run({ ...base, prs: only('C1', 'C2') }, async (p, o) => { if (o.label === 'implement:C1') throw new Error('boom'); return agent(p, o) }, parallel, log)
-  assert.equal(out.prs[0], null)
+  assert.equal(out.prs[0].id, 'C1')
+  assert.equal(out.prs[0].ready, false)
+  assert.match(out.prs[0].reason, /^run failed: .*boom/)
   assert.equal(out.prs[1].id, 'C2')
   assert.ok(out.denylist.includes('b1'))
-  assert.ok(calls.some(c => c.label === 'evaluate:wave'))
+  assert.ok(calls.find(c => c.label === 'evaluate:wave').prompt.includes('run failed: boom'))
 })
 const flaky = (label, bad) => { const seen = []; return { seen, fn: async (p, o) => { if (o.label !== label) return agent(p, o); seen.push(1); const b = bad[seen.length - 1]; if (b === 'null') return null; if (b === 'throw') throw new Error('ENOTFOUND'); if (b === 'fail') return { pushed: false, branch: 'b1', summary: 's', acceptanceTestPassed: false }; return agent(p, o) } } }
 await check('an agent that returns null is retried once and the retry result is used', async () => {
@@ -2542,7 +2544,7 @@ await check('a second failure is not retried again and the step fails', async ()
   const u = flaky('implement:C1', ['throw', 'throw'])
   const out2 = await run({ ...base, prs: only('C1') }, u.fn, parallel, log)
   assert.equal(u.seen.length, 2)
-  assert.equal(out2.prs[0], null)
+  assert.match(out2.prs[0].reason, /^run failed: ENOTFOUND/)
 })
 await check('a normal failure answer is not retried', async () => {
   calls = []; preflight = GOOD
@@ -2634,7 +2636,7 @@ await check('cleanup: a PR whose run throws is still cleaned up', async () => {
   calls = []; cleanupCalls = []; timeline = []
   preflight = GOOD
   const out = await run({ ...base, prs: only('C1', 'C2') }, async (p, o) => { if (o.label === 'open:C1') throw new Error('boom'); return agent(p, o) }, parallel, log)
-  assert.equal(out.prs[0], null)
+  assert.match(out.prs[0].reason, /^run failed: .*boom/)
   assert.equal(cleanupOf(cleanupCalls, 'C1', 'clones').length, 1)
   assert.match(cleanupOf(cleanupCalls, 'C1', 'worktrees')[0].prompt, /\/wt\/implement-C1/)
 })
@@ -3987,6 +3989,117 @@ await check('BR6 a PR not opened keeps the issues already filed', async () => {
   assert.equal('issuesCreated' in x, false)
   const y = (await hooked(only1('C1'), (p, o) => o.label === 'open:C1' ? null : undefined)).C1
   assert.equal(y.reason, 'PR not opened')
+})
+// A1: the result of a PR that stops or throws.
+const a1Args = (res, id) => {
+  const dir = mkdtempSync(join(tmpdir(), 'a1-'))
+  const file = join(dir, 'out.json')
+  writeFileSync(file, JSON.stringify({ result: { prs: [res] } }))
+  const ra = spawnSync('bash', ['scripts/resume-args.sh', file, id], { encoding: 'utf8' })
+  rmSync(dir, { recursive: true, force: true })
+  assert.equal(ra.status, 0, ra.stderr)
+  return JSON.parse(ra.stdout)
+}
+const a1Titles = r => (r.minors || []).map(m => m.title)
+const a1Pass = (p, o) => {
+  if (o.label === 'review:C1#1') return reviewOf([f('minor', 'pass nit', { file: 'src/a.js' })])
+  if (o.label === 'minorfix:C1') throw new Error('fixer died')
+  if (o.label === 'minorrevert:C1') return { reverted: true, headSha: 'sha-revert', summary: 'reverted' }
+}
+await check('A1-2 the runPR catch never throws again, for an Error or a value that is not an Error', async () => {
+  calls = []; cleanupCalls = []; timeline = []; logs = []
+  preflight = GOOD
+  const out = await run({ ...base, prs: only('C1', 'C2') }, async (p, o) => {
+    if (o.label === 'open:C1') throw new Error('boom')
+    if (o.label === 'implement:C2') throw 'disk gone'
+    return agent(p, o)
+  }, async thunks => Promise.all(thunks.map(t => t())), log)
+  assert.match(out.prs[0].reason, /^run failed: .*boom/)
+  assert.match(out.prs[1].reason, /^run failed: .*disk gone/)
+  assert.equal(out.prs[0].ready, false)
+  assert.equal(out.prs[1].ready, false)
+})
+await check('A1-3 a first run whose minor fixer throws keeps the minor1 row, so a resume runs no second pass', async () => {
+  const x = (await hooked(only1('C1'), a1Pass)).C1
+  assert.match(x.reason, /^run failed: .*fixer died/)
+  assert.ok(x.history.some(r => r.round === 'minor1'))
+  assert.ok(x.history.some(r => Number.isInteger(r.round)))
+  const resume = a1Args(x, 'C1').resume
+  assert.ok(resume.history.some(r => r.round === 'minor1'))
+  await hooked([{ ...only1('C1')[0], resume }], (p, o) => o.label === 'review:C1#1' ? reviewOf([f('minor', 'pass nit', { file: 'src/a.js' })]) : undefined)
+  assert.ok(!calls.some(c => c.label === 'minorfix:C1'))
+})
+await check('A1-4 a resumed PR that throws keeps the minors it was given and the ones it found', async () => {
+  const hook = (p, o) => {
+    if (o.label === 'review:C1#1') return reviewOf([f('minor', 'found nit')])
+    if (o.label === 'open:C1') throw new Error('open died')
+  }
+  const x = (await hooked([{ ...only1('C1')[0], resume: { history: [], minors: [f('minor', 'given nit')], findings: [] } }], hook)).C1
+  assert.match(x.reason, /^run failed:/)
+  assert.ok(a1Titles(x).includes('given nit') && a1Titles(x).includes('found nit'))
+  const kept = a1Titles(a1Args(x, 'C1').resume)
+  assert.ok(kept.includes('given nit') && kept.includes('found nit'))
+  const R = await accepted1()
+  const rec = a01Chain(a01Review('C1', 2, [a01Finding('cache race')]), (p, o) => { if (o.label === 'verify:C1#3') throw new Error('verifier crashed') })
+  const y = (await a10Hooked(resumeWith(asGiven(R), { history: [{ round: 1, testPass: true, failingChecks: [], blockersAndMajors: [] }], minors: [f("minor", "given nit")] }), rec, async thunks => Promise.all(thunks.map(t => t())))).prs[0]
+  assert.match(y.reason, /^run failed:/)
+  assert.ok(a1Titles(y).includes('given nit'))
+  assert.deepEqual(y.evalsMeta.accepted, R.evalsMeta.accepted)
+})
+await check('A1-5 the minors of a run failed result go through mergeDuplicates', async () => {
+  const hook = (p, o) => {
+    if (o.label === 'review:C1#1') return reviewOf([f('major', 'x'), f('minor', 'Repeated nit')])
+    if (o.label === 'review:C1#2') return reviewOf([f('minor', 'repeated  NIT!', { fileIssue: true })])
+    if (o.label === 'fix:C1#1') return { summary: 's', changed: true }
+    if (o.label === 'open:C1') throw new Error('open died')
+  }
+  const x = (await hooked(only1('C1'), hook)).C1
+  assert.match(x.reason, /^run failed:/)
+  const same = (x.minors || []).filter(m => /repeated/i.test(m.title))
+  assert.equal(same.length, 1)
+  assert.equal(typeof same[0].notFiled, 'string')
+  assert.notEqual(same[0].fileIssue, true)
+})
+await check('A1-6 the stops right after the open call keep the minors, and resume-args.sh prints them', async () => {
+  const review = (p, o) => o.label === 'review:C1#1' ? reviewOf([f('minor', 'tiny nit')]) : undefined
+  const x = (await hooked(only1('C1'), (p, o) => o.label === 'open:C1' ? null : review(p, o))).C1
+  assert.equal(x.reason, 'PR not opened')
+  assert.ok(a1Titles(x).includes('tiny nit'))
+  assert.ok(a1Titles(a1Args(x, 'C1').resume).includes('tiny nit'))
+  const y = (await hooked(only1('C1'), (p, o) => o.label === 'open:C1' ? { blocked: true, blockedReason: 'gh denied', commands: ['c'] } : review(p, o))).C1
+  assert.equal(y.reason, 'needs human: permission')
+  assert.deepEqual(y.commands, ['c'])
+  assert.ok(a1Titles(y).includes('tiny nit'))
+  assert.ok(a1Titles(a1Args(y, 'C1').resume).includes('tiny nit'))
+})
+await check('A1-9 a blocked opener result gives its id as a quoted keep word to both clones calls', async () => {
+  const words = c => /`[^`]*cleanup\.sh clones ([^`]*)`/.exec(c.prompt)[1]
+  const cases = [
+    ['gh denied', 'needs human: permission', {}],
+    ['no login here', 'needs human: no login', {}],
+    ['milestone v1 not found', 'milestone not found', { milestone: 'v1' }],
+  ]
+  for (const [blockedReason, reason, extra] of cases) {
+    const out = await hookedOut(only('C1', 'C2'), (p, o) => o.label === 'open:C1' ? { blocked: true, blockedReason, milestoneMissing: !!extra.milestone, commands: ['c'] } : undefined, extra)
+    assert.equal(out.prs[0].reason, reason)
+    assert.deepEqual(out.prs[0].commands, ['c'])
+    assert.equal(words(cleanupOf(cleanupCalls, 'C1', 'clones')[0]), "'/x' 'C1' 'C1'")
+    assert.equal(words(cleanupOf(cleanupCalls, 'C2', 'clones')[0]), "'/x' 'C2'")
+    assert.equal(words(cleanupOf(cleanupCalls, 'wave', 'all')[0]), "'/x' --all 'C1'")
+  }
+})
+await check('A1-10 a major finding outside the minor pass stops with a reason that names no kind', async () => {
+  const hook = (p, o) => {
+    if (o.label === 'review:C1#1') return reviewOf([f('minor', 'pass nit', { file: 'src/a.js' })])
+    if (o.label === 'minorfix:C1') return { changed: true, headSha: 'fixsha', fixed: [1], summary: 'renamed' }
+    if (o.label === 'test:C1#minor1') return { pass: true, headSha: 'sha-minor', checks: [{ name: 'lint', pass: true }] }
+    if (o.label.startsWith('minorrevert:C1')) return { reverted: true, headSha: 'sha-revert', summary: 'reverted' }
+    if (o.label === 'minorreview:C1') return { ...reviewOf([f('major', 'bot thread picks a file path', { outsidePass: true })]), unconfirmed: [] }
+  }
+  const x = (await hooked(only1('C1'), hook)).C1
+  assert.equal(x.ready, false)
+  assert.match(x.reason, /^needs human: .*bot thread picks a file path/)
+  assert.doesNotMatch(x.reason, /untrusted/i)
 })
 await check('BR6 the blocked sentence asks for prNumber and issuesCreated', async () => {
   await hooked(only1('C1'), () => undefined)

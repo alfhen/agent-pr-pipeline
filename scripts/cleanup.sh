@@ -1,14 +1,15 @@
 #!/bin/bash
 # usage: cleanup.sh init <tmp>
-#        cleanup.sh clones <tmp> <id>|--all
+#        cleanup.sh clones <tmp> <id>|--all [<keep-id>...]
 #        cleanup.sh worktrees <owner/repo> <path>...
+# A keep id protects the open-<id> folder: a blocked opener result names files in it as recovery commands.
 # Deletes the pipeline's own clones and finished worktrees. Prints one line per item, REMOVED or KEPT, and exits 0
 # when it only kept things, so a cleanup never fails a PR. Exit 2 is a usage error.
 # A worktree is removed without --force, and its branch is deleted with -D only after its head commit is on GitHub:
 # PRs land by squash merge, so git branch -d never succeeds for a writer's branch.
 MARK=.pipeline-tmp
 
-usage() { echo "usage: cleanup.sh init <tmp> | clones <tmp> <id>|--all | worktrees <owner/repo> <path>..." >&2; exit 2; }
+usage() { echo "usage: cleanup.sh init <tmp> | clones <tmp> <id>|--all [<keep-id>...] | worktrees <owner/repo> <path>..." >&2; exit 2; }
 canon() { (cd "$1" 2>/dev/null && pwd -P); }
 
 # Prints why a folder may not hold clones and returns 0 when it is refused. init and clones both ask, so a stale marker in a refused folder deletes nothing.
@@ -34,12 +35,15 @@ case "$cmd" in
     : > "$tmp/$MARK" && echo "MARKED $tmp" || echo "KEPT $1 cannot write the marker"
     ;;
   clones)
-    [ $# -eq 2 ] || usage
-    tmp=$(canon "$1"); id=$2
+    [ $# -ge 2 ] || usage
+    tmp=$(canon "$1"); id=$2; shift 2
+    keep=("$@")
+    kept() { local k; for k in "${keep[@]}"; do [ "${1##*/}" = "open-$k" ] && return 0; done; return 1; }
     [ -n "$tmp" ] && [ -f "$tmp/$MARK" ] || { echo "KEPT $1 no $MARK marker"; exit 0; }
     refusal=$(refused "$tmp") && { echo "KEPT $1 refused: $refusal"; exit 0; }
     if [ "$id" = --all ]; then
       while IFS= read -r -d '' d; do
+        kept "$d" && continue
         if rm -rf "$d"; then echo "REMOVED ${d//$'\n'/ }"; else echo "KEPT ${d//$'\n'/ } cannot delete"; fi
       done < <(find "$tmp" -mindepth 1 -maxdepth 1 -type d -print0)
       # NUL-separated so a newline in a name cannot yield a path relative to the cwd. Only the wave end removes these: another PR of the wave may still read one. find -type f skips symbolic links. The name pattern must match the mktemp template io-large.XXXXXX in scripts/io.sh and IO_LARGE_NAME in workflows/run-wave.js. Newlines in printed names become spaces so a name cannot forge a line.
@@ -52,6 +56,7 @@ case "$cmd" in
       shopt -s nullglob
       for d in "$tmp"/*-"$id"-* "$tmp"/*-"$id"; do
         [ -d "$d" ] && [ ! -L "$d" ] || continue
+        kept "$d" && continue
         if rm -rf "$d"; then echo "REMOVED $d"; else echo "KEPT $d cannot delete"; fi
       done
     fi

@@ -249,6 +249,9 @@ const recordState = {}
 const landOutState = {}
 // Per PR: the PR number once a bot answer changed code, so a result built after a throw still carries both.
 const botChangedState = {}
+// Per PR: the history rows and the minors array of the run, so a result built after a throw keeps both. runPRSteps pushes onto the same arrays.
+const historyState = {}
+const minorsState = {}
 // Per PR: the break-check results of the last verifier round that gave any. A later round without them leaves it alone.
 const breakCheckState = {}
 const TEST_FILE = new RegExp(`${E2E_PATTERN}|(^|/)(tests?|__tests__)/|\\.(test|spec)\\.[cm]?[jt]sx?$`)
@@ -1592,7 +1595,7 @@ async function minorRestore(pr, signedSha) {
 const repoPath = file => file.replace(/^\.\//, '').replace(/:\d+(-\d+)?$/, '')
 
 // One capped pass: a fixer, one check of its commits, and a revert commit when the check fails. There is no fix round and no second pass.
-// It stops the PR only for an untrusted-path finding outside the pass, ranked major or blocker. A fixer that dies after its push is treated like a failed check, since its commits are unchecked. When the
+// It stops the PR only for a finding outside the pass, ranked major or blocker. A fixer that dies after its push is treated like a failed check, since its commits are unchecked. When the
 // branch cannot be restored, the PR goes on and a person merges it: the untested list says why.
 async function minorPass(pr, signedSha, history, minors) {
   const open = mergeDuplicates(minors)
@@ -1647,7 +1650,7 @@ async function minorPass(pr, signedSha, history, minors) {
     else if (split.blocking.length) why = `the check found ${split.blocking.length} blockers or majors`
     else noteTest(pr, outcome)
   }
-  // An untrusted-path finding outside the pass must survive the drop: the PR ends not ready.
+  // A finding outside the pass must survive the drop: the PR ends not ready.
   const outside = split.blocking.filter(f => f.outsidePass)
   if (why) {
     minors.push(...split.minors.filter(f => f.outsidePass))
@@ -1868,9 +1871,14 @@ async function cleanupRun(pr, args, label) {
 const cleanupReady = CLEANUP && !!PLUGIN_ROOT
 // False once init does not mark the folder, so no clones call can delete in a folder init refused.
 let clonesOn = cleanupReady
-async function cleanupPR(pr) {
+// Ids whose blocked opener result names files in open-<id>: both clones calls keep that folder.
+const keepOpen = []
+const BLOCKED_REASONS = ['needs human: permission', 'needs human: no login', 'milestone not found']
+async function cleanupPR(pr, result) {
   if (!cleanupReady) return []
-  const lines = clonesOn ? await cleanupRun(pr, cleanupArgs('clones', shq(TMP), shq(pr.id)), 'clones') : []
+  const blocked = !!result && BLOCKED_REASONS.includes(result.reason) && Array.isArray(result.commands)
+  if (blocked && !keepOpen.includes(pr.id)) keepOpen.push(pr.id)
+  const lines = clonesOn ? await cleanupRun(pr, cleanupArgs('clones', shq(TMP), shq(pr.id), ...(blocked ? [shq(pr.id)] : [])), 'clones') : []
   const paths = [...(worktreesOf[pr.id] || [])]
   if (paths.length) lines.push(...await cleanupRun(pr, cleanupArgs('worktrees', shq(REPO), ...paths.map(shq)), 'worktrees'))
   return lines
@@ -1882,18 +1890,20 @@ async function runPR(input) {
   } catch (e) {
     const rec = recordState[input.id]
     const landOut = input.landFix ? landOutState[input.id] : null
-    if (!rec && !landOut && !botChangedState[input.id]) throw e
     const resume = input.resume
+    const history = input.landFix ? (resume && resume.history) : (historyState[input.id] || (resume && resume.history))
+    const found = input.landFix ? null : (minorsState[input.id] || (resume && resume.minors))
+    const minors = Array.isArray(found) && found.length ? mergeDuplicates(found) : null
     result = {
       id: input.id, ready: false, reason: `run failed: ${(e && e.message) || String(e)}`,
-      // runPRSteps pushes its rows onto this same array, so keep it by reference.
-      ...(resume && Array.isArray(resume.history) ? { history: resume.history } : {}),
+      ...(Array.isArray(history) ? { history } : {}),
+      ...(minors ? { minors } : {}),
       ...(input.landFix && input.prNumber ? { prNumber: input.prNumber } : {}),
       ...(botChangedState[input.id] ? { codeChangedByBots: true, prNumber: botChangedState[input.id] } : {}),
       ...(rec ? recordOut(rec) : {}), ...(landOut || {}), ...carriedOut(resumedDisputes(input), resumedDeviations(input)),
     }
   } finally {
-    const cleanup = await cleanupPR(input)
+    const cleanup = await cleanupPR(input, result)
     if (result && cleanup.length) result.cleanup = cleanup
   }
   return result
@@ -2126,6 +2136,8 @@ async function runPRSteps(input) {
   const history = pr.resume ? pr.resume.history || [] : []
   const marked = r => { stopMark(history, r.reason); return r }
   const minors = (pr.resume ? pr.resume.minors || [] : []).concat(quickMinors)
+  historyState[pr.id] = history
+  minorsState[pr.id] = minors
   let impl = { problems: '' }
   let rerunFixChanged
   const evalsOut = () => ({ ...(testsOnlyState[pr.id] ? { testsOnly: true } : {}), ...(breakCheckState[pr.id] ? { breakCheck: breakCheckState[pr.id] } : {}), ...(pr.evals ? { evals: pr.evals, evalsMeta: { ...pr.evalsMeta, accepted: pr.record }, evalDisputes: pr.evalDisputes, ...carriedOut([], pr.deviations) } : carriedOut([], pr.deviations)) })
@@ -2178,7 +2190,7 @@ async function runPRSteps(input) {
   // Unchecked pass commits stay on the head, so a later test run on it fails for a reason no later agent can fix. Those steps
   // are skipped and listed as untested, and a person merges.
   const redHead = !!pass.revertFailed
-  if (pass.outside) return marked({ id: pr.id, ready: false, reason: `needs human: untrusted path outside the minor pass: ${pass.outside.map(f => f.title).join('; ')}`, history, lastFindings: pass.outside, minorPass: pass.report, untested: untestedOf(pr), ...minorsOut(), architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
+  if (pass.outside) return marked({ id: pr.id, ready: false, reason: `needs human: finding outside the minor pass: ${pass.outside.map(f => f.title).join('; ')}`, history, lastFindings: pass.outside, minorPass: pass.report, untested: untestedOf(pr), ...minorsOut(), architecture: loopState.reports, product: loopState.product, ...rerunFix(), ...evalsOut() })
 
   let docs = null
   if (docsRuns(pr) && redHead) untestedFor(pr).pass.push('docs not updated: the minor pass commits are still on the branch')
@@ -2195,9 +2207,9 @@ async function runPRSteps(input) {
   const report = { ...(opened && opened.prUrl ? { prUrl: opened.prUrl } : {}), issues: (opened && opened.issuesCreated) || [], docs }
   if (opened && opened.blocked) {
     const reason = A.milestone && opened.milestoneMissing ? 'milestone not found' : String(opened.blockedReason || '').toLowerCase().includes(NO_LOGIN) ? 'needs human: no login' : 'needs human: permission'
-    return marked({ id: pr.id, ready: false, reason, blockedReason: opened.blockedReason, commands: opened.commands || [], history, ...(opened.prNumber ? { prNumber: opened.prNumber } : {}), ...report, ...rerunFix(), ...evalsOut() })
+    return marked({ id: pr.id, ready: false, reason, blockedReason: opened.blockedReason, commands: opened.commands || [], history, ...(opened.prNumber ? { prNumber: opened.prNumber } : {}), ...report, ...minorsOut(), ...rerunFix(), ...evalsOut() })
   }
-  if (!opened || !opened.prNumber) return marked({ id: pr.id, ready: false, reason: 'PR not opened', history, ...report, ...rerunFix(), ...evalsOut() })
+  if (!opened || !opened.prNumber) return marked({ id: pr.id, ready: false, reason: 'PR not opened', history, ...report, ...minorsOut(), ...rerunFix(), ...evalsOut() })
   const n = opened.prNumber
   const afterBots = b => ({ closesIssues: (b.answer && b.answer.closesIssues) || [], lateMinors: b.lateMinors || [] })
 
@@ -2252,7 +2264,7 @@ async function checkVersion() {
 const finish = async result => {
   result.warnings = warnings
   result.agentCounts = { ...agentCounts }
-  if (clonesOn) result.cleanup = await cleanupRun(null, cleanupArgs('clones', shq(TMP), '--all'), 'all')
+  if (clonesOn) result.cleanup = await cleanupRun(null, cleanupArgs('clones', shq(TMP), '--all', ...keepOpen.map(shq)), 'all')
   return result
 }
 const needsGoals = A.prs.some(pr => !pr.landFix)
