@@ -1,0 +1,6 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# The free plan gives about one review an hour. A review is asked for by comment on the final head of a PR
+# ("@coderabbitai full review"), so no review is spent on an earlier push.
+reviews:
+  auto_review:
+    enabled: false
