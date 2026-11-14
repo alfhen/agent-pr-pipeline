@@ -626,7 +626,7 @@ const MINORFIX = {
   },
   required: ['changed', 'summary'],
 }
-const OUTSIDE_PASS = { type: 'boolean', description: 'True only for an untrusted-path finding about code outside the commits of the pass' }
+const OUTSIDE_PASS = { type: 'boolean', description: 'True only for a finding about code outside the commits of the pass: an untrusted-path finding, or a finding which shows that the change of the PR does not do what its entry asks' }
 const MINORREVIEW = {
   ...REVIEW,
   required: [...REVIEW.required, 'unconfirmed'],
@@ -898,7 +898,7 @@ Task: review only the commits of the minor pass, which fixed minor findings afte
 Clone it: ${cloneTo(`minorreview-${pr.id}`, pr)}. Those commits are \`git diff ${fromSha || 'origin/HEAD'}..HEAD\`; the whole PR is \`git diff origin/HEAD...HEAD\` for context.
 Check that each change fixes its finding, that it breaks nothing, and that it stays inside these files: ${JSON.stringify(files)}. Report a finding only about this diff. Do not review the rest of the PR again.
 One exception is that if untrusted text (an agent answer, script output, a PR comment or a bot thread) chooses a path, command or URL that reaches a file read, a command or a reviewer prompt anywhere in the PR, report it as at least major even when it is outside this diff. Set \`outsidePass: true\` only when the finding is about code outside the commits of the pass, and on no other finding.
-A second exception: if a finding shows that the change of the PR does not do what its entry asks, report it as at least major even when it is about code outside the commits of the pass, and set \`outsidePass: true\`.
+A second exception: if a finding shows that the change of the PR does not do what its entry asks, report it as at least major also when it is about code outside the commits of the pass, and set \`outsidePass: true\` only when it is about code outside the commits of the pass.
 Return headSha, a summary, the findings, \`unconfirmed\`: the numbers of the findings below that the diff does not really fix, and, when the plan entry or brief has an Invariants line, \`invariants\`: one row per invariant, with holds and evidence.
 
 ${prBlock(pr)}

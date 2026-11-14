@@ -83,6 +83,22 @@ test('the minor-pass sentence of the reviewer and the task of the check carry th
   for (const w of ['at least major', 'does not do what its entry', 'outsidePass: true']) assert.ok(task.includes(w), w)
 })
 
+test('OUTSIDE_PASS names both kinds of finding about code outside the pass', () => {
+  const d = /description: '([^']*)'/.exec(src.slice(src.indexOf('const OUTSIDE_PASS')))[1]
+  for (const w of ['outside the commits of the pass', 'untrusted-path', 'does not do what its entry']) assert.ok(d.includes(w), w)
+})
+
+test('the second exception marks only a finding about code outside the commits of the pass', () => {
+  const start = src.indexOf('const minorReviewPrompt')
+  const task = src.slice(start, src.indexOf('\nconst ', start + 1))
+  const inTask = task.split(/(?<=\.)\s/).find(s => s.includes('does not do what its entry'))
+  const inRole = read('agents/reviewer.md').split(/(?<=\.)\s/).find(s => s.includes('does not do what its entry') && s.includes('outsidePass'))
+  for (const sentence of [inTask, inRole]) {
+    assert.ok(sentence)
+    assert.match(sentence, /outsidePass: true\\?`? only when it is about code outside the commits of the pass/)
+  }
+})
+
 const stepLines = (() => {
   const lines = skill.split('\n')
   const from = lines.findIndex(l => l.startsWith('## ') && l.includes('The loop for one PR'))
