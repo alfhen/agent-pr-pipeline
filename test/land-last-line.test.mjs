@@ -92,7 +92,7 @@ test('the marker comment is posted in step 7 of the answer prompt, after the pus
 
 test('the docs say the marker is posted last and the land check reads the last line', () => {
   const skill = readFileSync(join(root, 'skills/pr-pipeline/SKILL.md'), 'utf8')
-  assert.match(skill, /posts that comment last, after its final push/)
+  assert.match(skill, /which it posts last, after its final push/)
   assert.match(skill, /`land-commits: sum <crc>:<bytes>`/)
   assert.match(readFileSync(join(root, 'agents/bot-answerer.md'), 'utf8'), /Post it last, after your final push/)
   for (const f of ['scripts/land-commits.sh', 'workflows/run-wave.js', 'skills/pr-pipeline/SKILL.md']) {
