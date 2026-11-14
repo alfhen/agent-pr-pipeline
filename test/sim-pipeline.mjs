@@ -3179,6 +3179,99 @@ await check('F659: the last verifier round decides tests only', () => withChange
   assert.equal(x.C1.testsOnly, undefined)
   assert.doesNotMatch(calls.find(c => c.label === 'open:C1').prompt, /adds tests only/)
 }))
+const runOnFiles = async (files, extra = {}) => {
+  let out
+  await withChanged(files, async () => {
+    const x = await hooked(withEvals('C1'), verifyHook({ 1: ROWS_PWC }), extra)
+    out = { x: x.C1, v: calls.find(c => c.label === 'verify:C1#1').prompt }
+  })
+  return out
+}
+await check('#664: a lone test in a Go, Python, RSpec, snapshot or .NET layout is tests only', async () => {
+  for (const f of ['pkg/a_test.go', 'app/test_a.py', 'app/a_test.py', 'spec/models/user_spec.rb', 'spec/spec_helper.rb', 'spec/support/factories.rb', 'lib/a_spec.rb', 'src/__snapshots__/a.test.js.snap', 'src/App.Tests/Helper.cs', 'src/AppTests.cs']) {
+    const { x, v } = await runOnFiles([f])
+    assert.equal(x.testsOnly, true, f)
+    assert.match(v, /A script found that every file the PR changes is a test/, f)
+    assert.equal(x.history.length, 1, f)
+    assert.deepEqual(x.untested, [], f)
+    assert.equal(x.ready, true, f)
+  }
+})
+await check('#664: a plain Go, Python, Ruby or C# source file beside a test keeps the break check', async () => {
+  for (const f of ['pkg/a.go', 'app/a.py', 'lib/a.rb', 'src/App.cs']) {
+    const { x, v } = await runOnFiles(['test/a.test.mjs', f])
+    assert.equal(x.testsOnly, undefined, f)
+    assert.doesNotMatch(v, /A script found/, f)
+    assert.ok(x.history[0].evals.failed.includes('X-1'), f)
+  }
+})
+await check('#665: tests plus Markdown files are tests only, and the verify sentence names Markdown', async () => {
+  for (const files of [['test/a.test.mjs', 'README.md'], ['test/a.test.mjs', 'docs/notes.md', 'CHANGELOG.md'], ['pkg/a_test.go', 'docs/guide/setup.md']]) {
+    const { x, v } = await runOnFiles(files)
+    assert.equal(x.testsOnly, true, files.join())
+    assert.match(v, /A script found that every file the PR changes is a test[^.]*not-applicable[^.]*`tests only: no change to take out`/, files.join())
+    assert.match((v.match(/[^.]*A script found that every file the PR changes is a test[^.]*\./) || [''])[0], /Markdown/i, files.join())
+    assert.equal(x.history.length, 1)
+    assert.deepEqual(x.untested, [])
+    assert.equal(x.ready, true)
+  }
+})
+await check('#665: Markdown only, a non-Markdown file under docs, or another file is not tests only', async () => {
+  for (const [files, extra] of [[['README.md'], {}], [['docs/a.md', 'CHANGELOG.md'], {}], [['test/a.test.mjs', 'site/index.js'], { docs: ['site'] }], [['test/a.test.mjs', 'docs/page.js'], {}], [['test/a.test.mjs', 'notes.txt'], {}]]) {
+    const { x, v } = await runOnFiles(files, extra)
+    assert.equal(x.testsOnly, undefined, files.join())
+    assert.doesNotMatch(v, /A script found/, files.join())
+  }
+})
+const REMOVE_RULE = /remove the line that starts with/
+const openOnRead = async (ans, extra = {}) => {
+  const x = await hooked(withEvals('C1'), (p, o) => /^io:C1#changed/.test(o.label) ? ans : verifyHook({ 1: ROWS_PWC })(p, o), extra)
+  return { x: x.C1, open: (calls.find(c => c.label === 'open:C1') || {}).prompt }
+}
+await check('#769: a changed-file read that failed or came back empty gives no remove instruction and keeps the break check', async () => {
+  const answers = { noAnswer: null, exit1: ioWrap('io:', { exitCode: 1, output: 'gate-files: cannot read' }), noLine: ioWrap('io:', { exitCode: 0, output: 'nothing here' }), badJson: ioWrap('io:', { exitCode: 0, output: 'CHANGED [not json' }), empty: ioWrap('io:', { exitCode: 0, output: 'CHANGED []' }) }
+  for (const [k, ans] of Object.entries(answers)) {
+    const { x, open } = await openOnRead(ans)
+    assert.ok(open, k)
+    assert.doesNotMatch(open, REMOVE_RULE, k)
+    assert.doesNotMatch(open, /adds tests only/, k)
+    assert.equal(x.testsOnly, undefined, k)
+    assert.ok(x.history[0].evals.failed.includes('X-1'), k)
+  }
+  const { open } = await openOnRead(ioWrap('io:', { exitCode: 0, output: 'CHANGED ["test/a.test.mjs"]' }), { pluginRoot: undefined })
+  assert.ok(open, 'noRoot')
+  assert.doesNotMatch(open, REMOVE_RULE, 'noRoot')
+})
+await check('#769: a real read still decides the open prompt', async () => {
+  let r = await openOnRead(ioWrap('io:', { exitCode: 0, output: 'CHANGED ["test/a.test.mjs","src/a.js"]' }))
+  assert.match(r.open, REMOVE_RULE)
+  assert.equal(r.x.testsOnly, undefined)
+  r = await openOnRead(ioWrap('io:', { exitCode: 0, output: 'CHANGED ["test/a.test.mjs"]' }))
+  assert.doesNotMatch(r.open, REMOVE_RULE)
+  assert.match(r.open, /adds tests only/)
+  assert.equal(r.x.testsOnly, true)
+})
+const portRuleNear = (t, w) => {
+  const m = /[^.\n]*\bports?\b[^.\n]*\bin use\b[^.\n]*|[^.\n]*\bin use\b[^.\n]*\bports?\b[^.\n]*/i.exec(t)
+  if (!m) return false
+  const s = t.slice(m.index, m.index + m[0].length + 300)
+  return /once more|again|a second time|one more time|rerun|re-run/i.test(s) && s.includes(w)
+}
+await check('#91: the tester and verify prompts say a port in use runs once more and is reported as refused', async () => {
+  await hooked(only1('C1'), () => undefined)
+  assert.ok(portRuleNear(calls.find(c => c.label === 'test:C1#1').prompt, 'refused'), 'test prompt')
+  await hooked(withEvals('C1'), verifyHook({ 1: vres() }))
+  assert.ok(portRuleNear(calls.find(c => c.label === 'verify:C1#1').prompt, 'refused'), 'verify prompt')
+})
+await check('#91: a refused check starts no fix round and is on the untested list', async () => {
+  const port = { pass: false, headSha: 'sha-C1', checks: [ck('lint'), ck('docs preview e2e', { pass: false, refused: true, log: 'Error: listen EADDRINUSE: address already in use :::4321' })] }
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? port : undefined)
+  assert.equal(calls.filter(c => c.label.startsWith('fix:C1')).length, 0)
+  assert.ok(x.C1.untested.includes('docs preview e2e (refused)'))
+  const y = await hooked(withEvals('C1'), verifyHook({ 1: vres({ checks: port.checks }) }))
+  assert.equal(calls.filter(c => c.label.startsWith('fix:C1')).length, 0)
+  assert.ok(y.C1.untested.includes('docs preview e2e (refused)'))
+})
 await check('severity: a review major titled [minor] x is one major line, a conflict and a clean title for the fixer', async () => {
   const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', '[minor] x')]) : undefined)
   assert.deepEqual(x.C1.history[0].blockersAndMajors, ['major [review]: x'])
