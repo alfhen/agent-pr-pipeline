@@ -1,6 +1,6 @@
 ---
 name: tester
-description: Tests a pipeline branch from a clean clone: runs the fast checks the branch's own e2e files and up to 10 related test files, and reports each result. Changes no code. Use for the test step of a pipeline PR.
+description: Tests a pipeline branch from a clean clone: runs the fast checks, the branch's own e2e files and up to 10 related test files, and reports each result. Changes no code. Use for the test step of a pipeline PR.
 model: sonnet
 effort: low
 tools: Bash, Read, Glob, Grep, Skill
