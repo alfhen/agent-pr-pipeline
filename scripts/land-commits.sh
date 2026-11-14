@@ -6,7 +6,7 @@
 # The combined diff omits a conflict resolved to exactly one side, which can drop the PR's change. For a file either parent
 # changed whose merged blob equals one parent's, the diff against each other parent that differs from the merge and the base
 # is printed too.
-# The last line is `land-commits: sum <crc>:<bytes>`, the POSIX cksum and byte length of every line before it, or the one line
+# The last line is `land-commits: sum <crc>:<bytes>`, the POSIX cksum and byte length of the text before that line, without the line end that comes before it, or the one line
 # `land-commits: no code added by the land fix` when there is nothing else. It is printed only after every git command succeeded,
 # so a cut or failed read has no such line. Exits 1 when it cannot read the range.
 # LAND_COMMITS_REMOTE: a local path used in place of the GitHub URL, for tests.
@@ -61,13 +61,15 @@ for m in $merges; do
     done
   done <<< "$changed"
 done
-# The workflow reads the answer as a UTF-8 string, so bytes that are not valid UTF-8 are dropped before the sum.
+# The workflow reads the answer as a UTF-8 string. Text that is not valid UTF-8 is never converted by a tool that may drop
+# bytes: each byte outside ASCII becomes `?` one for one, and a result of another length is refused.
 if [ -n "$out" ]; then
-  clean=$(printf '%s' "$out" | iconv -f utf-8 -t utf-8 -c 2>/dev/null) || true
-  [ -n "$clean" ] || fail "cannot make the output valid UTF-8"
-  # iconv -c exits 1 whenever it drops a byte, so a stop part way shows only as lost ASCII.
-  [ "$(printf '%s' "$out" | LC_ALL=C tr -cd '\000-\177' | tr -d '\n' | cksum)" = "$(printf '%s' "$clean" | LC_ALL=C tr -cd '\000-\177' | tr -d '\n' | cksum)" ] || fail "cannot make the output valid UTF-8"
-  out=$clean
+  out=$(printf '%s' "$out")
+  if ! printf '%s' "$out" | iconv -f utf-8 -t utf-8 >/dev/null 2>&1; then
+    safe=$(printf '%s' "$out" | LC_ALL=C tr '\200-\377' '?') || fail "cannot replace the bytes outside ASCII"
+    [ "$(printf '%s' "$safe" | wc -c)" -eq "$(printf '%s' "$out" | wc -c)" ] || fail "the byte replacement changed the length"
+    out=$safe$'\n'"land-commits: the output was not valid UTF-8; each byte outside ASCII is shown as ?"
+  fi
 fi
 if [ -z "$out" ]; then
   echo "land-commits: no code added by the land fix"

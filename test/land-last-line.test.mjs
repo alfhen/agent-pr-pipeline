@@ -94,27 +94,58 @@ test('a git warning on a successful clone stays out of the output and the sum', 
   assert.equal(last, want)
 })
 
-test('an iconv that stops part way prints no matching last line', () => {
-  const f = fixture(false)
-  const shim = join(f.dir, 'ishim'); mkdirSync(shim)
-  writeFileSync(join(shim, 'iconv'), '#!/bin/sh\nhead -c 20; cat >/dev/null; exit 1\n')
-  chmodSync(join(shim, 'iconv'), 0o755)
-  const r = runIo(f, { PATH: `${shim}:${process.env.PATH}` })
-  assert.match(r.stdout, /pipeline-io: exit 1/)
-  assert.doesNotMatch(r.stdout, /land-commits: (sum|no code)/)
+const NOTE = /^land-commits: the output was not valid UTF-8; each byte outside ASCII is shown as \?$/m
+const runRaw = f => spawnSync('bash', [join(root, 'scripts/io.sh'), 'land-commits.sh', 'o/r', f.before, f.after, join(f.dir, 'tmp')], {
+  env: { ...GIT_ENV, LAND_COMMITS_REMOTE: f.remote, PIPELINE_IO_TMP: f.dir, ...(f.env || {}) },
 })
+const shimOf = (f, name, script) => {
+  const shim = join(f.dir, name + '-shim'); mkdirSync(shim)
+  writeFileSync(join(shim, name), script); chmodSync(join(shim, name), 0o755)
+  return { PATH: `${shim}:${process.env.PATH}` }
+}
 
-test('bytes that are not valid UTF-8 are dropped before the sum', () => {
-  const f = fixture(false, Buffer.from([0x78, 0xe9, 0x79, 0x0a, 0x74, 0x77, 0x6f, 0x0a]))
-  const r = spawnSync('bash', [join(root, 'scripts/io.sh'), 'land-commits.sh', 'o/r', f.before, f.after, join(f.dir, 'tmp')], {
-    env: { ...GIT_ENV, LAND_COMMITS_REMOTE: f.remote, PIPELINE_IO_TMP: f.dir },
-  })
+test('valid UTF-8 text with non-ASCII characters comes out byte for byte, with no note line', () => {
+  const f = fixture(false, Buffer.from('\u4e2d\u6587\u6587\u672c\ntwo\n', 'utf8'))
+  const r = runRaw(f)
   assert.equal(r.status, 0)
   const text = new TextDecoder('utf-8', { fatal: true }).decode(r.stdout)
-  assert.doesNotMatch(text, /\ufffd/)
+  assert.match(text, /^\+\+\u4e2d\u6587\u6587\u672c$/m)
+  assert.doesNotMatch(text, NOTE)
   const { last, want } = sumLine(body(text))
   assert.equal(last, want)
-  assert.match(text, /^\+\+xy$/m)
+})
+
+test('a byte outside ASCII in text that is not valid UTF-8 becomes ? with a note line and a matching sum', () => {
+  const f = fixture(false, Buffer.from([0x78, 0xe9, 0x79, 0x0a, 0x74, 0x77, 0x6f, 0x0a]))
+  const r = runRaw(f)
+  assert.equal(r.status, 0)
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(r.stdout)
+  assert.match(text, /^\+\+x\?y$/m)
+  assert.match(text, NOTE)
+  const lines = body(text)
+  assert.match(lines[lines.length - 2], /^land-commits: the output was not valid UTF-8/)
+  const { last, want } = sumLine(lines)
+  assert.equal(last, want)
+})
+
+test('an iconv that stops part way, on text that ends in non-ASCII characters, never gives a cut output with a matching last line', () => {
+  const f = fixture(false, Buffer.from('hand\ntwo\n\u4e2d\u6587\n', 'utf8'))
+  f.env = shimOf(f, 'iconv', '#!/bin/sh\nhead -c 20; cat >/dev/null; exit 1\n')
+  const r = runRaw(f)
+  const text = r.stdout.toString('utf8')
+  assert.match(text, /^\+\+hand$/m)
+  assert.match(text, /^\+\+\?{6}$/m)
+  assert.match(text, NOTE)
+  const { last, want } = sumLine(body(text))
+  assert.equal(last, want)
+})
+
+test('a tr that prints less than its input fails with no last line', () => {
+  const f = fixture(false, Buffer.from([0x78, 0xe9, 0x79, 0x0a, 0x74, 0x77, 0x6f, 0x0a]))
+  f.env = shimOf(f, 'tr', '#!/bin/sh\nhead -c 5; cat >/dev/null; exit 0\n')
+  const text = runRaw(f).stdout.toString('utf8')
+  assert.match(text, /pipeline-io: exit 1/)
+  assert.doesNotMatch(text, /land-commits: (sum|no code)/)
 })
 
 const src = readFileSync(join(root, 'workflows/run-wave.js'), 'utf8')
