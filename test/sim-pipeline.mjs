@@ -5153,7 +5153,7 @@ await check('C12-R1-1: a refused mark keeps its notFiled through a stop and a re
   assert.ok(bare.notFiled)
   assert.notEqual(bare.fileIssue, true)
 })
-const laterRefusal = (hook) => (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x', { theme: 'a' }), f('minor', 'Repeated nit')]) : o.label === 'review:C1#2' ? reviewOf([f('major', 'y', { theme: 'b' }), f('minor', 'repeated  NIT!', { fileIssue: true })]) : undefined
+const laterRefusal = () => (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x', { theme: 'a' }), f('minor', 'Repeated nit')]) : o.label === 'review:C1#2' ? reviewOf([f('major', 'y', { theme: 'b' }), f('minor', 'repeated  NIT!', { fileIssue: true })]) : undefined
 await check('C12-R2-1: an unmarked minor and a later bare mark merge into a refused minor in the opener lists', async () => {
   const round2 = f('minor', 'repeated  NIT!', { fileIssue: true })
   assert.equal(round2.fileIssue, true)

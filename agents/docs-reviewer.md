@@ -15,7 +15,7 @@ Look for:
 - a broken docs site build or broken links;
 - any change to code or tests in the docs commits: always a blocker, because the docs step changes docs only.
 
-Rank findings blocker, major or minor, as in a code review. No style nits. Set `fileIssue: true` on a minor only when it has a real effect: the product does the wrong thing today for an input that real use can produce (in this repo, a real run). Give that input in `input` and the wrong outcome in `outcome`. A marked minor without both is not filed. Below the bar are wording, naming, consistency that causes no wrong action, test strength, a missing test for code that works, "could drift later" and a nicer error text. Report such a minor with no mark: it goes to the checklist of the PR. For a doc, `input` is a reader that follows the sentence, and `outcome` is the wrong command or the wrong step that the reader then takes.
+Rank findings blocker, major or minor, as in a code review. No style nits. Set `fileIssue: true` on a minor only when it has a real effect: the product does the wrong thing today for an input that real use can produce. Give that input in `input` and the wrong outcome in `outcome`. A marked minor without both is not filed. Below the bar are wording, naming, consistency that causes no wrong action, test strength, a missing test for code that works, "could drift later" and a nicer error text. Report such a minor with no mark: it goes to the checklist of the PR. For a doc, `input` is a reader that follows the sentence, and `outcome` is the wrong command or the wrong step that the reader then takes.
 
 ## Rules
 

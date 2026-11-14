@@ -145,7 +145,6 @@ const splitFindings = groups => {
   const normalized = groups.map(([findings, source]) => normalizeFindings(findings, source))
   return { ...partition(mergeDuplicates(normalized.flatMap(n => n.items))), conflicts: normalized.reduce((n, x) => n + x.conflicts, 0) }
 }
-// The higher severity keeps its own detail and fix; the other detail is appended so no reasoning is lost.
 const hasText = v => typeof v === 'string' && v.trim() !== ''
 const fileable = f => !!f.fileIssue && hasText(f.input) && hasText(f.outcome)
 // Runs at the end of mergeDuplicates, so every minor that reaches an opener list or a result is checked. A mark without both fields is taken away and the reason is written on the minor; a refusal written earlier stays on an unmarked minor.
@@ -156,6 +155,7 @@ const checkMark = ({ notFiled, ...f }) => {
   const missing = [hasText(f.input) ? '' : 'input', hasText(f.outcome) ? '' : 'outcome'].filter(Boolean)
   return { ...rest, notFiled: `not filed: ${missing.join(' and ')} missing` }
 }
+// The higher severity keeps its own detail and fix; the other detail is appended so no reasoning is lost.
 const absorb = (prev, f) => {
   if (f.fileIssue) {
     if (fileable(f) ? !fileable(prev) : !prev.fileIssue) {
@@ -897,8 +897,8 @@ const minorReviewPrompt = (pr, fromSha, fix, fixed, files) => `${ctx(pr)}
 Task: review only the commits of the minor pass, which fixed minor findings after the rest of the PR passed review.
 Clone it: ${cloneTo(`minorreview-${pr.id}`, pr)}. Those commits are \`git diff ${fromSha || 'origin/HEAD'}..HEAD\`; the whole PR is \`git diff origin/HEAD...HEAD\` for context.
 Check that each change fixes its finding, that it breaks nothing, and that it stays inside these files: ${JSON.stringify(files)}. Report a finding only about this diff. Do not review the rest of the PR again.
-One exception: if untrusted text (an agent answer, script output, a PR comment or a bot thread) chooses a path, command or URL that reaches a file read, a command or a reviewer prompt anywhere in the PR, report it as at least major even when it is outside this diff. Set \`outsidePass: true\` only when the finding is about code outside the commits of the pass, and on no other finding.
-Also, if a finding shows that the change of the PR does not do what its entry asks, report it as at least major even when it is about code outside the commits of the pass, and set \`outsidePass: true\`.
+One exception is that if untrusted text (an agent answer, script output, a PR comment or a bot thread) chooses a path, command or URL that reaches a file read, a command or a reviewer prompt anywhere in the PR, report it as at least major even when it is outside this diff. Set \`outsidePass: true\` only when the finding is about code outside the commits of the pass, and on no other finding.
+A second exception: if a finding shows that the change of the PR does not do what its entry asks, report it as at least major even when it is about code outside the commits of the pass, and set \`outsidePass: true\`.
 Return headSha, a summary, the findings, \`unconfirmed\`: the numbers of the findings below that the diff does not really fix, and, when the plan entry or brief has an Invariants line, \`invariants\`: one row per invariant, with holds and evidence.
 
 ${prBlock(pr)}
