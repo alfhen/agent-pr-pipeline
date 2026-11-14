@@ -145,9 +145,24 @@ const splitFindings = groups => {
   const normalized = groups.map(([findings, source]) => normalizeFindings(findings, source))
   return { ...partition(mergeDuplicates(normalized.flatMap(n => n.items))), conflicts: normalized.reduce((n, x) => n + x.conflicts, 0) }
 }
+const hasText = v => typeof v === 'string' && v.trim() !== ''
+const fileable = f => !!f.fileIssue && hasText(f.input) && hasText(f.outcome)
+// Runs at the end of mergeDuplicates, so every minor that reaches an opener list or a result is checked. A mark without both fields is taken away and the reason is written on the minor; a refusal written earlier stays on an unmarked minor.
+const checkMark = ({ notFiled, ...f }) => {
+  if (fileable(f)) return f
+  if (!f.fileIssue) return notFiled ? { ...f, notFiled } : f
+  const { fileIssue, ...rest } = f
+  const missing = [hasText(f.input) ? '' : 'input', hasText(f.outcome) ? '' : 'outcome'].filter(Boolean)
+  return { ...rest, notFiled: `not filed: ${missing.join(' and ')} missing` }
+}
 // The higher severity keeps its own detail and fix; the other detail is appended so no reasoning is lost.
 const absorb = (prev, f) => {
-  if (f.fileIssue) prev.fileIssue = true
+  if (f.fileIssue) {
+    if (fileable(f) ? !fileable(prev) : !prev.fileIssue) {
+      for (const k of ['input', 'outcome']) { if (f[k] === undefined) delete prev[k]; else prev[k] = f[k] }
+    }
+    prev.fileIssue = true
+  } else if (f.notFiled && !prev.fileIssue && !prev.notFiled) prev.notFiled = f.notFiled
   if (f.theme && !prev.theme) prev.theme = f.theme
   if (f.outsidePass) prev.outsidePass = true
   if (RANK[f.severity] > RANK[prev.severity]) {
@@ -175,7 +190,7 @@ const mergeDuplicates = findings => {
     prev.sources = [...new Set(prev.sources.concat(sources))]
     absorb(prev, f)
   }
-  return [...seen.values()].map(({ source, ...f }) => f).sort(byFile)
+  return [...seen.values()].map(({ source, ...f }) => f.severity === 'minor' ? checkMark(f) : f).sort(byFile)
 }
 // The finding number only means something in the fix prompt, so the next reviewer also gets the title and file.
 const labelSiblings = (siblings, blocking) => (siblings || []).map(s => { const f = blocking[s.finding - 1]; return f ? { ...s, title: f.title, file: f.file } : s })
@@ -475,6 +490,8 @@ const VERIFY = {
 }
 const FILE = { type: 'string', description: 'Path relative to the repo root, with no line number' }
 const THEME = { type: 'string', description: 'A short name for the weakness behind a blocker or major, such as "bypass of the path check". Reuse the earlier name when the weakness is the same.' }
+const INPUT = { type: 'string', description: 'For a minor with fileIssue true: an input that real use can produce. For a doc, the reader and the sentence that the reader follows.' }
+const OUTCOME = { type: 'string', description: 'For a minor with fileIssue true: the wrong result or the wrong action that follows today for that input. For a doc, the wrong command or step that the reader takes.' }
 const REVIEW = {
   type: 'object',
   properties: {
@@ -485,7 +502,7 @@ const REVIEW = {
         type: 'object',
         properties: {
           severity: { type: 'string', enum: ['blocker', 'major', 'minor'] },
-          title: { type: 'string' }, file: FILE, detail: { type: 'string' }, suggestedFix: { type: 'string' }, fileIssue: { type: 'boolean' }, theme: THEME,
+          title: { type: 'string' }, file: FILE, detail: { type: 'string' }, suggestedFix: { type: 'string' }, fileIssue: { type: 'boolean' }, input: INPUT, outcome: OUTCOME, theme: THEME,
           eval: { type: 'object', properties: { kind: { type: 'string', enum: EVAL_KINDS }, statement: { type: 'string' }, check: { type: 'string' } }, required: ['kind', 'statement', 'check'] },
         },
         required: ['severity', 'title', 'detail'],
@@ -517,7 +534,7 @@ const ARCHREV = {
     },
     findings: {
       type: 'array',
-      items: { type: 'object', properties: { severity: { type: 'string', enum: ['blocker', 'major', 'minor'] }, title: { type: 'string' }, file: FILE, detail: { type: 'string' }, suggestedFix: { type: 'string' }, fileIssue: { type: 'boolean' }, theme: THEME }, required: ['severity', 'title', 'detail'] },
+      items: { type: 'object', properties: { severity: { type: 'string', enum: ['blocker', 'major', 'minor'] }, title: { type: 'string' }, file: FILE, detail: { type: 'string' }, suggestedFix: { type: 'string' }, fileIssue: { type: 'boolean' }, input: INPUT, outcome: OUTCOME, theme: THEME }, required: ['severity', 'title', 'detail'] },
     },
     escalation: {
       type: 'object',
@@ -540,7 +557,7 @@ const QA = {
         type: 'object',
         properties: {
           severity: { type: 'string', enum: ['blocker', 'major', 'minor'] },
-          title: { type: 'string' }, file: FILE, command: { type: 'string' }, expected: { type: 'string' }, actual: { type: 'string' }, detail: { type: 'string' }, fileIssue: { type: 'boolean' },
+          title: { type: 'string' }, file: FILE, command: { type: 'string' }, expected: { type: 'string' }, actual: { type: 'string' }, detail: { type: 'string' }, fileIssue: { type: 'boolean' }, input: INPUT, outcome: OUTCOME,
         },
         required: ['severity', 'title', 'detail'],
       },
@@ -609,7 +626,7 @@ const MINORFIX = {
   },
   required: ['changed', 'summary'],
 }
-const OUTSIDE_PASS = { type: 'boolean', description: 'True only for an untrusted-path finding about code outside the commits of the pass' }
+const OUTSIDE_PASS = { type: 'boolean', description: 'True only for a finding about code outside the commits of the pass: an untrusted-path finding, or a finding which shows that the change of the PR does not do what its entry asks' }
 const MINORREVIEW = {
   ...REVIEW,
   required: [...REVIEW.required, 'unconfirmed'],
@@ -799,7 +816,7 @@ const reviewPrompt = (pr, round, history, siblings, stopOnConflict = false, with
 
 Task: review the branch against ${SPEC ? `${SPEC} and ` : ''}${ref(pr)}.
 Clone it: ${cloneTo(`review-${pr.id}-r${round}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`.
-${pr.kind === 'plan' ? `Check each entry's Acceptance line against the plan's decisions: a line that says a test or file "passes unchanged" while a decision changes a limit, name or default that it hard-codes cannot be met. Report it as a blocker; the fix is to edit the plan.\n` : stopOnConflict ? `If a blocker cannot be fixed without breaking the Touches line or an Acceptance line of the entry, start its title with \`plan conflict:\`. The loop then stops for a person.` : ''}
+${pr.kind === 'plan' ? `Check each entry's Acceptance line against the plan's decisions: a line that says a test or file "passes unchanged" while a decision changes a limit, name or default that it hard-codes cannot be met. Report it as a blocker; the fix is to edit the plan.\n` : stopOnConflict ? `If a blocker or major cannot be fixed without breaking the Touches line or an Acceptance line of the entry, start its title with \`plan conflict:\`. The loop then stops for a person.` : ''}
 Return headSha, a summary, the findings (give each blocker and major a \`theme\`: reuse the name from an earlier round when it is the same weakness), the sweep (for each blocker and major: the sibling places you checked and those with the same weakness) and, when the plan entry or brief has an Invariants line, \`invariants\`: one row per invariant, with holds and evidence.
 
 ${pr.deviations && pr.deviations.length ? `The implementer reports these deviations from the entry:\n${JSON.stringify(pr.deviations, null, 1)}\nRule on each one: accepted, or a finding. A change outside the entry's Touches line is a finding unless the entry or a plan rule allows it.\n\n` : ''}Honour a threat model that the plan, the notes or the context states: do not report as a blocker or major an attack it rules out. When none is stated and your findings keep going around one check, say so in the summary.
@@ -880,7 +897,8 @@ const minorReviewPrompt = (pr, fromSha, fix, fixed, files) => `${ctx(pr)}
 Task: review only the commits of the minor pass, which fixed minor findings after the rest of the PR passed review.
 Clone it: ${cloneTo(`minorreview-${pr.id}`, pr)}. Those commits are \`git diff ${fromSha || 'origin/HEAD'}..HEAD\`; the whole PR is \`git diff origin/HEAD...HEAD\` for context.
 Check that each change fixes its finding, that it breaks nothing, and that it stays inside these files: ${JSON.stringify(files)}. Report a finding only about this diff. Do not review the rest of the PR again.
-One exception: if untrusted text (an agent answer, script output, a PR comment or a bot thread) chooses a path, command or URL that reaches a file read, a command or a reviewer prompt anywhere in the PR, report it as at least major even when it is outside this diff. Set \`outsidePass: true\` only when the finding is about code outside the commits of the pass, and on no other finding.
+One exception is that if untrusted text (an agent answer, script output, a PR comment or a bot thread) chooses a path, command or URL that reaches a file read, a command or a reviewer prompt anywhere in the PR, report it as at least major even when it is outside this diff. Set \`outsidePass: true\` on such a finding only when it is about code outside the commits of the pass.
+A second exception: if a finding shows that the change of the PR does not do what its entry asks, report it as at least major also when it is about code outside the commits of the pass, and set \`outsidePass: true\` only when it is about code outside the commits of the pass.
 Return headSha, a summary, the findings, \`unconfirmed\`: the numbers of the findings below that the diff does not really fix, and, when the plan entry or brief has an Invariants line, \`invariants\`: one row per invariant, with holds and evidence.
 
 ${prBlock(pr)}
