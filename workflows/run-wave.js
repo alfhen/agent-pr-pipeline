@@ -6,7 +6,7 @@ export const meta = {
     { title: 'Triage', detail: 'only for quick fixes: a stronger model decides build, plan or decline for one issue; a small agent runs the brief script' },
     { title: 'Evals', detail: 'before the build, a stronger model writes the list of checks in plain words, and the architecture reviewer checks it' },
     { title: 'Implement', detail: 'one agent builds each PR on its own branch' },
-    { title: 'Test', detail: 'a second agent runs the fast checks and the PR\'s own e2e from a clean clone' },
+    { title: 'Test', detail: 'a second agent runs the fast checks, the PR\'s own e2e and related test files from a clean clone' },
     { title: 'Review', detail: 'a stronger model reviews the diff adversarially' },
     { title: 'Product fit', detail: 'a stronger model checks a plan against the product goals and non-goals, and asks a person when it diverges' },
     { title: 'QA', detail: 'an agent uses the built feature like a user and checks it does what the plan entry and the docs say' },

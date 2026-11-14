@@ -1,6 +1,6 @@
 ---
 name: verifier
-description: Verifies a pipeline branch from a clean clone: runs the fast checks, the branch's own e2e files and the check of every eval, and reports a result for each eval id. Changes no code. Use for the verify step of a pipeline PR that has an eval list.
+description: Verifies a pipeline branch from a clean clone: runs the fast checks, the branch's own e2e files, up to 10 related test files and the check of every eval, and reports a result for each eval id. Changes no code. Use for the verify step of a pipeline PR that has an eval list.
 model: sonnet
 effort: medium
 tools: Bash, Read, Glob, Grep, Skill

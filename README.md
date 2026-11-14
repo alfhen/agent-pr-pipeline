@@ -56,7 +56,7 @@ Ask Claude Code to plan and build a release or a set of issues with the pipeline
    - It merges only the commit the pipeline checked, with green CI and a review bot's approval (or its comments answered and nothing new raised).
    - First a script checks the changed files against the gated paths. The merge-safety agent then decides `safe` or `person` for the rest.
    - The land value from the workflow ends in `:auto` only for a PR that passed both. Only a `:auto` PR is merged by an agent.
-   - A PR with an untested item (a check a permission check refused, or a QA scenario that did not run) never gets `:auto`. Its body lists the items, and the maintainer runs them before the merge.
+   - A PR with an untested item (a check that was refused or could not run, or a QA scenario that did not run) never gets `:auto`. Its body lists the items, and the maintainer runs them before the merge.
    - A rerun PR (land fix, `skipImpl`, resume or decision rerun) skips both checks and never gets `:auto`. The maintainer merges it.
    - Code that a land fix adds is tested and reviewed by other agents before the PR can land.
    - For a merge you asked for in the conversation, the merge scripts take `--person`.
