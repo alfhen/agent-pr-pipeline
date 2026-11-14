@@ -162,7 +162,7 @@ const absorb = (prev, f) => {
       for (const k of ['input', 'outcome']) { if (f[k] === undefined) delete prev[k]; else prev[k] = f[k] }
     }
     prev.fileIssue = true
-  }
+  } else if (f.notFiled && !prev.fileIssue && !prev.notFiled) prev.notFiled = f.notFiled
   if (f.theme && !prev.theme) prev.theme = f.theme
   if (f.outsidePass) prev.outsidePass = true
   if (RANK[f.severity] > RANK[prev.severity]) {

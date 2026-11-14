@@ -5153,6 +5153,24 @@ await check('C12-R1-1: a refused mark keeps its notFiled through a stop and a re
   assert.ok(bare.notFiled)
   assert.notEqual(bare.fileIssue, true)
 })
+const laterRefusal = (hook) => (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x', { theme: 'a' }), f('minor', 'Repeated nit')]) : o.label === 'review:C1#2' ? reviewOf([f('major', 'y', { theme: 'b' }), f('minor', 'repeated  NIT!', { fileIssue: true })]) : undefined
+await check('C12-R2-1: an unmarked minor and a later bare mark merge into a refused minor in the opener lists', async () => {
+  const round2 = f('minor', 'repeated  NIT!', { fileIssue: true })
+  assert.equal(round2.fileIssue, true)
+  await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x'), f('minor', 'Repeated nit')]) : o.label === 'review:C1#2' ? reviewOf([round2]) : undefined)
+  const { notFixed, toFile } = openLists('C1')
+  const item = notFixed.find(m => /repeated nit/i.test(m.title))
+  assert.ok(typeof item.notFiled === 'string' && item.notFiled !== '')
+  assert.notEqual(item.fileIssue, true)
+  assert.ok(!toFile.some(m => /repeated nit/i.test(m.title)))
+})
+await check('C12-R2-2: a stop result carries notFiled for a minor unmarked in round 1 and bare-marked in round 2', async () => {
+  const x = await hooked([{ ...only1('C1')[0], maxRounds: 2 }], laterRefusal())
+  assert.match(x.C1.reason, /^rounds exhausted/)
+  const item = x.C1.minors.find(m => /repeated nit/i.test(m.title))
+  assert.ok(typeof item.notFiled === 'string' && item.notFiled !== '')
+  assert.notEqual(item.fileIssue, true)
+})
 await check('BR2-13: a docs-check stop and a stop of a resumed run keep the accumulated minors', async () => {
   const g = await hooked(only1('G3'), at('review', 'G3', { 1: reviewOf([f('major', 'x1', { theme: 'gap' }), f('minor', 'docs nit')]) }))
   assert.match(g.G3.reason, /^docs check:/)
