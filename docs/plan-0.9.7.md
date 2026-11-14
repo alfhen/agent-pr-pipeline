@@ -27,6 +27,7 @@ Taken by the driving session, inside the merged plans:
 - #769: `testsOnlyBranch` returns `null` when it could not read the changed files, and also for an empty list.
 - #91: a prompt rule only. A check that fails because a port is in use runs once more, and is then reported as `refused`, which starts no fix round and puts the check on the untested list. No port for each agent: that is a new rule for every repo.
 - #89: the `runPR` catch always builds a result and never throws again. The early check that the issue also asks for is not built: with the catch fixed, the reason is in the result.
+- #82: settled by the plan-review check alone, which removes the source of the failure. The opener Refs rule and the land-step compare are not built: the opener has no signal for a partial fix, and `merge-pr.sh` already takes the squash message from the PR body, so the closing lines the plan review passes are the ones that merge.
 - #766: the new call of `syncUntested` covers a bot code change and also a land fix whose check stored `false`.
 - The stop for a finding that the minor-pass check marks as outside the pass gets a reason that is true for both kinds of finding (no issue; found in the build of C12, which already made the schema description of the mark name both kinds).
 
