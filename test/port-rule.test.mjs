@@ -42,10 +42,10 @@ test('the run-wave prompts make the port rule conditional', () => {
   const src = fs.readFileSync(new URL('../workflows/run-wave.js', import.meta.url), 'utf8')
   assert.match(src, /const refusedText = [^\n]*only when the port is still in use/)
 })
-test('the ci sentences of the verify prompt, verifier.md and SKILL.md name the port case', () => {
+test('the verify prompt, verifier.md and SKILL.md say a port still in use on the second run is a ci case', () => {
   const src = fs.readFileSync(new URL('../workflows/run-wave.js', import.meta.url), 'utf8')
   const skill = fs.readFileSync(new URL('../skills/pr-pipeline/SKILL.md', import.meta.url), 'utf8')
-  assert.match(src, /used only when the sandbox refused the command \(a busy port is not that case\)/)
-  assert.match(skill, /`ci` is allowed only when the sandbox refused the command \(a busy port is not that case\)/)
-  assert.match(body('agents/verifier.md'), /Use `ci` only when a permission check denied the command[^.]*\(a busy port is not that case\)/)
+  assert.match(src, /const refusedText = [^\n]*For the check of an eval, a port that is still in use on the second run[^\n]*result `ci`/)
+  assert.match(skill, /refused the command, or a port stayed in use on the second run of its check/)
+  assert.match(body('agents/verifier.md'), /port is in use runs once more[^\n]*still in use on the second run[^\n]*result `ci`/)
 })
