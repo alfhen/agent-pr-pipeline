@@ -146,8 +146,22 @@ const splitFindings = groups => {
   return { ...partition(mergeDuplicates(normalized.flatMap(n => n.items))), conflicts: normalized.reduce((n, x) => n + x.conflicts, 0) }
 }
 // The higher severity keeps its own detail and fix; the other detail is appended so no reasoning is lost.
+const hasText = v => typeof v === 'string' && v.trim() !== ''
+const fileable = f => !!f.fileIssue && hasText(f.input) && hasText(f.outcome)
+// Shows a minor as the opener, a result and a resume see it: a mark without both fields is taken away and the reason is written on the minor.
+const checkMark = ({ notFiled, ...f }) => {
+  if (!f.fileIssue || fileable(f)) return f
+  const { fileIssue, ...rest } = f
+  const missing = [hasText(f.input) ? '' : 'input', hasText(f.outcome) ? '' : 'outcome'].filter(Boolean)
+  return { ...rest, notFiled: `not filed: ${missing.join(' and ')} missing` }
+}
 const absorb = (prev, f) => {
-  if (f.fileIssue) prev.fileIssue = true
+  if (f.fileIssue) {
+    if (fileable(f) ? !fileable(prev) : !prev.fileIssue) {
+      for (const k of ['input', 'outcome']) { if (f[k] === undefined) delete prev[k]; else prev[k] = f[k] }
+    }
+    prev.fileIssue = true
+  }
   if (f.theme && !prev.theme) prev.theme = f.theme
   if (f.outsidePass) prev.outsidePass = true
   if (RANK[f.severity] > RANK[prev.severity]) {
@@ -475,6 +489,8 @@ const VERIFY = {
 }
 const FILE = { type: 'string', description: 'Path relative to the repo root, with no line number' }
 const THEME = { type: 'string', description: 'A short name for the weakness behind a blocker or major, such as "bypass of the path check". Reuse the earlier name when the weakness is the same.' }
+const INPUT = { type: 'string', description: 'For a minor with fileIssue true: an input that real use can produce. For a doc, the reader and the sentence that the reader follows.' }
+const OUTCOME = { type: 'string', description: 'For a minor with fileIssue true: the wrong result or the wrong action that follows today for that input. For a doc, the wrong command or step that the reader takes.' }
 const REVIEW = {
   type: 'object',
   properties: {
@@ -485,7 +501,7 @@ const REVIEW = {
         type: 'object',
         properties: {
           severity: { type: 'string', enum: ['blocker', 'major', 'minor'] },
-          title: { type: 'string' }, file: FILE, detail: { type: 'string' }, suggestedFix: { type: 'string' }, fileIssue: { type: 'boolean' }, theme: THEME,
+          title: { type: 'string' }, file: FILE, detail: { type: 'string' }, suggestedFix: { type: 'string' }, fileIssue: { type: 'boolean' }, input: INPUT, outcome: OUTCOME, theme: THEME,
           eval: { type: 'object', properties: { kind: { type: 'string', enum: EVAL_KINDS }, statement: { type: 'string' }, check: { type: 'string' } }, required: ['kind', 'statement', 'check'] },
         },
         required: ['severity', 'title', 'detail'],
@@ -517,7 +533,7 @@ const ARCHREV = {
     },
     findings: {
       type: 'array',
-      items: { type: 'object', properties: { severity: { type: 'string', enum: ['blocker', 'major', 'minor'] }, title: { type: 'string' }, file: FILE, detail: { type: 'string' }, suggestedFix: { type: 'string' }, fileIssue: { type: 'boolean' }, theme: THEME }, required: ['severity', 'title', 'detail'] },
+      items: { type: 'object', properties: { severity: { type: 'string', enum: ['blocker', 'major', 'minor'] }, title: { type: 'string' }, file: FILE, detail: { type: 'string' }, suggestedFix: { type: 'string' }, fileIssue: { type: 'boolean' }, input: INPUT, outcome: OUTCOME, theme: THEME }, required: ['severity', 'title', 'detail'] },
     },
     escalation: {
       type: 'object',
@@ -540,7 +556,7 @@ const QA = {
         type: 'object',
         properties: {
           severity: { type: 'string', enum: ['blocker', 'major', 'minor'] },
-          title: { type: 'string' }, file: FILE, command: { type: 'string' }, expected: { type: 'string' }, actual: { type: 'string' }, detail: { type: 'string' }, fileIssue: { type: 'boolean' },
+          title: { type: 'string' }, file: FILE, command: { type: 'string' }, expected: { type: 'string' }, actual: { type: 'string' }, detail: { type: 'string' }, fileIssue: { type: 'boolean' }, input: INPUT, outcome: OUTCOME,
         },
         required: ['severity', 'title', 'detail'],
       },
@@ -799,7 +815,7 @@ const reviewPrompt = (pr, round, history, siblings, stopOnConflict = false, with
 
 Task: review the branch against ${SPEC ? `${SPEC} and ` : ''}${ref(pr)}.
 Clone it: ${cloneTo(`review-${pr.id}-r${round}`, pr)}. The diff is \`git diff origin/HEAD...HEAD\`.
-${pr.kind === 'plan' ? `Check each entry's Acceptance line against the plan's decisions: a line that says a test or file "passes unchanged" while a decision changes a limit, name or default that it hard-codes cannot be met. Report it as a blocker; the fix is to edit the plan.\n` : stopOnConflict ? `If a blocker cannot be fixed without breaking the Touches line or an Acceptance line of the entry, start its title with \`plan conflict:\`. The loop then stops for a person.` : ''}
+${pr.kind === 'plan' ? `Check each entry's Acceptance line against the plan's decisions: a line that says a test or file "passes unchanged" while a decision changes a limit, name or default that it hard-codes cannot be met. Report it as a blocker; the fix is to edit the plan.\n` : stopOnConflict ? `If a blocker or major cannot be fixed without breaking the Touches line or an Acceptance line of the entry, start its title with \`plan conflict:\`. The loop then stops for a person.` : ''}
 Return headSha, a summary, the findings (give each blocker and major a \`theme\`: reuse the name from an earlier round when it is the same weakness), the sweep (for each blocker and major: the sibling places you checked and those with the same weakness) and, when the plan entry or brief has an Invariants line, \`invariants\`: one row per invariant, with holds and evidence.
 
 ${pr.deviations && pr.deviations.length ? `The implementer reports these deviations from the entry:\n${JSON.stringify(pr.deviations, null, 1)}\nRule on each one: accepted, or a finding. A change outside the entry's Touches line is a finding unless the entry or a plan rule allows it.\n\n` : ''}Honour a threat model that the plan, the notes or the context states: do not report as a blocker or major an attack it rules out. When none is stated and your findings keep going around one check, say so in the summary.
@@ -881,6 +897,7 @@ Task: review only the commits of the minor pass, which fixed minor findings afte
 Clone it: ${cloneTo(`minorreview-${pr.id}`, pr)}. Those commits are \`git diff ${fromSha || 'origin/HEAD'}..HEAD\`; the whole PR is \`git diff origin/HEAD...HEAD\` for context.
 Check that each change fixes its finding, that it breaks nothing, and that it stays inside these files: ${JSON.stringify(files)}. Report a finding only about this diff. Do not review the rest of the PR again.
 One exception: if untrusted text (an agent answer, script output, a PR comment or a bot thread) chooses a path, command or URL that reaches a file read, a command or a reviewer prompt anywhere in the PR, report it as at least major even when it is outside this diff. Set \`outsidePass: true\` only when the finding is about code outside the commits of the pass, and on no other finding.
+Also, if a finding shows that the change of the PR does not do what its entry asks, report it as at least major even when it is about code outside the commits of the pass, and set \`outsidePass: true\`.
 Return headSha, a summary, the findings, \`unconfirmed\`: the numbers of the findings below that the diff does not really fix, and, when the plan entry or brief has an Invariants line, \`invariants\`: one row per invariant, with holds and evidence.
 
 ${prBlock(pr)}
@@ -957,7 +974,7 @@ const evalResultOf = (id, history) => {
 const evalsOpenStep = (pr, rounds) => pr.evals
   ? ` Add an "Evals" section with a table of the rows below (columns: Id, Kind, What must be true, Last result). In an existing body, replace its Evals section with it, or add one.\nEval rows: ${JSON.stringify(pr.evals.map(e => ({ id: e.id, kind: e.kind, statement: e.statement, result: evalResultOf(e.id, rounds) })))}${pr.evalDisputes && pr.evalDisputes.length ? `\nUnder the Evals table, list each dispute of an eval (id, who raised it, its reason, the ruling and the writer's reason):\n${JSON.stringify(pr.evalDisputes)}` : ''}`
   : ''
-const openPrompt = (pr, rounds, minors, arch, untested = [], fixed = []) => `${ctx(pr)}
+const openPrompt = (pr, rounds, minorsIn, arch, untested = [], fixed = []) => { const minors = minorsIn.map(checkMark); return `${ctx(pr)}
 
 Task: open the pull request for ${pr.branch}, file the minor findings that matter and post the checklist of the others.
 Write each issue body, the PR body and the checklist comment to a file under \`${TMP}/open-${pr.id}/\` with the Write tool, and pass it with \`-F body=@<file>\`. Never pass a body inline, and write no other file${pr.titleFromIssue ? ' than the title file' : ''}.${MILESTONE_STEP}
@@ -974,7 +991,7 @@ Architecture, product and docs: ${JSON.stringify(arch || [])}
 Untested items: ${JSON.stringify(untested)}
 Minors fixed in the minor pass: ${JSON.stringify(fixed.map(m => ({ title: m.title, file: m.file })), null, 1)}
 Minor findings not fixed: ${JSON.stringify(minors, null, 1)}
-Minor findings to file: ${JSON.stringify(minors.filter(m => m.fileIssue), null, 1)}`
+Minor findings to file: ${JSON.stringify(minors.filter(m => m.fileIssue), null, 1)}` }
 
 const bodyPrompt = (pr, n, untested, exact) => `${ctx(pr)}
 
@@ -1751,8 +1768,8 @@ async function bots(pr, n, headSha, issues, history, minors) {
   const lateMinors = []
   const check = await botCheck(pr, n, headSha, answer, history, lateMinors, issues, minors)
   minors.push(...lateMinors)
-  if (!check.ok) return { ok: false, reason: check.reason, lastFindings: check.lastFindings, worktree: check.worktree, headSha: answer.headSha || headSha, wait, answer, lateMinors }
-  return { ok: true, headSha: check.headSha, wait, answer, lateMinors }
+  if (!check.ok) return { ok: false, reason: check.reason, lastFindings: check.lastFindings, worktree: check.worktree, headSha: answer.headSha || headSha, wait, answer, lateMinors: lateMinors.map(checkMark) }
+  return { ok: true, headSha: check.headSha, wait, answer, lateMinors: lateMinors.map(checkMark) }
 }
 
 const FEEDBACK_ITEM = {
@@ -2053,7 +2070,7 @@ async function runPRSteps(input) {
     const lateMinors = []
     let listOut = {}
     delete landOutState[pr.id]
-    const stopped = (reason, more) => { stopMark(history, reason); return { id: pr.id, prNumber: n, ready: false, reason, history, ...listOut, ...more } }
+    const stopped = (reason, more) => { stopMark(history, reason); return { id: pr.id, prNumber: n, ready: false, reason, history, ...listOut, ...more, ...(more && more.lateMinors ? { lateMinors: more.lateMinors.map(checkMark) } : {}) } }
     const given = givenEvals(pr, rawEvals)
     if (given) {
       const rec = Array.isArray(given.list) ? usableRecord(pr, given.accepted) : null
@@ -2091,7 +2108,7 @@ async function runPRSteps(input) {
     return {
       id: pr.id, prNumber: n, ready: true, headSha: end.head, ...landing, untested: untestedOf(pr), notes: r.notes,
       ci: end.ci, approvedBy: end.approvedBy || b.wait.approvedBy || [], botNotes: b.wait.notes, codeChangedByBots: botCodeChanged(b),
-      lateMinors, history, ...listOut,
+      lateMinors: lateMinors.map(checkMark), history, ...listOut,
     }
   }
   const history = pr.resume ? pr.resume.history || [] : []
@@ -2100,7 +2117,7 @@ async function runPRSteps(input) {
   let impl = { problems: '' }
   let rerunFixChanged
   const evalsOut = () => ({ ...(testsOnlyState[pr.id] ? { testsOnly: true } : {}), ...(breakCheckState[pr.id] ? { breakCheck: breakCheckState[pr.id] } : {}), ...(pr.evals ? { evals: pr.evals, evalsMeta: { ...pr.evalsMeta, accepted: pr.record }, evalDisputes: pr.evalDisputes, ...carriedOut([], pr.deviations) } : carriedOut([], pr.deviations)) })
-  const minorsOut = () => minors.length ? { minors: mergeDuplicates(minors) } : {}
+  const minorsOut = () => minors.length ? { minors: mergeDuplicates(minors).map(checkMark) } : {}
   const rerunFix = () => rerunFixChanged === undefined ? {} : { rerunFixChanged }
   const decisionFindings = (pr.skipImpl || pr.resume) && (pr.architectureDecision || pr.productDecision)
     ? [{ severity: 'major', title: 'Apply the maintainer decision', detail: `Apply the maintainer decision given in the brief to the branch. If the branch already follows it, change nothing.${pr.architectureDecision ? ` Architecture decision: ${pr.architectureDecision}` : ''}${pr.productDecision ? ` Product decision: ${pr.productDecision}` : ''}` }]

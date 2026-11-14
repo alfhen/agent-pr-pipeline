@@ -16,7 +16,7 @@ You check that a change works as intended, by using it. You do not read the code
 Rank each finding:
 - blocker: the feature does not do what the plan entry says, or it breaks something that worked before;
 - major: a case a user will hit gives a wrong result or a confusing error, or the docs promise something the feature does not do;
-- minor: a rough edge that is not needed before merge. Set `fileIssue: true` only when it has a real effect on behaviour or on a reader.
+- minor: a rough edge that is not needed before merge. Set `fileIssue: true` only when it has a real effect: the product does the wrong thing today for an input that real use can produce (in this repo, a real run). Give that input in `input` and the wrong outcome in `outcome`. A marked minor without both is not filed. Below the bar are wording, naming, consistency that causes no wrong action, test strength, a missing test for code that works, "could drift later" and a nicer error text. Report such a minor with no mark: it goes to the checklist of the PR.
 
 Give the exact command, the expected result and the actual result for each finding. No code style comments. When your task lists your findings from the last round, check each one again first.
 

@@ -2564,6 +2564,7 @@ const hookedOut = async (prs, hook, extra = {}) => {
 const hooked = async (prs, hook, extra = {}) => Object.fromEntries((await hookedOut(prs, hook, extra)).prs.map(x => [x.id, x]))
 const only1 = id => PRS.filter(p => p.id === id)
 const f = (severity, title, extra = {}) => ({ severity, title, detail: 'd', ...extra })
+const BAR = { input: 'a real run', outcome: 'a wrong result' }
 // A reviewer finding that carries its eval, as a PR with an eval list needs (E04).
 const fe = (severity, title, extra = {}) => f(severity, title, { eval: { kind: 'behaviour', statement: `${title} holds`, check: 'run it, expect ok' }, ...extra })
 // A reviewer whose one major changes theme every round, so each round counts as progress.
@@ -4145,7 +4146,7 @@ const minorOf = (extra = {}) => f('minor', 'rename helper', { file: 'src/a.js', 
 // A hooked answer skips the fake's head tracking, which the bot status reads.
 const headed = (r, id = 'C1') => { if (r.headSha) lastHead[id] = r.headSha; return r }
 const passHook = (over = {}, id = 'C1') => (p, o) => {
-  if (o.label === `review:${id}#1`) return reviewOf([minorOf(), f('minor', 'unmarked nit', { file: 'src/b.js' }), f('minor', 'design nit', { file: 'src/c.js', fileIssue: true })])
+  if (o.label === `review:${id}#1`) return reviewOf([minorOf(), f('minor', 'unmarked nit', { file: 'src/b.js' }), f('minor', 'design nit', { file: 'src/c.js', fileIssue: true, ...BAR })])
   if (o.label === `minorfix:${id}`) return { changed: true, headSha: 'fixsha', fixed: [1], summary: 'renamed', ...over.fix }
   if (o.label === `minorreview:${id}`) return { ...reviewOf(over.findings || [], over.invariants ? { invariants: over.invariants } : {}), unconfirmed: over.unconfirmed || [] }
   if (o.label === `test:${id}#minor1`) return headed({ pass: over.testPass !== false, headSha: 'sha-minor', checks: [{ name: 'lint', pass: over.testPass !== false }] }, id)
@@ -4239,7 +4240,7 @@ await check('minor pass: a fixer that dies after its push is reverted like a fai
   assert.equal(x.C1.land.split(':')[1], 'sha-revert')
 })
 await check('minor pass: a finding the reviewer cannot confirm stays in the not-fixed list and is filed when marked', async () => {
-  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([minorOf({ fileIssue: true }), f('minor', 'unmarked nit', { file: 'src/b.js' })])
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([minorOf({ fileIssue: true, ...BAR }), f('minor', 'unmarked nit', { file: 'src/b.js' })])
     : passHook({ unconfirmed: [1] })(p, o))
   const open = calls.find(c => c.label === 'open:C1').prompt
   assert.doesNotMatch(open.split('Minors fixed in the minor pass:')[1].split('Minor findings not fixed:')[0], /rename helper/)
@@ -4455,8 +4456,8 @@ await check('minors: only marked minors are listed to file, and the checklist li
   assert.match(open, /Checklist: /)
 })
 await check('minors: a minor repeated in several rounds reaches the opener once', async () => {
-  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x'), f('minor', 'Repeated nit', { fileIssue: true })])
-    : o.label === 'review:C1#2' ? reviewOf([f('minor', 'repeated  NIT!', { fileIssue: true })]) : undefined)
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x'), f('minor', 'Repeated nit', { fileIssue: true, ...BAR })])
+    : o.label === 'review:C1#2' ? reviewOf([f('minor', 'repeated  NIT!', { fileIssue: true, ...BAR })]) : undefined)
   assert.equal(x.C1.ready, true)
   const open = calls.find(c => c.label === 'open:C1').prompt
   assert.equal((open.match(/"title": "[Rr]epeated/g) || []).length, 2, 'once in the checklist list and once in the file list')
@@ -4464,25 +4465,178 @@ await check('minors: a minor repeated in several rounds reaches the opener once'
 await check('minors: the opener list drops a repeat on a plan PR, where no pass runs', async () => {
   await hooked(PRS.filter(p => p.id === 'P1'), (p, o) => o.label.startsWith('review:P1') ? reviewOf([])
     : /^arch:P1#[12]$/.test(o.label)
-      ? { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [{ title: 'Repeated nit', detail: 'd', severity: 'minor', fileIssue: true }, ...(o.label.endsWith('#1') ? [{ title: 'blocks', detail: 'd', severity: 'major' }] : [])] }
+      ? { verdict: 'needs-change', summary: 's', newConcepts: [], findings: [{ title: 'Repeated nit', detail: 'd', severity: 'minor', fileIssue: true, ...BAR }, ...(o.label.endsWith('#1') ? [{ title: 'blocks', detail: 'd', severity: 'major' }] : [])] }
       : undefined)
   assert.ok(calls.some(c => c.label === 'arch:P1#2'))
   const open = calls.find(c => c.label === 'open:P1').prompt
   assert.equal((open.match(/"title": "Repeated nit"/g) || []).length, 2, 'once in the checklist list and once in the file list')
 })
 await check('minors: the opener list drops a minor the docs check repeats', async () => {
-  await hooked(only1('G1'), (p, o) => o.label === 'review:G1#1' ? reviewOf([f('minor', 'Same nit', { fileIssue: true })])
-    : o.label === 'docsreview:G1#1' ? reviewOf([f('minor', 'same nit', { fileIssue: true })]) : undefined)
+  await hooked(only1('G1'), (p, o) => o.label === 'review:G1#1' ? reviewOf([f('minor', 'Same nit', { fileIssue: true, ...BAR })])
+    : o.label === 'docsreview:G1#1' ? reviewOf([f('minor', 'same nit', { fileIssue: true, ...BAR })]) : undefined)
   const open = calls.find(c => c.label === 'open:G1').prompt
   assert.equal((open.match(/"title": "[Ss]ame nit"/g) || []).length, 2)
 })
 
 await check('minors: a minor marked in a later round keeps its mark when round 1 left it unmarked', async () => {
   await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x'), f('minor', 'Repeated nit')])
-    : o.label === 'review:C1#2' ? reviewOf([f('minor', 'repeated  NIT!', { fileIssue: true })]) : undefined)
+    : o.label === 'review:C1#2' ? reviewOf([f('minor', 'repeated  NIT!', { fileIssue: true, ...BAR })]) : undefined)
   const open = calls.find(c => c.label === 'open:C1').prompt
   assert.ok(open.includes('Minor findings to file:'))
   assert.match(open.split('Minor findings to file:')[1], /[Rr]epeated nit/)
+})
+// C12: the filing bar
+const openLists = id => {
+  const t = calls.find(c => c.label === `open:${id}`).prompt
+  const [notFixed, toFile] = t.split('Minor findings not fixed:')[1].split('Minor findings to file:')
+  return { notFixed: JSON.parse(notFixed), toFile: JSON.parse(toFile) }
+}
+await check('C12-2: a minor with the mark, an input and an outcome is listed to file, and an unmarked minor is not', async () => {
+  const filed = f('minor', 'filed nit', { fileIssue: true, input: 'a path with a space', outcome: 'the run skips the PR' })
+  const plain = f('minor', 'plain nit')
+  assert.ok(filed.fileIssue && filed.input && filed.outcome)
+  await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([filed, plain]) : undefined)
+  const { notFixed, toFile } = openLists('C1')
+  assert.deepEqual(toFile.map(m => m.title), ['filed nit'])
+  assert.equal(toFile[0].input, 'a path with a space')
+  assert.equal(toFile[0].outcome, 'the run skips the PR')
+  assert.deepEqual(notFixed.map(m => m.title).sort(), ['filed nit', 'plain nit'])
+  for (const m of [...notFixed, ...toFile]) assert.ok(!('notFiled' in m), m.title)
+})
+const refusedTitles = ['no fields', 'input only', 'outcome only', 'spaces only']
+const refusedMinors = () => [
+  f('minor', 'no fields', { fileIssue: true }),
+  f('minor', 'input only', { fileIssue: true, input: 'an input' }),
+  f('minor', 'outcome only', { fileIssue: true, outcome: 'an outcome' }),
+  f('minor', 'spaces only', { fileIssue: true, input: '  ', outcome: '\n' }),
+]
+const assertRefused = (title, notFixed, toFile) => {
+  const item = notFixed.find(m => m.title === title)
+  assert.ok(item, `${title} is not in the list of minors not fixed`)
+  assert.ok(typeof item.notFiled === 'string' && item.notFiled !== '', `${title} has no notFiled`)
+  assert.notEqual(item.fileIssue, true)
+  assert.ok(!toFile.some(m => m.title === title), `${title} is in the list to file`)
+  return item
+}
+await check('C12-3: a marked minor without an input or an outcome is not listed to file and stops nothing', async () => {
+  const given = refusedMinors()
+  for (const m of given) assert.equal(m.fileIssue, true)
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf(given) : undefined)
+  assert.equal(x.C1.ready, true)
+  assert.equal(x.C1.reason, undefined)
+  const { notFixed, toFile } = openLists('C1')
+  for (const t of refusedTitles) assertRefused(t, notFixed, toFile)
+  assert.match(notFixed.find(m => m.title === 'input only').notFiled, /outcome/)
+  assert.match(notFixed.find(m => m.title === 'outcome only').notFiled, /input/)
+  const resumed = [f('minor', 'resume nit', { fileIssue: true, input: 'an input' })]
+  assert.equal(resumed[0].fileIssue, true)
+  const y = await hooked([{ ...only1('C1')[0], resume: { history: [{ round: 1 }, { round: 'stop', stop: 'x' }], minors: resumed, findings: [] } }], () => undefined)
+  assert.equal(y.C1.ready, true)
+  assert.equal(y.C1.reason, undefined)
+  const second = openLists('C1')
+  assert.match(assertRefused('resume nit', second.notFixed, second.toFile).notFiled, /outcome/)
+})
+await check('C12-4: the architecture reviewer, the docs check and QA get the same check', async () => {
+  const pair = () => [f('minor', 'fine nit', { fileIssue: true, ...BAR }), f('minor', 'bare nit', { fileIssue: true })]
+  assert.ok(pair().every(m => m.fileIssue))
+  await hooked(only1('C1'), (p, o) => o.label === 'arch:C1#1' ? { verdict: 'fits', summary: 's', newConcepts: [], findings: pair() } : undefined)
+  const arch = calls.find(c => c.label === 'open:C1').prompt
+  await hooked(only1('G1'), (p, o) => o.label === 'docsreview:G1#1' ? reviewOf(pair()) : undefined)
+  const docs = calls.find(c => c.label === 'open:G1').prompt
+  await hooked(only1('Q1'), (p, o) => o.label === 'qa:Q1#1' ? { summary: 's', scenarios: [{ name: 's', result: 'pass' }], findings: pair() } : undefined)
+  const qa = calls.find(c => c.label === 'open:Q1').prompt
+  for (const [id, prompt] of [['C1', arch], ['G1', docs], ['Q1', qa]]) {
+    const t = prompt.split('Minor findings to file:')[1]
+    assert.match(t, /fine nit/, id)
+    assert.doesNotMatch(t, /bare nit/, id)
+  }
+})
+await check('C12-5: a minor reported in two rounds is fileable only when one report is, and then carries its texts', async () => {
+  const both = n => ({ fileIssue: true, input: `in-${n}`, outcome: `out-${n}` })
+  const run2 = async (one, two) => {
+    await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', 'x'), f('minor', 'Repeated nit', one)])
+      : o.label === 'review:C1#2' ? reviewOf([f('minor', 'repeated  NIT!', two)]) : undefined)
+    return openLists('C1')
+  }
+  for (const [one, two, n] of [[{}, both(2), 2], [both(1), { fileIssue: true }, 1], [{ fileIssue: true }, both(2), 2]]) {
+    const { notFixed, toFile } = await run2(one, two)
+    assert.equal(toFile.length, 1)
+    assert.equal(toFile[0].input, `in-${n}`)
+    assert.equal(toFile[0].outcome, `out-${n}`)
+    assert.ok(!('notFiled' in toFile[0]))
+    assert.ok(!('notFiled' in notFixed[0]))
+  }
+  const { notFixed, toFile } = await run2({ fileIssue: true, input: 'in-1' }, { fileIssue: true, outcome: 'out-2' })
+  assert.equal(toFile.length, 0)
+  assert.equal(notFixed.length, 1)
+  assert.ok(notFixed[0].notFiled)
+  assert.notEqual(notFixed[0].fileIssue, true)
+})
+await check('C12-6: a late minor of the bot-answer check or the land-fix check has the mark only with both fields', async () => {
+  const pair = () => [f('minor', 'fine nit', { fileIssue: true, ...BAR }), f('minor', 'bare nit', { fileIssue: true })]
+  assert.ok(pair().every(m => m.fileIssue))
+  const bots = await hooked(only1('C2'), (p, o) => o.label === 'botreview:C2#1' ? reviewOf(pair()) : undefined)
+  land.landOutput.add('LA')
+  let landed
+  try { landed = await hooked(LANDS, (p, o) => o.label === 'landreview:LA#1' ? reviewOf(pair()) : undefined) } finally { for (const k of Object.keys(land)) land[k] = new Set() }
+  for (const late of [bots.C2.lateMinors, landed.LA.lateMinors]) {
+    assert.deepEqual(late.map(m => m.title), ['fine nit', 'bare nit'])
+    assert.equal(late[0].fileIssue, true)
+    assert.ok(!('notFiled' in late[0]))
+    assert.ok(late[1].notFiled)
+    assert.notEqual(late[1].fileIssue, true)
+  }
+})
+await check('C12-7: a stop result carries notFiled on a refused minor and none on a fileable one', async () => {
+  const pair = () => [f('minor', 'fine nit', { fileIssue: true, ...BAR }), f('minor', 'bare nit', { fileIssue: true })]
+  assert.ok(pair().every(m => m.fileIssue))
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([...pair(), f('major', 'x')]) : o.label === 'fix:C1#1' ? { summary: 's', changed: false } : undefined)
+  assert.match(x.C1.reason, /^no progress:/)
+  const fine = x.C1.minors.find(m => m.title === 'fine nit')
+  const bare = x.C1.minors.find(m => m.title === 'bare nit')
+  assert.equal(fine.fileIssue, true)
+  assert.ok(!('notFiled' in fine))
+  assert.ok(bare.notFiled)
+  assert.notEqual(bare.fileIssue, true)
+})
+await check('C12-10: only the review loop of a code PR names a blocker or major in the plan conflict sentence', async () => {
+  const seen = {}
+  await hooked(only1('C1'), (p, o) => { if (o.label === 'review:C1#1') seen.review = p })
+  const sentence = seen.review.split(/(?<=\.)\s/).find(s => s.includes('plan conflict:'))
+  assert.ok(sentence, 'no plan conflict sentence')
+  assert.match(sentence, /blocker or major/)
+  land.landOutput.add('LA')
+  try { await hooked(LANDS, () => undefined) } finally { for (const k of Object.keys(land)) land[k] = new Set() }
+  const lr = calls.find(c => c.label === 'landreview:LA#1')
+  assert.ok(lr, 'no landreview:LA#1 call')
+  assert.doesNotMatch(lr.prompt, /plan conflict:/)
+})
+await check('C12-11: a major titled plan conflict stops the PR before a fixer runs', async () => {
+  const title = 'plan conflict: the entry asks for X, and the Touches line leaves out the code for X'
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('major', title)]) : undefined)
+  assert.equal(x.C1.reason, 'needs human: plan conflict')
+  assert.match(x.C1.conflict, /the entry asks for X/)
+  assert.equal(fixCalls('C1').length, 0)
+})
+await check('C12-13: the task of the minor-pass check says that a finding against the entry is at least major also outside the pass', async () => {
+  await hooked(only1('C1'), passHook())
+  const t = calls.find(c => c.label === 'minorreview:C1').prompt
+  const sentence = t.split(/(?<=\.)\s/).find(s => s.includes('does not do what its entry'))
+  assert.ok(sentence, 'no sentence')
+  assert.match(sentence, /at least major/)
+  assert.match(sentence, /outsidePass: true/)
+})
+await check('C12-14: the filing check keeps a refused minor for the minor pass and changes no severity', async () => {
+  const bare = minorOf({ fileIssue: true })
+  assert.equal(bare.input, undefined)
+  assert.equal(bare.outcome, undefined)
+  await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([bare]) : passHook()(p, o))
+  assert.match(calls.find(c => c.label === 'minorfix:C1').prompt, /rename helper/)
+  const marked = f('major', 'marked major', { fileIssue: true })
+  assert.equal(marked.input, undefined)
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([marked]) : undefined)
+  assert.match(calls.find(c => c.label === 'fix:C1#1').prompt, /marked major/)
+  assert.ok(x.C1.history[0].blockersAndMajors.some(l => /^major .*marked major/.test(l)))
 })
 await check('minor pass: a plan PR with a minor in a file runs no fixer', async () => {
   const x = await hooked([{ ...PRS.find(p => p.id === 'P1'), skipImpl: false }], (p, o) => o.label.startsWith('review:P1') ? reviewOf([minorOf()]) : undefined)
