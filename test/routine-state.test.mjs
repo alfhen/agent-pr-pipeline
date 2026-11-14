@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync, cpSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const TRACKING = 100
@@ -2106,4 +2106,207 @@ test('put feedback-outbox limits the file by bytes, not characters', () => {
   const r = c_cput(s, 'feedback-outbox', c_CRUN(1), big)
   assert.equal(r.status, 64, r.stderr); assert.deepEqual(r.calls, [])
   assert.equal(c_cput(s, 'feedback-outbox', c_CRUN(1), ok).status, 0)
+})
+
+// ---- 0.9.5 batch BR3 ----
+const br_planWorld = (o = {}) => {
+  const why = o.why ?? 'quick fix: plan. The change spans three modules.'
+  const recs = [c_triagedRec(5), c_startedRec(5, 1), c_cr('built', '5:1', { run: c_CRUN(1), reasonCode: 'triage-plan', why }, { at: c_T(35) })]
+  if (!o.noBlocked) recs.push(c_cr('blocked', '5:1', { run: c_CRUN(1), reasonCode: 'triage-plan', attempt: 1 }, { at: c_T(40), id: o.blockedId ?? 7001 }))
+  return csetup({
+    ...c_withIssues({ issue: c_ci(5, { labels: o.labels ?? ['building', 'maintainer-approved', 'ready-to-build'] }), events: c_approved(c_T(26)), records: recs }),
+    settings: { gates: [], routine: { ...c_ROUTINE, stage: o.stage ?? 1 } },
+  })
+}
+const br_err = (s, path, method, msg = 'HTTP 502') => writeFileSync(join(s.fx, `${fname(path)}.${method}.error`), msg)
+const br_notice = r => r.stdout.split('\n').filter(l => l.startsWith('NOTICE'))
+const br_comments = s => (s.w.comments[5] ?? []).map(c => c.body)
+const br_planRecs = s => s.w.records.filter(c => c.body.startsWith('<!-- pipeline:routine needs-plan 5:'))
+const br_COMMENT_1 = 'The build routine stopped and opened no PR. Its triage step decided that this issue needs a plan.'
+const br_setBlockedId = (s, id) => { s.w.records = s.w.records.map(c => c.body.startsWith('<!-- pipeline:routine blocked 5:1') ? { ...c, id } : c); s.sync() }
+
+test('put pr-seen finishes a triage-plan block: record, one NOTICE, needs-plan only and one comment', () => {
+  const s = br_planWorld()
+  assert.deepEqual(c_one(c_cnext(s, 'cloud-build')), { step: 'pr-seen', issue: 5 })
+  const r = c_cput(s, 'pr-seen', '5')
+  assert.equal(r.status, 0, r.stderr)
+  assert.deepEqual(br_notice(r), ['NOTICE needs-plan o/r 5'])
+  assert.ok(r.calls.some(c => c.startsWith('POST /repos/o/r/issues/100/comments body=<!-- pipeline:routine needs-plan 5:7001 -->')), r.calls.join('\n'))
+  c_apply(s, r)
+  assert.deepEqual(c_labelsOf(s, 5), ['needs-plan'])
+  assert.equal(br_planRecs(s).length, 1)
+  assert.deepEqual(br_comments(s), [`${br_COMMENT_1}\nquick fix: plan. The change spans three modules.`])
+  assert.equal(c_cnext(s, 'cloud-build').stdout.includes('"issue":5'), false)
+})
+
+test('put pr-seen after a put blocked that failed on the building label writes no second record', () => {
+  const s = br_planWorld({ labels: ['building', 'maintainer-approved'], noBlocked: true })
+  br_err(s, 'repos/o/r/issues/5/labels/building', 'DELETE')
+  const b = c_cput(s, 'blocked', '5', c_CRUN(1), 'triage-plan')
+  assert.equal(b.status, 3)
+  assert.deepEqual(br_notice(b), ['NOTICE needs-plan o/r 5'])
+  assert.ok(b.calls.some(c => c.startsWith('POST /repos/o/r/issues/100/comments body=<!-- pipeline:routine needs-plan 5:5000 -->')))
+  assert.ok(!b.calls.some(c => c.startsWith('POST /repos/o/r/issues/5/comments')))
+  c_apply(s, { calls: b.calls.filter(c => !c.includes('/labels/building')) })
+  br_setBlockedId(s, 5000)
+  rmSync(join(s.fx, 'repos__o__r__issues__5__labels__building.DELETE.error'))
+  assert.deepEqual(c_one(c_cnext(s, 'cloud-build')), { step: 'pr-seen', issue: 5 })
+  const r = c_cput(s, 'pr-seen', '5')
+  assert.equal(r.status, 0, r.stderr)
+  assert.deepEqual(br_notice(r), [])
+  assert.ok(!r.calls.some(c => c.startsWith('POST /repos/o/r/issues/100/comments')))
+  c_apply(s, r)
+  assert.deepEqual(c_labelsOf(s, 5), ['needs-plan'])
+  assert.equal(br_planRecs(s).length, 1)
+  assert.ok(br_planRecs(s)[0].body.startsWith('<!-- pipeline:routine needs-plan 5:5000 -->'))
+  assert.equal(br_comments(s).length, 1)
+  assert.ok(br_comments(s)[0].startsWith(br_COMMENT_1))
+  assert.equal(c_cnext(s, 'cloud-build').stdout.includes('"issue":5'), false)
+})
+
+test('put pr-seen at stage 0 on a triage-plan block only prints WOULD', () => {
+  const s = br_planWorld({ stage: 0 })
+  const r = c_cput(s, 'pr-seen', '5')
+  assert.equal(r.status, 0, r.stderr)
+  assert.ok(r.stdout.startsWith('WOULD'), r.stdout)
+  assert.deepEqual(br_notice(r), [])
+  assert.deepEqual(r.writes, [])
+})
+
+test('put pr-seen makes an @ in the why inert, like put blocked', () => {
+  const why = 'ask @someone about it.'
+  const s = br_planWorld({ why })
+  c_doPut(s, 'pr-seen', '5')
+  const other = br_planWorld({ why, labels: ['building'], noBlocked: true })
+  const r = c_cput(other, 'blocked', '5', c_CRUN(1), 'triage-plan')
+  assert.equal(r.status, 0, r.stderr)
+  c_apply(other, r)
+  assert.equal(br_comments(s).length, 1)
+  assert.equal(br_comments(s)[0], br_comments(other)[0])
+  assert.doesNotMatch(br_comments(s)[0], /@[A-Za-z0-9]/)
+  assert.match(br_comments(s)[0], /someone/)
+})
+
+test('put pr-seen posts the block comment after every label write', () => {
+  const s = br_planWorld()
+  const r = c_cput(s, 'pr-seen', '5')
+  const post = r.calls.findIndex(c => c.startsWith('POST /repos/o/r/issues/5/comments'))
+  const labels = r.calls.map((c, i) => /^(POST \/repos\/o\/r\/issues\/5\/labels|DELETE \/repos\/o\/r\/issues\/5\/labels\/)/.test(c) ? i : -1).filter(i => i >= 0)
+  assert.ok(post >= 0 && labels.length > 0 && labels.every(i => i < post), r.calls.join('\n'))
+})
+
+test('put pr-seen that fails on a label write posts no comment, and a retry finishes the work', () => {
+  const s = br_planWorld()
+  br_err(s, 'repos/o/r/issues/5/labels/maintainer-approved', 'DELETE')
+  const r = c_cput(s, 'pr-seen', '5')
+  assert.equal(r.status, 3)
+  assert.ok(!r.calls.some(c => c.startsWith('POST /repos/o/r/issues/5/comments')))
+  c_apply(s, { calls: r.calls.filter(c => !c.includes('/labels/maintainer-approved')) })
+  rmSync(join(s.fx, 'repos__o__r__issues__5__labels__maintainer-approved.DELETE.error'))
+  assert.deepEqual(c_one(c_cnext(s, 'cloud-build')), { step: 'pr-seen', issue: 5 })
+  const r2 = c_cput(s, 'pr-seen', '5')
+  assert.equal(r2.status, 0, r2.stderr)
+  c_apply(s, r2)
+  assert.deepEqual(c_labelsOf(s, 5), ['needs-plan'])
+  assert.equal(br_planRecs(s).length, 1)
+  assert.ok(br_planRecs(s)[0].body.startsWith('<!-- pipeline:routine needs-plan 5:7001 -->'))
+  assert.equal(br_comments(s).length, 1)
+  assert.ok(br_comments(s)[0].startsWith(br_COMMENT_1))
+})
+
+test('put blocked that fails on ready-to-build or maintainer-approved keeps building, and pr-seen finishes', () => {
+  for (const l of ['ready-to-build', 'maintainer-approved']) {
+    const s = br_planWorld({ noBlocked: true })
+    br_err(s, `repos/o/r/issues/5/labels/${l}`, 'DELETE')
+    const b = c_cput(s, 'blocked', '5', c_CRUN(1), 'triage-plan')
+    assert.equal(b.status, 3, l)
+    assert.ok(!b.calls.some(c => c.startsWith('POST /repos/o/r/issues/5/comments')))
+    c_apply(s, { calls: b.calls.filter(c => !c.includes(`/labels/${l}`)) })
+    assert.ok(c_labelsOf(s, 5).includes('building'), l)
+    br_setBlockedId(s, 5000)
+    rmSync(join(s.fx, `repos__o__r__issues__5__labels__${l}.DELETE.error`))
+    assert.deepEqual(c_one(c_cnext(s, 'cloud-build')), { step: 'pr-seen', issue: 5 })
+    c_doPut(s, 'pr-seen', '5')
+    assert.deepEqual(c_labelsOf(s, 5), ['needs-plan'], l)
+    assert.equal(br_planRecs(s).length, 1, l)
+    assert.equal(br_comments(s).length, 1, l)
+    assert.ok(br_comments(s)[0].startsWith(br_COMMENT_1))
+    assert.equal(c_cnext(s, 'cloud-build').stdout.includes('"issue":5'), false)
+  }
+})
+
+test('a failed block comment from put pr-seen is a warning, not a failure', () => {
+  const s = br_planWorld()
+  br_err(s, 'repos/o/r/issues/5/comments', 'POST')
+  const r = c_cput(s, 'pr-seen', '5')
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stderr, /^WARNING/m)
+  assert.ok(r.calls.some(c => c.startsWith('POST /repos/o/r/issues/100/comments body=<!-- pipeline:routine needs-plan 5:7001 -->')))
+  c_apply(s, r)
+  assert.deepEqual(c_labelsOf(s, 5), ['needs-plan'])
+})
+
+test('block adopt takes its state labels from config.jq', () => {
+  const rec = n => c_cr('triaged', String(n), { decision: 'build', size: 'S', risk: 'low' }, { at: c_T(20) })
+  const s = csetup({
+    ...c_withIssues({ issue: c_ci(5, { labels: ['needs-person'] }), records: [rec(5)] }, { issue: c_ci(6, { labels: ['needs-maintainer'] }), records: [rec(6)] }),
+    settings: { gates: [], routine: { ...c_ROUTINE, stage: 0 } },
+  })
+  const cfg = join(dirname(dirname(s.script)), 'routine/config.jq')
+  writeFileSync(cfg, readFileSync(cfg, 'utf8').replaceAll('needs-maintainer', 'needs-person'))
+  const out = c_ok(c_cnext(s))
+  assert.ok(!out.some(l => l.step === 'adopt' && l.issue === 5), JSON.stringify(out))
+  assert.ok(out.some(l => l.step === 'adopt' && l.issue === 6), JSON.stringify(out))
+})
+
+test('routine-state.sh holds no list of its own state labels', () => {
+  const src = readFileSync(join(root, 'scripts/routine-state.sh'), 'utf8')
+  assert.doesNotMatch(src, /\[ *"ready-to-build", *"needs-approval"/)
+  assert.doesNotMatch(src, /STATE_LABELS/)
+})
+
+test('cloud-triage makes no per-issue call for an issue below triageFrom without a 0.7.0 record', () => {
+  const settings = { gates: [], routine: { ...c_ROUTINE, triageFrom: 50 } }
+  const s = csetup({ ...c_withIssues(c_bare(3), c_bare(4), c_bare(60)), settings })
+  const r = c_cnext(s)
+  assert.deepEqual(c_one(r), { step: 'triage', issues: [60] })
+  assert.ok(!r.calls.some(c => /issues\/(3|4)\/|issue-(3|4)(\D|$)/.test(c)), r.calls.join('\n'))
+  const solo = csetup({ ...c_withIssues(c_bare(60)), settings })
+  const gets = x => x.calls.filter(c => c.startsWith('GET')).length
+  assert.equal(gets(r), gets(c_cnext(solo)))
+})
+
+test('an adopt candidate below triageFrom is still adopted and the build side still builds it', () => {
+  const rec = c_cr('triaged', '2', { decision: 'build', size: 'S', risk: 'low' }, { at: c_T(20) })
+  const a = csetup({ ...c_withIssues({ issue: c_ci(2), records: [rec] }, c_bare(60)), settings: { gates: [], routine: { ...c_ROUTINE, triageFrom: 50, stage: 0 } } })
+  const out = c_ok(c_cnext(a))
+  assert.deepEqual(out[0], { step: 'adopt', issue: 2, labels: ['ready-to-build', 'size:S'] })
+  assert.deepEqual(out[1], { step: 'would-triage', issues: [60] })
+  const b = csetup({ ...c_withIssues(c_readyIssue(5)), settings: { gates: [], routine: { ...c_ROUTINE, triageFrom: 50 } } })
+  assert.ok(c_ok(c_cnext(b, 'cloud-build')).some(l => l.step === 'build' && l.issue === 5))
+})
+
+test('put revoke and put adopt still act on an issue below triageFrom', () => {
+  const settings = { gates: [], routine: { ...c_ROUTINE, triageFrom: 50 } }
+  const a = csetup({ ...c_withIssues({ issue: c_ci(5, { labels: ['maintainer-approved'] }), events: c_approved(c_T(26)), comments: [c_cc('mallory', c_T(60))], records: [c_triagedRec(5)] }), settings })
+  assert.deepEqual(c_one(c_cnext(a, 'cloud-build')), { step: 'revoke', issue: 5, cause: 'comment' })
+  const r = c_cput(a, 'revoke', '5', 'comment')
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stdout, /ok revoke 5 comment/)
+  assert.ok(r.calls.some(c => c.startsWith('POST /repos/o/r/issues/100/comments body=<!-- pipeline:routine revoked 5:comment:')))
+  assert.ok(r.calls.includes('DELETE /repos/o/r/issues/5/labels/maintainer-approved'))
+  const rec = c_cr('triaged', '2', { decision: 'build', size: 'S', risk: 'low' }, { at: c_T(20) })
+  const b = csetup({ ...c_withIssues({ issue: c_ci(2), records: [rec] }), settings })
+  const p = c_cput(b, 'adopt', '2')
+  assert.equal(p.status, 0, p.stderr)
+  assert.match(p.stdout, /ok adopt 2/)
+  assert.ok(p.calls.includes('POST /repos/o/r/issues/2/labels labels[]=ready-to-build labels[]=size:S'), p.calls.join('\n'))
+})
+
+test('gather does not feed the whole context list to jq inside its loop', () => {
+  const src = readFileSync(join(root, 'scripts/routine-state.sh'), 'utf8')
+  const start = src.indexOf('\ngather() {')
+  const body = src.slice(start, src.indexOf('\n}\n', start))
+  const loop = body.slice(body.indexOf('for n in'), body.indexOf('\n  done'))
+  assert.doesNotMatch(loop, /\$\{?ctx\}?([^A-Za-z0-9_]|$)/)
 })

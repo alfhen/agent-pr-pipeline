@@ -4,6 +4,7 @@ def defaults: {openPRs: 3, wavesPerDay: 2, buildIssues: 3, maxRunMinutes: 240};
 def cloudLimits: {openPRs: 3, wavesPerDay: 2, buildAttempts: 2, buildHours: 6, triagePerRun: 5, triagePerDay: 20, feedbackItems: 3, feedbackPerDay: 6};
 def typeNames: ["bug", "feat", "docs", "chore", "test"];
 def fixedLabels: ["ready-to-build", "needs-approval", "maintainer-approved", "declined", "building", "build-failed", "needs-plan", "needs-maintainer", "untrusted-author", "routine-paused", "size:S", "size:M", "size:L"];
+def stateLabels: fixedLabels - ["maintainer-approved", "untrusted-author", "routine-paused", "size:S", "size:M", "size:L"];
 def routineDefaults: {stage: 0, triageFrom: 1, skipLabels: ["review-minor"], typeLabels: (typeNames | map({key: ., value: .}) | from_entries), feedbackRepo: "alfhen/agent-pr-pipeline", collectFrom: [], limits: cloudLimits};
 def bad($m): error("routine.json: " + $m);
 def badp($m): error("pipeline.json: routine." + $m);
@@ -36,7 +37,7 @@ def routineCheck:
   | if ($tl | type) != "object" then badp("typeLabels must be an object")
     elif (($tl | keys) - typeNames | length) > 0 then badp("unknown typeLabels key " + (($tl | keys) - typeNames)[0])
     elif any($tl[]; type != "string" or . == "") then badp("typeLabels values must be label names")
-    elif any($tl[]; IN(fixedLabels[]) or . == "pipeline-routine" or . == "pipeline-ledger") then badp("typeLabels values must not be a fixed label") else . end
+    elif any($tl[]; ascii_downcase | IN(fixedLabels[] | ascii_downcase) or . == "pipeline-routine" or . == "pipeline-ledger") then badp("typeLabels values must not be a fixed label") else . end
   | opt("feedbackRepo"; routineDefaults.feedbackRepo) as $fr
   | if ($fr | repo | not) then badp("feedbackRepo must be owner/repo") else . end
   | opt("collectFrom"; []) as $cf
@@ -58,7 +59,7 @@ def routineCheck:
      trustedAuthors: (([$m] + $ta) | uniq), triageFrom: $tf, skipLabels: (($sl + ["pipeline-routine", "pipeline-ledger"]) | uniq),
      typeLabels: (routineDefaults.typeLabels + $tl), feedbackRepo: $fr, collectFrom: $cf, waveArgs: $w, limits: (cloudLimits + $l)};
 
-if input_filename == null and . == null then {limits: defaults, routine: routineDefaults, labels: fixedLabels}
+if input_filename == null and . == null then {limits: defaults, routine: routineDefaults, labels: fixedLabels, stateLabels: stateLabels}
 elif $ARGS.named.form == "pipeline" then
   (if type == "object" then . else badp("must be a JSON object") end) |
   if (.routine // null) == null then {routine: null} else {routine: (.routine | routineCheck)} end
