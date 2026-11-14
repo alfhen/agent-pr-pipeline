@@ -19,7 +19,7 @@ const NO_CODE = 'land-commits: no code added by the land fix'
 // clean: main adds another file. Otherwise both sides edit line 1 and the merge is resolved by hand.
 const dirs = []
 process.on('exit', () => { for (const d of dirs) rmSync(d, { recursive: true, force: true }) })
-const fixture = clean => {
+const fixture = (clean, resolved = 'hand resolved\ntwo\n') => {
   const dir = mkdtempSync(join(tmpdir(), 'land-last-'))
   dirs.push(dir)
   const remote = join(dir, 'r.git'); const w = join(dir, 'w')
@@ -38,7 +38,7 @@ const fixture = clean => {
   const merged = spawnSync('git', ['merge', '--no-edit', 'origin/main'], { cwd: w, encoding: 'utf8', env: GIT_ENV })
   if (!clean) {
     assert.notEqual(merged.status, 0)
-    writeFileSync(join(w, 's.txt'), 'hand resolved\ntwo\n'); git(w, 'add', '.'); git(w, 'commit', '-qm', 'merge')
+    writeFileSync(join(w, 's.txt'), resolved); git(w, 'add', '.'); git(w, 'commit', '-qm', 'merge')
   } else assert.equal(merged.status, 0)
   const after = git(w, 'rev-parse', 'HEAD'); git(w, 'push', '-q', 'origin', 'feature')
   return { dir, remote, before, after }
@@ -64,7 +64,7 @@ test('a clean merge prints only the no-code line', () => {
   assert.deepEqual(body(r.stdout), [NO_CODE])
 })
 
-for (const word of ['log', 'diff-tree', '--parents', '--name-only']) {
+for (const word of ['log', 'diff-tree', '--parents', '--name-only', 'merge-base']) {
   test(`a failed git command with ${word} prints no last line`, () => {
     const f = fixture(false)
     const shim = join(f.dir, 'shim'); mkdirSync(shim)
@@ -76,6 +76,36 @@ for (const word of ['log', 'diff-tree', '--parents', '--name-only']) {
     assert.doesNotMatch(r.stdout, /land-commits: (sum|no code)/)
   })
 }
+
+const sumLine = (lines) => {
+  const last = lines.pop()
+  const [crc, bytes] = spawnSync('cksum', { input: Buffer.from(lines.join('\n'), 'utf8'), encoding: 'utf8' }).stdout.trim().split(/\s+/)
+  return { last, want: `land-commits: sum ${crc}:${bytes}` }
+}
+
+test('a git warning on a successful clone stays out of the output and the sum', () => {
+  const f = fixture(false)
+  const cfg = join(f.dir, 'gitconfig')
+  writeFileSync(cfg, `[init]\n\ttemplateDir = ${join(f.dir, 'no-such-templates')}\n`)
+  const r = runIo(f, { GIT_CONFIG_GLOBAL: cfg })
+  assert.equal(r.status, 0, r.stderr)
+  assert.doesNotMatch(r.stdout, /warning/)
+  const { last, want } = sumLine(body(r.stdout))
+  assert.equal(last, want)
+})
+
+test('bytes that are not valid UTF-8 are dropped before the sum', () => {
+  const f = fixture(false, Buffer.from([0x78, 0xe9, 0x79, 0x0a, 0x74, 0x77, 0x6f, 0x0a]))
+  const r = spawnSync('bash', [join(root, 'scripts/io.sh'), 'land-commits.sh', 'o/r', f.before, f.after, join(f.dir, 'tmp')], {
+    env: { ...GIT_ENV, LAND_COMMITS_REMOTE: f.remote, PIPELINE_IO_TMP: f.dir },
+  })
+  assert.equal(r.status, 0)
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(r.stdout)
+  assert.doesNotMatch(text, /\ufffd/)
+  const { last, want } = sumLine(body(text))
+  assert.equal(last, want)
+  assert.match(text, /^\+\+xy$/m)
+})
 
 const src = readFileSync(join(root, 'workflows/run-wave.js'), 'utf8')
 const sectionOf = (from, to) => { const i = src.indexOf(from); return src.slice(i, src.indexOf(to, i)) }

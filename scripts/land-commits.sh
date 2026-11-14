@@ -13,6 +13,8 @@
 R=$1; before=$2; after=$3; tmp=$4
 [ -n "$tmp" ] || { echo "usage: land-commits.sh <owner/repo> <before> <after> <tmp dir>"; exit 2; }
 exec 3>&2
+# Git warnings, also those of a successful clone, must not reach the output, which is summed.
+exec 2>/dev/null
 fail() { echo "land-commits: $1" >&3; exit 1; }
 blob() { git rev-parse -q --verify "$1:$2" 2>/dev/null || echo none; }
 for sha in "$before" "$after"; do
@@ -27,8 +29,6 @@ git rev-parse --quiet --verify origin/HEAD >/dev/null || fail "the clone has no 
 git rev-parse --quiet --verify "$before^{commit}" >/dev/null || fail "cannot read $before"
 git rev-parse --quiet --verify "$after^{commit}" >/dev/null || fail "cannot read $after"
 
-# Git warnings must not reach the output, which is summed.
-exec 2>/dev/null
 out=""
 add() { out+="$1"$'\n'; }
 logged=$(git log --no-merges --reverse -p --format='commit %H%n%s' "$before..$after" --not origin/HEAD) || fail "cannot list the commits"
@@ -39,7 +39,7 @@ for m in $merges; do
   if [ -n "$diff" ]; then add "$(printf 'merge %s\n%s' "$m" "$diff")"; fi
   line=$(git rev-list --parents -n 1 "$m") || fail "cannot read the parents of merge $m"
   parents=${line#* }
-  base=$(git merge-base --octopus $parents) || continue
+  base=$(git merge-base --octopus $parents) || fail "cannot find the merge base of merge $m"
   changed=""
   for p in $parents; do
     names=$(git diff --name-only "$base" "$p") || fail "cannot list the files of merge $m"
@@ -61,7 +61,12 @@ for m in $merges; do
     done
   done <<< "$changed"
 done
-out=$(printf '%s' "$out")
+# The workflow reads the answer as a UTF-8 string, so bytes that are not valid UTF-8 are dropped before the sum.
+if [ -n "$out" ]; then
+  clean=$(printf '%s' "$out" | iconv -f utf-8 -t utf-8 -c 2>/dev/null) || true
+  [ -n "$clean" ] || fail "cannot make the output valid UTF-8"
+  out=$clean
+fi
 if [ -z "$out" ]; then
   echo "land-commits: no code added by the land fix"
 else
