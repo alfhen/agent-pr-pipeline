@@ -48,7 +48,7 @@ const mergeMain = (t, resolution) => {
   return must(t.work, 'rev-parse', 'HEAD')
 }
 
-test('a clean merge of the default branch prints nothing', () => {
+test('a clean merge of the default branch prints only the no-code line', () => {
   const t = build()
   must(t.work, 'checkout', '-q', '-B', 'feature', 'origin/main~2')
   const before = commit(t.work, 'feature.txt', 'f\n', 'feature file')
@@ -57,7 +57,7 @@ test('a clean merge of the default branch prints nothing', () => {
   push(t)
   const r = run(t, before, after)
   assert.equal(r.status, 0, r.stderr)
-  assert.equal(r.stdout, '')
+  assert.equal(r.stdout, 'land-commits: no code added by the land fix\n')
 })
 
 test('a merge with a hand-resolved conflict prints the resolution', () => {
