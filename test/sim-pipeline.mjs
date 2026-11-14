@@ -4625,6 +4625,7 @@ await check('C12-13: the task of the minor-pass check says that a finding agains
   assert.ok(sentence, 'no sentence')
   assert.match(sentence, /at least major/)
   assert.match(sentence, /outsidePass: true/)
+  assert.ok(!t.includes('on no other finding'))
 })
 await check('C12-14: the filing check keeps a refused minor for the minor pass and changes no severity', async () => {
   const bare = minorOf({ fileIssue: true })
