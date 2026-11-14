@@ -5141,6 +5141,18 @@ await check('BR2-12: a stop before the open step carries the minor, and a resume
   assert.equal(y.C1.ready, true)
   assert.ok(calls.some(c => /^(open|minorfix):C1$/.test(c.label) && c.prompt.includes('tiny nit')))
 })
+await check('C12-R1-1: a refused mark keeps its notFiled through a stop and a resume', async () => {
+  const x = await hooked(only1('C1'), (p, o) => o.label === 'review:C1#1' ? reviewOf([f('minor', 'bare nit', { fileIssue: true }), f('major', 'x')]) : o.label === 'fix:C1#1' ? { summary: 's', changed: false } : undefined)
+  assert.match(x.C1.reason, /^no progress:/)
+  const item = br2Args(x.C1, 'C1')
+  assert.ok(item.resume.minors.find(m => m.title === 'bare nit').notFiled)
+  await hooked([{ ...only1('C1')[0], resume: item.resume }], () => undefined)
+  const t = calls.find(c => c.label === 'open:C1').prompt
+  const list = JSON.parse(t.split('Minor findings not fixed:')[1].split('Minor findings to file:')[0])
+  const bare = list.find(m => m.title === 'bare nit')
+  assert.ok(bare.notFiled)
+  assert.notEqual(bare.fileIssue, true)
+})
 await check('BR2-13: a docs-check stop and a stop of a resumed run keep the accumulated minors', async () => {
   const g = await hooked(only1('G3'), at('review', 'G3', { 1: reviewOf([f('major', 'x1', { theme: 'gap' }), f('minor', 'docs nit')]) }))
   assert.match(g.G3.reason, /^docs check:/)

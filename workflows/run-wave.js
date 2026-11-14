@@ -148,9 +148,10 @@ const splitFindings = groups => {
 // The higher severity keeps its own detail and fix; the other detail is appended so no reasoning is lost.
 const hasText = v => typeof v === 'string' && v.trim() !== ''
 const fileable = f => !!f.fileIssue && hasText(f.input) && hasText(f.outcome)
-// Shows a minor as the opener, a result and a resume see it: a mark without both fields is taken away and the reason is written on the minor.
+// Runs at the end of mergeDuplicates, so every minor that reaches an opener list or a result is checked. A mark without both fields is taken away and the reason is written on the minor; a refusal written earlier stays on an unmarked minor.
 const checkMark = ({ notFiled, ...f }) => {
-  if (!f.fileIssue || fileable(f)) return f
+  if (fileable(f)) return f
+  if (!f.fileIssue) return notFiled ? { ...f, notFiled } : f
   const { fileIssue, ...rest } = f
   const missing = [hasText(f.input) ? '' : 'input', hasText(f.outcome) ? '' : 'outcome'].filter(Boolean)
   return { ...rest, notFiled: `not filed: ${missing.join(' and ')} missing` }
@@ -189,7 +190,7 @@ const mergeDuplicates = findings => {
     prev.sources = [...new Set(prev.sources.concat(sources))]
     absorb(prev, f)
   }
-  return [...seen.values()].map(({ source, ...f }) => f).sort(byFile)
+  return [...seen.values()].map(({ source, ...f }) => f.severity === 'minor' ? checkMark(f) : f).sort(byFile)
 }
 // The finding number only means something in the fix prompt, so the next reviewer also gets the title and file.
 const labelSiblings = (siblings, blocking) => (siblings || []).map(s => { const f = blocking[s.finding - 1]; return f ? { ...s, title: f.title, file: f.file } : s })
@@ -974,7 +975,7 @@ const evalResultOf = (id, history) => {
 const evalsOpenStep = (pr, rounds) => pr.evals
   ? ` Add an "Evals" section with a table of the rows below (columns: Id, Kind, What must be true, Last result). In an existing body, replace its Evals section with it, or add one.\nEval rows: ${JSON.stringify(pr.evals.map(e => ({ id: e.id, kind: e.kind, statement: e.statement, result: evalResultOf(e.id, rounds) })))}${pr.evalDisputes && pr.evalDisputes.length ? `\nUnder the Evals table, list each dispute of an eval (id, who raised it, its reason, the ruling and the writer's reason):\n${JSON.stringify(pr.evalDisputes)}` : ''}`
   : ''
-const openPrompt = (pr, rounds, minorsIn, arch, untested = [], fixed = []) => { const minors = minorsIn.map(checkMark); return `${ctx(pr)}
+const openPrompt = (pr, rounds, minors, arch, untested = [], fixed = []) => `${ctx(pr)}
 
 Task: open the pull request for ${pr.branch}, file the minor findings that matter and post the checklist of the others.
 Write each issue body, the PR body and the checklist comment to a file under \`${TMP}/open-${pr.id}/\` with the Write tool, and pass it with \`-F body=@<file>\`. Never pass a body inline, and write no other file${pr.titleFromIssue ? ' than the title file' : ''}.${MILESTONE_STEP}
@@ -991,7 +992,7 @@ Architecture, product and docs: ${JSON.stringify(arch || [])}
 Untested items: ${JSON.stringify(untested)}
 Minors fixed in the minor pass: ${JSON.stringify(fixed.map(m => ({ title: m.title, file: m.file })), null, 1)}
 Minor findings not fixed: ${JSON.stringify(minors, null, 1)}
-Minor findings to file: ${JSON.stringify(minors.filter(m => m.fileIssue), null, 1)}` }
+Minor findings to file: ${JSON.stringify(minors.filter(m => m.fileIssue), null, 1)}`
 
 const bodyPrompt = (pr, n, untested, exact) => `${ctx(pr)}
 
@@ -1768,8 +1769,8 @@ async function bots(pr, n, headSha, issues, history, minors) {
   const lateMinors = []
   const check = await botCheck(pr, n, headSha, answer, history, lateMinors, issues, minors)
   minors.push(...lateMinors)
-  if (!check.ok) return { ok: false, reason: check.reason, lastFindings: check.lastFindings, worktree: check.worktree, headSha: answer.headSha || headSha, wait, answer, lateMinors: lateMinors.map(checkMark) }
-  return { ok: true, headSha: check.headSha, wait, answer, lateMinors: lateMinors.map(checkMark) }
+  if (!check.ok) return { ok: false, reason: check.reason, lastFindings: check.lastFindings, worktree: check.worktree, headSha: answer.headSha || headSha, wait, answer, lateMinors }
+  return { ok: true, headSha: check.headSha, wait, answer, lateMinors }
 }
 
 const FEEDBACK_ITEM = {
@@ -2070,7 +2071,7 @@ async function runPRSteps(input) {
     const lateMinors = []
     let listOut = {}
     delete landOutState[pr.id]
-    const stopped = (reason, more) => { stopMark(history, reason); return { id: pr.id, prNumber: n, ready: false, reason, history, ...listOut, ...more, ...(more && more.lateMinors ? { lateMinors: more.lateMinors.map(checkMark) } : {}) } }
+    const stopped = (reason, more) => { stopMark(history, reason); return { id: pr.id, prNumber: n, ready: false, reason, history, ...listOut, ...more } }
     const given = givenEvals(pr, rawEvals)
     if (given) {
       const rec = Array.isArray(given.list) ? usableRecord(pr, given.accepted) : null
@@ -2108,7 +2109,7 @@ async function runPRSteps(input) {
     return {
       id: pr.id, prNumber: n, ready: true, headSha: end.head, ...landing, untested: untestedOf(pr), notes: r.notes,
       ci: end.ci, approvedBy: end.approvedBy || b.wait.approvedBy || [], botNotes: b.wait.notes, codeChangedByBots: botCodeChanged(b),
-      lateMinors: lateMinors.map(checkMark), history, ...listOut,
+      lateMinors, history, ...listOut,
     }
   }
   const history = pr.resume ? pr.resume.history || [] : []
@@ -2117,7 +2118,7 @@ async function runPRSteps(input) {
   let impl = { problems: '' }
   let rerunFixChanged
   const evalsOut = () => ({ ...(testsOnlyState[pr.id] ? { testsOnly: true } : {}), ...(breakCheckState[pr.id] ? { breakCheck: breakCheckState[pr.id] } : {}), ...(pr.evals ? { evals: pr.evals, evalsMeta: { ...pr.evalsMeta, accepted: pr.record }, evalDisputes: pr.evalDisputes, ...carriedOut([], pr.deviations) } : carriedOut([], pr.deviations)) })
-  const minorsOut = () => minors.length ? { minors: mergeDuplicates(minors).map(checkMark) } : {}
+  const minorsOut = () => minors.length ? { minors: mergeDuplicates(minors) } : {}
   const rerunFix = () => rerunFixChanged === undefined ? {} : { rerunFixChanged }
   const decisionFindings = (pr.skipImpl || pr.resume) && (pr.architectureDecision || pr.productDecision)
     ? [{ severity: 'major', title: 'Apply the maintainer decision', detail: `Apply the maintainer decision given in the brief to the branch. If the branch already follows it, change nothing.${pr.architectureDecision ? ` Architecture decision: ${pr.architectureDecision}` : ''}${pr.productDecision ? ` Product decision: ${pr.productDecision}` : ''}` }]
