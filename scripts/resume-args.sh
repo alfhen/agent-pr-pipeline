@@ -3,7 +3,7 @@
 # Prints the id, prNumber and resume to add to the PR's own prs[] item (it has no branch or title): { id, prNumber, resume: { history, minors, findings, evals, designRules,
 # evalDisputes, deviations } }. Every field is copied from the input as it is, and a field the input lacks is left out.
 # resume.evals is the object form { evals, ...evalsMeta }, so the accepted record is resume.evals.accepted. A workflow result
-# keeps its minors in minors (a stop before the open step) or lateMinors, and its findings in lastFindings. A large list is never typed by hand, so use this script.
+# keeps its minors in minors (a stop, or a run that failed) or lateMinors, and its findings in lastFindings. A large list is never typed by hand, so use this script.
 # --max-rounds and --cap together print one WARN line on stderr when the rounds in the history (rows whose round is an
 # integer) plus n are more than c. The item is still printed.
 # Exit: 0 printed, 1 the PR id is not in the input, 64 bad argument, 65 the input is missing, not JSON, or not a result.

@@ -233,3 +233,44 @@ test('a usage error exits 2', () => {
   assert.equal(run(t, ['worktrees', 'o/r']).status, 2)
   assert.equal(run(t, ['clones', t.tmp]).status, 2)
 })
+
+test('clones keeps the open folder of each keep id, per id and with --all', () => {
+  const t = build()
+  run(t, ['init', t.tmp])
+  mkdirs(t, 'open-T01', 'test-T01-r1', 'safety-T01', 'open-T02', 'test-T02-r1')
+  const r = run(t, ['clones', t.tmp, 'T01', 'T01'])
+  assert.equal(r.status, 0)
+  for (const kept of ['open-T01', 'open-T02', 'test-T02-r1']) assert.ok(existsSync(join(t.tmp, kept)), kept)
+  for (const gone of ['test-T01-r1', 'safety-T01']) assert.ok(!existsSync(join(t.tmp, gone)), gone)
+  const u = build()
+  run(u, ['init', u.tmp])
+  mkdirs(u, 'open-T01', 'test-T01-r1', 'safety-T01', 'open-T02', 'test-T02-r1')
+  assert.equal(run(u, ['clones', u.tmp, '--all', 'T01']).status, 0)
+  assert.ok(existsSync(join(u.tmp, 'open-T01')) && existsSync(join(u.tmp, '.pipeline-tmp')))
+  for (const gone of ['open-T02', 'test-T01-r1', 'safety-T01', 'test-T02-r1']) assert.ok(!existsSync(join(u.tmp, gone)), gone)
+  for (const args of [['T01'], ['--all']]) {
+    const v = build()
+    run(v, ['init', v.tmp])
+    mkdirs(v, 'open-T01')
+    assert.equal(run(v, ['clones', v.tmp, ...args]).status, 0)
+    assert.ok(!existsSync(join(v.tmp, 'open-T01')), args.join(' '))
+  }
+})
+
+test('keep words do not weaken the refusals of clones', () => {
+  const t = build()
+  run(t, ['init', t.tmp])
+  mkdirs(t, 'test-T01-r1', 'open-T01', 'safety-T02')
+  for (const id of ['*', 'T01/../..']) {
+    const r = run(t, ['clones', t.tmp, id, 'T01'])
+    assert.equal(r.status, 0)
+    assert.match(r.out, /^KEPT /)
+  }
+  for (const n of ['test-T01-r1', 'open-T01', 'safety-T02']) assert.ok(existsSync(join(t.tmp, n)), n)
+  const u = build()
+  mkdirs(u, 'test-T01-r1')
+  const r = run(u, ['clones', u.tmp, '--all', 'T01'])
+  assert.equal(r.status, 0)
+  assert.match(r.out, /^KEPT /)
+  assert.ok(existsSync(join(u.tmp, 'test-T01-r1')))
+})
