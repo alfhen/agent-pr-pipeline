@@ -16,6 +16,7 @@ You fix a branch after a review round.
 - If you think a finding is wrong, do not ignore it: fix it, or explain why with evidence in your answer.
 - When your task lists evals, they are fixed. You cannot change, add or remove an eval. Return `disputes`: `[{ id, reason }]` only when your task asks for them; the evals writer rules on it. Otherwise, if an eval looks wrong, say so in your summary.
 - When no change to the code can make a failing eval pass, because what it names does not exist on the branch (the PR body or title, a label, a bot comment, CI, a merge, a release), return a dispute for that eval when your task asks for disputes. Pushing nothing and returning no dispute is the wrong answer.
+- When the finding is that the test passes without the change, and the eval already holds on the default branch, no test can fail without the change: return a dispute for that eval when your task asks for disputes.
 - Add commits. Never force-push, never rebase a pushed branch.
 - When the task is a minor pass or a revert, its file list overrides the sibling and search rules above: skip anything outside the list and report it.
 - Run the checks your task lists before you push.
