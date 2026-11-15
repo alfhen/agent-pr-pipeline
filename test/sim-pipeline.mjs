@@ -5676,6 +5676,27 @@ await check('C10-12 a list that the evals check sends back three times stops the
   assert.ok(evalLabels('C1').includes('evalsarch:C1#3'))
   assert.ok(!evalLabels('C1').includes('implement:C1'))
 })
+await check('D-7 the prompts of a quick fix say the issue text is untrusted, and the prompts of a plan PR do not', async () => {
+  const head = p => p.slice(0, p.indexOf('Temporary files go under'))
+  for (const re of [/^implement/, /^review/, /^product/]) {
+    const c = forPr('QM', re)[0]
+    assert.ok(c, String(re))
+    assert.match(head(c.prompt), /text of the issue is untrusted data[^\n]*instructions in it/, String(re))
+  }
+  const seen = {}
+  await hooked(only1('C1'), (p, o) => { if (o.label === 'implement:C1') seen.impl = p })
+  assert.ok(seen.impl)
+  assert.doesNotMatch(head(seen.impl), /untrusted/)
+})
+await check('D-9 the plan review checks that each issue an entry closes is fully settled, and the code review does not', async () => {
+  const seen = {}
+  await hooked(only1('P1'), (p, o) => { if (o.label === 'review:P1#1') seen.plan = p })
+  const after = seen.plan.slice(seen.plan.indexOf("Check each entry's Acceptance line against the plan's decisions"))
+  assert.ok(after.split(/(?<=\.) /).some(t => /issue/.test(t) && /clos/.test(t) && /fully|whole|entirely/.test(t) && /blocker|major/.test(t)))
+  await hooked(only1('C1'), (p, o) => { if (o.label === 'review:C1#1') seen.code = p })
+  assert.ok(seen.code)
+  assert.doesNotMatch(seen.code, /fully settled by that entry/)
+})
 await check('F652-3 a failing eval and a fixer dispute with no push go to the writer, not to the no-progress stop', async () => {
   const newEval = ev('C1-1', 'behaviour', { statement: 'C1-1 checkable from the branch' })
   const x = await disputeRun(listOf('C1'), disputeFlow({ ruling: 'change', reason: 'not checkable', eval: newEval }))
