@@ -773,7 +773,7 @@ Task: write the evals for this PR.${pr.resume || pr.skipImpl ? '' : ' Nothing is
 ${evalsRules}
 Return evals, coverage, algorithm, noErrorPath, noReference and notes.
 
-${evalsBlock(pr)}${last ? `\n\nThis is attempt ${attempt}. Your last list was sent back: ${last.reason}\nYour last list:\n${JSON.stringify(last.evals, null, 1)}\n${last.rule ? 'A rule decides this, so the list itself must change; notes cannot change it.' : 'Change the list to meet this, or say in notes why it already does.'}` : ''}`
+${evalsBlock(pr)}${last ? `\n\nThis is attempt ${attempt}. ${last.given ? 'The list' : 'Your last list'} was sent back: ${last.reason}\n${last.given ? 'The list' : 'Your last list'}:\n${JSON.stringify(last.evals, null, 1)}\n${last.rule ? 'A rule decides this, so the list itself must change; notes cannot change it.' : 'Change the list to meet this, or say in notes why it already does.'}` : ''}`
 
 const coverageText = coverage => `
 
@@ -2013,7 +2013,7 @@ async function checkEvals(pr, list, meta, round, writerNotes, coverage) {
   return { notes: notes.join('; ') }
 }
 
-// Gets the accepted list for a PR before anything is built. { stop } ends the PR, { evals, meta } is the list, {} means no list (the tester path).
+// Gets the accepted list for a PR before the build step of this run. { stop } ends the PR, { evals, meta } is the list, {} means no list (the tester path).
 async function writeEvals(pr, raw) {
   if (!evalsRuns(pr)) return {}
   const given = givenEvals(pr, raw)
@@ -2032,15 +2032,15 @@ async function writeEvals(pr, raw) {
     if (!c.down && !c.notes) return { evals: given.list, meta: given.meta, record: makeRecord(pr, given.list, given.meta) }
     const stop = `evals check: ${c.down || c.notes}`
     if (c.down || !EVALS_ON || EVALS_ROUNDS < 2) return { stop, record: rec, refused: given.list }
-    return writerLoop(pr, 2, { rule: false, reason: `the reviewers found gaps: ${c.notes}`, evals: given.list }, rec)
+    return writerLoop(pr, 2, { rule: false, reason: `the reviewers found gaps: ${c.notes}`, evals: given.list, meta: given.meta, given: true }, rec)
   }
   return writerLoop(pr, 1, null, null)
 }
 
-// Every stop returns the writer's last list, so a resume of the result runs the check or the rule again. The record of an earlier run stays through every attempt.
+// The record of an earlier run stays through every attempt, so a throw or a stop returns it.
 async function writerLoop(pr, first, from, rec) {
   let last = from
-  let written = null
+  let written = from ? { evals: from.evals, meta: from.meta } : null
   const stopWith = stop => ({ stop, record: rec, ...(written ? { refused: written.evals, refusedMeta: written.meta } : {}) })
   for (let attempt = first; attempt <= EVALS_ROUNDS; attempt++) {
     let w = null

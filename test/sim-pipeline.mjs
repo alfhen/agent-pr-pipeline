@@ -6042,7 +6042,7 @@ await check('RE-12 SKILL.md says a sent-back given list goes to the writer and a
   const sentences = reSentences(text)
   assert.ok(sentences.some(t => /given|resumed|`prs\[\]\.evals`|`resume\.evals`/.test(t) && /writer/.test(t) && t.includes('`evalsRounds`')))
   assert.ok(sentences.some(t => /last list of the writer|writer's last list/.test(t) && /evals stop|`evals check:|`evals refused:/.test(t)))
-  assert.ok(text.includes('default 3'))
+  assert.ok(text.split('\n').some(l => l.startsWith('- `evals`:') && l.includes('default 3')))
 })
 await check('RE-13 the result paragraph says a land-fix run that throws carries minors under lateMinors', () => {
   const line = readFileSync(new URL('skills/pr-pipeline/SKILL.md', root), 'utf8').split('\n').find(l => l.startsWith('The result is `{ prs,'))
