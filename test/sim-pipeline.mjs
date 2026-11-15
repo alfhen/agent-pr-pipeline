@@ -2013,6 +2013,84 @@ await check('reused PR: the open prompt keeps the body', async () => {
   assert.match(open, /Change only the Review line .* and the Untested section/)
   assert.doesNotMatch(open, /replace its body with the body described below/)
 })
+const a2Run = async (prs, hook) => { calls = []; cleanupCalls = []; timeline = []; logs = []; preflight = GOOD; const out = await run({ ...base, prs }, async (p, o) => { const h = hook(p, o); if (h === undefined) return agent(p, o); if (h && h.headSha && !o.label.startsWith('botanswer')) checkedHead[o.label.split(':')[1].split('#')[0]] = h.headSha; calls.push({ label: o.label, prompt: p }); return h }, parallel, log); return Object.fromEntries(out.prs.map(x => [x.id, x])) }
+const a2Pwc = (p, o) => o.label === 'verify:C1#1' ? (lastHead.C1 = 'sha-C1', { pass: true, headSha: 'sha-C1', checks: [{ name: 'lint', pass: true }], evals: K_LIST.map(e => ({ id: e.id, result: 'pass', evidence: 'ok', breakCheck: 'passes-without-change' })) }) : undefined
+const a2C1 = () => only('C1').map(p => ({ ...p, evals: K_LIST }))
+const a2Bots = async (read, hook) => {
+  land.threads.add('C1')
+  changedFiles.files.C1 = read
+  try { return await a2Run(a2C1(), hook) } finally { land.threads.delete('C1'); delete changedFiles.files.C1 }
+}
+const a2Bodies = id => calls.filter(c => c.label === `open:${id}#body`)
+const a2NonTest = l => /bots/.test(l) ? ['test/a.test.mjs', 'src/a.js'] : ['test/a.test.mjs']
+await check('A2 reused PR: the open prompt adds a line to the Minor fixes section for each minor the pass fixed', async () => {
+  const hook = (p, o) => o.label === 'review:C1#1' ? { summary: 's', findings: [{ severity: 'minor', title: 'rename helper', detail: 'd', file: 'src/a.js' }] }
+    : o.label === 'minorfix:C1' ? { changed: true, headSha: 'fixsha', fixed: [1], summary: 'renamed' }
+    : o.label === 'minorreview:C1' ? { summary: 's', findings: [], unconfirmed: [] }
+    : o.label === 'test:C1#minor1' ? (lastHead.C1 = 'sha-minor', { pass: true, headSha: 'sha-minor', checks: [{ name: 'lint', pass: true }] })
+    : undefined
+  const x = await a2Run(only('C1').map(p => ({ ...p, prNumber: 7 })), hook)
+  assert.deepEqual(x.C1.minorPass.fixed, ['rename helper'])
+  const open = calls.find(c => c.label === 'open:C1').prompt
+  const part = open.split('use that PR and create none')[1].split('The rest of this step describes the body of a new PR')[0]
+  assert.match(part, /keep all of it, including every `Closes #N` line, the Minor fixes section/)
+  assert.match(part, /Change only the Review line .* and the Untested section/)
+  assert.match(part, /and the Untested section[^]*add to its Minor fixes section one line for each finding under "Minors fixed in the minor pass"/)
+  assert.match(part, /Never rebuild the body from the data below/)
+})
+await check('A2 a bot code change on a non-test file makes the body agent remove the Tests only line', async () => {
+  const x = await a2Bots(a2NonTest, a2Pwc)
+  assert.match(calls.find(c => c.label === 'open:C1').prompt, /Tests only: the reported behaviour already holds/)
+  assert.equal(x.C1.codeChangedByBots, true)
+  const labels = calls.map(c => c.label)
+  const body = a2Bodies('C1')
+  assert.equal(body.length, 1)
+  assert.ok(labels.indexOf('open:C1#body') > labels.indexOf('io:C1#changedbots1'))
+  assert.ok(body[0].prompt.split('\n').some(l => /Tests only:/.test(l) && /remove|delete/i.test(l)))
+  assert.equal(x.C1.ready, true)
+  assert.notEqual(x.C1.testsOnly, true)
+})
+await check('A2 a land fix on a non-test file makes the body agent remove the Tests only line, with no drop or exactly', async () => {
+  const x = await kRun(kLandPr({ evals: K_LIST }), { cfg: [['landOutput', 'LA']] })
+  assert.equal(x.LA.ready, true, x.LA.reason)
+  const body = a2Bodies('LA')
+  assert.equal(body.length, 1)
+  assert.ok(body[0].prompt.split('\n').some(l => /Tests only:/.test(l) && /remove|delete/i.test(l)))
+  assert.doesNotMatch(body[0].prompt, /drop|remove the section|exactly/)
+})
+await check('A2 a refused removal of the Tests only line stops the PR with the body reason', async () => {
+  const x = await a2Bots(a2NonTest, (p, o) => o.label === 'open:C1#body' ? { updated: false } : a2Pwc(p, o))
+  assert.equal(a2Bodies('C1').length, 1)
+  assert.equal(x.C1.ready, false)
+  assert.equal(x.C1.codeChangedByBots, true)
+  assert.equal(x.C1.reason, 'PR body not updated with the untested items')
+  land.landOutput.add('LA')
+  try {
+    const y = await a2Run(kLandPr({ evals: K_LIST }), (p, o) => o.label === 'open:LA#body' ? { updated: false } : undefined)
+    assert.equal(a2Bodies('LA').length, 1)
+    assert.equal(y.LA.ready, false)
+    assert.equal(y.LA.reason, 'PR body not updated with the untested items')
+  } finally { land.landOutput.delete('LA') }
+})
+await check('A2 no Tests only removal after a failed read, a tests-only read or no bot change', async () => {
+  const failed = (p, o) => o.label === 'io:C1#changedbots1' ? ioWrap(o.label, { exitCode: 1, output: 'gate-files: cannot read the branch' }) : a2Pwc(p, o)
+  const a = await a2Bots(['test/a.test.mjs'], failed)
+  assert.ok(calls.some(c => c.label === 'io:C1#changedbots1'))
+  assert.equal(a.C1.codeChangedByBots, true)
+  assert.equal(a.C1.ready, true)
+  assert.equal(a2Bodies('C1').length, 0)
+  const b = await a2Bots(['test/a.test.mjs'], a2Pwc)
+  assert.ok(calls.some(c => c.label === 'io:C1#changedbots1'))
+  assert.equal(b.C1.codeChangedByBots, true)
+  assert.equal(b.C1.ready, true)
+  assert.equal(a2Bodies('C1').length, 0)
+  changedFiles.files.C1 = ['test/a.test.mjs', 'src/a.js']
+  try {
+    const c = await a2Run(a2C1(), a2Pwc)
+    assert.equal(c.C1.ready, true)
+    assert.equal(a2Bodies('C1').length, 0)
+  } finally { delete changedFiles.files.C1 }
+})
 await check('decision rerun: a skipImpl rerun with productDecision runs the fixer first, then reviews', async () => {
   const order = id => calls.filter(c => c.label.includes(`:${id}`)).map(c => c.label)
   const findingsOf = label => calls.find(c => c.label === label).prompt.split('together:\n')[1].split(/^File .*:\n/m).filter(Boolean).flatMap(g => JSON.parse(g)).sort((x, y) => x.n - y.n)

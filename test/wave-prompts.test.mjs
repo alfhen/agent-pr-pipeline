@@ -153,7 +153,7 @@ test('a missing milestone has its own reason', () => {
   assert.match(src, /return blocked true and milestoneMissing true, with blockedReason/)
 })
 
-test('the opener keeps the body of a reused PR and changes only the Review line and the Untested section', () => {
+test('the opener keeps the body of a reused PR, changes only the Review line and the Untested section, and adds the minors fixed', () => {
   assert.match(src, /use that PR and create none\. Read its body with \\`gh api repos\/\$\{REPO\}\/pulls\/<number> --jq \.body\\` and keep all of it, including every \\`Closes #N\\` line, the Minor fixes section/)
   assert.match(src, /Change only the Review line .* and the Untested section/)
   assert.match(src, /Never rebuild the body from the data below/)
