@@ -1,5 +1,5 @@
 #!/bin/bash
-# usage: land-wave.sh [--person] <owner/repo> <pr>:<checked sha>[:auto] [<pr>:<checked sha>[:auto] ...]
+# usage: land-wave.sh [--review] [--person] <owner/repo> <pr>:<checked sha>[:auto] [<pr>:<checked sha>[:auto] ...]
 # The pairs come from the workflow result (each PR's "land" field). The :auto suffix becomes --auto for
 # merge-pr.sh; --person is passed through. For each PR in order: wait for CI
 # (up to 45 min), then merge it with merge-pr.sh, which refuses unless the head is still the checked sha,
@@ -8,10 +8,20 @@
 # that PR (landFix: true, or skipImpl to check the new head), then run this again.
 # When every failing check is in knownFlakes (.github/pipeline.json on the default branch), the failed jobs
 # are rerun once and CI is awaited again; only a check that still fails stops the wave.
-person=""
-[ "$1" = "--person" ] && { person=--person; shift; }
+# With --review, a PR that no bot has cleared (and has no open bot comment) first gets request-review.sh, which asks CodeRabbit for a
+# review (two requests at most, 64 minutes apart), so a PR can wait hours: run it in the background, one --review land at a time for a
+# repo (there is no lock). A review that did not come stops the wave with "REVIEW #<pr>: <cause>" (exit 9).
+person=""; review=0
+while :; do
+  case "$1" in
+    --person) person=--person ;;
+    --review) review=1 ;;
+    *) break ;;
+  esac
+  shift
+done
 R=$1; shift
-[ -n "$1" ] || { echo "usage: land-wave.sh [--person] <owner/repo> <pr>:<sha>[:auto] [...]"; exit 2; }
+[ -n "$1" ] || { echo "usage: land-wave.sh [--review] [--person] <owner/repo> <pr>:<sha>[:auto] [...]"; exit 2; }
 M="$(dirname "$0")/merge-pr.sh"
 tries=90; pause=30; mtries=6; mpause=10; rtries=6
 [ "$PIPELINE_TEST_FAST" = 1 ] && { tries=3; pause=0; mtries=1; mpause=0; rtries=3; }
@@ -74,6 +84,23 @@ parse_arg() {
   [[ "$pr" =~ ^[0-9]+$ ]] || { echo "need a PR number in $arg"; exit 2; }
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "need the full 40-character commit id in $arg: a short id cannot match the PR head. Use the land value from the workflow result as it is."; exit 2; }
 }
+# Runs between the WAITING test and merge-pr.sh. Returns when merge-pr.sh should run; stops the wave when no review came.
+ask_review() {
+  local st failed rrout rrc cause
+  st=$(bash "$here/bot-status.sh" "$R" "$pr") || { echo "STOP #$pr: cannot read the bot status"; exit 5; }
+  if [ "$(jq -r '(.approvedBy | length) > 0' <<<"$st")" = true ]; then
+    failed=$(gh api --paginate "repos/$R/commits/$sha/check-runs?per_page=100") || { echo "STOP #$pr: cannot read the check runs"; exit 5; }
+    failed=$(jq -s '[.[].check_runs[] | select((.app.slug // "") == "coderabbitai" and .conclusion == "success" and (.output.title // "") == "Review failed")] | length' <<<"$failed") || { echo "STOP #$pr: cannot read the check runs"; exit 5; }
+    [ "$failed" = 0 ] && return 0
+  elif [ "$(jq -r '.openThreads > 0 or .reviewBodies > 0' <<<"$st")" = true ]; then
+    echo "REVIEW #$pr: a bot left open comments or a review body with a finding (openThreads, reviewBodies); answer them first"; exit 9
+  fi
+  rrout=$(mktemp) || { echo "STOP #$pr: cannot make a temporary file"; exit 5; }
+  bash "$here/request-review.sh" "$R" "$pr" "$sha" | tee "$rrout"; rrc=${PIPESTATUS[0]}
+  cause=$(tail -n 1 "$rrout"); rm -f "$rrout"
+  [ "$rrc" = 0 ] && return 0
+  echo "REVIEW #$pr: ${cause#NO REVIEW #$pr: }"; exit 9
+}
 # Every argument is checked before the first gh call, so a bad one cannot stop the run after an earlier PR has merged.
 for arg in "$@"; do parse_arg; done
 for arg in "$@"; do
@@ -113,6 +140,7 @@ for arg in "$@"; do
     echo "LAND FIX #$pr state=$state failing=[$failing]"; exit 3
   fi
   if [ "$pending" != "0" ]; then echo "WAITING #$pr: CI still running after 45 min"; exit 4; fi
+  [ "$review" = 1 ] && [ "$state" = MERGEABLE ] && ask_review
   bash "$M" $auto $person "$R" "$pr" "$sha" "$branch" || { echo "STOP #$pr not merged (see the merge-pr.sh output above)"; exit 5; }
   sleep "$((pause / 6))"
 done
