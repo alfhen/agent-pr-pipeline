@@ -780,7 +780,7 @@ const evalsCheckPrompt = (pr, list, meta, who, round, writerNotes, coverage) => 
 
 Task: check the list of evals for this PR${who === 'product' ? ' against the product goals' : ' against the architecture'}. Nothing is built yet, so you check the list and the entry, not code.
 1. Clone the default branch: ${evalsClone(`evals-${who}-${pr.id}-r${round}`, pr)} and cd there. Read ${who === 'product' ? GOALS : ARCH}, then ${ref(pr)} (the entry of this PR).
-2. First question: which behaviour, error path, Acceptance line or QA line of the entry has no eval? Each such gap is a \`needs-change\` note. An Acceptance or QA line that names a step after the build (the text or title of the pull request, labels, CI, a merge or a release) needs no eval and is not a gap.
+2. First question: which behaviour, error path, Acceptance line or QA line of the entry has no eval? Each such gap is a \`needs-change\` note. The part of an Acceptance or QA line that names a step after the build (the text or title of the pull request, labels, CI, a merge or a release) needs no eval and is not a gap; the rest of the line still does.
 3. Then check that each eval is one plain sentence, has a check that can fail, and does not ask for more than the entry does${who === 'product' ? ' (an eval that widens the product or touches a non-goal is a note)' : ' (an eval that asks for a new concept the architecture does not have is a note)'}.
 ${evalsRules}
 Return verdict (\`ok\` or \`needs-change\`) and notes: one line for each gap or problem, empty when the verdict is ok.
