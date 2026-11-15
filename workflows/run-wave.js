@@ -788,7 +788,7 @@ Return verdict (\`ok\` or \`needs-change\`) and notes: one line for each gap or 
 ${evalsBlock(pr)}
 
 Evals to check:
-${JSON.stringify({ evals: list, ...meta }, null, 1)}${coverage ? coverageText(coverage) : ''}${writerNotes ? `\n\nThe writer's notes (an answer to an earlier needs-change; accept it when it is reasoned and true):\n${writerNotes}` : ''}`
+${JSON.stringify({ evals: list, ...meta }, null, 1)}${coverage ? coverageText(coverage) : ''}${writerNotes ? `\n\nThe writer's notes (an answer to an earlier needs-change; accept it when it is reasoned and true):\n${writerNotes}` : ''}${designRulesText(pr)}`
 
 const relatedStep = RELATED_TESTS ? `3. Then run the e2e and docs test files that import or name the modules the PR touches and are not in that list. Find them with a search (\`git grep -l -E\` for each touched module's file name and exported names, over every tracked test file in the repo, such as \`*.test.*\` and \`*.spec.*\` files in any folder, and the paths the test config's projects include, docs folders too). Run at most ${RELATED_MAX}, the files that import a touched module directly first, and name the files you left out in the check, because CI runs them. Never run the whole suite. For each file, read the repo's test config and package scripts to find the command and test project that own it (for example \`--project <name>\` in a vitest workspace), also when that project is left out of the default test command, and name the command in the check. Do not use \`${E2E_COMMAND}\` for a file outside its project. Report a file or project you could not select, or one the environment cannot run (for example a missing browser), as a check with \`refused\`: true, never as passed or failed. Name each extra file in the check, and say which test projects you ran.\n` : ''
 const refusedText = '`refused`: true for a command that a permission check denied, or for a file or project you could not run, so it did not run. A check that fails because a port is in use runs once more. Report the second run as it ended, and use `refused`: true only when the port is still in use. For the check of an eval, as an exception to the `ci` rule, a port that is still in use on the second run counts as a command that did not run here, like a refused command: result `ci`, with `ciCheck` the name of a check that covers it'
@@ -1903,7 +1903,8 @@ async function runPR(input) {
     const rec = recordState[input.id]
     const landOut = input.landFix ? landOutState[input.id] : null
     const resume = input.resume
-    const history = historyState[input.id] || (resume && resume.history)
+    const own = historyState[input.id]
+    const history = input.landFix && own && resume && Array.isArray(resume.history) ? resume.history.concat(own) : own || (resume && resume.history)
     const raw = minorsState[input.id] || (!input.landFix && resume && resume.minors)
     const found = Array.isArray(raw) ? raw.filter(m => m && typeof m === 'object') : null
     const minors = Array.isArray(found) && found.length ? mergeDuplicates(found) : null

@@ -5889,3 +5889,20 @@ await check('RL-8 SKILL.md names the design rules, the thrown land fix and the s
   const row = sentences(text.find(l => l.startsWith('| `needs human: scope`')))
   assert.ok(row.some(s => s.includes('Touches') && s.includes('scope eval') && /rerun/.test(s)))
 })
+const rlEvalsCheckPrompt = async designRules => {
+  const pr = { ...C1PR, evals: listOf('C1'), resume: { history: [], ...(designRules ? { designRules } : {}) } }
+  await a01Hooked([pr], () => undefined)
+  return archCalls()[0].prompt
+}
+await check('RL-11 the evals check prompt holds the design rules', async () => {
+  assert.match(await rlEvalsCheckPrompt(['Refuse a path with dots']), RL_RULES)
+  assert.doesNotMatch(await rlEvalsCheckPrompt(), /Rules a person set/)
+})
+await check('RL-12 a land-fix run that throws keeps the resumed rows first', async () => {
+  const x = await rlLand(false, async () => (await rlRun(kLandPr({ resume: { history: [{ round: 1 }, { round: 'minor1' }] } }), (p, o) => { if (o.label === 'io:LA#endci') throw new Error('ci read crashed') })).prs[0])
+  assert.equal(x.ready, false)
+  assert.match(x.reason, /^run failed:/)
+  assert.equal(x.history[0].round, 1)
+  assert.equal(x.history[1].round, 'minor1')
+  assert.ok(x.history.slice(2).some(h => h.round === 'land1'), JSON.stringify(x.history))
+})
