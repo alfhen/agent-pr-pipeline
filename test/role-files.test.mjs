@@ -84,7 +84,7 @@ test('a second folder that cannot be read, or the same folder, gives CHECK FAILE
 
 test('the script leaves every file and folder as it was', () => {
   const t = setup()
-  const snapshot = () => execSync(`find ${t} -exec cksum {} + | sort`, { encoding: 'utf8' })
+  const snapshot = () => execSync(`(find ${t} | sort; find ${t} -type f -exec cksum {} + | sort)`, { encoding: 'utf8' })
   const before = snapshot()
   writeFileSync(join(t, 'b/agents/alpha.md'), 'other\n')
   const changed = snapshot()

@@ -5724,7 +5724,7 @@ const onlyRoleWarning = (re = /^WARN role check could not run: /) => {
   assert.equal(lastResult.warnings.length, 1, JSON.stringify(lastResult.warnings))
   assert.match(lastResult.warnings[0], re)
 }
-const refusedRole = x => Object.values(x).every(p => p.refused && !p.ready && p.reason.startsWith('role files differ:'))
+const refusedRole = (x, ids) => ids.every(id => x[id]) && Object.values(x).every(p => p.refused && !p.ready && p.reason.startsWith('role files differ:'))
 await check('C11-2 the probe is one goals-preflight call at the start of every wave, with a prompt that holds no version and no folder', async () => {
   for (const ids of [['C1'], ['L1']]) {
     await rolesRun({ ids })
@@ -5782,12 +5782,12 @@ await check('C11-7 ROLES DIFFER and ROLES MISSING refuse every PR, in every kind
   assert.deepEqual(Object.keys(lastResult).sort(), ROLE_KEYS)
   assert.ok(cleanupCalls.some(c => c.label === 'io:wave#cleanupall'))
   const missing = await rolesRun({ probes: roleSame06, io: { exitCode: 0, output: 'ROLES MISSING /cache/apl/0.9.6' }, ids: ['C1', 'C2'] })
-  assert.ok(refusedRole(missing))
+  assert.ok(refusedRole(missing, ['C1', 'C2']))
   const goals = await rolesRun({ probes: roleSame06, io: differ, ids: ['C1', 'C2'], pre: { ok: false, exists: true, goals: 2, nonGoals: 0, missing: ['Non-goals items'] } })
-  assert.ok(refusedRole(goals))
+  assert.ok(refusedRole(goals, ['C1', 'C2']))
   const land = await rolesRun({ probes: roleSame06, io: { exitCode: 0, output: 'ROLES DIFFER implementer.md' }, ids: ['L1'] })
   assert.deepEqual(Object.keys(land.L1).sort(), ['id', 'ready', 'reason', 'refused'])
-  assert.ok(refusedRole(land))
+  assert.ok(refusedRole(land, ['L1']))
   assert.deepEqual(calls, [])
   assert.deepEqual(Object.keys(lastResult).sort(), ROLE_KEYS)
   assert.ok(cleanupCalls.some(c => c.label === 'io:wave#cleanupall'))

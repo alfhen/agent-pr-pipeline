@@ -2299,7 +2299,9 @@ async function checkRoles() {
   try {
     const probe = async label => {
       const got = await call('roleProbe', null, roleProbePrompt(), label, { schema: ROLE_LINE })
-      return got && typeof got.version === 'string' ? got.version.trim() : null
+      if (!got || typeof got.version !== 'string') return null
+      const v = got.version.trim().replace(/\.$/, '')
+      return v.toLowerCase() === NO_LINE ? NO_LINE : v
     }
     const first = await probe('roles:wave')
     if (first === VERSION) return {}

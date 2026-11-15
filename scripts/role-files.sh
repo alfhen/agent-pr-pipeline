@@ -4,16 +4,19 @@
 # Prints ROLES SAME, ROLES DIFFER <names> or ROLES MISSING <folder> (exit 0), or CHECK FAILED <why> (exit 3).
 set -uo pipefail
 if [ $# -ne 2 ]; then echo "usage: role-files.sh LOADED_FOLDER WORKFLOW_FOLDER"; exit 2; fi
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "$here/semver.sh"
 a=$1 b=$2
 if [ ! -d "$a" ]; then echo "ROLES MISSING $a"; exit 0; fi
 if [ ! -d "$b/agents" ] || [ ! -r "$b/agents" ]; then echo "CHECK FAILED cannot read $b/agents"; exit 3; fi
 if [ "$(cd "$a" && pwd -P)" = "$(cd "$b" && pwd -P)" ]; then echo "CHECK FAILED both folders are the same folder: $a"; exit 3; fi
 
 # Only the release line of goals-preflight.md is left out: it is the one line that must differ between releases.
-release_line='^Role files of release [0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?\.$'
+core=${semver#^}; core=${core%\$}
+release_line="^Role files of release ${core}\\.\$"
 body() {
   if [ "$(basename "$1")" = "goals-preflight.md" ]; then
-    grep -v -E "$release_line" "$1"
+    RE="$release_line" awk '!done && $0 ~ ENVIRON["RE"] {done=1; next} 1' "$1"
     # grep ends every line with a newline, so the last byte keeps the compare byte for byte
     tail -c 1 "$1" | od -An -c
   else
