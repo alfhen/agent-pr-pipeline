@@ -76,7 +76,7 @@ The local routine is replaced by the cloud routines once it is retired (docs/clo
 ## Needs
 
 - Claude Code with the Workflow tool and `gh` signed in.
-- A review bot on the repo, such as CodeRabbit or Gitar. Its approval, or its clean review that was asked for with `@coderabbitai full review`, is the merge gate. Another review bot needs its exact login in `BOT_LOGINS`.
+- A review bot on the repo, such as CodeRabbit or Gitar. Its approval is the merge gate. For CodeRabbit only, a clean review that was asked for with `@coderabbitai full review` also clears the gate. Another review bot clears it by approval or by answered comments, and needs its exact login in `BOT_LOGINS`.
 - CI that runs the same checks the agents run, and the full e2e suite.
 
 ## Develop
