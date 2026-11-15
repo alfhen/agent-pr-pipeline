@@ -56,12 +56,18 @@ def answerLine: gsub("^\\s+|\\s+$"; "") | (test("#[0-9]+") or startswith("Note, 
 def blk($title; $inner): "<details>\\s*<summary>\\s*" + $title + "</summary>\\s*<dl>\\s*<dd>\\s*" + $inner + "</dd>\\s*</dl>\\s*</details>";
 def nitRe: "<details>\\s*<summary>\\s*Nitpick comments: (?<k>[0-9]+)</summary>\\s*<blockquote>\\s*<dl>\\s*<dd>\\s*<br>(?<inner>[\\s\\S]*?)</dd>\\s*</dl>\\s*</blockquote></details>\\s*</dd>\\s*</dl>\\s*</blockquote></details>";
 def findingHead: "(?m)^`[^`\\n]+`: \\*\\*\\s*[A-Za-z]+\\*\\*[^\\n]*$";
+def fileRe: "<details>\\s*<summary>\\s*(?<path>[^\\s<:`]+): (?<n>[0-9]+)</summary>\\s*<blockquote>\\s*<dl>\\s*<dd>\\s*<br>(?<fbody>[\\s\\S]*?)</dd>\\s*</dl>\\s*</blockquote></details>";
+# Finding text may not hold the form of a finding line, a heading, a count heading, a rank word above Minor or a layout tag.
+def findingTextBad: test("(?m)^\\s*(- |\\* )?Line [0-9]|^\\s*`[0-9]+(-[0-9]+)?`:|^#{1,6}\\s|^\\s*\\*\\*[^*\\n]*: [0-9]+\\*\\*\\s*$|[*_]{1,2}\\s*(Critical|Major|Blocker|High|Medium|Low)\\s*[*_]{1,2}|</?(details|summary|dl|dd|blockquote|h[1-6]|table|p|b)[ >]"; "i");
+# nitRe ends the inner before the closer of the last per-file block, so it is added back here.
+# The nitpick inner is only per-file blocks; each block is its head, then finding heads with their text, and N of the head is the number of finding heads.
 def nitInnerOk:
-  gsub(blk("Prompt for AI Agents"; "```[\\s\\S]*?```\\s*"); "")
-  | gsub("<details>\\s*<summary>\\s*[^<\\n]*[/.][^<\\n]*: [0-9]+</summary>\\s*<blockquote>\\s*<dl>\\s*<dd>\\s*<br>"; "")
-  | gsub("</dd>\\s*</dl>\\s*</blockquote></details>"; "")
-  | gsub(findingHead; "")
-  | test("</?(details|summary|dl|dd|blockquote|h[1-6])[ >]|(?m)^#{1,6}\\s") | not;
+  . + "</dd></dl></blockquote></details>" | gsub(blk("Prompt for AI Agents"; "```[\\s\\S]*?```\\s*"); "") as $x
+  | [$x | match(fileRe; "g") | .captures | map(select(.name != null) | {(.name): .string}) | add] as $files
+  | ($files | length) > 0
+    and ($x | gsub(fileRe; "") | test("\\S") | not)
+    and all($files[]; (.fbody | split(findingHead; "g")) as $parts
+      | ($parts | length) > 1 and ($parts | length) - 1 == (.n | tonumber) and ($parts[0] | test("\\S") | not) and all($parts[1:][]; findingTextBad | not));
 def cutKnown:
   . as $b
   | [match(nitRe; "g") | .captures | map(select(.name != null) | {(.name): .string}) | add] as $secs
@@ -71,11 +77,10 @@ def cutKnown:
       | gsub(blk("Prompt to fix all issues"; "```[\\s\\S]*?```\\s*"); "")
       | gsub("(?m)^---\\s*$"; "")
       | gsub("- \\[[ x]\\]\\s*Fix comments: Fix CodeRabbit comments on this PR"; "")
-      | gsub(blk("Run configuration"; "<br>\\s*(- \\*\\*[A-Za-z ]+\\*\\*: [^\\n]*\\n\\s*)+"); "")
+      | gsub(blk("Run configuration"; "<br>\\s*(- \\*\\*(Source mode|Repository|Branch|File|Commit|Layers|Review profile|Plan|Run ID)\\*\\*: [^\\n]*\\n\\s*)+"); "")
       | gsub(blk("Commits"; "<br>\\s*Reviewing files that changed from the base of the PR and between [0-9a-f]+ and [0-9a-f]+\\.\\s*"); "")
       | gsub(blk("Files selected for processing: [0-9]+"; "<br>\\s*(\\* `[^`\\n]+`\\s*)+"); "")
-      | gsub("\\*\\*Included review availability:\\*\\*[^\\n]*"; "")
-      | gsub("<h6>\\s*<details>\\s*<summary>\\s*Review info</summary>\\s*<dl>\\s*<dd>\\s*<br>\\s*</dd>\\s*</dl>\\s*</details>\\s*</h6>"; ""))};
+      | gsub("<h6>\\s*<details>\\s*<summary>\\s*Review info</summary>\\s*<dl>\\s*<dd>\\s*<br>\\s*(\\*\\*Included review availability:\\*\\* This review used your included allowance\\. Your plan provides up to [0-9]+ included reviews? per hour; [0-9]+ remain after this review\\.\\s*)?</dd>\\s*</dl>\\s*</details>\\s*</h6>"; ""))};
 # Problems of rule A for one review of the bot on the head: a list of texts, empty when the review passes.
 # Second output: the findings its body ranks, which the answer comment must cover.
 def ruleA($rv):

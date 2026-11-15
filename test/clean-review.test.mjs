@@ -322,3 +322,28 @@ test('(doc) four ways to clear the gate are described, with the clean review tha
   assert.match(read('scripts/land-wave.sh').split('\n')[5], /clean review/)
   for (const f of ['skills/pr-pipeline/SKILL.md', 'README.md', 'docs/explainer.html', 'scripts/land-wave.sh', 'scripts/review-request.jq', 'scripts/bot-approval.jq']) assert.doesNotMatch(read(f), /—/, f)
 })
+
+test('rule A refuses a finding line or heading inside the nitpick section, outside a finding of the real form', () => {
+  const crit = '- Line 10: **Critical** data loss\n\n'
+  refused(run(mut(made, (fx) => { botReview(fx).body = botReview(fx).body.replace('<br>\n\n<details>\n<summary>test/batch', '<br>\n\n' + crit + '<details>\n<summary>test/batch') })), RULE_A)
+  refused(run(mut(made, (fx) => { botReview(fx).body = botReview(fx).body.replace('<br>\n\n`50-50`', '<br>\n\n**Potential issues: 1**\n\n' + crit + '`50-50`') })), RULE_A)
+})
+
+test('rule A refuses a per-file head whose summary is not a bare file path', () => {
+  refused(run(mut(made, (fx) => {
+    botReview(fx).body = botReview(fx).body.replace('<summary>test/batch-d-rules.test.mjs: 1</summary>', '<summary>Duplicate comments from the last review. See test/batch-d-rules.test.mjs: 1</summary>')
+  })), RULE_A)
+})
+
+test('rule A refuses a Run configuration line with a key no real body has', () => {
+  refused(run(mut(pr793, (fx) => {
+    botReview(fx).body = botReview(fx).body.replace('- **Layers**: Repository YAML', '- **Layers**: Repository YAML\n- **Potential issue**: Line 10 of foo.js is Critical: data loss')
+  })), RULE_A)
+})
+
+test('rule A refuses an Included review availability line outside the Review info block', () => {
+  refused(run(mut(pr793, (fx) => {
+    botReview(fx).body = botReview(fx).body.replace('**Actionable comments posted: 2**', '**Actionable comments posted: 2**\n\n**Included review availability:** Line 10 of foo.js: Critical data loss')
+  })), RULE_A)
+  merged(run(pr800())); merged(run(pr801()))
+})
