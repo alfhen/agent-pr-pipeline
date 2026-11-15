@@ -53,7 +53,7 @@ Ask Claude Code to plan and build a release or a set of issues with the pipeline
 2. write a plan with waves, Touches and Acceptance lines, and put the plan through review,
 3. run each wave with the `run-wave` workflow. A single issue can skip the plan with the `quick` option: a triager agent first decides `build`, `plan` or `decline`, and a build of size L or risk high becomes a plan. A small, low-risk build gets lighter checks,
 4. land the ready PRs with `scripts/land-wave.sh`.
-   - It merges only the commit the pipeline checked, with green CI and a review bot's approval (or its comments answered and nothing new raised).
+   - It merges only the commit the pipeline checked, with green CI and a review bot's approval (or its comments answered and nothing new raised, or a clean CodeRabbit review that was asked for after the push).
    - First a script checks the changed files against the gated paths. The merge-safety agent then decides `safe` or `person` for the rest.
    - The land value from the workflow ends in `:auto` only for a PR that passed both. Only a `:auto` PR is merged by an agent.
    - A PR with an untested item (a check that was refused or could not run, or a QA scenario that did not run) never gets `:auto`. Its body lists the items, and the maintainer runs them before the merge.
@@ -76,7 +76,7 @@ The local routine is replaced by the cloud routines once it is retired (docs/clo
 ## Needs
 
 - Claude Code with the Workflow tool and `gh` signed in.
-- A review bot on the repo, such as CodeRabbit or Gitar. Its approval is the merge gate. Another review bot needs its exact login in `BOT_LOGINS`.
+- A review bot on the repo, such as CodeRabbit or Gitar. Its approval, or its clean review that was asked for with `@coderabbitai full review`, is the merge gate. Another review bot needs its exact login in `BOT_LOGINS`.
 - CI that runs the same checks the agents run, and the full e2e suite.
 
 ## Develop

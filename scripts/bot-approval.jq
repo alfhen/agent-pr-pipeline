@@ -1,19 +1,24 @@
-# Input: {reviews, comments, checks, head, bots, user}: the PR's REST reviews and review comments, the check
-# runs of its head commit, its head sha, the review-bot logins (a list) and the login of
-# the user from GET /user. With no user, only a bot's own reply answers one of its threads.
-# Output: the bots that clear the gate, as "login" (approved on the head), "login (approved earlier)" or
-# "login (answered)". bot-status.sh strips every suffix printed here.
+# Input: {reviews, comments, checks, head, bots, user, issueComments, suites}: the PR's REST reviews and review comments, the check
+# runs of its head commit (with started_at, head_sha and the title and start of the summary), its head sha, the review-bot logins (a list),
+# the login of the user from GET /user, the PR's comments and the check suites of the head. With no user, only a bot's own reply answers one
+# of its threads.
+# Output: the bots that clear the gate, as "login" (approved on the head), "login (approved earlier)", "login (answered)" or
+# "coderabbitai[bot] (clean review)". bot-status.sh strips every suffix printed here. With --arg why 1 the output is one string instead:
+# empty when a bot cleared, else a line that starts "clean review:" and names the first condition of the fourth way that did not hold.
+# The fourth way: a completed, clean review that was asked for after the push (rules in review-request.jq), green CI, a reply of the
+# user on every top-level inline comment, no unanswered change request, and rule A for the findings of the reviews on the head.
 # A bot clears it when its latest review is APPROVED on the head, or APPROVED on an older commit, or when
 # that review is COMMENTED on an older commit and every inline thread the bot opened has a reply of the bot or of the user. On an
 # older commit the bot's own check run on the head must also have finished with success. A run is the bot's when its App slug
 # with [bot] added is the bot's login. That check run is the proof the bot looked at the head: a finding that still holds would come
 # back as a new review there. A CHANGES_REQUESTED without a later APPROVED from the same bot always blocks.
+include "review-request" {search: "./"};
 . as $in
 | $in.bots as $bots
 | ($in.user // null) as $user
 | def checkedHead($login): any($in.checks[]; .status == "completed" and .conclusion == "success" and ((.app.slug // "") != "") and (.app.slug + "[bot]") == $login);
 def answered($t): any($in.comments[]; .in_reply_to_id == $t.id and (.user.login == $t.user.login or ($user != null and .user.login == $user)));
-[$in.reviews[]
+( [$in.reviews[]
     | select(.user.login | IN($bots[]))
     # A COMMENTED review with an empty body and no new top-level inline comment only carries thread
     # replies and holds no verdict. An empty body alone is not enough: Gitar's finding reviews are empty.
@@ -34,4 +39,65 @@ def answered($t): any($in.comments[]; .in_reply_to_id == $t.id and (.user.login 
         or ($r.state == "COMMENTED" and $r.commit_id != $in.head
             and ([$in.comments[] | select(.user.login == $login and .in_reply_to_id == null) | select(answered(.) | not)] | length) == 0
             and checkedHead($login)))
-    | $r.user.login + (if $r.state == "COMMENTED" then " (answered)" elif $r.commit_id != $in.head then " (approved earlier)" else "" end))
+    | $r.user.login + (if $r.state == "COMMENTED" then " (answered)" elif $r.commit_id != $in.head then " (approved earlier)" else "" end)) ) as $old
+| ($in.comments // []) as $comments
+| ($in.issueComments // []) as $issue
+| ($in.suites // []) as $suites
+| ($in.checks // []) as $allChecks
+| "coderabbitai[bot]" as $cr
+| def isRankMinor: . == "Minor" or . == "Trivial";
+# The rank word of an inline comment or of a finding line, as CodeRabbit writes it: **<picture>..</picture> Minor**.
+def rankOf: stripComments | (try capture("^\\*\\*(<picture>.*?</picture>)?\\s*(?<w>[A-Za-z]+)\\*\\*").w catch null);
+def answerLine: gsub("^\\s+|\\s+$"; "") | (test("#[0-9]+") or startswith("Note, not filed:"));
+# Problems of rule A for one review of the bot on the head: a list of texts, empty when the review passes.
+# Second output: the findings its body ranks, which the answer comment must cover.
+def ruleA($rv):
+  ($rv.body // "" | stripComments) as $body
+  | [$comments[] | select(.user.login == $cr and .in_reply_to_id == null and .pull_request_review_id == $rv.id)] as $inline
+  | [$body | scan("(?m)^`[^`\n]+`: \\*\\*(?:<picture>.*?</picture>)?\\s*([A-Za-z]+)\\*\\*") | .[0]] as $ranked
+  | (($body | capture("Actionable comments posted: (?<n>[0-9]+)").n | tonumber?) // null) as $n
+  | (($body | capture("Nitpick comments: (?<k>[0-9]+)").k | tonumber?) // 0) as $k
+  | ([$body | scan("([A-Za-z ]+) comments: [0-9]+</summary>") | .[0] | select(. | test("Nitpick$") | not)] | length) as $other
+  | {problems: ([
+      (if ($body | length) > 0 and ($body | nofinding | not) then
+        (if ($body | test("Outside diff range|Duplicate comments|comments \\([1-9]"; "i")) or $other > 0 then "review " + ($rv.id | tostring) + " has a section that rule A cannot rank" else empty end),
+        (if $n == null then "review " + ($rv.id | tostring) + " has no Actionable comments count" else empty end)
+      else empty end),
+      (if ($body | length) > 0 and $n != null and $n != ($inline | length) then "review " + ($rv.id | tostring) + " says " + ($n | tostring) + " inline comments and has " + ($inline | length | tostring) else empty end),
+      (if ($body | length) == 0 and ($inline | length) > 0 then "review " + ($rv.id | tostring) + " has inline comments and no count" else empty end),
+      (if ($body | length) > 0 and ($body | nofinding | not) and ($ranked | length) != $k then "review " + ($rv.id | tostring) + " counts " + ($k | tostring) + " nitpicks and ranks " + ($ranked | length | tostring) else empty end),
+      (if any($ranked[]; isRankMinor | not) then "review " + ($rv.id | tostring) + " ranks a finding above Minor or with a word rule A does not know" else empty end),
+      (if any($inline[]; (.body // "" | rankOf) as $w | ($w == null or ($w | isRankMinor | not))) then "review " + ($rv.id | tostring) + " has an inline comment above Minor or with no rank" else empty end),
+      (if any($inline[] | . as $t | select(any($comments[]; .in_reply_to_id == $t.id and $user != null and .user.login == $user and (.body // "" | answerLine)) | not); true)
+        then "review " + ($rv.id | tostring) + " has an inline finding with no answer of the user" else empty end)
+    ]), ranked: ($ranked | length)};
+def fourthWhy:
+  ([$allChecks[] | select(.head_sha == null or .head_sha == $in.head)]) as $onHead
+  | ([$onHead[] | select((.app.slug // "") != "" and (.app.slug + "[bot]") == $cr)] | sort_by(.started_at) | last) as $run
+  | pushTime($suites) as $push
+  | [$in.reviews[] | select(.user.login == $cr)] as $mine
+  | [$mine[] | select(.commit_id == $in.head)] as $onHeadReviews
+  | ([$onHeadReviews[] | ruleA(.)]) as $checked
+  | ([$issue[] | select($user != null and .user.login == $user and ((.body // "") | startswith("<!-- pipeline-bot-answer head=" + $in.head + " -->")))] | sort_by(.created_at) | last) as $answer
+  | (($onHeadReviews | map(.submitted_at) | max) // "") as $lastReview
+  | ($checked | map(.ranked) | add // 0) as $need
+  | (if $answer == null then 0 else [$answer.body | split("\n")[] | select(answerLine)] | length end) as $have
+  | if ($cr | IN($bots[]) | not) then "clean review: " + $cr + " is not in BOT_LOGINS"
+    elif $run == null or ($run | completedReview | not) then "clean review: the bot's run on the head is not a completed, clean review (newest run: "
+      + (if $run == null then "none" else ($run.status // "") + " " + ($run.conclusion // "") + " " + ($run.output.title // "") end) + ")"
+    elif any($onHead[]; .status == "completed" and .conclusion == "success" and (.app.slug // "") != "" and ((.app.slug + "[bot]") | IN($bots[]) | not)) | not
+      then "clean review: no green CI on the head (no completed, successful check run of an App other than a review bot)"
+    elif $push == null then "clean review: the head has no check suite, so there is no push time and no request after it"
+    elif ($user == null or ($issue | requestedBetween($user; $push; $run.started_at) | not))
+      then "clean review: no request comment of the user with the text " + requestText + " made after the push time and before the review started"
+    elif any($comments[]; .user.login == $cr and .in_reply_to_id == null and ($user == null or (. as $t | any($comments[]; .in_reply_to_id == $t.id and .user.login == $user) | not)))
+      then "clean review: not every top-level inline comment of the bot has a reply of the user (replies missing)"
+    elif ([$mine[] | select(.state == "CHANGES_REQUESTED")] | last) as $ch | $ch != null and ([$mine[] | select(.state == "APPROVED" and .submitted_at > $ch.submitted_at)] | length) == 0
+      then "clean review: a CHANGES_REQUESTED review of the bot has no later approval"
+    elif ($checked | map(.problems) | add // []) != [] then "clean review: rule A: " + (($checked | map(.problems) | add)[0])
+    elif $need > 0 and ($answer == null or $answer.created_at <= $lastReview) then "clean review: rule A: no answer comment of the user for this head made after the newest review"
+    elif $have < $need then "clean review: rule A: " + ($have | tostring) + " answer lines for " + ($need | tostring) + " findings in the review bodies"
+    else null end;
+($old | map(sub(" \\(.*\\)$"; ""))) as $oldLogins
+| if $ARGS.named.why == "1" then (if ($old | length) > 0 then "" else (fourthWhy // "") end)
+  else $old + (if ($oldLogins | index($cr)) == null and fourthWhy == null then [$cr + " (clean review)"] else [] end) end

@@ -54,7 +54,7 @@ test('a changes request with no later approval still blocks', () => {
 test('bot-status.sh strips every suffix that bot-approval.jq can print', () => {
   const jq = readFileSync(JQ, 'utf8')
   const words = [...jq.matchAll(/" \(([a-z ]+)\)"/g)].map((m) => m[1])
-  assert.deepEqual([...words].sort(), ['answered', 'approved earlier'])
+  assert.deepEqual([...words].sort(), ['answered', 'approved earlier', 'clean review'])
   const sh = readFileSync(join(root, 'scripts/bot-status.sh'), 'utf8')
   const sub = sh.match(/sub\("([^"]+)"; ""\)/)[1]
   const re = new RegExp(sub.replace(/\\\\/g, '\\'))

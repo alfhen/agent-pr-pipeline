@@ -3,7 +3,7 @@
 # The pairs come from the workflow result (each PR's "land" field). The :auto suffix becomes --auto for
 # merge-pr.sh; --person is passed through. For each PR in order: wait for CI
 # (up to 45 min), then merge it with merge-pr.sh, which refuses unless the head is still the checked sha,
-# every check passed and a review bot cleared the gate (approved, or its comments answered and not repeated). A PR whose head moved after the check stops the wave with
+# every check passed and a review bot cleared the gate (approved, its comments answered and not repeated, or a clean review that was asked for). A PR whose head moved after the check stops the wave with
 # "HEAD MOVED"; one that conflicts or has a failing check stops it with "LAND FIX". Run the workflow for
 # that PR (landFix: true, or skipImpl to check the new head), then run this again.
 # When every failing check is in knownFlakes (.github/pipeline.json on the default branch), the failed jobs
