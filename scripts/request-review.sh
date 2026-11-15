@@ -61,6 +61,9 @@ post_request() {
     [ "$PIPELINE_TEST_FAST" = 1 ] || sleep "$secs"
     waited=$any
   done
+  # The wait can last an hour, so a push during it must not get a request for the old head.
+  head=$(gh api "repos/$R/pulls/$pr" --jq .head.sha) || no_review "cannot read the pull request"
+  [ "$head" = "$sha" ] || no_review "the head is ${head:0:7}, not the checked ${sha:0:7}"
   out=$(gh api -X POST "repos/$R/issues/$pr/comments" -f body="$text") || no_review "cannot post the request"
   mine=$(jq -r "$epoch"' .created_at | t' <<<"$out" 2>/dev/null) && [ -n "$mine" ] || no_review "the answer to the request has no created_at"
   any=$mine
@@ -74,7 +77,7 @@ follow() {
     i=$((i + 1))
     gh api --paginate "repos/$R/commits/$sha/check-runs?per_page=100" >"$tmp/runs" || no_review "cannot read the check runs"
     run=$(jq -s -c -L "$here" --argjson q "$q" --argjson window "$window" --arg app "$APP" "include \"review-request\"; $epoch"'
-      [.[].check_runs[] | select((.app.slug // "") == $app and (.started_at | t) > $q and (.started_at | t) < $q + $window)]
+      [.[].check_runs[] | select((.app.slug // "") == $app and .started_at != null and (.started_at | t) > $q and (.started_at | t) < $q + $window)]
       | sort_by(.started_at | t) | first // null' "$tmp/runs") || no_review "cannot read the check runs"
     now=$(date -u +%s)
     expired=0

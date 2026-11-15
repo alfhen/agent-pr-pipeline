@@ -1,5 +1,5 @@
 // Runs land-wave.sh --review (and without it) on fixtures for test/fake-gh. Times are relative to the start of the test.
-import { test } from 'node:test'
+import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync, execFileSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync, cpSync } from 'node:fs'
@@ -14,7 +14,8 @@ const B = 'b'.repeat(40)
 const P = 'repos__o__r'
 const REQ = '@coderabbitai full review'
 const asked = (n) => `POST /repos/o/r/issues/${n}/comments body=${REQ}`
-const T0 = Date.now()
+let T0 = 0
+beforeEach(() => { T0 = Date.now() })
 const iso = (min) => new Date(T0 - min * 60000).toISOString().replace(/\.\d+Z$/, 'Z')
 const isoSec = (sec) => new Date(T0 - sec * 1000).toISOString().replace(/\.\d+Z$/, 'Z')
 const put = (fx, name, v) => writeFileSync(join(fx, name), typeof v === 'string' ? v : JSON.stringify(v))

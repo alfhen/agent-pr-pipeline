@@ -1,5 +1,5 @@
 // Runs scripts/request-review.sh on fixtures for test/fake-gh. Times are relative to the start of the test.
-import { test } from 'node:test'
+import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { rmSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync, cpSync } from 'node:fs'
@@ -16,7 +16,8 @@ const PRC = `${P}__issues__7__comments`
 const REPOC = `${P}__issues__comments`
 const REQ = '@coderabbitai full review'
 const POSTED = `POST /repos/o/r/issues/7/comments body=${REQ}`
-const T0 = Date.now()
+let T0 = 0
+beforeEach(() => { T0 = Date.now() })
 const iso = (min) => new Date(T0 - min * 60000).toISOString().replace(/\.\d+Z$/, 'Z')
 const isoSec = (sec) => new Date(T0 - sec * 1000).toISOString().replace(/\.\d+Z$/, 'Z')
 const put = (fx, name, v) => writeFileSync(join(fx, name), typeof v === 'string' ? v : JSON.stringify(v))
@@ -25,7 +26,6 @@ const ci = { id: 1, name: 'ci', app: { slug: 'github-actions' }, status: 'comple
 const bot = ({ id = 5151, min = 0, status = 'completed', conclusion = 'success', title = 'Finished', summary = 'Result: Success - Review completed', slug = 'coderabbitai' } = {}) =>
   ({ id, name: 'CodeRabbit', app: { slug }, status, conclusion, started_at: min === 0 ? isoSec(0) : iso(min), output: { title, summary } })
 const comment = (min, { user = 'alfhen', body = REQ } = {}) => ({ id: Math.floor(min * 1000) + 1, user: { login: user }, body, created_at: iso(min) })
-const done = bot()
 
 // requests: comments of PR 7. repoComments: more comments of the repo. runs: check runs of S. seq: one run list per read.
 // post: false leaves out the answer of the POST. swap: false keeps the runs as they are after the POST.
@@ -44,7 +44,7 @@ const setup = ({ requests = [], repoComments = [], runs = [ci], seq = null, post
   if (post) {
     put(fx, `${PRC}.POST.json`, { id: 9000, user: { login: 'alfhen' }, body: REQ, created_at: isoSec(30) })
     if (swap) {
-      put(fx, 'runs-after.json', { check_runs: [...runs, done] })
+      put(fx, 'runs-after.json', { check_runs: [...runs, bot()] })
       put(fx, 'comments-after.json', [...requests, { id: 9000, user: { login: 'alfhen' }, body: REQ, created_at: isoSec(30) }])
       put(fx, `${PRC}.POST.then`, `runs-after.json ${CHECKS}.json\ncomments-after.json ${PRC}.json\ncomments-after.json ${REPOC}.json\n`)
     }
@@ -288,7 +288,7 @@ test('a changed completed-review rule in review-request.jq changes which run is 
   assert.ok(!r.lines.some((l) => l.startsWith('REVIEWED #7 run 4242')), r.out)
 })
 
-const failedRun = bot({ conclusion: 'success', title: 'Review failed', summary: '' })
+const failedRun = () => bot({ conclusion: 'success', title: 'Review failed', summary: '' })
 const asSequence = (fx, file, first, second) => {
   rmSync(join(fx, `${file}.json`), { force: true })
   put(fx, `${file}.call1.json`, first)
@@ -296,7 +296,7 @@ const asSequence = (fx, file, first, second) => {
 }
 
 test('a request made by hand while the script waited is counted: no third request', () => {
-  const s = setup({ runs: [ci, failedRun], swap: false })
+  const s = setup({ runs: [ci, failedRun()], swap: false })
   asSequence(s.fx, PRC, [], [comment(0.5), { ...comment(0.33), id: 77 }])
   const r = run(s)
   assert.ok(posts(r).length <= 1, r.log.join('\n'))
@@ -304,11 +304,46 @@ test('a request made by hand while the script waited is counted: no third reques
 })
 
 test('a request on another PR made while the script waited moves the WAIT', () => {
-  const s = setup({ runs: [ci, failedRun], swap: false })
+  const s = setup({ runs: [ci, failedRun()], swap: false })
   put(s.fx, `${PRC}.POST.json`, { id: 9000, user: { login: 'alfhen' }, body: REQ, created_at: iso(30) })
   asSequence(s.fx, REPOC, [], [{ id: 88, user: { login: 'alfhen' }, body: REQ, issue_url: 'https://api.github.com/repos/o/r/issues/8', created_at: isoSec(10) }])
   const r = run(s)
   const w = waits(r)
   assert.ok(w.length >= 1, r.out)
   for (const n of w) assert.ok(n >= 3820 && n <= 3840, String(n))
+})
+
+const pullSeq = (s, heads) => {
+  rmSync(join(s.fx, `${P}__pulls__7.json`), { force: true })
+  heads.forEach((h, i) => put(s.fx, `${P}__pulls__7.call${i + 1}.json`, { merged: false, mergeable: true, head: { sha: h, ref: 'feat/x' } }))
+}
+
+test('a push during the wait before request 1 gives no request for the old head', () => {
+  const s = setup({ repoComments: [{ ...comment(10), id: 4001 }] })
+  pullSeq(s, [S, B])
+  const r = run(s)
+  noReview(r, /^NO REVIEW #7: .*bbbbbbb/)
+  assert.equal(waits(r).length, 1, r.out)
+  assert.ok(r.log.filter((l) => l === 'GET /repos/o/r/pulls/7').length >= 2, r.log.join('\n'))
+  assert.equal(posts(r).length, 0)
+})
+
+test('the same fixture with the head unchanged posts the request once', () => {
+  const s = setup({ repoComments: [{ ...comment(10), id: 4001 }] })
+  pullSeq(s, [S, S])
+  const r = run(s)
+  assert.equal(r.code, 0, r.out)
+  assert.deepEqual(posts(r), [POSTED])
+})
+
+test('a run of the bot with no started_at is not read as the answer and the script reads again', () => {
+  const queued = bot({ id: 4242, status: 'queued', conclusion: null })
+  queued.started_at = null
+  const seq = seq3(5)
+  seq[0] = [ci, queued]
+  const r = run(setup({ requests: [comment(10)], seq, post: false }))
+  assert.equal(r.code, 0, r.out)
+  assert.ok(r.lines.some((l) => l.startsWith('REVIEWED #7 run 4242')), r.out)
+  assert.ok(!r.lines.some((l) => l.startsWith('NO REVIEW')), r.out)
+  assert.equal(posts(r).length, 0)
 })
