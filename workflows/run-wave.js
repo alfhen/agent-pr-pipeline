@@ -1508,6 +1508,10 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     }
     if (listChanged) row.listChanged = true
     if (fix && typeof fix.changed === 'boolean') row.fixChanged = fix.changed
+    const heldDisputes = fix && !listChanged ? (fix.disputes || []).map(d => d.id).filter(id => (outcome.breakFailed || []).includes(id)) : []
+    if (fix && fix.changed === false && heldDisputes.length) {
+      return halt(`needs human: eval ${heldDisputes.join(', ')}: the test passes without the change in two rounds in a row`, { lastFindings: blocking, lastTest: test, fixSummary: fix.summary })
+    }
     if (fix && fix.changed === false && !listChanged) {
       const failedEvals = (outcome.evals && outcome.evals.failed) || []
       const brokenEvals = outcome.breakFailed || []

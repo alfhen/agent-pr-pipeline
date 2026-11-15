@@ -5911,6 +5911,14 @@ await check('RK-3 a dispute of the only error path eval that the rule rejects, t
   assert.ok(x.C1.reason.startsWith('needs human:') && x.C1.reason.includes('C1-2'))
   assert.equal(called('fix:C1#2'), false)
 })
+await check('RK-3b a dispute-only fix that the rule rejects stops with the eval id, not with no progress', async () => {
+  const v = id => vres({ evals: listOf('C1').map(e => ({ id: e.id, result: 'pass', evidence: 'ok', breakCheck: e.id === id ? 'passes-without-change' : 'fails-without-change' })) })
+  const x = await disputeRun(listOf('C1'), chain(verifyHook({ 1: v('C1-2'), 2: v('C1-2') }), (p, o) => o.label === 'fix:C1#1' ? { summary: 's', changed: false, disputes: [{ id: 'C1-2', reason: 'it already holds on the default branch' }] } : o.label === 'dispute:C1#1' ? { ruling: 'change', reason: 'holds', eval: { ...listOf('C1')[1], kind: 'regression' } } : undefined))
+  assert.equal(x.C1.evalDisputes[0].why, 'no error path')
+  assert.equal(x.C1.ready, false)
+  assert.ok(x.C1.reason.startsWith('needs human:') && x.C1.reason.includes('C1-2'))
+  assert.ok(!x.C1.reason.startsWith('no progress:'))
+})
 await check('RK-4 the same eval id in two rounds in a row stops the PR, a different id does not', async () => {
   const a = await hooked(withEvals('C1'), verifyHook({ 1: pwc('X-1'), 2: pwc('X-1') }))
   assert.ok(a.C1.reason.startsWith('needs human:') && a.C1.reason.includes('X-1'))
