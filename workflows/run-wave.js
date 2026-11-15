@@ -1011,7 +1011,7 @@ Task: update the body of pull request #${n} in ${REPO}. ${exact
     ? 'Its "Untested" section must list exactly the untested items below: add the section if it is missing, drop items not listed, and remove the section when the list is empty.'
     : 'Add every untested item below that its "Untested" section does not list yet (add the section if it is missing). Keep the items already listed.'}${dropTestsOnly ? ` This PR now changes a file that is not a test: remove the line that starts with "${TESTS_ONLY_LINE.split(':')[0]}:" from the body when it is there.` : ''} Keep the rest of the body as it is.
 Read the body with \`gh api repos/${REPO}/pulls/${n} --jq .body\`. Write the new body to a file under \`${TMP}/open-${pr.id}/\` with the Write tool, and pass it with \`gh api -X PATCH repos/${REPO}/pulls/${n} -F body=@<file>\`. Never pass a body inline, and write no other file.
-Return updated true when the body is saved. Return unchanged true when you saved nothing because the body already holds what this task asks. In every answer, also return holds: the items of the "Untested" section of the body after this step, an empty list when the body has no such section.
+Return updated true when the body is saved. In every answer, also return unchanged (true when you saved nothing because the body already holds what this task asks, else false) and holds: the items of the "Untested" section of the body after this step, an empty list when the body has no such section.
 
 Untested items: ${JSON.stringify(untested)}`
 
