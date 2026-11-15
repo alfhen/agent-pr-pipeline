@@ -391,3 +391,20 @@ test('a failed pre-merge check is a finding of the body and needs its own answer
   merged(run(pr793()))
   bodyOf(pr793, (b) => b.replace('\n\nAfter applying the fix', '\n- Title check:\nUse a shorter title.\n\nAfter applying the fix'))
 })
+
+test('rule A refuses a failed pre-merge check in a line form other than "- <name> check:"', () => {
+  for (const to of ['- Linked Issues check: failed', '* Linked Issues check:', '- Linked Issues check (failed):', '- Linked Issues check']) {
+    bodyOf(pr793real, (b) => b.replace('- Linked Issues check:', to))
+  }
+  bodyOf(pr793real, (b) => b.replace('Failed pre-merge checks:', 'Failed pre-merge checks (1):'))
+  merged(run(pr793()))
+})
+
+test('rule A refuses a nitpick finding text with a setext heading, an underscore bold line or a table without a leading pipe', () => {
+  const title = '**Pin the limited scope of the post-build exemption.**'
+  for (const add of ['\n\nData loss in parse\n---\n\nfoo.js line 10 drops the input.', '\n\nData loss in parse\n===\n\nfoo.js line 10 drops the input.',
+    '\n\n__Data loss in parse__\n\nfoo.js line 10 drops the input.', '\n\nFile | Problem\n--- | ---\nfoo.js | data loss', '\n\n> **Warning**']) {
+    bodyOf(made, (b) => b.replace(title, title + add))
+  }
+  merged(run(made()))
+})

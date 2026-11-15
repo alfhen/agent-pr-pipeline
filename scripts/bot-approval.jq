@@ -79,7 +79,7 @@ def findingTextOk:
   | ($ls | length) > 0
     and ($ls[0] | test("^\\*\\*(?:(?!\\*\\*).)+\\*\\*$"))
     and all($ls[1:][]; test("^\\*\\*(?:(?!\\*\\*).)*\\*\\*$") | not)
-    and all($ls[]; test("^([-*+]|[0-9]+[.)])\\s|^\\||^#|<[A-Za-z/!]|^Line [0-9]|^`[0-9]+(-[0-9]+)?`:") | not)
+    and all($ls[]; test("^([-*+]|[0-9]+[.)])\\s|^\\||^#|^>|^[-=_*]+$|^__(?:(?!__).)+__$|\\||<[A-Za-z/!]|^Line [0-9]|^`[0-9]+(-[0-9]+)?`:") | not)
     and ($t | test(aboveMinor; "i") | not);
 # The ranks of the findings of a nitpick section, or null when the section is not per-file blocks of findings in the real form.
 # nitRe ends the inner before the closer of the last per-file block, so it is added back here.
@@ -99,17 +99,24 @@ def nitRanks($k):
     end)
   | if . != null and length != $k then null else . end;
 # A failed pre-merge check is a finding of the body with no rank: one for each line "- <name> check:" under the label in the fence.
+# Null when the fence names pre-merge checks in a form this rule does not know: no exact label line, or a list line under the
+# label that is not a check line in the real form, or a first line under the label that is not one.
 def failedChecks:
   if . == null then 0
-  else sub("^[\\s\\S]*?Failed pre-merge checks:"; "") as $t
-    | if $t == . then 0 else [$t | scan("(?m)^- [^\\n]+ check:[ \\t]*$")] | length end end;
+  elif (test("(?m)^Failed pre-merge checks:[ \\t]*$") | not) then (if test("pre-merge"; "i") then null else 0 end)
+  else sub("^[\\s\\S]*?(?m:^)Failed pre-merge checks:[ \\t]*\\n"; "") as $t
+    | ([$t | split("\n")[] | gsub("^\\s+|\\s+$"; "") | select(length > 0)]) as $ls
+    | if ($ls | length) == 0 or ($ls[0] | test("^- [^\\n]+ check:$") | not)
+        or any($ls[]; test("^[-*+]( |$)") and (test("^- [^\\n]+ check:$") | not))
+      then null else [$ls[] | select(test("^- [^\\n]+ check:$"))] | length end end;
 # The parsed body: its count, nitpick ranks and failed checks, or null when the body is not exactly the known blocks.
 def parseBody:
   ([capture(topRe)] | first) as $m
   | if $m == null then null
     else (if $m.inner == null then [] else ($m.inner | nitRanks($m.k | tonumber)) end) as $r
       | if $r == null or ($m.items != null and ([$m.items | scan("\\* `")] | length) != ($m.fc | tonumber)) then null
-        else {n: ($m.n | tonumber), k: ($m.k // "0" | tonumber), ranks: $r, failed: ($m.fix | failedChecks)} end
+        else ($m.fix | failedChecks) as $f
+          | if $f == null then null else {n: ($m.n | tonumber), k: ($m.k // "0" | tonumber), ranks: $r, failed: $f} end end
     end;
 # Problems of rule A for one review of the bot on the head: a list of texts, empty when the review passes.
 # Second output: the findings its body ranks, which the answer comment must cover.
