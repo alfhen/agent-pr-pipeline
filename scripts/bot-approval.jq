@@ -49,30 +49,54 @@ def answered($t): any($in.comments[]; .in_reply_to_id == $t.id and (.user.login 
 # The rank word of an inline comment or of a finding line, as CodeRabbit writes it: **<picture>..</picture> Minor**.
 def rankOf: stripComments | (first(capture("^\\*\\*(<picture>.*?</picture>)?\\s*(?<w>[A-Za-z]+)\\*\\*").w) // null);
 def answerLine: gsub("^\\s+|\\s+$"; "") | (test("#[0-9]+") or startswith("Note, not filed:"));
+# Rule A accounts for the whole body of a review: it cuts the blocks of the real CodeRabbit bodies (the count line, the nitpick
+# section, the autofix checkbox, the block "Prompt to fix all issues", the review-info blocks) and refuses when any text is left.
+# A form that no real body has is never cut, so it is left and refused. The nitpick section is cut only when every part of it is
+# a per-file head, a finding line, finding text or a prompt block.
+def blk($title; $inner): "<details>\\s*<summary>\\s*" + $title + "</summary>\\s*<dl>\\s*<dd>\\s*" + $inner + "</dd>\\s*</dl>\\s*</details>";
+def nitRe: "<details>\\s*<summary>\\s*Nitpick comments: (?<k>[0-9]+)</summary>\\s*<blockquote>\\s*<dl>\\s*<dd>\\s*<br>(?<inner>[\\s\\S]*?)</dd>\\s*</dl>\\s*</blockquote></details>\\s*</dd>\\s*</dl>\\s*</blockquote></details>";
+def findingHead: "(?m)^`[^`\\n]+`: \\*\\*\\s*[A-Za-z]+\\*\\*[^\\n]*$";
+def nitInnerOk:
+  gsub(blk("Prompt for AI Agents"; "```[\\s\\S]*?```\\s*"); "")
+  | gsub("<details>\\s*<summary>\\s*[^<\\n]*[/.][^<\\n]*: [0-9]+</summary>\\s*<blockquote>\\s*<dl>\\s*<dd>\\s*<br>"; "")
+  | gsub("</dd>\\s*</dl>\\s*</blockquote></details>"; "")
+  | gsub(findingHead; "")
+  | test("</?(details|summary|dl|dd|blockquote|h[1-6])[ >]|(?m)^#{1,6}\\s") | not;
+def cutKnown:
+  . as $b
+  | [match(nitRe; "g") | .captures | map(select(.name != null) | {(.name): .string}) | add] as $secs
+  | (if ($secs | length) > 0 and all($secs[]; .inner | nitInnerOk) then {text: ($b | gsub(nitRe; "")), secs: $secs} else {text: $b, secs: []} end) as $c
+  | {secs: $c.secs, left: ($c.text
+      | gsub("\\*\\*Actionable comments posted: [0-9]+\\*\\*"; "")
+      | gsub(blk("Prompt to fix all issues"; "```[\\s\\S]*?```\\s*"); "")
+      | gsub("(?m)^---\\s*$"; "")
+      | gsub("- \\[[ x]\\]\\s*Fix comments: Fix CodeRabbit comments on this PR"; "")
+      | gsub(blk("Run configuration"; "<br>\\s*(- \\*\\*[A-Za-z ]+\\*\\*: [^\\n]*\\n\\s*)+"); "")
+      | gsub(blk("Commits"; "<br>\\s*Reviewing files that changed from the base of the PR and between [0-9a-f]+ and [0-9a-f]+\\.\\s*"); "")
+      | gsub(blk("Files selected for processing: [0-9]+"; "<br>\\s*(\\* `[^`\\n]+`\\s*)+"); "")
+      | gsub("\\*\\*Included review availability:\\*\\*[^\\n]*"; "")
+      | gsub("<h6>\\s*<details>\\s*<summary>\\s*Review info</summary>\\s*<dl>\\s*<dd>\\s*<br>\\s*</dd>\\s*</dl>\\s*</details>\\s*</h6>"; ""))};
 # Problems of rule A for one review of the bot on the head: a list of texts, empty when the review passes.
 # Second output: the findings its body ranks, which the answer comment must cover.
 def ruleA($rv):
-  ($rv.body // "" | stripComments) as $body
+  ($rv.body // "" | stripComments | gsub("<picture>[\\s\\S]*?</picture>"; "")) as $body
+  | ($body | cutKnown) as $cut
   | [$comments[] | select(.user.login == $cr and .in_reply_to_id == null and .pull_request_review_id == $rv.id)] as $inline
-  | [$body | scan("(?m)^`[^`\n]+`: \\*\\*(?:<picture>.*?</picture>)?\\s*([A-Za-z]+)\\*\\*") | .[0]] as $ranked
-  | (($body | capture("Actionable comments posted: (?<n>[0-9]+)").n | tonumber?) // null) as $n
-  | (($body | capture("Nitpick comments: (?<k>[0-9]+)").k | tonumber?) // 0) as $k
-  | ([$body | scan("([A-Za-z ]+) comments: [0-9]+</summary>") | .[0] | select(. | test("Nitpick$") | not)] | length) as $other
-  | ([$body | scan("<summary>(.*?)</summary>") | .[0] | gsub("<picture>.*?</picture>"; "") | gsub("^\\s+|\\s+$"; "")
-      | select(test("^(Nitpick comments: [0-9]+|Prompt to fix all issues|Prompt for AI Agents|Review info|Run configuration|Commits|Files selected for processing: [0-9]+|[^ ]+: [0-9]+)$") | not)] | length) as $unknownHeads
-  | ([$body | scan("(?m)^`[^`\n]+`:")] | length) as $findingLines
+  | [$cut.secs[].inner | scan("(?m)^`[^`\n]+`: \\*\\*\\s*([A-Za-z]+)\\*\\*") | .[0]] as $ranked
+  | ([$body | scan("\\*\\*Actionable comments posted: ([0-9]+)\\*\\*") | .[0]]) as $counts
+  | (if ($counts | length) == 1 then ($counts[0] | tonumber) else null end) as $n
+  | ([$cut.secs[].k | tonumber] | add // 0) as $k
+  | ($rv.id | tostring) as $id
   | {problems: ([
-      (if ($body | length) > 0 and ($body | nofinding | not) then
-        (if ($body | test("Outside diff range|Duplicate comments|comments \\([1-9]"; "i")) or $other > 0 or $unknownHeads > 0 or $findingLines != ($ranked | length) then "review " + ($rv.id | tostring) + " has a section that rule A cannot rank" else empty end),
-        (if $n == null then "review " + ($rv.id | tostring) + " has no Actionable comments count" else empty end)
-      else empty end),
-      (if ($body | length) > 0 and $n != null and $n != ($inline | length) then "review " + ($rv.id | tostring) + " says " + ($n | tostring) + " inline comments and has " + ($inline | length | tostring) else empty end),
-      (if ($body | length) == 0 and ($inline | length) > 0 then "review " + ($rv.id | tostring) + " has inline comments and no count" else empty end),
-      (if ($body | length) > 0 and ($body | nofinding | not) and ($ranked | length) != $k then "review " + ($rv.id | tostring) + " counts " + ($k | tostring) + " nitpicks and ranks " + ($ranked | length | tostring) else empty end),
-      (if any($ranked[]; isRankMinor | not) then "review " + ($rv.id | tostring) + " ranks a finding above Minor or with a word rule A does not know" else empty end),
-      (if any($inline[]; (.body // "" | rankOf) as $w | ($w == null or ($w | isRankMinor | not))) then "review " + ($rv.id | tostring) + " has an inline comment above Minor or with no rank" else empty end),
+      (if ($body | length) > 0 and ($cut.left | test("\\S")) then "review " + $id + " has text that rule A does not know" else empty end),
+      (if ($body | length) > 0 and $n == null then "review " + $id + " has no single Actionable comments count" else empty end),
+      (if ($body | length) > 0 and $n != null and $n != ($inline | length) then "review " + $id + " says " + ($n | tostring) + " inline comments and has " + ($inline | length | tostring) else empty end),
+      (if ($body | length) == 0 and ($inline | length) > 0 then "review " + $id + " has inline comments and no count" else empty end),
+      (if ($ranked | length) != $k then "review " + $id + " counts " + ($k | tostring) + " nitpicks and ranks " + ($ranked | length | tostring) else empty end),
+      (if any($ranked[]; isRankMinor | not) then "review " + $id + " ranks a finding above Minor or with a word rule A does not know" else empty end),
+      (if any($inline[]; (.body // "" | rankOf) as $w | ($w == null or ($w | isRankMinor | not))) then "review " + $id + " has an inline comment above Minor or with no rank" else empty end),
       (if any($inline[] | . as $t | select(any($comments[]; .in_reply_to_id == $t.id and $user != null and .user.login == $user and (.body // "" | answerLine)) | not); true)
-        then "review " + ($rv.id | tostring) + " has an inline finding with no answer of the user" else empty end)
+        then "review " + $id + " has an inline finding with no answer of the user" else empty end)
     ]), ranked: ($ranked | length)};
 def fourthWhy:
   ([$allChecks[] | select(.head_sha == null or .head_sha == $in.head)]) as $onHead

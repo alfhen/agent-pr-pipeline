@@ -16,6 +16,8 @@ const fixture = (name) => JSON.parse(readFileSync(join(root, 'test/fixtures/clea
 const pr794 = () => fixture('pr794-33b6f35.json')
 const pr793 = () => fixture('pr793-334a3cb.json')
 const made = () => fixture('made-pr794-900bd64.json')
+const pr800 = () => fixture('pr800-3ecb04e.json')
+const pr801 = () => fixture('pr801-da0b70d.json')
 const botRun = (fx) => fx.checks.find((c) => c.app.slug === 'coderabbitai' && c.conclusion === 'success')
 const ciRun = (fx) => fx.checks.find((c) => c.app.slug === 'github-actions')
 const request = (fx) => fx.issueComments.filter((c) => c.body === '@coderabbitai full review').at(-1)
@@ -93,6 +95,14 @@ test('positive: the made fixture of PR 794 at 900bd64 (a nitpick and an answer c
   const fx = made()
   assert.equal(fx.made, true)
   merged(run(fx))
+})
+
+test('positive: the real reviews of PRs 800 and 801 (one inline Minor, a Note answer) merge as a clean review', () => {
+  for (const fx of [pr800(), pr801()]) {
+    assert.ok(fx.issueComments.some((c) => c.user.login === 'alfhen' && c.body === '@coderabbitai full review'))
+    assert.ok(fx.comments.some((c) => c.body.startsWith('Note, not filed:')))
+    merged(run(fx))
+  }
 })
 
 test('the gate never reads the date of the commit', () => {
@@ -206,7 +216,27 @@ test('rule A refuses what it cannot rank', () => {
   refused(run(mut(made, body((b) => b.replace('Trivial**', 'Critical**')))), RULE_A)
   refused(run(mut(made, (fx) => { fx.issueComments = fx.issueComments.filter((c) => c !== answer(fx)) })), RULE_A)
   refused(run(mut(made, body(() => 'Some new format'))), RULE_A)
-  refused(run(mut(made, body((b) => b.replace('Nitpick comments: 1', 'Refactor comments: 1')))), RULE_A)
+  refused(run(mut(made, body((b) => b.replaceAll('Nitpick comments', 'Refactor comments')))), RULE_A)
+})
+
+test('rule A refuses a body of a form no real fixture has, also when it says Actionable comments posted: 0', () => {
+  const noAnswer = (fx) => { fx.issueComments = fx.issueComments.filter((c) => c !== answer(fx)) }
+  const crit = '<details>\n<summary>Potential issues (1)</summary>\n\n`10-12`: _🔴 Critical_ · **Data loss**\n\n</details>\n'
+  refused(run(mut(made, (fx) => { botReview(fx).body = '<!-- coderabbit-ai-generated:v1 -->\n\n**Actionable comments posted: 0**\n\n' + crit; noAnswer(fx) })), RULE_A)
+  refused(run(mut(made, (fx) => { botReview(fx).body = botReview(fx).body.replaceAll('Nitpick comments', 'Refactor comments') })), RULE_A)
+  refused(run(mut(pr793, (fx) => { botReview(fx).body = botReview(fx).body.replace('---', '<details>\n<summary>Issues: 1</summary>\n\n- Line 10: **Critical** data loss\n\n</details>\n\n---') })), RULE_A)
+  refused(run(mut(pr793, (fx) => { botReview(fx).body = botReview(fx).body.replace('---', '### Potential issues\n\n- Line 10: **Critical** data loss\n\n---') })), RULE_A)
+})
+
+test('rule A refuses a body with text left after the known blocks are cut', () => {
+  const sentence = 'Also check the null input of parse in foo.js; it can lose data.'
+  refused(run(mut(pr793, (fx) => { botReview(fx).body = botReview(fx).body.replace('---', sentence + '\n\n---') })), RULE_A)
+  refused(run(mut(made, (fx) => { botReview(fx).body += '\n' + sentence })), RULE_A)
+  refused(run(mut(made, (fx) => {
+    botReview(fx).body = '<!-- coderabbit-ai-generated:v1 -->\n\n**Actionable comments posted: 0**\n\n' + sentence + '\n'
+    fx.issueComments = fx.issueComments.filter((c) => c !== answer(fx))
+  })), RULE_A)
+  refused(run(mut(made, (fx) => { botReview(fx).body = botReview(fx).body.replace('<br>\n\n`50-50`', '<br>\n\n<details>\n<summary>Potential issues (1)</summary>\n</details>\n`50-50`') })), RULE_A)
 })
 
 test('a run that is not a clean, completed review of the head clears nothing', () => {
