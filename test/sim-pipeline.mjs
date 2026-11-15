@@ -5965,6 +5965,16 @@ await check('RK-8 SKILL.md has the helper checklist item and the new stop reason
   const six = lines.find(l => l.startsWith('6. **Fix.**'))
   assert.ok(six.includes('`' + spanOf(lines[row]) + '`'))
 })
+await check('RK-11 the SKILL.md row for the repeated passes-without-change stop says to check the default branch first', async () => {
+  const md = readFileSync(new URL('skills/pr-pipeline/SKILL.md', root), 'utf8')
+  const row = md.split('\n').find(l => l.startsWith('| `needs human: eval <ids>: the test passes without the change in two rounds in a row`'))
+  assert.ok(row)
+  assert.ok(row.includes('default branch'))
+  assert.match(row, /(run|read)[^.]*default branch[^.]*|first find out[^.]*default branch/i)
+  assert.match(row, /When the behaviour holds there, change the kind[^.]*`regression`/)
+  assert.match(row, /does not hold there[^.]*(weak|proves nothing)[^.]*keep the kind/)
+  assert.ok(!row.includes('probably'))
+})
 await check('C10-11 a resumed list, a reviewer eval and a land-fix list accept a check-only trigger and refuse a statement one', async () => {
   const withIt = where => listOf('C1').concat(codeEval('C1-3', where))
   assert.match(codeEval('C1-3', 'statement').statement, PR_TEXT_RULE)
