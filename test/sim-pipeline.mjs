@@ -5856,6 +5856,7 @@ await check('RL-5 a bot check whose fixer or reviewer throws returns the minors 
   const c = (await rlLand(true, () => rlRun(kLandPr(), rlThrowAt('fix:LA#bots1', 'LA', rlBotReview('bot nit', 'LA'))))).prs[0]
   assert.match(c.reason, /^run failed:/)
   for (const t of ['land nit', 'bot nit']) assert.ok(titles(c.lateMinors).includes(t), JSON.stringify(c.lateMinors))
+  for (const t of ['land nit', 'bot nit']) assert.ok(titles(a1Args(c, 'LA').resume.minors).includes(t))
   const d = (await rlLand(true, () => rlRun(kLandPr(), rlThrowAt('botreview:LA#2', 'LA', rlBotReview('bot nit', 'LA')), rethrowing))).prs[0]
   assert.match(d.reason, /^run failed:/)
   for (const t of ['land nit', 'bot nit']) assert.ok(titles(d.lateMinors).includes(t), JSON.stringify(d.lateMinors))

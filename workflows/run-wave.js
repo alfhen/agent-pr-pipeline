@@ -252,8 +252,6 @@ const botChangedState = {}
 // Per PR: the history rows and the minors array of the run, so a result built after a throw keeps both. runPRSteps pushes onto the same arrays.
 const historyState = {}
 const minorsState = {}
-// Per land-fix PR: the minors array of the run, which a throw returns under lateMinors.
-const lateMinorsState = {}
 // Per PR: the break-check results of the last verifier round that gave any. A later round without them leaves it alone.
 const breakCheckState = {}
 const TEST_FILE = new RegExp(`${E2E_PATTERN}|(^|/)(tests?|__tests__|__snapshots__)/|(^|/)spec/.*\\.rb$|(^|/)[^/]*\\.Tests?/|\\.(test|spec)\\.[cm]?[jt]sx?$|_test\\.go$|(^|/)test_[^/]*\\.py$|_test\\.py$|_spec\\.rb$|\\.snap$|Tests\\.cs$`)
@@ -895,8 +893,7 @@ Task: fix minor findings in one pass. This is the only minor pass of this PR: no
 4. Checks: ${fastText}, and ${ownE2e}.
 5. Commit and push. If you fix no finding, push nothing and return changed false.${noDisputesText(pr) || '\n'}Return changed, headSha (\`git rev-parse HEAD\` after your push), fixed (the numbers of the findings you fixed), skipped (the number and why, for each finding you left), a short summary, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
-${prBlock(pr)}${designRulesText(pr)}
-The branch head before your commits: ${signedSha || '(unknown)'}.
+${prBlock(pr)}${designRulesText(pr) || '\n'}The branch head before your commits: ${signedSha || '(unknown)'}.
 Minor findings, numbered. Findings of one file are together:
 ${numbered(findings)}`
 
@@ -1907,7 +1904,7 @@ async function runPR(input) {
     const landOut = input.landFix ? landOutState[input.id] : null
     const resume = input.resume
     const history = historyState[input.id] || (resume && resume.history)
-    const raw = input.landFix ? lateMinorsState[input.id] : (minorsState[input.id] || (resume && resume.minors))
+    const raw = minorsState[input.id] || (!input.landFix && resume && resume.minors)
     const found = Array.isArray(raw) ? raw.filter(m => m && typeof m === 'object') : null
     const minors = Array.isArray(found) && found.length ? mergeDuplicates(found) : null
     let msg = 'unknown error'
@@ -2111,7 +2108,7 @@ async function runPRSteps(input) {
     let listOut = {}
     delete landOutState[pr.id]
     historyState[pr.id] = history
-    lateMinorsState[pr.id] = lateMinors
+    minorsState[pr.id] = lateMinors
     const stopped = (reason, more) => { stopMark(history, reason); return { id: pr.id, prNumber: n, ready: false, reason, history, ...listOut, ...more } }
     const given = givenEvals(pr, rawEvals)
     if (given) {
