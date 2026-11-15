@@ -889,7 +889,8 @@ const noErrorList = [ev('C1-1', 'behaviour'), ev('C1-2', 'regression')]
 await check('A01-11 a resume whose changed list the check refuses keeps the record, and its result resumes with no check', async () => {
   const R = await accepted1(noErrorList, { noErrorPath: 'no failing input exists' })
   const record = R.evalsMeta.accepted
-  const R1 = (await evalsRun(resumeWith({ ...asGiven(R), evals: noErrorList.concat(ev('C1-9', 'behaviour')), noErrorPath: 'other reason' }), noWriter, () => ({ verdict: 'needs-change', notes: 'gap' }))).C1
+  const changed = noErrorList.concat(ev('C1-9', 'behaviour'))
+  const R1 = (await evalsRun(resumeWith({ ...asGiven(R), evals: changed, noErrorPath: 'other reason' }), () => withMeta(changed, { noErrorPath: 'no failing input exists' }), () => ({ verdict: 'needs-change', notes: 'gap' }))).C1
   assert.equal(R1.ready, false)
   assert.match(R1.reason, /^evals check:/)
   assert.deepEqual(R1.evalsMeta.accepted, record)
@@ -5899,6 +5900,168 @@ await check('C10-12 a list that the evals check sends back three times stops the
   assert.equal(x.C1.reason, 'evals check: architecture: no eval for the QA line')
   assert.ok(evalLabels('C1').includes('evalsarch:C1#3'))
   assert.ok(!evalLabels('C1').includes('implement:C1'))
+})
+// RE: a list that the evals check refuses goes back to the writer also on a rerun, and a stop holds the list.
+const reSends = notes => () => ({ verdict: 'needs-change', notes })
+const reRound1 = o => /#1$/.test(o.label) ? { verdict: 'needs-change', notes: 'a gap' } : { verdict: 'ok', notes: '' }
+const reWriterCalls = id => calls.filter(c => c.label.startsWith(`evals:${id}#w`))
+await check('RE-1 a given or resumed list that the check sends back goes to the writer, up to evalsRounds attempts', async () => {
+  const flow = ['evalsarch:C1#1', 'evals:C1#w2', 'evalsarch:C1#2', 'evals:C1#w3', 'evalsarch:C1#3']
+  const a = await evalsRun([{ ...C1PR, evals: listOf('C1') }], () => withMeta(listOf('C1')), reSends('a gap'))
+  assert.deepEqual(evalLabels('C1').slice(0, 5), flow)
+  assert.ok(!evalLabels('C1').includes('evals:C1') && !evalLabels('C1').includes('evals:C1#w4') && !evalLabels('C1').includes('implement:C1'))
+  assert.equal(a.C1.reason, 'evals check: architecture: a gap')
+  const prompt = calls.find(c => c.label === 'evals:C1#w2').prompt
+  for (const t of ['This is attempt 2', 'a gap', 'C1-1 must hold']) assert.ok(prompt.includes(t), t)
+  await evalsRun(resumeWith(listOf('C1')), () => withMeta(listOf('C1')), reSends('a gap'))
+  assert.deepEqual(evalLabels('C1').slice(0, 5), flow)
+  await evalsRun([{ ...C1PR, evals: listOf('C1') }], () => withMeta(listOf('C1')), reRound1)
+  assert.deepEqual(evalLabels('C1').slice(0, 3), ['evalsarch:C1#1', 'evals:C1#w2', 'evalsarch:C1#2'])
+  assert.ok(evalLabels('C1').includes('implement:C1'))
+  await evalsRun([{ ...C1PR, evals: listOf('C1') }], () => withMeta(listOf('C1')), reSends('a gap'), { evalsRounds: 1 })
+  assert.deepEqual(evalLabels('C1'), ['evalsarch:C1#1'])
+  await evalsRun([{ ...C1PR, evals: listOf('C1') }], () => withMeta(listOf('C1')), reSends('a gap'), { evalsRounds: 2 })
+  assert.deepEqual(evalLabels('C1').slice(-2), ['evals:C1#w2', 'evalsarch:C1#2'])
+  assert.ok(!evalLabels('C1').includes('evals:C1#w3'))
+})
+await check('RE-2 a check that does not answer, and evals false, still stop a given list at once', async () => {
+  const given = () => [{ ...C1PR, evals: listOf('C1') }]
+  await evalsRun(given(), () => withMeta(listOf('C1')), reSends('a gap'))
+  assert.ok(evalLabels('C1').includes('evals:C1#w2'))
+  const a = await evalsRun(given(), noWriter, () => null)
+  assert.equal(a.C1.reason, 'evals check: the architecture reviewer did not answer')
+  assert.ok(!evalLabels('C1').some(l => l.startsWith('evals:C1#w')))
+  const b = await evalsRun(given(), noWriter, reSends('a gap'), { evals: false })
+  assert.equal(b.C1.reason, 'evals check: architecture: a gap')
+  assert.ok(!evalLabels('C1').some(l => l.startsWith('evals:C1#w')))
+})
+await check('RE-3 a given list that a code rule refuses stops at once with no writer and no check', async () => {
+  await evalsRun([{ ...C1PR, evals: listOf('C1') }], () => withMeta(listOf('C1')), reSends('a gap'))
+  assert.ok(evalLabels('C1').includes('evals:C1#w2'))
+  const bad = [ev('C1-1', 'behaviour')]
+  for (const prs of [[{ ...C1PR, evals: bad }], resumeWith(bad)]) {
+    const x = await evalsRun(prs, noWriter, okCheck)
+    assert.equal(x.C1.reason, 'evals refused: no error path')
+    assert.ok(!evalLabels('C1').some(l => l.startsWith('evals')))
+  }
+})
+await check('RE-4 the record is kept through every attempt, so a stop or a throw on a later attempt returns it', async () => {
+  const R = await accepted1()
+  const record = R.evalsMeta.accepted
+  const given = { ...asGiven(R), evals: R.evals.concat(ev('C1-9', 'behaviour')) }
+  let thrown = 0
+  const hook = (p, o) => {
+    if (/^evals:C1#w/.test(o.label)) return withMeta(listOf('C1'))
+    if (o.label === 'evalsarch:C1#3') { thrown++; throw new Error('check crashed') }
+    if (/^evalsarch:C1#/.test(o.label)) return { verdict: 'needs-change', notes: 'a gap' }
+  }
+  const out = await a10Hooked(resumeWith(given), hook, rethrowing)
+  const x = out.prs[0]
+  assert.match(x.reason, /^run failed:.*check crashed/)
+  assert.ok(thrown >= 1)
+  const labels = calls.map(c => c.label)
+  for (const l of ['evals:C1#w2', 'evalsarch:C1#2', 'evals:C1#w3']) assert.ok(labels.includes(l), l)
+  assert.deepEqual(x.evalsMeta.accepted, record)
+  assert.deepEqual(x.evals, record.evals)
+  const y = await evalsRun(resumeWith(given), () => null, reSends('a gap'))
+  assert.equal(y.C1.reason, 'evals writer failed')
+  assert.deepEqual(y.C1.evalsMeta.accepted, record)
+})
+await check('RE-5 a list that the writer returns on a later attempt and the check accepts leaves a record with its coverage', async () => {
+  const R = await firstRecord()
+  const W = [ev('C1-1', 'behaviour'), ev('C1-2', 'error path'), ev('C1-5', 'behaviour')]
+  const x = await evalsRun(resumeWith({ ...asGiven(R), evals: R.evals.concat(ev('C1-9', 'behaviour')) }), covWriter(COV, W), reRound1)
+  assert.ok(evalLabels('C1').includes('evals:C1#w2') && evalLabels('C1').includes('evalsarch:C1#2'))
+  assert.deepEqual(x.C1.evalsMeta.accepted, { pr: 'C1', evals: W, noErrorPath: '', noReference: '', algorithm: false, coverage: COV })
+})
+await check('RE-6 with a record, an evals stop after the last attempt keeps the record and puts the last writer list in lastFindings', async () => {
+  const R = await accepted1()
+  const record = R.evalsMeta.accepted
+  const given = { ...asGiven(R), evals: R.evals.concat(ev('C1-9', 'behaviour')) }
+  const counting = last => { let n = 1; return () => { n++; return withMeta(n === 3 && last ? last : [ev(`C1-W${n}`, 'behaviour'), ev('C1-2', 'error path')]) } }
+  const a = await evalsRun(resumeWith(given), counting(), reSends('a gap'))
+  assert.equal(a.C1.reason, 'evals check: architecture: a gap')
+  const b = await evalsRun(resumeWith(given), counting([ev('C1-W3', 'behaviour')]), o => /#[12]$/.test(o.label) ? { verdict: 'needs-change', notes: 'a gap' } : okCheck())
+  assert.equal(b.C1.reason, 'evals refused: no error path')
+  for (const x of [a, b]) {
+    assert.deepEqual(x.C1.evals, record.evals)
+    assert.deepEqual(x.C1.evalsMeta.accepted, record)
+    assert.ok(JSON.stringify(x.C1.lastFindings).includes('C1-W3'))
+  }
+})
+await check('RE-7 on a rerun the writer prompt does not say that nothing is built, and on a first build it does', async () => {
+  const promptOf = async prs => { await evalsRun(prs, () => withMeta(listOf('C1')), reRound1); return calls.find(c => c.label === 'evals:C1#w2').prompt }
+  assert.match(await promptOf([{ ...C1PR, evals: listOf('C1') }]), /Nothing is built yet/)
+  assert.doesNotMatch(await promptOf(resumeWith(listOf('C1'))), /Nothing is built yet/)
+  assert.doesNotMatch(await promptOf([{ ...C1PR, skipImpl: true, evals: listOf('C1') }]), /Nothing is built yet/)
+})
+await check('RE-8 every writer prompt keeps the writer on the default branch and names no PR branch', async () => {
+  const sentence = 'Read the default branch only; never read or check out a PR branch'
+  await evalsRun([C1PR], () => withMeta(listOf('C1')))
+  const first = calls.find(c => c.label === 'evals:C1').prompt
+  const prompts = [first]
+  for (const prs of [resumeWith(listOf('C1')), [{ ...C1PR, skipImpl: true, evals: listOf('C1') }]]) {
+    await evalsRun(prs, () => withMeta(listOf('C1')), reRound1)
+    prompts.push(calls.find(c => c.label === 'evals:C1#w2').prompt)
+  }
+  for (const p of prompts) {
+    assert.ok(p.includes(sentence))
+    assert.doesNotMatch(p, /origin\/b1\b|checkout -B b1\b/)
+  }
+})
+await check('RE-9 for a PR with no record, an evals check stop on the writer path returns the last writer list, and a resume runs the check', async () => {
+  const W = [ev('C1-7', 'behaviour'), ev('C1-8', 'error path')]
+  const x = await evalsRun([C1PR], () => withMeta(W, { noReference: 'no simple version' }), reSends('a gap'))
+  assert.equal(x.C1.reason, 'evals check: architecture: a gap')
+  assert.deepEqual(x.C1.evals, W)
+  const meta = { noErrorPath: '', noReference: 'no simple version', algorithm: false }
+  assert.deepEqual(x.C1.evalsMeta, meta)
+  const resume = a1Args(x.C1, 'C1').resume
+  assert.deepEqual(resume.evals, { evals: W, ...meta })
+  const y = await evalsRun([{ ...C1PR, resume }], noWriter)
+  assert.equal(archCalls().length, 1)
+  assert.ok(archCalls()[0].prompt.includes('C1-7'))
+  assert.ok(!/^evals/.test(y.C1.reason || ''))
+})
+await check('RE-10 for a PR with no record, an evals refused stop on the writer path returns the last writer list, and a resume stops at the rule', async () => {
+  const W = [ev('C1-7', 'behaviour')]
+  const x = await evalsRun([C1PR], () => withMeta(W, { noReference: 'no simple version' }), okCheck)
+  assert.equal(x.C1.reason, 'evals refused: no error path')
+  assert.deepEqual(x.C1.evals, W)
+  const meta = { noErrorPath: '', noReference: 'no simple version', algorithm: false }
+  assert.deepEqual(x.C1.evalsMeta, meta)
+  const resume = a1Args(x.C1, 'C1').resume
+  assert.deepEqual(resume.evals, { evals: W, ...x.C1.evalsMeta })
+  const y = await evalsRun([{ ...C1PR, resume }], noWriter)
+  assert.equal(y.C1.reason, 'evals refused: no error path')
+  assert.equal(archCalls().length, 0)
+})
+const reSentences = text => text.split('\n').flatMap(l => l.split(/(?<=\.) /))
+await check('RE-12 SKILL.md says a sent-back given list goes to the writer and an evals stop returns the last writer list', () => {
+  const text = readFileSync(new URL('skills/pr-pipeline/SKILL.md', root), 'utf8')
+  const sentences = reSentences(text)
+  assert.ok(sentences.some(t => /given|resumed|`prs\[\]\.evals`|`resume\.evals`/.test(t) && /writer/.test(t) && t.includes('`evalsRounds`')))
+  assert.ok(sentences.some(t => /last list of the writer|writer's last list/.test(t) && /evals stop|`evals check:|`evals refused:/.test(t)))
+  assert.ok(text.split('\n').some(l => l.startsWith('- `evals`:') && l.includes('default 3')))
+})
+await check('RE-13 the result paragraph says a land-fix run that throws carries minors under lateMinors', () => {
+  const line = readFileSync(new URL('skills/pr-pipeline/SKILL.md', root), 'utf8').split('\n').find(l => l.startsWith('The result is `{ prs,'))
+  const hit = reSentences(line).find(t => /land[- ]fix/i.test(t) && /throw/.test(t) && t.includes('`lateMinors`'))
+  assert.ok(hit)
+  assert.ok(hit.includes('`minors`'))
+})
+await check('RE-16 on a rerun the writer prompt of a later attempt holds the design rules on a line of their own', async () => {
+  const promptOf = async prs => { await evalsRun(prs, () => withMeta(listOf('C1')), reRound1); return calls.find(c => c.label === 'evals:C1#w2').prompt }
+  const withRules = resumeWith(listOf('C1')).map(p => ({ ...p, resume: { ...p.resume, designRules: ['Refuse a path with dots'] } }))
+  assert.match(await promptOf(withRules), /Rules a person set after the last stop[^]*\n- Refuse a path with dots\n/)
+  assert.doesNotMatch(await promptOf(resumeWith(listOf('C1'))), /Rules a person set/)
+})
+await check('RE-17 SKILL.md says an evals stop of a PR with no built branch starts the PR again with the list, and resume is for a built branch', () => {
+  const row = readFileSync(new URL('skills/pr-pipeline/SKILL.md', root), 'utf8').split('\n').find(l => l.startsWith('| `evals refused: <rule>`'))
+  assert.ok(row)
+  assert.ok(row.includes('`prs[].evals`') && /not built/.test(row))
+  assert.match(row, /no `resume` and no `skipImpl`/)
+  assert.match(row, /resume it/)
 })
 await check('D-7 the prompts of a quick fix say the issue text is untrusted, and the prompts of a plan PR do not', async () => {
   const head = p => p.slice(0, p.indexOf('Temporary files go under'))
