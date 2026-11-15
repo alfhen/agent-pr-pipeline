@@ -1,5 +1,5 @@
 {
- "note": "Real answers of PR 793 at 334a3cb, cut to the fields the gate reads. Change: the text of the second reply of the user starts with Note, not filed:. MADE: the answer comment of the user in issueComments (id 1) is not real. The real review holds a failed pre-merge check (Linked Issues), and the real PR had no answer for it.",
+ "note": "Real answers of PR 793 at 334a3cb, cut to the fields the gate reads; no change. Both replies of the user hold #792. The real review holds a failed pre-merge check (Linked Issues) inside the fence of its prompt block. The gate does not read that text, and the PR has no answer comment.",
  "head": "334a3cba84b910424cd6074bdb90e70918a61982",
  "user": "alfhen",
  "checks": [
@@ -154,7 +154,7 @@
    "in_reply_to_id": 4575752839,
    "pull_request_review_id": 5907287732,
    "commit_id": "334a3cba84b910424cd6074bdb90e70918a61982",
-   "body": "Note, not filed: It is the same gap as #792 in a second place (the bot check keeps its minors in a local array until it returns), so I added this case to #792 with its input and outcome. One change fixes both: track those arrays per PR and read them in the catch of `runPR`. Not fixed in this PR, because the batch covers the first run and the resume paths that its issues name.",
+   "body": "Right. It is the same gap as #792 in a second place (the bot check keeps its minors in a local array until it returns), so I added this case to #792 with its input and outcome. One change fixes both: track those arrays per PR and read them in the catch of `runPR`. Not fixed in this PR, because the batch covers the first run and the resume paths that its issues name.",
    "created_at": "2026-11-14T21:43:40Z"
   }
  ],
@@ -222,14 +222,6 @@
    },
    "created_at": "2026-11-14T21:44:02Z",
    "body": "Merged by the driving session (the assessment session, which drives the build by the maintainer's word of 2026-11-13) under the maintainer's standing rule of 2026-11-12 (merge on a clean CodeRabbit review of the final head and green CI while no bot can approve, #736). This is a person-rule merge, not an agent merge. Pinned to head 334a3cba84b910424cd6074bdb90e70918a61982. Basis: CodeRabbit check run 132595658103 (app coderabbitai) is completed/success, \"Finished\", \"Review completed\", started 2026-11-14T21:32:51Z; head pushed 2026-11-14T21:13:11Z (first check suite GitHub made for it); full-review request comment 6884518680 between the two; 0 CodeRabbit threads without a reply from CodeRabbit or the maintainer's account; no CodeRabbit review body on the head with a finding above minor or outside the inline threads; all check runs and statuses on the head passed. Minor findings answered with their issue under the maintainer's rule of 2026-11-13 (a review with only minor findings is clean once each is answered and filed): threads 4575752835 4575752839; outside the diff 0. Path gate: GATED #793: scripts/cleanup.sh, scripts/resume-args.sh, skills/pr-pipeline/SKILL.md, workflows/run-wave.js."
-  },
-  {
-   "id": 1,
-   "user": {
-    "login": "alfhen"
-   },
-   "created_at": "2026-11-14T21:50:00Z",
-   "body": "<!-- pipeline-bot-answer head=334a3cba84b910424cd6074bdb90e70918a61982 -->\nNote, not filed: the Linked Issues check names two closing lines that the PR does not settle fully; the maintainer decides them."
   }
  ]
 }
