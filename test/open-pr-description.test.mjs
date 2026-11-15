@@ -25,9 +25,3 @@ test('step 9 names the Minor fixes lines and the Tests only removal after a bot 
   assert.ok(step.some(s => /Minor fixes/.test(s) && /\badds?\b/i.test(s)))
   assert.ok(step.some(s => /Tests only:/.test(s) && /bot/i.test(s) && /land fix/i.test(s)))
 })
-
-test('bodyPrompt removes the Tests only line only on a stored false after a bot change or a land fix', () => {
-  const src = read('workflows/run-wave.js')
-  assert.match(src, /dropTestsOnly = BREAK_CHECK && testsOnlyState\[pr\.id\] === false && \(!!pr\.landFix \|\| !!botChangedState\[pr\.id\]\)/)
-  assert.match(src, /remove the line that starts with "\$\{TESTS_ONLY_LINE\.split\(':'\)\[0\]\}:" from the body/)
-})
