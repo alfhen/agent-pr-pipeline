@@ -47,7 +47,7 @@ def answered($t): any($in.comments[]; .in_reply_to_id == $t.id and (.user.login 
 | "coderabbitai[bot]" as $cr
 | def isRankMinor: . == "Minor" or . == "Trivial";
 # The rank word of an inline comment, as CodeRabbit writes it: **<picture>..</picture> Minor**.
-def rankOf: stripComments | (first(capture("^\\*\\*(<picture>.*?</picture>)?\\s*(?<w>[A-Za-z]+)\\*\\*").w) // null);
+def rankOf: stripComments | (first(capture("\\A\\*\\*(<picture>.*?</picture>)?\\s*(?<w>[A-Za-z]+)\\*\\*").w) // null);
 def answerLine: gsub("^\\s+|\\s+$"; "") | (test("#[0-9]+") or startswith("Note, not filed:"));
 # Rule A ranks inline findings only. The body of a review must be exactly the frame of the real CodeRabbit bodies, each block at
 # most once and in their order; a section of findings or any other text left makes the body not match, and rule A refuses it.
@@ -67,7 +67,7 @@ def availLine: "\\*\\*Included review availability:\\*\\* This review used your 
 # Only the HTML comments of the frame are cut, so any other comment is text that is left.
 def frameComment: "<!-- (?:coderabbit-ai-generated:v[0-9]+|autofix_checkbox_start|autofix_checkbox_end|\\{\"checkboxId\":\"[0-9a-f-]+\"\\}"
   + "|This is an auto-generated comment by CodeRabbit for review status|coderabbit-review-publication v[0-9]+ publication=[0-9a-f-]+ attempt=[0-9a-f-]+ batch=[0-9]+/[0-9]+) -->";
-def topRe: "^\\s*\\*\\*Actionable comments posted: (?<n>[0-9]+)\\*\\*\\s*"
+def topRe: "\\A\\s*\\*\\*Actionable comments posted: (?<n>[0-9]+)\\*\\*\\s*"
   + "(?:---\\s*)?(?:- \\[[ x]\\]\\s*Fix comments: Fix CodeRabbit comments on this PR\\s*)?(?:" + blk("Prompt to fix all issues"; oneFence) + "\\s*)?"
   + "(?:<h6>\\s*<details>\\s*<summary>\\s*" + pic + "Review info</summary>\\s*<dl>\\s*<dd>\\s*<br>\\s*" + runCfg + "\\s*" + commitsBlk + "\\s*" + filesBlk + "\\s*(?:" + availLine + ")?</dd>\\s*</dl>\\s*</details>\\s*</h6>\\s*)?\\z";
 # The count of a body that is the frame and nothing else, or null. Each part of the frame can be absent. The text inside the fence

@@ -451,3 +451,18 @@ test('(doc) SKILL.md says that rule A covers inline findings only and refuses a 
   assert.doesNotMatch(gate, /pipeline-bot-answer/)
   assert.doesNotMatch(gate, /—/)
 })
+
+test('rule A matches the frame from the first character of the body', () => {
+  const marker = '**Actionable comments posted'
+  const line = 'Major finding requiring a fix.\n'
+  bodyOf(pr793, (b) => b.replace(marker, line + marker))
+  bodyOf(pr793, (b) => line + b)
+  merged(run(pr793()))
+})
+
+test('rule A reads the rank of an inline comment only from its start', () => {
+  const rank = (text) => mut(pr793, (fx) => { fx.comments.find((c) => c.user.login === BOT && !c.in_reply_to_id).body = text })
+  refused(run(rank('Some header with no rank\n**Minor**\n\ntext')), RULE_A)
+  refused(run(rank('<!-- coderabbit-ai-generated:v1 -->\n\nSome header\n\n**Minor**\n\ntext')), RULE_A)
+  merged(run(pr793()))
+})
