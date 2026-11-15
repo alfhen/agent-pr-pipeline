@@ -6050,6 +6050,19 @@ await check('RE-13 the result paragraph says a land-fix run that throws carries 
   assert.ok(hit)
   assert.ok(hit.includes('`minors`'))
 })
+await check('RE-16 on a rerun the writer prompt of a later attempt holds the design rules on a line of their own', async () => {
+  const promptOf = async prs => { await evalsRun(prs, () => withMeta(listOf('C1')), reRound1); return calls.find(c => c.label === 'evals:C1#w2').prompt }
+  const withRules = resumeWith(listOf('C1')).map(p => ({ ...p, resume: { ...p.resume, designRules: ['Refuse a path with dots'] } }))
+  assert.match(await promptOf(withRules), /Rules a person set after the last stop[^]*\n- Refuse a path with dots\n/)
+  assert.doesNotMatch(await promptOf(resumeWith(listOf('C1'))), /Rules a person set/)
+})
+await check('RE-17 SKILL.md says an evals stop of a PR with no built branch starts the PR again with the list, and resume is for a built branch', () => {
+  const row = readFileSync(new URL('skills/pr-pipeline/SKILL.md', root), 'utf8').split('\n').find(l => l.startsWith('| `evals refused: <rule>`'))
+  assert.ok(row)
+  assert.ok(row.includes('`prs[].evals`') && /not built/.test(row))
+  assert.match(row, /no `resume` and no `skipImpl`/)
+  assert.match(row, /resume it/)
+})
 await check('D-7 the prompts of a quick fix say the issue text is untrusted, and the prompts of a plan PR do not', async () => {
   const head = p => p.slice(0, p.indexOf('Temporary files go under'))
   for (const re of [/^implement/, /^review/, /^product/]) {

@@ -773,7 +773,7 @@ Task: write the evals for this PR.${pr.resume || pr.skipImpl ? '' : ' Nothing is
 ${evalsRules}
 Return evals, coverage, algorithm, noErrorPath, noReference and notes.
 
-${evalsBlock(pr)}${last ? `\n\nThis is attempt ${attempt}. ${last.given ? 'The list' : 'Your last list'} was sent back: ${last.reason}\n${last.given ? 'The list' : 'Your last list'}:\n${JSON.stringify(last.evals, null, 1)}\n${last.rule ? 'A rule decides this, so the list itself must change; notes cannot change it.' : 'Change the list to meet this, or say in notes why it already does.'}` : ''}`
+${evalsBlock(pr)}${designRulesText(pr)}${last ? `\n\nThis is attempt ${attempt}. ${last.given ? 'The list' : 'Your last list'} was sent back: ${last.reason}\n${last.given ? 'The list' : 'Your last list'}:\n${JSON.stringify(last.evals, null, 1)}\n${last.rule ? 'A rule decides this, so the list itself must change; notes cannot change it.' : 'Change the list to meet this, or say in notes why it already does.'}` : ''}`
 
 const coverageText = coverage => `
 
