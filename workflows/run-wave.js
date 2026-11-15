@@ -741,7 +741,7 @@ const fixedEvalsText = (pr, deviations, disputes = true) => {
   if (!pr.evals) return dev ? `\n${dev}\n` : ''
   return `\nThe evals in the PR block are fixed. Build until you believe every one passes. You cannot change, add or remove an eval, and an eval in your answer is ignored.${disputes ? ' If an eval is wrong or cannot be met, build the rest and return \`disputes\`: [{ id, reason }]. The evals writer rules on each dispute.' : NO_DISPUTES}${dev ? ` ${dev}` : ''}\n`
 }
-const UNMEETABLE_EVAL_TEXT = 'When no change to the code can make a failing eval pass, because what it names does not exist on the branch (the PR body or title, a label, a bot comment, CI, a merge, a release), return a dispute for that eval. Pushing nothing and returning no dispute is the wrong answer.'
+const UNMEETABLE_EVAL_TEXT = 'When no change to the code can make a failing eval pass, because what it names does not exist on the branch (the PR body or title, a label, a bot comment, CI, a merge, a release), return a dispute for that eval. Pushing nothing and returning no dispute is the wrong answer. When a finding says that the test passes without the change for an eval that already holds on the default branch, no test can fail without the change: the answer is a dispute of that eval.'
 const implPrompt = pr => `${ctx(pr)}
 
 Task: implement this PR.
@@ -760,7 +760,9 @@ const evalsClone = (dir, pr) => `\`rm -rf ${TMP}/${dir} && git clone https://git
 const evalsRules = `Rules for the list (the writer and the evals check use the same rules):
 - The plan's "Rules for every PR" apply to the list (a quick-fix PR with no plan: the rules in its brief): each eval must keep them.
 - The Touches line is a limit: no eval needs a file outside it.
-- A claim that an eval fails on the default branch must be true there. Check it on the clone.`
+- A claim that an eval fails on the default branch must be true there. Check it on the clone.
+- An eval of kind behaviour or error path whose statement or check says that it holds on the default branch is refused, and its kind is regression. When it is the only error path eval, give noErrorPath with the reason that the error path already holds.
+- A check that names a helper of a test file must be able to run at the place where the entry puts the new test: the helper is defined before that place.`
 
 const evalsPrompt = (pr, attempt, last) => `${ctx(pr)}
 
@@ -1402,6 +1404,7 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
   if (startRound > 1) log(`${pr.id} resume: this run does at most ${max} rounds (${startRound} to ${startRound + max - 1}), ${cap} counts rounds from the resume`)
   const fixerBeforeLoop = !!(pr.skipImpl || pr.resume)
   const halt = (reason, more) => { history[history.length - 1].stop = reason; return { signedOff: false, ...more, reason } }
+  let passedWithoutChange = []
   for (let round = startRound; round < startRound + max; round++) {
     const evalMode = verifies(pr)
     const wantArch = archRuns(pr) && (!loopState.reviewed || loopState.fixed || pr.kind === 'plan')
@@ -1483,6 +1486,9 @@ async function reviewLoop(pr, startRound, history, minors, loopState) {
     const repeated = themesOf(blocking).filter(t => loopState.themes.includes(normTitle(t)))
     loopState.themes = [...new Set(loopState.themes.concat(themesOf(blocking).map(normTitle)))]
     if (repeated.length) return halt('needs human: scope', { lastFindings: blocking, escalation: scopeEscalation(repeated) })
+    const again = (outcome.breakFailed || []).filter(id => passedWithoutChange.includes(id))
+    passedWithoutChange = outcome.breakFailed || []
+    if (again.length) return halt(`needs human: eval ${again.join(', ')}: the test passes without the change in two rounds in a row`, { lastFindings: blocking, lastTest: test })
     if (round === startRound + max - 1) return halt(capReason(pr, outcome, blocking, max, cap), { lastFindings: blocking, lastTest: test })
     const seg = segmentOf(history, startRound)
     if (seg.length >= 3 && !progressOf(seg[seg.length - 2], seg[seg.length - 1]) && !progressOf(seg[seg.length - 3], seg[seg.length - 2])) {
