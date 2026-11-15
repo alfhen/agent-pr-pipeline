@@ -2,7 +2,7 @@
 
 ## Status (2026-11-15)
 
-- For plan review. Nothing is built.
+- The plan is merged (#797) and wave 1 is built: C02a is on `main`, C11 and RL are in review. This revision adds one entry, RU, and choice 8. Nothing else changes.
 - Written from one impact pass on `main` at 15ee469 (`.claude/assessment/drafts/impact-gate.md`, a local note of the driving session), checked again at 2fbab55 (v0.9.7). Each Touches line names functions, sections and case titles, because line numbers move.
 - The six choices on the merge gate are decided (maintainer, 2026-11-13). Rule A (a review with only minor findings is clean once each finding is answered) is decided (2026-11-13). The filing bar is decided (2026-11-13). CodeRabbit's automatic reviews are off and a review is asked for by comment (2026-11-14).
 - The entries hold what must be true as numbered statements. The evals writer builds its list from them, with one coverage item for each statement. A statement with more than one sentence gets one item for each sentence.
@@ -11,6 +11,8 @@
 ## Summary in plain words
 
 Today the session that drives the build asks CodeRabbit for each review by hand, one PR an hour, reads the answer with its own scripts and merges under your standing rule. This plan moves that into the plugin. The step that lands a PR can now ask CodeRabbit for a review of the last commit. It asks only when the session that drives the build turns that on; a plain land asks for nothing. The merge script does not ask. It merges when that review finds nothing or only small points that each have an answer. A run now also looks at its start for a session that still uses the agent rules of an older release. For this release the run goes on with a warning. From the next release it stops. In both cases you type `/reload-plugins` and the run is started again. Three small entries fix the faults that cost the most time in the 0.9.7 run: a list of checks that was given again after a stop got only one try, a decision of yours did not reach the agent that repairs a PR before the merge, and a check for behaviour that already worked could not be shown to fail, and stopped the PR.
+
+Added on 2026-11-15, while wave 1 was built: a ninth entry (RU, choice 8). A run that repairs an open PR on release 0.9.7 can end as "not ready" with a reason that is not true, when the text of the PR needed no change. RU fixes that before the full product waves, where such repair runs happen.
 
 What you do: remove the Gitar app from the repo (choice 1), merge one small settings PR after wave 3 (choice 5), and reload after the release.
 
@@ -27,6 +29,7 @@ Merging this plan accepts the pick of each line. Say so before the merge to chan
 | 5 | Two rule files change. The repo rules (`AGENTS.md`) get the new merge condition and the new review request. The list of files that only you merge gets CodeRabbit's settings file. | One small settings PR (entry SET), built alone after wave 3, that you merge. All other PRs merge under your standing rule. | Your rule does not cover those two files. |
 | 6 | The three entries for the faults of the 0.9.7 run (RL, RE, RK). | In this plan. | Batch B needed four restarts and five fix runs for these causes. A product run meets the same paths. |
 | 7 | On a product repo, a review finding above minor at the land step means a fix run, and a fix run is always merged by you (#78). | No change in this plan. Know it before the full Tagreeve waves. | #78 is its own design question. |
+| 8 | A fault of release 0.9.7 that the build of wave 1 found (#802): a land-fix run stops with `PR body not updated with the untested items` when the body needs no change. The quick-fix route refused it, because the triager ranked the risk high (it loosens a check that stops a PR). | A ninth entry, RU, in wave 3. It merges under your standing rule, like the other code PRs. | Every land-fix run on a product repo meets the fault, and the result then has no pair for the land step. |
 
 ## Decisions
 
@@ -62,7 +65,7 @@ Merging this plan accepts the pick of each line. Say so before the merge to chan
 flowchart LR
   P[Plan PR] --> W1[Wave 1: C02a, C11, RL]
   W1 --> W2[Wave 2: C02b, RE]
-  W2 --> W3[Wave 3: C03, RK]
+  W2 --> W3[Wave 3: C03, RK, RU]
   W3 --> S[SET alone, merged by the maintainer]
   S --> V[Version PR, release 0.9.8]
   V --> L[Live land with the new gate]
@@ -70,7 +73,7 @@ flowchart LR
 
 Summary: three waves of two or three PRs, then the settings PR alone, then the release, then one live land that uses the new gate.
 
-Why three waves: C02a and C02b both rewrite `scripts/bot-approval.jq`. C03 needs the rules for the request, the push time and a completed review, which C02b puts in `scripts/review-request.jq`. `skills/pr-pipeline/SKILL.md` has one line for each step, so two entries that edit one step are in different waves: step 10 (C02a, C02b, C03), step 6 (RL, RK), the result paragraph (C11, RE). Edits of lines that touch also conflict at landing, so RL edits step 6 and not step 11, which is the line after step 10 (C02a). RE comes after RL: it edits the result paragraph for the key that RL gives a land-fix run that throws, and so it carries the closing line for #792. SET comes alone after wave 3: its sentences name the request of the land step, which C03 builds, and the maintainer merges it.
+Why three waves: C02a and C02b both rewrite `scripts/bot-approval.jq`. C03 needs the rules for the request, the push time and a completed review, which C02b puts in `scripts/review-request.jq`. `skills/pr-pipeline/SKILL.md` has one line for each step, so two entries that edit one step are in different waves: step 10 (C02a, C02b, C03), step 6 (RL, RK), the result paragraph (C11, RE). Edits of lines that touch also conflict at landing, so RL edits step 6 and not step 11, which is the line after step 10 (C02a). RE comes after RL: it edits the result paragraph for the key that RL gives a land-fix run that throws, and so it carries the closing line for #792. RU is in wave 3 because it was added after wave 1 started; it edits `BODY`, `bodyPrompt` and `syncUntested`, which no other entry edits, and no line of SKILL.md. SET comes alone after wave 3: its sentences name the request of the land step, which C03 builds, and the maintainer merges it.
 
 ### Wave 1
 
@@ -186,6 +189,17 @@ What must be true:
 Build notes: "A06-1" and "A06-2" match three rule sentences and stay with more rules. "E04-11: at the cap with the evals passing, the reason names the open source and not rounds exhausted" pins the reason of a one-round cap; statement 3 stops in round 2 and leaves it. `test/skill-notes.test.mjs` matches six checklist sentences and counts nothing.
 Closes #786
 
+**RU A PR body that needs no change does not stop a PR.** Added to this plan on 2026-11-15 (choice 8). Sim anchor: after "D-9 the plan review checks that each issue an entry closes is fully settled, and the code review does not".
+Touches: `workflows/run-wave.js` (`BODY`, one new key of the answer; `bodyPrompt`, the sentence on what to return; `syncUntested`, the line that reads the answer), `test/sim-pipeline.mjs` (one new block).
+What must be true:
+1. The body agent can answer that the body already holds what its task asks: `updated` false with `unchanged` true. Its prompt says when to give that answer: the body has no `Tests only:` line to take out and its Untested section needs no change.
+2. When the untested list of the run is empty and the answer is `unchanged` true, the body step is not a failure. A land-fix run of a branch that is not tests only, whose body has no `Tests only:` line, then goes on and ends `ready` with its `land` pair. The same holds for a run where a bot answer changed code.
+3. When the untested list of the run is not empty, `unchanged` true does not count: the PR stops with `PR body not updated with the untested items`, as for `updated` false. The maintainer merges from the body, so a list that the run cannot show as saved stops the PR.
+4. `updated` false with no `unchanged` true stops the PR with `PR body not updated with the untested items`. (holds today; kind `regression`)
+5. `updated` true goes on, with or without `unchanged`. (holds today; kind `regression`)
+Build notes: the sim cases "A2 a refused removal of the Tests only line stops the PR with the body reason" and the cases near "BR6" that answer `{ updated: false }` pin statement 4 and stay with no change. The fake agent answers a label that ends in `#body` with `{ updated: true }`; the new block gives its own answers. The helpers `a2Run`, `a2Bots`, `a2NonTest` and `kLandPr` are defined before the anchor. The key `unchanged` is a key of the answer of the body agent, not a key of the result of a PR. The row `PR body not updated with the untested items` of SKILL.md stays true and is not edited: after this entry the reason is given only when a needed change was not saved. Seen in run `wf_a0ee60f6-a63` on #799.
+Closes #802
+
 ### After wave 3
 
 **SET The settings: the bot's config file is gated, and the repo rules name the fourth way and the request.** After C03 is on `main`. It is built alone, before the version PR. The maintainer merges this PR.
@@ -228,13 +242,13 @@ No wave agent can do these steps. The driving session does them, in this order.
 1. The four per-PR criteria of iteration 1 hold for each entry (a list before the build, a result for each eval id in the pull request, the break check ran, and a ledger record with tokens by role).
 2. No eval list stops at the evals stage.
 3. No entry needs more than two outside reviews.
-4. The entries file at most 2 issues, besides the one that choice 4 names.
+4. The entries file at most 2 issues, besides the one that choice 4 names. #802 (choice 8) is the first of the two.
 5. After the release, one PR of this repo lands with `land-wave.sh --person --review`. For a review with no finding: one request, a `REVIEWED` line, `approved=[coderabbitai[bot] (clean review)]`, the merge. For a minor-only review: a stop, the answers, then a second call that posts no request and merges. A rerun of the same call posts no new request.
 6. After the release and before the reload, a wave that runs the 0.9.8 workflow with `pluginRoot` at the 0.9.8 folder runs, and `warnings` holds the `WARN` line that names `/reload-plugins`. After `/reload-plugins` the same wave has no such line. The refusal (the compare of two releases) is first shown live at the next release.
 
 ## Release
 
-- 0.9.8 is the eight entries. The maintainer merges SET after wave 3, and the version PR comes after it. The version PR also writes the version line of `agents/goals-preflight.md`. The live check of the probe (step 3 of the driving session) passes before the version PR.
+- 0.9.8 is the nine entries (RU was added on 2026-11-15). The maintainer merges SET after wave 3, and the version PR comes after it. The version PR also writes the version line of `agents/goals-preflight.md`. The live check of the probe (step 3 of the driving session) passes before the version PR.
 - The plan's own PRs cannot use the new gate, because the waves run on v0.9.7. Criterion 5 is the first use.
 - After it: the full Tagreeve 0.7.0 waves.
 
