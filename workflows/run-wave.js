@@ -384,6 +384,7 @@ const ROLES = {
   landReview: { agent: 'reviewer', phase: 'Land fix', reviewModel: true, skills: 'review' },
   landFix: { agent: 'land-fixer', phase: 'Land fix', isolation: 'worktree' },
   preflight: { agent: 'goals-preflight', phase: 'Preflight' },
+  roleProbe: { agent: 'goals-preflight', phase: 'Preflight', model: 'preflight', skills: null },
   triage: { agent: 'triager', phase: 'Triage', skills: null },
   io: { agent: 'pipeline-io', phase: 'Triage', skills: null },
   ioBrief: { agent: 'pipeline-io', phase: 'Triage', skills: null, model: 'brief' },
@@ -608,6 +609,11 @@ const PREFLIGHT = {
     missing: { type: 'array', items: { type: 'string' } },
   },
   required: ['ok', 'exists', 'missing'],
+}
+const ROLE_LINE = {
+  type: 'object',
+  properties: { version: { type: 'string' } },
+  required: ['version'],
 }
 const DOCS = {
   type: 'object',
@@ -1101,6 +1107,11 @@ ${prBlock(pr)}`
 const preflightPrompt = () => `Task: check the goals document ${GOALS} on the default branch of ${REPO}.
 Read it with \`gh api repos/${REPO}/contents/${GOALS} --jq .content | base64 --decode\`. If that fails, the file does not exist.
 Return ok, exists, the two counts, and missing: a short list of what is absent (for example "file", "Goals section", "Non-goals items").`
+
+// The probe has no version and no folder in it: the answer must come from the role file the session loaded.
+const roleProbePrompt = () => `Task: say which release your own instructions name.
+Your instructions hold one line of the form "Role files of release <version>.". Return that version in version. If your instructions hold no such line, return the text no line in version.
+Run no command and read no file. Answer from your own instructions only.`
 
 const triagePrompt = pr => `${ctx(pr)}
 
@@ -1845,8 +1856,9 @@ const denylistFor = (changedPaths, results) => {
   return [...new Set([owner, name, REPO, `https://github.com/${REPO}`, ...paths, ...paths.flatMap(suffixes), ...branches].filter(x => typeof x === 'string' && x.trim()))]
 }
 
+const noEvaluation = () => ({ feedback: [], denylist: [], source: REPO, feedbackRepo: FEEDBACK_REPO })
 async function evaluateWave(prs) {
-  const none = { feedback: [], denylist: [], source: REPO, feedbackRepo: FEEDBACK_REPO }
+  const none = noEvaluation()
   if (!FEEDBACK || A.prs.every(pr => pr.landFix || pr.resume || (pr.skipImpl && pr.kind !== 'plan'))) return none
   const evaluation = await call('evaluate', null, evaluatePrompt(prs, { ...agentCounts }), 'evaluate:wave', { schema: EVALUATION })
   if (!evaluation) {
@@ -2274,6 +2286,50 @@ async function checkVersion() {
     return [`version check could not run: ${e && e.message}`]
   }
 }
+// Copy of the pattern in scripts/semver.sh; test/plugin-version.test.mjs keeps them equal.
+const SEMVER = /^([0-9]+\.[0-9]+\.[0-9]+)(-[0-9A-Za-z.-]+)?$/
+const NO_LINE = 'no line'
+// Refuses only on a fact a script read (ROLES DIFFER or ROLES MISSING). An answer of the model alone gives a warning.
+async function checkRoles() {
+  if (!PLUGIN_ROOT || AGENT_PREFIX !== 'agent-pr-pipeline:') {
+    log('role check skipped: it needs pluginRoot and the default agentPrefix')
+    return {}
+  }
+  const couldNot = why => ({ warn: `WARN role check could not run: ${why}` })
+  try {
+    const probe = async label => {
+      const got = await call('roleProbe', null, roleProbePrompt(), label, { schema: ROLE_LINE })
+      if (!got || typeof got.version !== 'string') return null
+      const v = got.version.trim().replace(/\.$/, '')
+      return v.toLowerCase() === NO_LINE ? NO_LINE : v
+    }
+    const first = await probe('roles:wave')
+    if (first === VERSION) return {}
+    const second = await probe('roles:wave#2')
+    if (first === NO_LINE && second === NO_LINE) {
+      return { warn: 'WARN role files hold no release line: the session holds the role files of a release before 0.9.8, or the probe failed. Run /reload-plugins and start a new run.' }
+    }
+    if (first !== second || !SEMVER.test(first || '')) return couldNot(`the probe answers were ${JSON.stringify(first)} and ${JSON.stringify(second)}`)
+    const cut = PLUGIN_ROOT.replace(/\/+$/, '').lastIndexOf('/')
+    if (cut < 0) return couldNot('pluginRoot has no parent folder')
+    const parent = PLUGIN_ROOT.replace(/\/+$/, '').slice(0, cut)
+    const io = await ioCall(null, 'io:wave#roles', 'role-files.sh', `${shq(`${parent}/${first}`)} ${shq(`${parent}/${VERSION}`)}`, { phase: 'Preflight' })
+    if (!io) return couldNot('pipeline-io failed')
+    const lines = String(io.output).split('\n').map(l => l.trim()).filter(Boolean)
+    if (io.exitCode !== 0) return couldNot(`exit ${io.exitCode}${lines.length ? `: ${lines.join(' ')}` : ''}`)
+    const answer = lines.find(l => l === 'ROLES SAME' || l.startsWith('ROLES DIFFER ') || l.startsWith('ROLES MISSING '))
+    if (answer === 'ROLES SAME') {
+      log(`role files match: release ${first} and release ${VERSION}`)
+      return {}
+    }
+    if (!answer) return couldNot('unexpected output')
+    const names = answer.startsWith('ROLES DIFFER ') ? answer.slice('ROLES DIFFER '.length).split(/\s+/).filter(n => /^[A-Za-z0-9._-]+$/.test(n)) : []
+    const what = names.length ? `the role files that differ: ${names.join(', ')}` : 'the folder of the loaded release is gone'
+    return { refuse: `role files differ: the session runs the role files of release ${first}, and the workflow is release ${VERSION} (${what}). Run /reload-plugins and start a new run.` }
+  } catch (e) {
+    return couldNot(e && e.message)
+  }
+}
 const finish = async result => {
   result.warnings = warnings
   result.agentCounts = { ...agentCounts }
@@ -2281,13 +2337,23 @@ const finish = async result => {
   return result
 }
 const needsGoals = A.prs.some(pr => !pr.landFix)
-const [versionLines, pre] = await parallel([
+const [versionLines, pre, roles] = await parallel([
   () => checkVersion(),
   () => needsGoals ? call('preflight', null, preflightPrompt(), 'preflight:goals', { schema: PREFLIGHT }) : Promise.resolve(null),
+  () => checkRoles(),
 ])
 for (const line of versionLines) {
   log(line)
   if (line.startsWith('WARN ')) warnings.push(line)
+}
+if (roles.warn) {
+  log(roles.warn)
+  warnings.push(roles.warn)
+}
+if (roles.refuse) {
+  log(`refused: ${roles.refuse}`)
+  const refusals = A.prs.map(pr => ({ id: pr.id, ready: false, refused: true, reason: roles.refuse }))
+  return finish({ prs: refusals, ...noEvaluation() })
 }
 if (needsGoals) {
   if (!pre || !pre.ok) {
