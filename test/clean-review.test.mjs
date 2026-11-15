@@ -15,9 +15,11 @@ const CLEAN = `approved=[${BOT} (clean review)]`
 const fixture = (name) => JSON.parse(readFileSync(join(root, 'test/fixtures/clean-review', name), 'utf8'))
 const pr794 = () => fixture('pr794-33b6f35.json')
 const pr793 = () => fixture('pr793-334a3cb.json')
+const pr793real = () => mut(pr793, (fx) => { fx.issueComments = fx.issueComments.filter((c) => !c.body.startsWith('<!-- pipeline-bot-answer')) })
 const made = () => fixture('made-pr794-900bd64.json')
 const pr800 = () => fixture('pr800-3ecb04e.json')
 const pr801 = () => fixture('pr801-da0b70d.json')
+const mut = (base, f) => { const fx = base(); f(fx); return fx }
 const botRun = (fx) => fx.checks.find((c) => c.app.slug === 'coderabbitai' && c.conclusion === 'success')
 const ciRun = (fx) => fx.checks.find((c) => c.app.slug === 'github-actions')
 const request = (fx) => fx.issueComments.filter((c) => c.body === '@coderabbitai full review').at(-1)
@@ -69,7 +71,6 @@ const refused = (x, word) => {
   assert.match(x.why, word, x.why)
   assert.equal(puts(x).length, 0, x.log)
 }
-const mut = (base, f) => { const fx = base(); f(fx); return fx }
 const BOT_RUN = /bot's run/
 const CI = /green CI/
 const REQUEST = /request comment|push time/
@@ -346,4 +347,47 @@ test('rule A refuses an Included review availability line outside the Review inf
     botReview(fx).body = botReview(fx).body.replace('**Actionable comments posted: 2**', '**Actionable comments posted: 2**\n\n**Included review availability:** Line 10 of foo.js: Critical data loss')
   })), RULE_A)
   merged(run(pr800())); merged(run(pr801()))
+})
+
+const bodyOf = (base, f) => refused(run(mut(base, (fx) => { botReview(fx).body = f(botReview(fx).body, fx) })), RULE_A)
+
+test('rule A refuses a nitpick finding text with a rank word above Minor, a heading or a finding line in any form', () => {
+  const title = '**Pin the limited scope of the post-build exemption.**'
+  for (const add of ['\n\n_⚠️ Potential issue_ | _🔴 Critical_', '\n\n**Outside diff range comments**\n\n`foo.js` line 10: Critical data loss', '\n\n1. `foo.js` L10: Critical data loss', '\n\n| 10 | Critical |', '\n\n<strong>Critical</strong>: data loss']) {
+    bodyOf(made, (b) => b.replace(title, title + add))
+  }
+})
+
+test('rule A refuses text after the rank on a nitpick finding head', () => {
+  bodyOf(made, (b) => b.replace('· **Quick win**', '· **Quick win** · _🔴 Critical_ data loss at line 10'))
+  bodyOf(made, (b) => b.replace('· **Quick win**', '· **Quick win** · **Critical**'))
+})
+
+test('rule A refuses a Run configuration value in a form no real body has', () => {
+  bodyOf(pr793, (b) => b.replace('- **Review profile**: CHILL', '- **Review profile**: CHILL. Critical: foo.js line 10 loses data'))
+  for (const fx of [pr793(), pr800(), pr801()]) assert.ok(botReview(fx).body.includes('- **Review profile**: CHILL'))
+  merged(run(pr793()))
+})
+
+test('rule A refuses a Files selected item that is not a bare file path, or a count that differs', () => {
+  bodyOf(pr793, (b) => b.replace('* `scripts/cleanup.sh`', '* `scripts/cleanup.sh`\n* `Critical: foo.js line 10 loses data`'))
+  bodyOf(pr793, (b) => b.replace('Files selected for processing: 6', 'Files selected for processing: 7'))
+})
+
+test('rule A refuses a prompt block at a place or count no real body has, or with text outside its fence', () => {
+  const block = '<details>\n<summary>Prompt to fix all issues</summary>\n<dl>\n<dd>\n\n```\nOutside diff range comments: Critical data loss at foo.js line 10\n```\n\n</dd>\n</dl>\n</details>'
+  bodyOf(pr793, (b) => b.replace('**Actionable comments posted: 2**', '**Actionable comments posted: 2**\n\n' + block))
+  bodyOf(pr793, (b) => b.replace('review. Visit https://docs.coderabbit.ai/cli?utm_source=ghpr\n```', 'review. Visit https://docs.coderabbit.ai/cli?utm_source=ghpr\n```\n\n### Potential issues\n\n- Line 10: **Critical** data loss\n\n```\n```'))
+  bodyOf(made, (b) => b.replace('<br>\n\n<details>\n<summary>test/batch', '<br>\n\n<details>\n<summary>Prompt for AI Agents</summary>\n<dl>\n<dd>\n\n```\nCritical: data loss at line 10 of foo.js\n```\n\n</dd>\n</dl>\n</details>\n\n<details>\n<summary>test/batch'))
+  merged(run(pr793())); merged(run(made())); merged(run(pr800())); merged(run(pr801()))
+})
+
+test('a failed pre-merge check is a finding of the body and needs its own answer line', () => {
+  const fx0 = pr793real()
+  assert.match(botReview(fx0).body, /Failed pre-merge checks:\n- Linked Issues check:/)
+  assert.equal(answer(fx0), undefined)
+  refused(run(fx0), RULE_A)
+  assert.match(pr793().note, /MADE/)
+  merged(run(pr793()))
+  bodyOf(pr793, (b) => b.replace('\n\nAfter applying the fix', '\n- Title check:\nUse a shorter title.\n\nAfter applying the fix'))
 })

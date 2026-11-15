@@ -49,60 +49,85 @@ def answered($t): any($in.comments[]; .in_reply_to_id == $t.id and (.user.login 
 # The rank word of an inline comment or of a finding line, as CodeRabbit writes it: **<picture>..</picture> Minor**.
 def rankOf: stripComments | (first(capture("^\\*\\*(<picture>.*?</picture>)?\\s*(?<w>[A-Za-z]+)\\*\\*").w) // null);
 def answerLine: gsub("^\\s+|\\s+$"; "") | (test("#[0-9]+") or startswith("Note, not filed:"));
-# Rule A accounts for the whole body of a review: it cuts the blocks of the real CodeRabbit bodies (the count line, the nitpick
-# section, the autofix checkbox, the block "Prompt to fix all issues", the review-info blocks) and refuses when any text is left.
-# A form that no real body has is never cut, so it is left and refused. The nitpick section is cut only when every part of it is
-# a per-file head, a finding line, finding text or a prompt block.
+# Rule A accounts for the whole body of a review. The body must be exactly the known blocks of the real CodeRabbit bodies, each at
+# most once and in the order the real bodies have them; any text left makes the body not match, and rule A refuses it.
 def blk($title; $inner): "<details>\\s*<summary>\\s*" + $title + "</summary>\\s*<dl>\\s*<dd>\\s*" + $inner + "</dd>\\s*</dl>\\s*</details>";
+def oneFence: "```\\n(?:(?!```)[\\s\\S])*\\n```\\s*";
+def ghUrl: "https://github\\.com/[A-Za-z0-9._/%@~-]+";
+def ghLink($text): "\\[" + $text + "\\]\\(<" + ghUrl + ">\\)";
+def cfgLine($key; $value): "- \\*\\*" + $key + "\\*\\*: " + $value + "[ \\t]*\\n\\s*";
+def runCfg: blk("Run configuration"; "<br>\\s*"
+  + cfgLine("Source mode"; "[A-Za-z]+") + cfgLine("Repository"; ghLink("[A-Za-z0-9._-]+/[A-Za-z0-9._-]+"))
+  + cfgLine("Branch"; ghLink("[^\\]\\s]+")) + cfgLine("File"; ghLink("[^\\]\\s]+")) + cfgLine("Commit"; ghLink("[0-9a-f]+"))
+  + cfgLine("Layers"; "Repository YAML") + cfgLine("Review profile"; "[A-Za-z]+") + cfgLine("Plan"; "[A-Za-z]+") + cfgLine("Run ID"; "`[0-9a-f-]+`"));
+def commitsBlk: blk("Commits"; "<br>\\s*Reviewing files that changed from the base of the PR and between [0-9a-f]+ and [0-9a-f]+\\.\\s*");
+def filesBlk: blk("Files selected for processing: (?<fc>[0-9]+)"; "<br>\\s*(?<items>(?:\\* `[^\\s`:<]+`\\s*)+)");
+def availLine: "\\*\\*Included review availability:\\*\\* This review used your included allowance\\. Your plan provides up to [0-9]+ included reviews? per hour; [0-9]+ remain after this review\\.\\s*";
 def nitRe: "<details>\\s*<summary>\\s*Nitpick comments: (?<k>[0-9]+)</summary>\\s*<blockquote>\\s*<dl>\\s*<dd>\\s*<br>(?<inner>[\\s\\S]*?)</dd>\\s*</dl>\\s*</blockquote></details>\\s*</dd>\\s*</dl>\\s*</blockquote></details>";
-def findingHead: "(?m)^`[^`\\n]+`: \\*\\*\\s*[A-Za-z]+\\*\\*[^\\n]*$";
+def topRe: "^\\s*\\*\\*Actionable comments posted: (?<n>[0-9]+)\\*\\*\\s*"
+  + "(?:" + nitRe + "\\s*)?"
+  + "(?:---\\s*- \\[[ x]\\]\\s*Fix comments: Fix CodeRabbit comments on this PR\\s*(?:" + blk("Prompt to fix all issues"; "(?<fix>```\\n(?:(?!```)[\\s\\S])*\\n```)\\s*") + "\\s*)?)?"
+  + "(?:<h6>\\s*<details>\\s*<summary>\\s*Review info</summary>\\s*<dl>\\s*<dd>\\s*<br>\\s*" + runCfg + "\\s*" + commitsBlk + "\\s*" + filesBlk + "\\s*(?:" + availLine + ")?</dd>\\s*</dl>\\s*</details>\\s*</h6>\\s*)?\\z";
+def findingHead: "(?m)^`[0-9]+(?:-[0-9]+)?`: \\*\\*\\s*[A-Za-z]+\\*\\*(?: · \\*\\*[^*\\n]+\\*\\*)*[ \\t]*$";
 def fileRe: "<details>\\s*<summary>\\s*(?<path>[^\\s<:`]+): (?<n>[0-9]+)</summary>\\s*<blockquote>\\s*<dl>\\s*<dd>\\s*<br>(?<fbody>[\\s\\S]*?)</dd>\\s*</dl>\\s*</blockquote></details>";
-# Finding text may not hold the form of a finding line, a heading, a count heading, a rank word above Minor or a layout tag.
-def findingTextBad: test("(?m)^\\s*(- |\\* )?Line [0-9]|^\\s*`[0-9]+(-[0-9]+)?`:|^#{1,6}\\s|^\\s*\\*\\*[^*\\n]*: [0-9]+\\*\\*\\s*$|[*_]{1,2}\\s*(Critical|Major|Blocker|High|Medium|Low)\\s*[*_]{1,2}|</?(details|summary|dl|dd|blockquote|h[1-6]|table|p|b)[ >]"; "i");
+def aboveMinor: "(?<![A-Za-z])(Critical|Major|Blocker|High|Medium|Low|Potential issues?|Outside diff|Duplicate comments)(?![A-Za-z])";
+# A finding is one bold title line, prose, and at most one prompt block at its end. A heading, a list or table line, a tag, a second
+# bold-only line, a finding line or a word of a higher rank is a form no real fixture has.
+def findingTextOk:
+  sub("\\s*" + blk("Prompt for AI Agents"; oneFence) + "\\s*\\z"; "") as $t
+  | ([$t | split("\n")[] | gsub("^\\s+|\\s+$"; "") | select(length > 0)]) as $ls
+  | ($ls | length) > 0
+    and ($ls[0] | test("^\\*\\*(?:(?!\\*\\*).)+\\*\\*$"))
+    and all($ls[1:][]; test("^\\*\\*(?:(?!\\*\\*).)*\\*\\*$") | not)
+    and all($ls[]; test("^([-*+]|[0-9]+[.)])\\s|^\\||^#|<[A-Za-z/!]|^Line [0-9]|^`[0-9]+(-[0-9]+)?`:") | not)
+    and ($t | test(aboveMinor; "i") | not);
+# The ranks of the findings of a nitpick section, or null when the section is not per-file blocks of findings in the real form.
 # nitRe ends the inner before the closer of the last per-file block, so it is added back here.
-# The nitpick inner is only per-file blocks; each block is its head, then finding heads with their text, and N of the head is the number of finding heads.
-def nitInnerOk:
-  . + "</dd></dl></blockquote></details>" | gsub(blk("Prompt for AI Agents"; "```[\\s\\S]*?```\\s*"); "") as $x
+def nitRanks($k):
+  (. + "</dd></dl></blockquote></details>") as $x
   | [$x | match(fileRe; "g") | .captures | map(select(.name != null) | {(.name): .string}) | add] as $files
-  | ($files | length) > 0
-    and ($x | gsub(fileRe; "") | test("\\S") | not)
-    and all($files[]; (.fbody | split(findingHead; "g")) as $parts
-      | ($parts | length) > 1 and ($parts | length) - 1 == (.n | tonumber) and ($parts[0] | test("\\S") | not) and all($parts[1:][]; findingTextBad | not));
-def cutKnown:
-  . as $b
-  | [match(nitRe; "g") | .captures | map(select(.name != null) | {(.name): .string}) | add] as $secs
-  | (if ($secs | length) > 0 and all($secs[]; .inner | nitInnerOk) then {text: ($b | gsub(nitRe; "")), secs: $secs} else {text: $b, secs: []} end) as $c
-  | {secs: $c.secs, left: ($c.text
-      | gsub("\\*\\*Actionable comments posted: [0-9]+\\*\\*"; "")
-      | gsub(blk("Prompt to fix all issues"; "```[\\s\\S]*?```\\s*"); "")
-      | gsub("(?m)^---\\s*$"; "")
-      | gsub("- \\[[ x]\\]\\s*Fix comments: Fix CodeRabbit comments on this PR"; "")
-      | gsub(blk("Run configuration"; "<br>\\s*(- \\*\\*(Source mode|Repository|Branch|File|Commit|Layers|Review profile|Plan|Run ID)\\*\\*: [^\\n]*\\n\\s*)+"); "")
-      | gsub(blk("Commits"; "<br>\\s*Reviewing files that changed from the base of the PR and between [0-9a-f]+ and [0-9a-f]+\\.\\s*"); "")
-      | gsub(blk("Files selected for processing: [0-9]+"; "<br>\\s*(\\* `[^`\\n]+`\\s*)+"); "")
-      | gsub("<h6>\\s*<details>\\s*<summary>\\s*Review info</summary>\\s*<dl>\\s*<dd>\\s*<br>\\s*(\\*\\*Included review availability:\\*\\* This review used your included allowance\\. Your plan provides up to [0-9]+ included reviews? per hour; [0-9]+ remain after this review\\.\\s*)?</dd>\\s*</dl>\\s*</details>\\s*</h6>"; ""))};
+  | (if ($files | length) == 0 or ($x | gsub(fileRe; "") | test("\\S")) then null
+    else
+      [$files[] | . as $f
+        | ($f.fbody | split(findingHead; "g")) as $parts
+        | [$f.fbody | match(findingHead; "g").string] as $heads
+        | if ($parts | length) - 1 == ($f.n | tonumber) and ($heads | length) > 0 and ($parts[0] | test("\\S") | not)
+            and all($parts[1:][]; findingTextOk) and all($heads[]; sub("^[^*]*\\*\\*\\s*[A-Za-z]+\\*\\*"; "") | test(aboveMinor; "i") | not)
+          then $heads[] | sub("^`[^`]*`: \\*\\*\\s*"; "") | sub("\\*\\*.*$"; "")
+          else null end] as $r
+      | if any($r[]; . == null) then null else $r end
+    end)
+  | if . != null and length != $k then null else . end;
+# A failed pre-merge check is a finding of the body with no rank: one for each line "- <name> check:" under the label in the fence.
+def failedChecks:
+  if . == null then 0
+  else sub("^[\\s\\S]*?Failed pre-merge checks:"; "") as $t
+    | if $t == . then 0 else [$t | scan("(?m)^- [^\\n]+ check:[ \\t]*$")] | length end end;
+# The parsed body: its count, nitpick ranks and failed checks, or null when the body is not exactly the known blocks.
+def parseBody:
+  ([capture(topRe)] | first) as $m
+  | if $m == null then null
+    else (if $m.inner == null then [] else ($m.inner | nitRanks($m.k | tonumber)) end) as $r
+      | if $r == null or ($m.items != null and ([$m.items | scan("\\* `")] | length) != ($m.fc | tonumber)) then null
+        else {n: ($m.n | tonumber), k: ($m.k // "0" | tonumber), ranks: $r, failed: ($m.fix | failedChecks)} end
+    end;
 # Problems of rule A for one review of the bot on the head: a list of texts, empty when the review passes.
 # Second output: the findings its body ranks, which the answer comment must cover.
 def ruleA($rv):
   ($rv.body // "" | stripComments | gsub("<picture>[\\s\\S]*?</picture>"; "")) as $body
-  | ($body | cutKnown) as $cut
+  | ($body | parseBody) as $p
   | [$comments[] | select(.user.login == $cr and .in_reply_to_id == null and .pull_request_review_id == $rv.id)] as $inline
-  | [$cut.secs[].inner | scan("(?m)^`[^`\n]+`: \\*\\*\\s*([A-Za-z]+)\\*\\*") | .[0]] as $ranked
-  | ([$body | scan("\\*\\*Actionable comments posted: ([0-9]+)\\*\\*") | .[0]]) as $counts
-  | (if ($counts | length) == 1 then ($counts[0] | tonumber) else null end) as $n
-  | ([$cut.secs[].k | tonumber] | add // 0) as $k
+  | ($p.ranks // []) as $ranked
   | ($rv.id | tostring) as $id
   | {problems: ([
-      (if ($body | length) > 0 and ($cut.left | test("\\S")) then "review " + $id + " has text that rule A does not know" else empty end),
-      (if ($body | length) > 0 and $n == null then "review " + $id + " has no single Actionable comments count" else empty end),
-      (if ($body | length) > 0 and $n != null and $n != ($inline | length) then "review " + $id + " says " + ($n | tostring) + " inline comments and has " + ($inline | length | tostring) else empty end),
+      (if ($body | length) > 0 and $p == null then "review " + $id + " has text that rule A does not know" else empty end),
+      (if ($body | length) > 0 and $p != null and $p.n != ($inline | length) then "review " + $id + " says " + ($p.n | tostring) + " inline comments and has " + ($inline | length | tostring) else empty end),
       (if ($body | length) == 0 and ($inline | length) > 0 then "review " + $id + " has inline comments and no count" else empty end),
-      (if ($ranked | length) != $k then "review " + $id + " counts " + ($k | tostring) + " nitpicks and ranks " + ($ranked | length | tostring) else empty end),
       (if any($ranked[]; isRankMinor | not) then "review " + $id + " ranks a finding above Minor or with a word rule A does not know" else empty end),
       (if any($inline[]; (.body // "" | rankOf) as $w | ($w == null or ($w | isRankMinor | not))) then "review " + $id + " has an inline comment above Minor or with no rank" else empty end),
       (if any($inline[] | . as $t | select(any($comments[]; .in_reply_to_id == $t.id and $user != null and .user.login == $user and (.body // "" | answerLine)) | not); true)
         then "review " + $id + " has an inline finding with no answer of the user" else empty end)
-    ]), ranked: ($ranked | length)};
+    ]), ranked: (($ranked | length) + ($p.failed // 0))};
 def fourthWhy:
   ([$allChecks[] | select(.head_sha == null or .head_sha == $in.head)]) as $onHead
   | ([$onHead[] | select((.app.slug // "") != "" and (.app.slug + "[bot]") == $cr)] | sort_by(.started_at) | last) as $run
