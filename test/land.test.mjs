@@ -52,6 +52,9 @@ const landSetup = ({ checks, settings = 'flake', onHead = null, attempt = 1 }) =
   if (onHead) put(fx, `${CONTENTS}@ref=${SHA}.json`, fixture(`pipeline-${onHead}.json`))
   put(fx, `${PULL}__reviews.json`, [{ id: 1, user: { login: 'gitar-bot[bot]' }, state: 'APPROVED', body: '', commit_id: SHA, submitted_at: '2026-01-01T10:00:00Z' }])
   put(fx, `${PULL}__comments.json`, [])
+  put(fx, `${P}__issues__7__comments.json`, [])
+  put(fx, `${P}__commits__${SHA}__check-suites.json`, { total_count: 0, check_suites: [] })
+  put(fx, 'user.json', { login: 'alfhen' })
   return s
 }
 const land = (s) => run(s, 'land-wave.sh', ['o/r', `7:${SHA}`])

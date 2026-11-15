@@ -87,3 +87,15 @@ test('docs name release 2 as 0.10.0 and do not promise stage 2 or the runner del
   const text = readFileSync(new URL('../docs/cloud-routines.md', import.meta.url), 'utf8')
   assert.match(text.split('\n').find((l) => l.startsWith('| 2 to 4 |')), /Release 2 \(0\.10\.0\)/)
 })
+
+test('skill says BOT_LOGINS is a list of exact logins, a bot check is found by its App, and the bots example is exact', () => {
+  assert.doesNotMatch(skill, /`BOT_LOGINS` regex/)
+  assert.doesNotMatch(skill, /found by name/)
+  assert.match(skill, /`BOT_LOGINS`, a comma-separated list of exact logins, default `coderabbitai\[bot\],gitar-bot\[bot\]`/)
+  assert.match(skill, /The bot's check is found by its App/)
+  assert.match(skill, /Another review bot needs its (exact )?login in `BOT_LOGINS`/)
+  const example = skill.split('\n').find((l) => l.trim().startsWith('"bots":'))
+  assert.ok(example.includes('coderabbitai[bot]') && example.includes('gitar-bot[bot]'), example)
+  assert.equal(example.includes('login contains'), false)
+  assert.match(skill, /approved earlier/)
+})

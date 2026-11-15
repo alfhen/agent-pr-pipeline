@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, existsSync, cpSync, copyFileSync, chmodSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, rmSync, existsSync, cpSync, copyFileSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -200,8 +200,11 @@ test('release: a bad version is a usage error and calls nothing', () => {
 })
 
 const BOT = 'gitar-bot[bot]'
-const statusSetup = (reviews, comments, checks = [{ name: 'Gitar', status: 'completed', conclusion: 'success' }]) => {
+const GITAR = { slug: 'gitar-bot' }
+const statusSetup = (reviews, comments, checks = [{ name: 'Gitar', status: 'completed', conclusion: 'success', app: GITAR }]) => {
   const s = setup()
+  put(s.fx, 'user.json', { login: 'alfhen' })
+  put(s.fx, `${P}__commits__${HEAD}__check-suites.json`, { total_count: 0, check_suites: [] })
   put(s.fx, `${P}__pulls__7.json`, { head: { sha: HEAD } })
   put(s.fx, `${P}__pulls__7__reviews.json`, reviews)
   put(s.fx, `${P}__pulls__7__comments.json`, comments)
@@ -218,7 +221,7 @@ test('bot-status: approvedBy is the land gate rule, so an approval of an older c
 })
 
 test('bot-status: an approval of an older commit with the bot check still running has not seen the head', () => {
-  const r = status(statusSetup([rv('APPROVED', 'old'.padEnd(40, '0'), '1')], [], [{ name: 'Gitar', status: 'in_progress', conclusion: null }]))
+  const r = status(statusSetup([rv('APPROVED', 'old'.padEnd(40, '0'), '1')], [], [{ name: 'Gitar', status: 'in_progress', conclusion: null, app: GITAR }]))
   assert.deepEqual(r, { head: HEAD, approvedBy: [], seenHead: [], pending: ['Gitar'], openThreads: 0, reviewBodies: 0 })
 })
 
@@ -236,6 +239,71 @@ test('bot-status: an unanswered bot thread is counted and nothing clears', () =>
   const thread = (id) => ({ id, pull_request_review_id: 1, in_reply_to_id: null, user: { login: BOT } })
   const s = statusSetup([rv('COMMENTED', 'old'.padEnd(40, '0'), '1')], [thread(4), thread(5), { id: 9, in_reply_to_id: 4, user: { login: 'alfhen' } }])
   assert.deepEqual(status(s), { head: HEAD, approvedBy: [], seenHead: [], pending: [], openThreads: 1, reviewBodies: 0 })
+})
+
+const KEYS = ['head', 'approvedBy', 'seenHead', 'pending', 'openThreads', 'reviewBodies']
+const SUITES = `${P}__commits__${HEAD}__check-suites`
+const thread4 = { id: 4, pull_request_review_id: 1, in_reply_to_id: null, user: { login: BOT } }
+const OLD = 'old'.padEnd(40, '0')
+
+test('bot-status: a check run with no App counts for nothing, with the App it counts', () => {
+  const bare = { name: 'Gitar', status: 'completed', conclusion: 'success' }
+  assert.deepEqual(status(statusSetup([rv('APPROVED', OLD, '1')], [], [bare])), { head: HEAD, approvedBy: [], seenHead: [], pending: [], openThreads: 0, reviewBodies: 0 })
+  assert.deepEqual(status(statusSetup([rv('APPROVED', OLD, '1')], [], [{ ...bare, app: GITAR }])).approvedBy, [`${BOT} (approved earlier)`])
+  const running = { name: 'CodeRabbit', status: 'in_progress', conclusion: null }
+  assert.deepEqual(status(statusSetup([], [], [running])).pending, [])
+  assert.deepEqual(status(statusSetup([], [], [{ ...running, app: { slug: 'coderabbitai' } }])).pending, ['CodeRabbit'])
+  assert.deepEqual(status(statusSetup([], [], [{ name: 'ci-gitar', status: 'in_progress', conclusion: null, app: { slug: 'github-actions' } }])).pending, [])
+})
+
+test('bot-status: the thread of a bot is answered only by the bot or the user', () => {
+  const reply = (login) => ({ id: 9, in_reply_to_id: 4, user: { login } })
+  for (const [login, open] of [['alfhen', 0], [BOT, 0], ['stranger', 1], ['coderabbitai[bot]', 1]]) {
+    assert.equal(status(statusSetup([], [thread4, reply(login)])).openThreads, open, login)
+  }
+})
+
+test('bot-status: BOT_LOGINS is a list of exact logins', () => {
+  const comment = (login) => [{ id: 4, in_reply_to_id: null, user: { login } }]
+  assert.equal(status(statusSetup([], comment('dependabot[bot]'))).openThreads, 0)
+  assert.equal(status(statusSetup([], comment('gitar-fan'))).openThreads, 0)
+  assert.equal(status(statusSetup([], comment(BOT))).openThreads, 1)
+  const withBots = (bots, login) => { const e = process.env.BOT_LOGINS; process.env.BOT_LOGINS = bots; try { return status(statusSetup([], comment(login))).openThreads } finally { if (e === undefined) delete process.env.BOT_LOGINS; else process.env.BOT_LOGINS = e } }
+  assert.equal(withBots('my-reviewer[bot]', 'my-reviewer[bot]'), 1)
+  assert.equal(withBots('my-reviewer[bot]', BOT), 0)
+})
+
+test('bot-status: a BOT_LOGINS item that is not a login stops the script with the format', () => {
+  for (const bots of ['coderabbit|gitar|\\[bot\\]', 'gitar.*', 'gitar-bot[bot],bad login']) {
+    process.env.BOT_LOGINS = bots
+    try {
+      const r = run(statusSetup([], []), 'bot-status.sh', ['o/r', '7'])
+      assert.notEqual(r.code, 0, bots)
+      assert.match(r.out, /BOT_LOGINS must be a comma-separated list of logins.*\[bot\]/)
+      assert.doesNotMatch(r.out, /^\{/m)
+    } finally { delete process.env.BOT_LOGINS }
+  }
+})
+
+test('bot-status: the check suites are read on all pages as one call, and the line keeps its six keys', () => {
+  const s = statusSetup([], [])
+  rmSync(join(s.fx, `${SUITES}.json`))
+  put(s.fx, `${SUITES}.1.json`, { total_count: 1, check_suites: [{ id: 1 }] })
+  put(s.fx, `${SUITES}.2.json`, { total_count: 1, check_suites: [{ id: 2 }] })
+  const r = run(s, 'bot-status.sh', ['o/r', '7'])
+  assert.equal(r.code, 0, r.out)
+  assert.deepEqual(Object.keys(JSON.parse(r.out)), KEYS)
+  assert.equal(r.log.filter((l) => l.startsWith(`GET /repos/o/r/commits/${HEAD}/check-suites`)).length, 1)
+  assert.doesNotMatch(readFileSync(join(root, 'scripts/bot-status.sh'), 'utf8'), /<\(gh api/)
+})
+
+test('bot-status: a failed check suites read exits 1', () => {
+  const s = statusSetup([], [])
+  put(s.fx, `${SUITES}.GET.error`, 'fake-gh: server error (HTTP 500)')
+  const r = run(s, 'bot-status.sh', ['o/r', '7'])
+  assert.equal(r.code, 1)
+  assert.match(r.out, /bot-status: cannot read the check suites/)
+  assert.doesNotMatch(r.out, /^\{/m)
 })
 
 test('bot-status: a failed GitHub read exits 1', () => {
