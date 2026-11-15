@@ -160,6 +160,22 @@ test('rule A, inline findings: the count, the rank and an answer with an issue n
   refused(run(mut(pr793, (fx) => { fx.comments.filter((c) => c.user.login === 'alfhen')[1].body = 'Note: not filed, fixed' })), RULE_A)
 })
 
+test('rule A refuses an inline comment whose rank it cannot read', () => {
+  refused(run(mut(pr793, (fx) => {
+    fx.comments.find((c) => c.user.login === BOT).body = '<!-- coderabbit-ai-generated:v1 -->\n\n_⚠️ Potential issue_ | _🔴 Critical_\n\n**Data loss on throw.**'
+  })), RULE_A)
+})
+
+test('rule A refuses a body section or finding line in a form no real fixture has', () => {
+  refused(run(mut(pr793, (fx) => {
+    botReview(fx).body = botReview(fx).body.replace('---', '<details>\n<summary>Potential issues (1)</summary>\n\n`10-12`: _🔴 Critical_ · **Data loss**\n\n</details>\n\n---')
+  })), RULE_A)
+  refused(run(mut(made, (fx) => {
+    botReview(fx).body = botReview(fx).body.replace('Nitpick comments: 1', 'Nitpick comments').replace('`50-50`: **', 'Line 50: **')
+    fx.issueComments = fx.issueComments.filter((c) => c !== answer(fx))
+  })), RULE_A)
+})
+
 test('rule A, findings in the body: the answer comment of the user for this head, made after the newest review, one line for each finding', () => {
   merged(run(made()))
   refused(run(mut(made, (fx) => { answer(fx).body = answer(fx).body.replace(fx.head, 'b'.repeat(40)) })), RULE_A)

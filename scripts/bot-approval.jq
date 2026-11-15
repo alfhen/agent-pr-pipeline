@@ -47,7 +47,7 @@ def answered($t): any($in.comments[]; .in_reply_to_id == $t.id and (.user.login 
 | "coderabbitai[bot]" as $cr
 | def isRankMinor: . == "Minor" or . == "Trivial";
 # The rank word of an inline comment or of a finding line, as CodeRabbit writes it: **<picture>..</picture> Minor**.
-def rankOf: stripComments | (try capture("^\\*\\*(<picture>.*?</picture>)?\\s*(?<w>[A-Za-z]+)\\*\\*").w catch null);
+def rankOf: stripComments | (first(capture("^\\*\\*(<picture>.*?</picture>)?\\s*(?<w>[A-Za-z]+)\\*\\*").w) // null);
 def answerLine: gsub("^\\s+|\\s+$"; "") | (test("#[0-9]+") or startswith("Note, not filed:"));
 # Problems of rule A for one review of the bot on the head: a list of texts, empty when the review passes.
 # Second output: the findings its body ranks, which the answer comment must cover.
@@ -58,9 +58,12 @@ def ruleA($rv):
   | (($body | capture("Actionable comments posted: (?<n>[0-9]+)").n | tonumber?) // null) as $n
   | (($body | capture("Nitpick comments: (?<k>[0-9]+)").k | tonumber?) // 0) as $k
   | ([$body | scan("([A-Za-z ]+) comments: [0-9]+</summary>") | .[0] | select(. | test("Nitpick$") | not)] | length) as $other
+  | ([$body | scan("<summary>(.*?)</summary>") | .[0] | gsub("<picture>.*?</picture>"; "") | gsub("^\\s+|\\s+$"; "")
+      | select(test("^(Nitpick comments: [0-9]+|Prompt to fix all issues|Prompt for AI Agents|Review info|Run configuration|Commits|Files selected for processing: [0-9]+|[^ ]+: [0-9]+)$") | not)] | length) as $unknownHeads
+  | ([$body | scan("(?m)^`[^`\n]+`:")] | length) as $findingLines
   | {problems: ([
       (if ($body | length) > 0 and ($body | nofinding | not) then
-        (if ($body | test("Outside diff range|Duplicate comments|comments \\([1-9]"; "i")) or $other > 0 then "review " + ($rv.id | tostring) + " has a section that rule A cannot rank" else empty end),
+        (if ($body | test("Outside diff range|Duplicate comments|comments \\([1-9]"; "i")) or $other > 0 or $unknownHeads > 0 or $findingLines != ($ranked | length) then "review " + ($rv.id | tostring) + " has a section that rule A cannot rank" else empty end),
         (if $n == null then "review " + ($rv.id | tostring) + " has no Actionable comments count" else empty end)
       else empty end),
       (if ($body | length) > 0 and $n != null and $n != ($inline | length) then "review " + ($rv.id | tostring) + " says " + ($n | tostring) + " inline comments and has " + ($inline | length | tostring) else empty end),
