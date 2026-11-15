@@ -425,6 +425,23 @@ test('an empty review of the bot that holds only replies is not read, and with a
   refused(x, RULE_A); assert.match(x.why, /5912158174/); assert.match(x.why, /empty/)
 })
 
+test('rule A cuts no picture element outside the summary of a frame block', () => {
+  bodyOf(pr800, (b) => b.replace('---', '<picture>\n### Potential issues\n- Line 10: **Critical** data loss\n</picture>\n\n---'))
+  const x = run(mut(pr794, (fx) => {
+    fx.reviews.push({ id: 99, user: { login: BOT }, state: 'COMMENTED', commit_id: fx.head, submitted_at: '2026-11-15T23:00:00Z', body: '<picture>Outside diff range comments (1): foo.js line 10 is Critical: data loss</picture>' })
+  }))
+  refused(x, RULE_A)
+  for (const b of [pr793, pr800, pr801, pr805]) merged(run(b()))
+})
+
+test('a review whose raw body holds only frame comments is not an empty container and has no count line', () => {
+  const x = run(mut(pr794, (fx) => {
+    fx.reviews.push({ id: 99, user: { login: BOT }, state: 'COMMENTED', commit_id: fx.head, submitted_at: '2026-11-15T23:00:00Z', body: '<!-- coderabbit-ai-generated:v1 -->\n\n<!-- This is an auto-generated comment by CodeRabbit for review status -->' })
+  }))
+  refused(x, RULE_A); assert.match(x.why, /count/)
+  merged(run(pr805()))
+})
+
 test('(doc) SKILL.md says that rule A covers inline findings only and refuses a review text that holds more than the frame', () => {
   const skill = readFileSync(join(root, 'skills/pr-pipeline/SKILL.md'), 'utf8')
   const gate = skill.split('\n').find((l) => l.includes('bot-approval.jq') && /fourth|four ways/.test(l) && l.includes('rule A'))

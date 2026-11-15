@@ -51,7 +51,8 @@ def rankOf: stripComments | (first(capture("^\\*\\*(<picture>.*?</picture>)?\\s*
 def answerLine: gsub("^\\s+|\\s+$"; "") | (test("#[0-9]+") or startswith("Note, not filed:"));
 # Rule A ranks inline findings only. The body of a review must be exactly the frame of the real CodeRabbit bodies, each block at
 # most once and in their order; a section of findings or any other text left makes the body not match, and rule A refuses it.
-def blk($title; $inner): "<details>\\s*<summary>\\s*" + $title + "</summary>\\s*<dl>\\s*<dd>\\s*" + $inner + "</dd>\\s*</dl>\\s*</details>";
+def pic: "(?:<picture>(?:<(?:source|img)\\b[^>]*>\\s*)+</picture>\\s*)?";
+def blk($title; $inner): "<details>\\s*<summary>\\s*" + pic + $title + "</summary>\\s*<dl>\\s*<dd>\\s*" + $inner + "</dd>\\s*</dl>\\s*</details>";
 def oneFence: "```\\n(?:(?!```)[\\s\\S])*\\n```\\s*";
 def ghUrl: "https://github\\.com/[A-Za-z0-9._/%@~-]+";
 def ghLink($text): "\\[" + $text + "\\]\\(<" + ghUrl + ">\\)";
@@ -68,7 +69,7 @@ def frameComment: "<!-- (?:coderabbit-ai-generated:v[0-9]+|autofix_checkbox_star
   + "|This is an auto-generated comment by CodeRabbit for review status|coderabbit-review-publication v[0-9]+ publication=[0-9a-f-]+ attempt=[0-9a-f-]+ batch=[0-9]+/[0-9]+) -->";
 def topRe: "^\\s*\\*\\*Actionable comments posted: (?<n>[0-9]+)\\*\\*\\s*"
   + "(?:---\\s*)?(?:- \\[[ x]\\]\\s*Fix comments: Fix CodeRabbit comments on this PR\\s*)?(?:" + blk("Prompt to fix all issues"; oneFence) + "\\s*)?"
-  + "(?:<h6>\\s*<details>\\s*<summary>\\s*Review info</summary>\\s*<dl>\\s*<dd>\\s*<br>\\s*" + runCfg + "\\s*" + commitsBlk + "\\s*" + filesBlk + "\\s*(?:" + availLine + ")?</dd>\\s*</dl>\\s*</details>\\s*</h6>\\s*)?\\z";
+  + "(?:<h6>\\s*<details>\\s*<summary>\\s*" + pic + "Review info</summary>\\s*<dl>\\s*<dd>\\s*<br>\\s*" + runCfg + "\\s*" + commitsBlk + "\\s*" + filesBlk + "\\s*(?:" + availLine + ")?</dd>\\s*</dl>\\s*</details>\\s*</h6>\\s*)?\\z";
 # The count of a body that is the frame and nothing else, or null. Each part of the frame can be absent. The text inside the fence
 # of the prompt block is not read.
 def parseBody:
@@ -78,17 +79,18 @@ def parseBody:
 # Problems of rule A for one review of the bot on the head: a list of texts, empty when the review passes. A review with an empty
 # body and only replies is the container GitHub makes for a reply of the bot, and it has no problem.
 def ruleA($rv):
-  ($rv.body // "" | gsub(frameComment; "") | gsub("^\\s+|\\s+$"; "") | gsub("<picture>[\\s\\S]*?</picture>"; "")) as $body
+  ($rv.body // "" | gsub(frameComment; "") | gsub("^\\s+|\\s+$"; "")) as $body
+  | ($rv.body // "" | test("\\S")) as $nonEmpty
   | ($body | parseBody) as $p
   | [$comments[] | select(.user.login == $cr and .in_reply_to_id == null and .pull_request_review_id == $rv.id)] as $inline
   | ($rv.id | tostring) as $id
   | [
-      (if ($body | length) > 0 and ($body | test("Actionable comments posted: [0-9]+") | not) then "review " + $id + " has no count line (Actionable comments posted: N)"
-        elif ($body | length) > 0 and $p == null then "review " + $id + " has text outside the frame of a review, which rule A does not read"
+      (if $nonEmpty and ($body | test("Actionable comments posted: [0-9]+") | not) then "review " + $id + " has no count line (Actionable comments posted: N)"
+        elif $nonEmpty and $p == null then "review " + $id + " has text outside the frame of a review, which rule A does not read"
         elif $p != null and $p.n == 0 then "review " + $id + " has a count line of 0, so its finding is in its text"
         else empty end),
       (if $p != null and $p.n != ($inline | length) then "review " + $id + " says " + ($p.n | tostring) + " inline comments and has " + ($inline | length | tostring) else empty end),
-      (if ($body | length) == 0 and ($inline | length) > 0 then "review " + $id + " has an empty body and a top-level inline comment" else empty end),
+      (if ($nonEmpty | not) and ($inline | length) > 0 then "review " + $id + " has an empty body and a top-level inline comment" else empty end),
       (if any($inline[]; (.body // "" | rankOf) as $w | ($w == null or ($w | isRankMinor | not))) then "review " + $id + " has an inline comment above Minor or with no rank" else empty end),
       (if any($inline[] | . as $t | select(any($comments[]; .in_reply_to_id == $t.id and $user != null and .user.login == $user and (.body // "" | answerLine)) | not); true)
         then "review " + $id + " has an inline finding with no answer of the user" else empty end)
