@@ -763,7 +763,7 @@ Task: write the evals for this PR. Nothing is built yet.
 2. Read ${GOALS}, ${SPEC ? `${SPEC}, ` : ''}${ref(pr)} (the entry of this PR, with its Touches, Acceptance, QA, Invariants, Round cap and Algorithm lines, and its Evals table when it has one) and the code the entry touches.
 3. Write the list as your instructions say. When the behaviour of an entry already holds on the default branch, give those evals kind regression and say so in notes. An Evals table in the entry is input: keep or improve each row under its id and add the rows it lacks.
 4. Each eval must be checkable from a clean clone of the branch, before the PR is open. Leave out what is not: the PR body or title, Closes lines, labels, bot comments or approvals, CI results, a merge, a release and any other pipeline step after the build. Notes that name such a thing still reach the opener, so they need no eval. An eval for code that reads pull request text names that code in its statement and puts the fixture text in its check.
-5. Return \`coverage\` with the list. An item is one bullet or one invariant of the entry, one issue for a batch, or one line of the brief for a quick fix. Each item says in a sentence what it asks for, and names in \`evals\` the ids of the evals that cover it. A list whose coverage is missing or empty, has an item with no eval id, or names an id that is not in the list is refused.
+5. Return \`coverage\` with the list. An item is one bullet or one invariant of the entry, one issue for a batch, or one line of the brief for a quick fix. A line of the entry or of the brief that names only a step after the build (the text or title of the pull request, labels, CI, a merge or a release) gets no item; a line that names such a step and something that can be tested still gets an item for the part that can be tested. Each item says in a sentence what it asks for, and names in \`evals\` the ids of the evals that cover it. A list whose coverage is missing or empty, has an item with no eval id, or names an id that is not in the list is refused.
 ${evalsRules}
 Return evals, coverage, algorithm, noErrorPath, noReference and notes.
 
@@ -774,7 +774,7 @@ const coverageText = coverage => `
 The writer's coverage (each item, with the ids of the evals that cover it):
 ${JSON.stringify(coverage, null, 1)}
 Judge each item: do the evals it names cover it?
-Which bullet, invariant, issue or brief line of the entry has no item? Each such gap means verdict \`needs-change\`, and you name each gap in the notes.`
+Which bullet, invariant, issue or brief line of the entry has no item? Each such gap means verdict \`needs-change\`, and you name each gap in the notes. A line that names only a step after the build (the text or title of the pull request, labels, CI, a merge or a release) gets no item, and its missing item is not a gap; for a line that also names something testable, the testable part still needs an item.`
 
 const evalsCheckPrompt = (pr, list, meta, who, round, writerNotes, coverage) => `${ctx(pr)}
 

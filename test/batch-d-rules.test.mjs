@@ -48,6 +48,9 @@ test('D-4 step 2 of the evals check names the steps after the build as no gap', 
   const step2 = p['evalsarch:X1#1'].split('\n').find(l => l.startsWith('2. '))
   const after = step2.slice(step2.indexOf('has no eval?'))
   for (const w of [/CI/, /label/, /merge/, /release/, /needs no eval|not a gap/]) assert.match(after, w)
+  assert.match(after, /The part of an Acceptance or QA line that names a step/)
+  assert.match(after, /the rest of the line still does/)
+  assert.doesNotMatch(after, /An Acceptance or QA line that names a step[^.]*needs no eval/)
 })
 
 test('D-6 step 1 of SKILL.md says the evals check asks no eval for a step after the build', () => {
@@ -58,4 +61,14 @@ test('D-6 step 1 of SKILL.md says the evals check asks no eval for a step after 
 test('D-10 the plan review paragraph of SKILL.md checks that each closed issue is fully settled', () => {
   const line = read('skills/pr-pipeline/SKILL.md').split('\n').find(l => l.startsWith('For the rest of the plan review'))
   assert.match(line, /issue[^.]*clos[^.]*(settled|fully)/)
+})
+
+const EXC = /names only a step after the build[^.]*(gets no (coverage )?item)/
+test('D-11 the coverage rule exempts a line that names only a step after the build', async () => {
+  const p = await capture({ ...base })
+  const w = p['evals:X1']
+  assert.match(w.slice(w.indexOf('5. Return')), EXC)
+  assert.match(read('agents/evals-writer.md').split('\n').find(l => l.startsWith('Return `coverage` with the list')), EXC)
+  const c = p['evalsarch:X1#1']
+  assert.match(c.slice(c.indexOf('Judge each item')), /names only a step after the build[^.]*gets no item[^.]*not a gap/)
 })
