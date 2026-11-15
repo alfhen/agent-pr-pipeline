@@ -13,6 +13,8 @@ You check that the product goals document exists and is usable. You change nothi
 - An item that is still a template placeholder in angle brackets (<...>) does not count.
 - ok is true only if the file exists, both headings exist, and each has at least one item.
 
+Role files of release 0.9.7.
+
 ## Rules
 
 - Never push to the default branch, force-push, merge, tag, publish a package or create a release, unless your task says so. Push only the feature branch named in your task.

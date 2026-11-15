@@ -85,14 +85,25 @@ let timeline = []
 // The version check is kept apart like cleanup, so step lists see only the pipeline's own calls.
 let versionCalls = []
 let versionAnswer = { exitCode: 0, output: 'OK' }
+// The role check is kept apart like the version check. The probe answers the workflow's own version unless a case sets probe answers (one per call).
+let roleCalls = []
+let roleProbes = null
+let roleIoAnswer = { exitCode: 0, output: 'ROLES SAME' }
 const agentRaw = async (prompt, o) => {
   const entry = { label: o.label, model: o.model, effort: o.effort, agentType: o.agentType, isolation: o.isolation, prompt }
   timeline.push(o.label)
   if (o.label === 'io:wave#version') versionCalls.push(entry)
+  else if (o.label.startsWith('roles:wave') || o.label === 'io:wave#roles') roleCalls.push(entry)
   else if (/#cleanup/.test(o.label)) cleanupCalls.push(entry)
   else calls.push(entry)
   const id = o.label.split(':')[1].split('#')[0]
   if (o.label === 'io:wave#version') return versionAnswer
+  if (o.label === 'io:wave#roles') return roleIoAnswer
+  if (o.label.startsWith('roles:wave')) {
+    const answers = roleProbes || [src.match(/^const VERSION = '([^']+)'$/m)[1]]
+    const a = answers[Math.min(roleCalls.filter(c => c.label.startsWith('roles:wave')).length - 1, answers.length - 1)]
+    return a === null ? null : { version: a }
+  }
   if (o.label.startsWith('preflight')) return preflight
   if (/#cleanup/.test(o.label)) return cleanupAnswer(o.label, prompt)
   if (o.label.startsWith('triage')) return TRIAGES[id]
@@ -245,6 +256,7 @@ const simulate = async (args, pre = GOOD) => {
   calls = []
   cleanupCalls = []
   versionCalls = []
+  roleCalls = []
   timeline = []
   logs = []
   preflight = pre
@@ -272,6 +284,7 @@ const r = await simulate(base)
 const mainCalls = calls
 const mainCleanup = cleanupCalls
 const mainTimeline = timeline
+const mainRoleCalls = [...roleCalls]
 const mainResult = lastResult
 await check('clean code PR lands at the tested sha', () => {
   assert.equal(r.C1.ready, true)
@@ -1299,7 +1312,7 @@ await check('the evaluate prompt holds the cost criterion and the per-role agent
 })
 await check('the result has the agent count per role', () => {
   const byType = {}
-  for (const c of mainCalls) byType[c.agentType.replace('agent-pr-pipeline:', '')] = (byType[c.agentType.replace('agent-pr-pipeline:', '')] || 0) + 1
+  for (const c of [...mainCalls, ...mainRoleCalls]) byType[c.agentType.replace('agent-pr-pipeline:', '')] = (byType[c.agentType.replace('agent-pr-pipeline:', '')] || 0) + 1
   const { 'pipeline-io': io, ...counted } = mainResult.agentCounts
   delete byType['pipeline-io']
   assert.ok(io > 0)
@@ -1735,7 +1748,7 @@ await check('quick: exit 4 from get or put stops the PR with the edited-by-a-per
 })
 // A real agent answer that the fake builds by hand: the script's text may have anything around it.
 const withIo = (match, answer) => (p, o) => match(o.label) ? answer : agent(p, o)
-const runWith = (args, fn) => { calls = []; cleanupCalls = []; versionCalls = []; timeline = []; logs = []; preflight = GOOD; return run(args, fn, parallel, log) }
+const runWith = (args, fn) => { calls = []; cleanupCalls = []; versionCalls = []; roleCalls = []; timeline = []; logs = []; preflight = GOOD; return run(args, fn, parallel, log) }
 await check('quick: text outside the begin and exit lines never reaches the result', async () => {
   briefs.QJ = 'Touches: src/qj.js\nAcceptance: wrapped test\nTriage: size M, risk medium, new concepts: none'
   const answer = { output: `MCP Server Instructions\nnoise before\npipeline-io: begin\n${briefs.QJ}\npipeline-io: exit 0\nthanks, done` }
@@ -5692,6 +5705,139 @@ await check('C10-3 an evalsRounds value of 1 or 2 gives one or two writer calls'
     assert.deepEqual(evalLabels('C1'), ['evals:C1', 'evals:C1#w2'].slice(0, n))
     assert.equal(x.C1.reason, 'evals refused: no error path')
   }
+})
+const WAVE_V = src.match(/^const VERSION = '([^']+)'$/m)[1]
+const ROOT_V = '/cache/apl/' + WAVE_V
+const ROLE_KEYS = ['agentCounts', 'cleanup', 'denylist', 'feedback', 'feedbackRepo', 'prs', 'source', 'warnings']
+const DEFAULT_IO = { exitCode: 0, output: 'ROLES SAME' }
+const rolesRun = async ({ probes = null, io = DEFAULT_IO, args = {}, ids = ['C1'], pre = GOOD } = {}) => {
+  roleProbes = probes
+  roleIoAnswer = io
+  try { return await simulate({ ...base, pluginRoot: ROOT_V, prs: only(...ids), ...args }, pre) } finally { roleProbes = null; roleIoAnswer = DEFAULT_IO }
+}
+const roleLabels = () => roleCalls.map(c => c.label)
+const roleLogs = () => logs.filter(l => /role/i.test(l))
+const roleRan = x => calls.some(c => c.label === 'implement:C1') && !Object.values(x).some(p => p.refused)
+const roleRuns = x => calls.some(c => c.label === 'implement:C1') && x.C1 && x.C1.ready && !x.C1.refused
+const roleSame06 = ['0.9.6', '0.9.6']
+const onlyRoleWarning = (re = /^WARN role check could not run: /) => {
+  assert.equal(lastResult.warnings.length, 1, JSON.stringify(lastResult.warnings))
+  assert.match(lastResult.warnings[0], re)
+}
+const refusedRole = x => Object.values(x).every(p => p.refused && !p.ready && p.reason.startsWith('role files differ:'))
+await check('C11-2 the probe is one goals-preflight call at the start of every wave, with a prompt that holds no version and no folder', async () => {
+  for (const ids of [['C1'], ['L1']]) {
+    await rolesRun({ ids })
+    const first = roleCalls[0]
+    assert.equal(roleCalls[0].label, 'roles:wave')
+    assert.equal(first.agentType, 'agent-pr-pipeline:goals-preflight')
+    assert.equal(`${first.model}/${first.effort}`, 'haiku/low')
+    for (const bad of [WAVE_V, '/plug', '/cache', '/x']) assert.ok(!first.prompt.includes(bad), bad)
+    assert.doesNotMatch(first.prompt, /\d+\.\d+\.\d+/)
+    assert.match(first.prompt, /run no command|do not run (any )?command/i)
+    assert.match(first.prompt, /read no file|do not read (any )?file/i)
+  }
+})
+await check('C11-3 the version of the workflow from the probe runs the wave with no second probe, no log and no warning', async () => {
+  const x = await rolesRun()
+  assert.deepEqual(roleLabels(), ['roles:wave'])
+  assert.deepEqual(lastResult.warnings, [])
+  assert.deepEqual(roleLogs(), [])
+  assert.ok(roleRuns(x))
+})
+await check('C11-4 another version twice runs one io call with the folder of the loaded version and the folder of the workflow version', async () => {
+  await rolesRun({ probes: roleSame06 })
+  assert.deepEqual(roleLabels(), ['roles:wave', 'roles:wave#2', 'io:wave#roles'])
+  assert.equal(roleCalls[2].agentType, 'agent-pr-pipeline:pipeline-io')
+  assert.ok(roleCalls[2].prompt.includes(`bash ${ROOT_V}/scripts/io.sh role-files.sh '/cache/apl/0.9.6' '${ROOT_V}'`))
+  await rolesRun({ probes: roleSame06, args: { pluginRoot: '/cache/apl/dev' } })
+  assert.ok(roleCalls[2].prompt.includes(`role-files.sh '/cache/apl/0.9.6' '${ROOT_V}'`))
+})
+await check('C11-5 every other pair of answers gives one warning, no io call and a wave that runs', async () => {
+  for (const probes of [['0.9.6', '0.9.5'], ['no line', '0.9.6'], ['0.9.6', 'no line'], ['I think 0.9.6', 'I think 0.9.6'], [null]]) {
+    const x = await rolesRun({ probes })
+    assert.ok(!roleLabels().includes('io:wave#roles'), JSON.stringify(probes))
+    onlyRoleWarning()
+    assert.ok(roleRuns(x), JSON.stringify(probes))
+  }
+})
+await check('C11-6 ROLES SAME runs the wave with one log line and no warning', async () => {
+  const x = await rolesRun({ probes: roleSame06 })
+  assert.equal(roleLogs().length, 1)
+  assert.deepEqual(lastResult.warnings, [])
+  assert.ok(roleRuns(x))
+})
+await check('C11-7 ROLES DIFFER and ROLES MISSING refuse every PR, in every kind of wave, before any PR step', async () => {
+  const differ = { exitCode: 0, output: 'ROLES DIFFER implementer.md goals-preflight.md' }
+  const x = await rolesRun({ probes: roleSame06, io: differ, ids: ['C1', 'C2'] })
+  for (const p of Object.values(x)) {
+    assert.deepEqual(Object.keys(p).sort(), ['id', 'ready', 'reason', 'refused'])
+    assert.equal(p.ready, false)
+    assert.equal(p.refused, true)
+    for (const part of ['0.9.6', WAVE_V, 'implementer', '/reload-plugins']) assert.ok(p.reason.includes(part), part)
+    assert.ok(p.reason.startsWith('role files differ:'))
+    assert.match(p.reason, /new run/)
+  }
+  assert.deepEqual(calls.map(c => c.label), ['preflight:goals'])
+  assert.deepEqual(Object.keys(lastResult).sort(), ROLE_KEYS)
+  assert.ok(cleanupCalls.some(c => c.label === 'io:wave#cleanupall'))
+  const missing = await rolesRun({ probes: roleSame06, io: { exitCode: 0, output: 'ROLES MISSING /cache/apl/0.9.6' }, ids: ['C1', 'C2'] })
+  assert.ok(refusedRole(missing))
+  const goals = await rolesRun({ probes: roleSame06, io: differ, ids: ['C1', 'C2'], pre: { ok: false, exists: true, goals: 2, nonGoals: 0, missing: ['Non-goals items'] } })
+  assert.ok(refusedRole(goals))
+  const land = await rolesRun({ probes: roleSame06, io: { exitCode: 0, output: 'ROLES DIFFER implementer.md' }, ids: ['L1'] })
+  assert.deepEqual(Object.keys(land.L1).sort(), ['id', 'ready', 'reason', 'refused'])
+  assert.ok(refusedRole(land))
+  assert.deepEqual(calls, [])
+  assert.deepEqual(Object.keys(lastResult).sort(), ROLE_KEYS)
+  assert.ok(cleanupCalls.some(c => c.label === 'io:wave#cleanupall'))
+})
+await check('C11-8 no line twice adds one warning that names the cause and the way out, and the wave runs', async () => {
+  const x = await rolesRun({ probes: ['no line', 'no line'] })
+  assert.deepEqual(roleLabels(), ['roles:wave', 'roles:wave#2'])
+  onlyRoleWarning(/^WARN role files hold no release line: /)
+  for (const re of [/0\.9\.8/, /probe/, /\/reload-plugins/, /new run/]) assert.match(lastResult.warnings[0], re)
+  assert.ok(roleRuns(x))
+})
+await check('C11-9 an io call that gives no answer adds one warning, and only DIFFER and MISSING refuse', async () => {
+  for (const io of [null, { exitCode: 3, output: `CHECK FAILED cannot read ${ROOT_V}/agents` }, { exitCode: 0, output: 'hello' }, { exitCode: 1, output: 'boom' }]) {
+    const x = await rolesRun({ probes: roleSame06, io })
+    onlyRoleWarning()
+    assert.ok(roleRuns(x), JSON.stringify(io))
+  }
+})
+await check('C11-10 no pluginRoot and a changed agentPrefix log one line, run no probe and run the wave', async () => {
+  const { pluginRoot, ...noRoot } = base
+  for (const args of [noRoot, { ...base, agentPrefix: '' }, { ...base, agentPrefix: 'x:' }]) {
+    const x = await simulate({ ...args, prs: only('C1') })
+    assert.deepEqual(roleLabels(), [])
+    assert.deepEqual(lastResult.warnings, [])
+    assert.equal(roleLogs().length, 1)
+    assert.ok(roleRan(x))
+  }
+  const x = await rolesRun({ probes: roleSame06, io: { exitCode: 0, output: 'ROLES DIFFER implementer.md' }, args: { agentPrefix: '' } })
+  assert.ok(roleRan(x))
+})
+await check('C11-11 a probe version reaches a command only when it matches the version pattern, inside one quoted argument', async () => {
+  for (const v of ["0.9.6'; touch /x; '", 'v0.9.6']) {
+    await rolesRun({ probes: [v, v] })
+    assert.ok(!roleLabels().includes('io:wave#roles'), v)
+    onlyRoleWarning()
+  }
+  await rolesRun({ probes: ['0.9.6-rc.1', '0.9.6-rc.1'] })
+  const prompt = roleCalls[2].prompt
+  assert.ok(prompt.includes(`role-files.sh '/cache/apl/0.9.6-rc.1' '${ROOT_V}'`))
+  assert.match(prompt.split('role-files.sh ')[1].split('`')[0], /^'[^']*' '[^']*'$/)
+})
+await check('C11-14 the result counts each probe call under goals-preflight and the role io call under pipeline-io', async () => {
+  await rolesRun()
+  const a = lastResult.agentCounts
+  await rolesRun({ probes: roleSame06 })
+  const b = lastResult.agentCounts
+  assert.equal(a['goals-preflight'], 2)
+  assert.equal(b['goals-preflight'], 3)
+  assert.equal(b['pipeline-io'], a['pipeline-io'] + 1)
+  assert.equal(mainResult.agentCounts['goals-preflight'], 2)
 })
 await check('C10-4 an eval about code is accepted when only its check holds a trigger phrase', async () => {
   assert.match(inStatement.statement, PR_TEXT_RULE)

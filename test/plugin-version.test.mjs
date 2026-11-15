@@ -103,6 +103,21 @@ test('VERSION in run-wave.js equals the version in the manifest', () => {
   assert.equal(m[1], version)
 })
 
+test('the release line of goals-preflight.md names the version of the manifest', () => {
+  const version = JSON.parse(readFileSync(join(root, '.claude-plugin/plugin.json'), 'utf8')).version
+  const text = readFileSync(join(root, 'agents/goals-preflight.md'), 'utf8').split('\n')
+  const lines = text.filter((l) => l.startsWith('Role files of release'))
+  assert.deepEqual(lines, [`Role files of release ${version}.`])
+  assert.ok(text.indexOf(lines[0]) < text.indexOf('## Rules'))
+})
+
+test('the version pattern in run-wave.js equals the one in semver.sh', () => {
+  const sh = /^semver='(.*)'$/m.exec(readFileSync(join(root, 'scripts/semver.sh'), 'utf8'))
+  const js = /^const SEMVER = \/(.*)\/$/m.exec(readFileSync(join(root, 'workflows/run-wave.js'), 'utf8'))
+  assert.ok(sh && js, 'a pattern line is missing')
+  assert.equal(js[1], sh[1])
+})
+
 test('semver.sh run by itself prints nothing and exits 0', () => {
   const r = spawnSync('bash', [join(root, 'scripts/io.sh'), 'semver.sh'], { encoding: 'utf8' })
   assert.equal(r.status, 0)
