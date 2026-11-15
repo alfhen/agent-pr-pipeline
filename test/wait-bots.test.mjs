@@ -22,6 +22,7 @@ const setup = (reviews) => {
   put(fx, `${P}__commits__${HEAD}__check-runs.json`, { check_runs: [] })
   put(fx, `${P}__pulls__7__comments.json`, [])
   put(fx, `${P}__issues__7__comments.json`, [])
+  put(fx, `${P}__commits__${HEAD}__check-suites.json`, { total_count: 0, check_suites: [] })
   put(fx, 'user.json', { login: 'pipeline-bot-account' })
   reviews.forEach((r, i) => put(fx, `${P}__pulls__7__reviews.call${i + 1}.json`, r))
   return { dir, fx, log: join(dir, 'log') }
@@ -164,7 +165,7 @@ test('reviewBodies is 0 when a rerun left two answer comments by the running acc
 
 test('wait-bots keeps polling while a bot check run is still running, and the body then counts', () => {
   const s = setup([[], [...approved], [...approved, rev('Outside diff range comments (1)')]])
-  const checks = (status_) => ({ check_runs: [{ name: 'CodeRabbit', status: status_, conclusion: null }] })
+  const checks = (status_) => ({ check_runs: [{ name: 'CodeRabbit', status: status_, conclusion: null, app: { slug: 'coderabbitai' } }] })
   put(s.fx, `${P}__commits__${HEAD}__check-runs.call1.json`, checks('in_progress'))
   put(s.fx, `${P}__commits__${HEAD}__check-runs.call2.json`, checks('in_progress'))
   put(s.fx, `${P}__commits__${HEAD}__check-runs.call3.json`, checks('completed'))

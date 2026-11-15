@@ -38,7 +38,7 @@ const E2E_PATTERN = A.e2ePattern || '\\.e2e\\.test\\.ts$'
 const RELATED_TESTS = A.relatedTests !== false
 const RELATED_MAX = 10
 const E2E_COMMAND = A.e2eCommand || 'pnpm exec vitest run {files}'
-const BOTS = A.bots || 'CodeRabbit (login coderabbitai) and Gitar (login contains "gitar")'
+const BOTS = A.bots || 'CodeRabbit (login "coderabbitai[bot]") and Gitar (login "gitar-bot[bot]")'
 const BOT_WAIT_MIN = A.botWaitMinutes || 20
 const LABEL = A.minorLabel || 'review-minor'
 const FEEDBACK = A.feedback !== false

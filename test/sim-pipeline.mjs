@@ -2447,9 +2447,9 @@ await check('the land-fixer role file tells it never to answer bot threads', () 
 
 // Land gate: scripts/bot-approval.jq on fixture reviews and comments.
 const { execFileSync } = await import('node:child_process')
-const GITAR_RAN = [{ name: 'Gitar', status: 'completed', conclusion: 'success' }]
+const GITAR_RAN = [{ name: 'Gitar', status: 'completed', conclusion: 'success', app: { slug: 'gitar-bot' } }]
 const gate = (reviews, comments = [], checks = GITAR_RAN) => JSON.parse(execFileSync('jq', ['-f', fileURLToPath(new URL('scripts/bot-approval.jq', root))], {
-  input: JSON.stringify({ reviews, comments, checks, head: 'HEAD', bots: 'coderabbit|gitar|\\[bot\\]' }),
+  input: JSON.stringify({ reviews, comments, checks, head: 'HEAD', bots: ['coderabbitai[bot]', 'gitar-bot[bot]'], user: 'alfhen' }),
 }))
 const BOT = 'gitar-bot[bot]'
 const review = (state, commit, at, login = BOT) => ({ user: { login }, state, commit_id: commit, submitted_at: at })
@@ -2477,9 +2477,9 @@ await check('gate: an earlier changes request still blocks after a later comment
 await check('gate: answered comments clear only if the bot check ran on the head and passed', () => {
   const answered = [[review('COMMENTED', 'OLD', '2')], [thread(7), reply(7)]]
   assert.deepEqual(gate(...answered, []), [])
-  assert.deepEqual(gate(...answered, [{ name: 'Gitar', status: 'in_progress', conclusion: null }]), [])
-  assert.deepEqual(gate(...answered, [{ name: 'CodeRabbit', status: 'completed', conclusion: 'success' }]), [])
-  assert.deepEqual(gate(...answered, [{ name: 'Gitar', status: 'completed', conclusion: 'neutral' }]), [])
+  assert.deepEqual(gate(...answered, [{ ...GITAR_RAN[0], status: 'in_progress', conclusion: null }]), [])
+  assert.deepEqual(gate(...answered, [{ name: 'CodeRabbit', status: 'completed', conclusion: 'success', app: { slug: 'coderabbitai' } }]), [])
+  assert.deepEqual(gate(...answered, [{ ...GITAR_RAN[0], conclusion: 'neutral' }]), [])
 })
 await check('gate: a person approving does not count as a bot', () => {
   assert.deepEqual(gate([review('APPROVED', 'HEAD', '1', 'alfhen')]), [])

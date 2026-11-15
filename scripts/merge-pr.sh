@@ -1,8 +1,8 @@
 #!/bin/bash
 # usage: merge-pr.sh [--auto] [--person] <owner/repo> <pr> <head sha> <branch>
 # Squash-merges only if the PR is mergeable, its head is <head sha> (the commit the pipeline checked),
-# every check run and commit status passed (and there is at least one check run), and a review bot (BOT_LOGINS regex, default
-# coderabbit|gitar|[bot]) clears bot-approval.jq. The merge call carries the sha. Deletes the branch
+# every check run and commit status passed (and there is at least one check run), and a review bot (BOT_LOGINS, a comma-separated
+# list of exact logins, default coderabbitai[bot],gitar-bot[bot]) clears bot-approval.jq. The merge call carries the sha. Deletes the branch
 # only after GitHub shows merged: true.
 # An agent merge runs gate-files.sh first and needs --auto: that is --auto, or CLAUDECODE set in the shell.
 # --person skips only the gate and the --auto requirement, for a merge the maintainer asked for.
@@ -19,6 +19,11 @@ R=$1; pr=$2; sha=$3; branch=$4
 [ -n "$branch" ] || { echo "usage: merge-pr.sh [--auto] [--person] <owner/repo> <pr> <head sha> <branch>"; exit 2; }
 here=$(dirname "$0")
 tries=6; pause=5
+bots="${BOT_LOGINS:-coderabbitai[bot],gitar-bot[bot]}"
+IFS=, read -ra logins <<<"$bots,"
+for l in "${logins[@]}"; do
+  [[ "$l" =~ ^[A-Za-z0-9-]+(\[bot\])?$ ]] || { echo "BOT_LOGINS must be a comma-separated list of logins (letters, digits and hyphens, with or without the ending [bot]), got: $bots"; exit 2; }
+done
 [ "$PIPELINE_TEST_FAST" = 1 ] && { tries=1; pause=0; }
 
 mode=person
@@ -37,17 +42,23 @@ for _ in $(seq 1 "$tries"); do
   sleep "$pause"
 done
 head=$(jq -r .head.sha <<<"$pull")
-bots="${BOT_LOGINS:-coderabbit|gitar|\\[bot\\]}"
-checks=$(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100") || { echo "PR $pr NOT merged: cannot read the check runs"; exit 1; }
-runs=$(jq -s -c '[.[].check_runs[] | {name, status, conclusion}]' <<<"$checks") || { echo "PR $pr NOT merged: unexpected check runs answer"; exit 1; }
+tmp=$(mktemp -d) || { echo "PR $pr NOT merged: cannot make a temporary folder"; exit 1; }
+trap 'rm -rf "$tmp"' EXIT
+user=$(gh api user --jq .login) && [ -n "$user" ] || { echo "PR $pr NOT merged: cannot read the user"; exit 1; }
+gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100" >"$tmp/checks" || { echo "PR $pr NOT merged: cannot read the check runs"; exit 1; }
+gh api --paginate "repos/$R/pulls/$pr/reviews?per_page=100" >"$tmp/reviews" || { echo "PR $pr NOT merged: cannot read the reviews"; exit 1; }
+gh api --paginate "repos/$R/pulls/$pr/comments?per_page=100" >"$tmp/comments" || { echo "PR $pr NOT merged: cannot read the review comments"; exit 1; }
+gh api --paginate "repos/$R/issues/$pr/comments?per_page=100" >"$tmp/issue-comments" || { echo "PR $pr NOT merged: cannot read the PR comments"; exit 1; }
+gh api --paginate "repos/$R/commits/$head/check-suites?per_page=100" >"$tmp/suites" || { echo "PR $pr NOT merged: cannot read the check suites"; exit 1; }
+runs=$(jq -s -c '[.[].check_runs[] | {name, status, conclusion, app: {slug: .app.slug}}]' "$tmp/checks") || { echo "PR $pr NOT merged: unexpected check runs answer"; exit 1; }
 stat=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100") || { echo "PR $pr NOT merged: cannot read the commit statuses"; exit 1; }
 sts=$(jq -s -c '[.[].statuses[] | {context, state}]' <<<"$stat") || { echo "PR $pr NOT merged: unexpected commit status answer"; exit 1; }
-appr=$(jq -n --arg head "$head" --arg bots "$bots" \
-  --slurpfile reviews <(gh api --paginate "repos/$R/pulls/$pr/reviews?per_page=100") \
-  --slurpfile comments <(gh api --paginate "repos/$R/pulls/$pr/comments?per_page=100") \
-  --argjson checks "$runs" \
-  '{reviews: ($reviews | add // []), comments: ($comments | add // []), checks: $checks, head: $head, bots: $bots}' \
-  | jq -f "$here/bot-approval.jq" | jq -r 'join(",")')
+# Files and --slurpfile, not --argjson: a busy PR passes the 128 KiB limit of one argument on Linux.
+echo "$runs" >"$tmp/runs"
+input=$(jq -n -c --arg head "$head" --argjson bots "$(jq -n -c --arg b "$bots" '$b | split(",")')" --arg user "$user" --slurpfile reviews "$tmp/reviews" --slurpfile comments "$tmp/comments" --slurpfile checks "$tmp/runs" \
+  '{reviews: ($reviews | add // []), comments: ($comments | add // []), checks: $checks[0], head: $head, bots: $bots, user: $user}') || { echo "PR $pr NOT merged: cannot build the bot input"; exit 1; }
+approved=$(jq -c -f "$here/bot-approval.jq" <<<"$input") || { echo "PR $pr NOT merged: cannot judge the reviews"; exit 1; }
+appr=$(jq -r 'join(",")' <<<"$approved")
 fail=$(jq -r 'if length == 0 then "no-checks" else [.[] | select(.status != "completed" or (.conclusion | IN("success", "skipped", "neutral") | not)) | .name + ":" + (if .status != "completed" then "pending" else .conclusion end)] | join(",") end' <<<"$runs")
 sfail=$(jq -r '[.[] | select(.state != "success") | .context + ":" + .state] | join(",")' <<<"$sts")
 [ -n "$sfail" ] && fail="${fail:+$fail,}$sfail"

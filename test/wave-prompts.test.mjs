@@ -220,3 +220,9 @@ test('the test prompt runs the related e2e and docs files and names the projects
   assert.match(src, /RELATED_TESTS = A\.relatedTests !== false/)
   assert.match(src, /say which test projects you ran/)
 })
+
+test('the default text of bots names the two exact logins and no sentence says login contains', () => {
+  const line = src.split('\n').find((l) => l.startsWith('const BOTS = A.bots || '))
+  assert.ok(line.includes('coderabbitai[bot]') && line.includes('gitar-bot[bot]'), line)
+  assert.equal(src.includes('login contains'), false)
+})

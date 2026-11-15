@@ -44,8 +44,11 @@ const setup = ({ files = 'clean', settings = 'repo', merging = true, scripts = f
   if (merging) put(fx, `${MERGE}.PUT.then`, `pull-merged.json ${PULL}.json\n`)
   put(fx, `${MERGE}.PUT.json`, { merged: true })
   put(fx, `${P}__commits__${SHA}__check-runs.json`, { check_runs: [
-    { name: 'ci', status: 'completed', conclusion: 'success' },
-    { name: 'gitar', status: 'completed', conclusion: 'success' }] })
+    { name: 'ci', status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } },
+    { name: 'gitar', status: 'completed', conclusion: 'success', app: { slug: 'gitar-bot' } }] })
+  put(fx, 'user.json', { login: 'alfhen' })
+  put(fx, `${P}__issues__7__comments.json`, [])
+  put(fx, `${P}__commits__${SHA}__check-suites.json`, { total_count: 0, check_suites: [] })
   put(fx, `${P}__commits__${SHA}__status.json`, { state: 'success', statuses: [] })
   put(fx, `${PULL}__reviews.json`, [{ id: 1, user: { login: 'gitar-bot[bot]' }, state: 'APPROVED', body: '', commit_id: SHA, submitted_at: '2026-01-01T10:00:00Z' }])
   put(fx, `${PULL}__comments.json`, [])
@@ -204,7 +207,7 @@ test('merge-pr: no DELETE call when the PR does not show merged', () => {
   assert.equal(r.code, 1)
   assert.equal(merges(r).length, 1)
   assert.equal(calls(r, /^DELETE /).length, 0)
-  assert.equal(calls(r, /issues\/7\/comments/).length, 0)
+  assert.equal(calls(r, /^POST .*issues\/7\/comments/).length, 0)
 })
 
 test('merge-pr: --person on a gated PR skips the gate and merges with a matching sha', () => {
@@ -212,7 +215,7 @@ test('merge-pr: --person on a gated PR skips the gate and merges with a matching
   assert.equal(r.code, 0, r.out)
   assert.equal(gateRan(r), false)
   assert.equal(merges(r).length, 1)
-  assert.ok(calls(r, /issues\/7\/comments/)[0].includes(`merge-cleared person ${SHA}`))
+  assert.ok(calls(r, /^POST .*issues\/7\/comments/)[0].includes(`merge-cleared person ${SHA}`))
 })
 
 test('merge-pr: --person with a wrong sha is refused', () => {
