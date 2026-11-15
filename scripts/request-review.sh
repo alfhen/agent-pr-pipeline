@@ -24,31 +24,47 @@ user=$(gh api user --jq .login) && [ -n "$user" ] || no_review "cannot read the 
 gh api --paginate "repos/$R/commits/$sha/check-suites?per_page=100" >"$tmp/suites" || no_review "cannot read the check suites"
 push=$(jq -s -r -L "$here" 'include "review-request"; pushTime([.[].check_suites[]]) // ""' "$tmp/suites") || no_review "cannot read the push time"
 [ -n "$push" ] || no_review "the head has no check suite, so there is no push time"
-gh api --paginate "repos/$R/issues/$pr/comments?per_page=100" >"$tmp/pr-comments" || no_review "cannot read the comments of the pull request"
-since=$(jq -n -r 'now - 3900 | todate')
-gh api "repos/$R/issues/comments?since=$since&sort=created&direction=desc&per_page=100" >"$tmp/repo-comments" || no_review "cannot read the comments of the repo"
-
-read -r count mine any <<<"$(jq -n -r -L "$here" --arg user "$user" --arg push "$push" --slurpfile pc "$tmp/pr-comments" --slurpfile rc "$tmp/repo-comments" \
-  "include \"review-request\"; $epoch"'
-  ($pc | add // []) as $c | ($rc | add // []) as $r | ($push | t) as $p
-  | [$c[] | select(isRequest($user) and (.created_at | t) > $p) | .created_at | t] | sort as $mine
-  | [($c + $r)[] | select(isRequest($user)) | .created_at | t] as $all
-  | "\($mine | length) \($mine | last // 0) \($all | max // 0)"')" || no_review "cannot count the requests"
-[ -n "$any" ] || no_review "cannot count the requests"
+count=0; mine=0; any=0
+# Reads the requests again at every call, so a request made by hand while the script waits is counted. Keeps the larger values.
+refresh() {
+  local c m a
+  gh api --paginate "repos/$R/issues/$pr/comments?per_page=100" >"$tmp/pr-comments" || no_review "cannot read the comments of the pull request"
+  local since
+  since=$(jq -n -r 'now - 3900 | todate')
+  gh api "repos/$R/issues/comments?since=$since&sort=created&direction=desc&per_page=100" >"$tmp/repo-comments" || no_review "cannot read the comments of the repo"
+  read -r c m a <<<"$(jq -n -r -L "$here" --arg user "$user" --arg push "$push" --slurpfile pc "$tmp/pr-comments" --slurpfile rc "$tmp/repo-comments" \
+    "include \"review-request\"; $epoch"'
+    ($pc | add // []) as $c | ($rc | add // []) as $r | ($push | t) as $p
+    | [$c[] | select(isRequest($user) and (.created_at | t) > $p) | .created_at | t] | sort as $mine
+    | [($c + $r)[] | select(isRequest($user)) | .created_at | t] as $all
+    | "\($mine | length) \($mine | last // 0) \($all | max // 0)"')" || no_review "cannot count the requests"
+  [ -n "$a" ] || no_review "cannot count the requests"
+  [ "$c" -gt "$count" ] && count=$c
+  [ "$m" -gt "$mine" ] && mine=$m
+  [ "$a" -gt "$any" ] && any=$a
+  return 0
+}
+refresh
 text=$(jq -n -r -L "$here" 'include "review-request"; requestText') || no_review "cannot read the request text"
 
 post_request() {
-  local now secs out
-  now=$(date -u +%s)
-  secs=$((any + gap - now))
-  if [ "$secs" -gt 0 ]; then
+  local now secs out want=$((count + 1)) waited=-1
+  while :; do
+    refresh
+    [ "$count" -ge "$want" ] && return 0
+    now=$(date -u +%s)
+    secs=$((any + gap - now))
+    [ "$secs" -le 0 ] && break
+    # In test mode the sleep is skipped, so an unchanged newest request ends the loop.
+    [ "$any" = "$waited" ] && break
     echo "WAIT $secs #$pr"
     [ "$PIPELINE_TEST_FAST" = 1 ] || sleep "$secs"
-  fi
+    waited=$any
+  done
   out=$(gh api -X POST "repos/$R/issues/$pr/comments" -f body="$text") || no_review "cannot post the request"
   mine=$(jq -r "$epoch"' .created_at | t' <<<"$out" 2>/dev/null) && [ -n "$mine" ] || no_review "the answer to the request has no created_at"
   any=$mine
-  count=$((count + 1))
+  count=$want
 }
 
 # Sets run_id and run_kind: reviewed, bad (a run that is no completed review), late (a run that did not complete) or none.

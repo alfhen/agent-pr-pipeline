@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync, cpSync } from 'node:fs'
+import { rmSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync, cpSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -286,4 +286,29 @@ test('a changed completed-review rule in review-request.jq changes which run is 
   const scripts = withEditedJq((t) => t.replace('Result: Success - Review completed', 'Result: Success - Done'))
   const r = run(setup({ requests: [comment(10)], seq: seq3(5), post: false }), { scripts })
   assert.ok(!r.lines.some((l) => l.startsWith('REVIEWED #7 run 4242')), r.out)
+})
+
+const failedRun = bot({ conclusion: 'success', title: 'Review failed', summary: '' })
+const asSequence = (fx, file, first, second) => {
+  rmSync(join(fx, `${file}.json`), { force: true })
+  put(fx, `${file}.call1.json`, first)
+  put(fx, `${file}.call2.json`, second)
+}
+
+test('a request made by hand while the script waited is counted: no third request', () => {
+  const s = setup({ runs: [ci, failedRun], swap: false })
+  asSequence(s.fx, PRC, [], [comment(0.5), { ...comment(0.33), id: 77 }])
+  const r = run(s)
+  assert.ok(posts(r).length <= 1, r.log.join('\n'))
+  noReview(r)
+})
+
+test('a request on another PR made while the script waited moves the WAIT', () => {
+  const s = setup({ runs: [ci, failedRun], swap: false })
+  put(s.fx, `${PRC}.POST.json`, { id: 9000, user: { login: 'alfhen' }, body: REQ, created_at: iso(30) })
+  asSequence(s.fx, REPOC, [], [{ id: 88, user: { login: 'alfhen' }, body: REQ, issue_url: 'https://api.github.com/repos/o/r/issues/8', created_at: isoSec(10) }])
+  const r = run(s)
+  const w = waits(r)
+  assert.ok(w.length >= 1, r.out)
+  for (const n of w) assert.ok(n >= 3820 && n <= 3840, String(n))
 })
