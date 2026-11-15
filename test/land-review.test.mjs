@@ -258,3 +258,11 @@ test('SKILL.md describes the review request of the land step', () => {
   const args = md.slice(md.indexOf('### Workflow arguments'), md.indexOf('### Role agents'))
   assert.match(args, /botWaitMinutes[^.\n]*\b1\b/)
 })
+
+test('SKILL.md says the review request needs the CodeRabbit check run', () => {
+  const md = readFileSync(join(root, 'skills/pr-pipeline/SKILL.md'), 'utf8')
+  const line = md.split('\n').find((l) => l.startsWith('With `--review`, the land step asks for the review'))
+  assert.ok(line.includes('reviews.review_progress'))
+  assert.ok(line.includes('check run'))
+  assert.match(line, /\bfalse\b/)
+})

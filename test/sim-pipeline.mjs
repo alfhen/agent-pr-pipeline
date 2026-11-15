@@ -6180,6 +6180,104 @@ await check('D-9 the plan review checks that each issue an entry closes is fully
   assert.ok(seen.code)
   assert.doesNotMatch(seen.code, /fully settled by that entry/)
 })
+const ruLand = async (answer, verify) => {
+  land.landOutput.add('LA')
+  try {
+    return (await a2Run(kLandPr({ evals: K_LIST }), (p, o) => o.label === 'open:LA#body' ? answer : o.label === 'verify:LA#land1' && verify ? verify : undefined)).LA
+  } finally { land.landOutput.delete('LA') }
+}
+const ruRefusedVerify = { pass: true, headSha: ABC, checks: [chk('unit')], extra: [{ name: 'lint', pass: false, refused: true }], evals: K_LIST.map(e => ({ id: e.id, result: 'pass', evidence: 'ok', breakCheck: 'fails-without-change' })) }
+const ruLandRefused = answer => ruLand(answer, ruRefusedVerify)
+const ruBots = async answer => (await hooked(only1('C2'), (p, o) => o.label === 'test:C2#bots1' ? { headSha: 'sha-answer-C2', pass: true, checks: [chk('unit'), { name: 'lint', pass: false, refused: true }] } : o.label === 'open:C2#body' ? answer : undefined)).C2
+const RU_REASON = 'PR body not updated with the untested items'
+await check('RU the body answer schema has unchanged and holds, and both body prompts ask for them', async () => {
+  const seen = {}
+  land.landOutput.add('LA')
+  try { await a2Run(kLandPr({ evals: K_LIST }), (p, o) => { if (o.label === 'open:LA#body') seen.land = { p, o } }) } finally { land.landOutput.delete('LA') }
+  await hooked(only1('C2'), (p, o) => {
+    if (o.label === 'test:C2#bots1') return { headSha: 'sha-answer-C2', pass: true, checks: [chk('unit'), { name: 'lint', pass: false, refused: true }] }
+    if (o.label === 'open:C2#body') seen.bots = { p, o }
+  })
+  for (const s of [seen.land, seen.bots]) {
+    assert.ok(s)
+    const sc = s.o.schema
+    assert.equal(sc.properties.unchanged.type, 'boolean')
+    assert.equal(sc.properties.holds.type, 'array')
+    assert.equal(sc.properties.holds.items.type, 'string')
+    assert.ok(sc.required.includes('updated'))
+    assert.match(s.p, /unchanged/)
+    assert.match(s.p, /holds/)
+    assert.match(s.p, /In every answer/)
+  }
+  assert.doesNotMatch(seen.land.p, /drop|remove the section|exactly/)
+})
+await check('RU a land fix with no untested item and unchanged true ends ready', async () => {
+  const x = await ruLand({ updated: false, unchanged: true, holds: [] })
+  assert.equal(a2Bodies('LA').length, 1)
+  assert.ok(a2Bodies('LA')[0].prompt.split('\n').some(l => /Tests only:/.test(l) && /remove/.test(l)))
+  assert.equal(x.ready, true, x.reason)
+  assert.equal(x.land, `8:${ABC}`)
+  assert.equal(x.landMode, 'person')
+  assert.deepEqual(x.untested, [])
+})
+await check('RU a land fix with unchanged true counts when holds has every untested item, also with more', async () => {
+  for (const holds of [['extra check lint (refused)'], ['an item listed before', 'extra check lint (refused)']]) {
+    const x = await ruLandRefused({ updated: false, unchanged: true, holds })
+    assert.equal(x.ready, true, x.reason)
+    assert.equal(x.land, `8:${ABC}`)
+    assert.equal(x.landMode, 'person')
+    assert.deepEqual(x.untested, ['extra check lint (refused)'])
+  }
+})
+await check('RU a land fix with unchanged true and holds that lacks an untested item stops', async () => {
+  const ok = await ruLandRefused({ updated: false, unchanged: true, holds: ['extra check lint (refused)'] })
+  assert.equal(ok.ready, true, ok.reason)
+  const x = await ruLandRefused({ updated: false, unchanged: true, holds: [] })
+  assert.equal(x.ready, false)
+  assert.equal(x.reason, RU_REASON)
+  assert.deepEqual(x.untested, ['extra check lint (refused)'])
+  assert.equal(a2Bodies('LA').length, 1)
+})
+await check('RU a bot answer with unchanged true and holds equal to the untested list ends ready', async () => {
+  let prompt
+  const x = await hooked(only1('C2'), (p, o) => o.label === 'test:C2#bots1' ? { headSha: 'sha-answer-C2', pass: true, checks: [chk('unit'), { name: 'lint', pass: false, refused: true }] } : o.label === 'open:C2#body' ? (prompt = p, { updated: false, unchanged: true, holds: ['lint (refused)'] }) : undefined)
+  assert.match(prompt, /exactly/)
+  assert.equal(x.C2.ready, true, x.C2.reason)
+  assert.match(x.C2.land, /^\d+:sha-answer-C2$/)
+  assert.deepEqual(x.C2.untested, ['lint (refused)'])
+})
+await check('RU a bot answer with unchanged true stops when holds has one more item or lacks one', async () => {
+  const ok = await ruBots({ updated: false, unchanged: true, holds: ['lint (refused)'] })
+  assert.equal(ok.ready, true, ok.reason)
+  for (const holds of [['lint (refused)', 'an item listed before'], []]) {
+    const x = await ruBots({ updated: false, unchanged: true, holds })
+    assert.equal(x.ready, false)
+    assert.equal(x.reason, RU_REASON)
+    assert.deepEqual(x.untested, ['lint (refused)'])
+  }
+})
+await check('RU unchanged true with no holds list or a holds value that is not a list stops', async () => {
+  const ok = await ruLand({ updated: false, unchanged: true, holds: [] })
+  assert.equal(ok.ready, true, ok.reason)
+  const none = await ruLand({ updated: false, unchanged: true })
+  assert.equal(none.ready, false)
+  assert.equal(none.reason, RU_REASON)
+  const str = await ruLandRefused({ updated: false, unchanged: true, holds: 'extra check lint (refused)' })
+  assert.equal(str.ready, false)
+  assert.equal(str.reason, RU_REASON)
+})
+await check('RU updated false with unchanged false stops on the land-fix path even when holds is complete', async () => {
+  const x = await ruLandRefused({ updated: false, unchanged: false, holds: ['extra check lint (refused)'] })
+  assert.equal(x.ready, false)
+  assert.equal(x.reason, RU_REASON)
+})
+await check('RU updated true goes on with or without the new keys, and holds is not checked', async () => {
+  const x = await ruLandRefused({ updated: true, unchanged: false, holds: [] })
+  assert.equal(x.ready, true, x.reason)
+  assert.equal(x.land, `8:${ABC}`)
+  const y = await ruBots({ updated: true, unchanged: false, holds: [] })
+  assert.equal(y.ready, true, y.reason)
+})
 await check('F652-3 a failing eval and a fixer dispute with no push go to the writer, not to the no-progress stop', async () => {
   const newEval = ev('C1-1', 'behaviour', { statement: 'C1-1 checkable from the branch' })
   const x = await disputeRun(listOf('C1'), disputeFlow({ ruling: 'change', reason: 'not checkable', eval: newEval }))
