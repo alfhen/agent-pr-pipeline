@@ -296,7 +296,7 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
       <li>You agree the plan before anything is built.</li>
       <li>You approve anything that changes a hard rule. For example, payments on real stores stay a human step unless you sign off.</li>
       <li>You merge every gated PR, any PR the merge-safety agent called <code>person</code>, and every rerun. Use <code>--person</code> for a merge you ask for.</li>
-      <li>Agents merge only the other PRs, with the <code>:auto</code> land value. A rerun never gets <code>:auto</code>. Merges need green CI and a review bot that approved, or whose comments were all answered with nothing new raised.</li>
+      <li>Agents merge only the other PRs, with the <code>:auto</code> land value. A rerun never gets <code>:auto</code>. Merges need green CI and a review bot that approved, whose comments were all answered with nothing new raised, or whose clean review was asked for after the push.</li>
       <li>Publishing to npm is yours, with your one-time code.</li>
     </ul>
   </section>
