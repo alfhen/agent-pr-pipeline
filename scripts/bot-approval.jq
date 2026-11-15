@@ -1,5 +1,5 @@
 # Input: {reviews, comments, checks, head, bots, user}: the PR's REST reviews and review comments, the check
-# runs of its head commit, its head sha, the review-bot logins (a list, or a comma-separated string) and the login of
+# runs of its head commit, its head sha, the review-bot logins (a list) and the login of
 # the user from GET /user. With no user, only a bot's own reply answers one of its threads.
 # Output: the bots that clear the gate, as "login" (approved on the head), "login (approved earlier)" or
 # "login (answered)". bot-status.sh strips every suffix printed here.
@@ -9,7 +9,7 @@
 # with [bot] added is the bot's login. That check run is the proof the bot looked at the head: a finding that still holds would come
 # back as a new review there. A CHANGES_REQUESTED without a later APPROVED from the same bot always blocks.
 . as $in
-| ($in.bots | if type == "array" then . else split(",") end) as $bots
+| $in.bots as $bots
 | ($in.user // null) as $user
 | def checkedHead($login): any($in.checks[]; .status == "completed" and .conclusion == "success" and ((.app.slug // "") != "") and (.app.slug + "[bot]") == $login);
 def answered($t): any($in.comments[]; .in_reply_to_id == $t.id and (.user.login == $t.user.login or ($user != null and .user.login == $user)));

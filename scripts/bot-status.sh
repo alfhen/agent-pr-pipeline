@@ -3,7 +3,7 @@
 # Prints one JSON line: {"head", "approvedBy", "seenHead", "pending", "openThreads", "reviewBodies"}. approvedBy is the output of bot-approval.jq,
 # the rule merge-pr.sh uses. seenHead lists the approving bots that looked at the head: their latest review
 # is on the head, or their check run on the head has completed. openThreads counts
-# the inline threads a bot opened that have no reply. pending lists the bot check runs on the head that have not completed:
+# the inline threads a bot opened that have no reply of that bot or of the user from GET /user. pending lists the bot check runs on the head that have not completed:
 # a bot posts its review body just before its check run completes. reviewBodies counts the bot reviews on the head whose
 # body can hold a finding: not empty, and not a known no-finding text. It is 0 once an answer comment for the head is on
 # the PR: the comment starts with <!-- pipeline-bot-answer head=<sha> --> and is by the account from GET /user (trusted-comment.jq). Exits 1 when a GitHub read fails.

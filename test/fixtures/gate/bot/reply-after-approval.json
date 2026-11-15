@@ -1,6 +1,6 @@
 {
   "head": "h1",
-  "bots": "coderabbitai[bot],gitar-bot[bot]",
+  "bots": ["coderabbitai[bot]", "gitar-bot[bot]"],
   "checks": [],
   "reviews": [
     {"id": 1, "user": {"login": "gitar-bot[bot]"}, "state": "APPROVED", "body": "", "commit_id": "h1", "submitted_at": "2026-01-01T10:00:00Z"},

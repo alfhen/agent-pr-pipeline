@@ -55,7 +55,7 @@ stat=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100") || { echo
 sts=$(jq -s -c '[.[].statuses[] | {context, state}]' <<<"$stat") || { echo "PR $pr NOT merged: unexpected commit status answer"; exit 1; }
 # Files and --slurpfile, not --argjson: a busy PR passes the 128 KiB limit of one argument on Linux.
 echo "$runs" >"$tmp/runs"
-input=$(jq -n -c --arg head "$head" --arg bots "$bots" --arg user "$user" --slurpfile reviews "$tmp/reviews" --slurpfile comments "$tmp/comments" --slurpfile checks "$tmp/runs" \
+input=$(jq -n -c --arg head "$head" --argjson bots "$(jq -n -c --arg b "$bots" '$b | split(",")')" --arg user "$user" --slurpfile reviews "$tmp/reviews" --slurpfile comments "$tmp/comments" --slurpfile checks "$tmp/runs" \
   '{reviews: ($reviews | add // []), comments: ($comments | add // []), checks: $checks[0], head: $head, bots: $bots, user: $user}') || { echo "PR $pr NOT merged: cannot build the bot input"; exit 1; }
 approved=$(jq -c -f "$here/bot-approval.jq" <<<"$input") || { echo "PR $pr NOT merged: cannot judge the reviews"; exit 1; }
 appr=$(jq -r 'join(",")' <<<"$approved")

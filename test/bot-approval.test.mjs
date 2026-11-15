@@ -16,7 +16,7 @@ const OLD = 'o'.repeat(40)
 const review = (state, commit, login = BOT) => ({ id: 1, user: { login }, state, body: 'x', commit_id: commit, submitted_at: '2026-01-01T00:00:00Z' })
 const check = (conclusion, name = 'Gitar', status = 'completed', slug = 'gitar-bot') => ({ name, status, conclusion, app: { slug } })
 const gate = (reviews, checks) => {
-  const r = spawnSync('jq', ['-c', '-f', JQ], { input: JSON.stringify({ reviews, comments: [], checks, head: HEAD, bots: DEFAULT_BOTS, user: 'alfhen' }), encoding: 'utf8' })
+  const r = spawnSync('jq', ['-c', '-f', JQ], { input: JSON.stringify({ reviews, comments: [], checks, head: HEAD, bots: DEFAULT_BOTS.split(","), user: 'alfhen' }), encoding: 'utf8' })
   assert.equal(r.status, 0, r.stderr)
   return JSON.parse(r.stdout)
 }
@@ -199,7 +199,7 @@ test('a bot thread is answered only by a reply of the bot or of the user', () =>
 
 test('with no user in the input only a reply of the thread bot answers', () => {
   const run = (login) => {
-    const input = { reviews: [rv('COMMENTED', OLD)], comments: [thread(4), reply(4, login)], checks: [check('success')], head: HEAD, bots: DEFAULT_BOTS }
+    const input = { reviews: [rv('COMMENTED', OLD)], comments: [thread(4), reply(4, login)], checks: [check('success')], head: HEAD, bots: DEFAULT_BOTS.split(",") }
     const r = spawnSync('jq', ['-c', '-f', JQ], { input: JSON.stringify(input), encoding: 'utf8' })
     assert.equal(r.status, 0, r.stderr)
     return JSON.parse(r.stdout)

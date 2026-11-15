@@ -2449,7 +2449,7 @@ await check('the land-fixer role file tells it never to answer bot threads', () 
 const { execFileSync } = await import('node:child_process')
 const GITAR_RAN = [{ name: 'Gitar', status: 'completed', conclusion: 'success', app: { slug: 'gitar-bot' } }]
 const gate = (reviews, comments = [], checks = GITAR_RAN) => JSON.parse(execFileSync('jq', ['-f', fileURLToPath(new URL('scripts/bot-approval.jq', root))], {
-  input: JSON.stringify({ reviews, comments, checks, head: 'HEAD', bots: 'coderabbitai[bot],gitar-bot[bot]', user: 'alfhen' }),
+  input: JSON.stringify({ reviews, comments, checks, head: 'HEAD', bots: ['coderabbitai[bot]', 'gitar-bot[bot]'], user: 'alfhen' }),
 }))
 const BOT = 'gitar-bot[bot]'
 const review = (state, commit, at, login = BOT) => ({ user: { login }, state, commit_id: commit, submitted_at: at })
