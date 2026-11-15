@@ -764,7 +764,7 @@ const evalsRules = `Rules for the list (the writer and the evals check use the s
 
 const evalsPrompt = (pr, attempt, last) => `${ctx(pr)}
 
-Task: write the evals for this PR. Nothing is built yet.
+Task: write the evals for this PR.${pr.resume || pr.skipImpl ? '' : ' Nothing is built yet.'}
 1. Clone the default branch: ${evalsClone(`evals-${pr.id}`, pr)} and cd there. Read the default branch only; never read or check out a PR branch.
 2. Read ${GOALS}, ${SPEC ? `${SPEC}, ` : ''}${ref(pr)} (the entry of this PR, with its Touches, Acceptance, QA, Invariants, Round cap and Algorithm lines, and its Evals table when it has one) and the code the entry touches.
 3. Write the list as your instructions say. When the behaviour of an entry already holds on the default branch, give those evals kind regression and say so in notes. An Evals table in the entry is input: keep or improve each row under its id and add the rows it lacks.
@@ -773,7 +773,7 @@ Task: write the evals for this PR. Nothing is built yet.
 ${evalsRules}
 Return evals, coverage, algorithm, noErrorPath, noReference and notes.
 
-${evalsBlock(pr)}${last ? `\n\nThis is attempt ${attempt}. Your last list was sent back: ${last.reason}\nYour last list:\n${JSON.stringify(last.evals, null, 1)}\n${last.rule ? 'A rule decides this, so the list itself must change; notes cannot change it.' : 'Change the list to meet this, or say in notes why it already does.'}` : ''}`
+${evalsBlock(pr)}${designRulesText(pr)}${last ? `\n\nThis is attempt ${attempt}. ${last.given ? 'The list' : 'Your last list'} was sent back: ${last.reason}\n${last.given ? 'The list' : 'Your last list'}:\n${JSON.stringify(last.evals, null, 1)}\n${last.rule ? 'A rule decides this, so the list itself must change; notes cannot change it.' : 'Change the list to meet this, or say in notes why it already does.'}` : ''}`
 
 const coverageText = coverage => `
 
@@ -2013,7 +2013,7 @@ async function checkEvals(pr, list, meta, round, writerNotes, coverage) {
   return { notes: notes.join('; ') }
 }
 
-// Gets the accepted list for a PR before anything is built. { stop } ends the PR, { evals, meta } is the list, {} means no list (the tester path).
+// Gets the accepted list for a PR before the build step of this run. { stop } ends the PR, { evals, meta } is the list, {} means no list (the tester path).
 async function writeEvals(pr, raw) {
   if (!evalsRuns(pr)) return {}
   const given = givenEvals(pr, raw)
@@ -2029,23 +2029,33 @@ async function writeEvals(pr, raw) {
     if (bad) return { stop: `evals refused: ${bad}`, record: rec, refused: given.list }
     if (rec && sameList(given.list, rec.evals)) return { evals: given.list, meta: { noErrorPath: reasonOf(rec.noErrorPath), noReference: reasonOf(rec.noReference), algorithm: !!rec.algorithm }, record: rec }
     const c = await checkEvals(pr, given.list, given.meta, 1)
-    if (c.down || c.notes) return { stop: `evals check: ${c.down || c.notes}`, record: rec, refused: given.list }
-    return { evals: given.list, meta: given.meta, record: makeRecord(pr, given.list, given.meta) }
+    if (!c.down && !c.notes) return { evals: given.list, meta: given.meta, record: makeRecord(pr, given.list, given.meta) }
+    const stop = `evals check: ${c.down || c.notes}`
+    if (c.down || !EVALS_ON || EVALS_ROUNDS < 2) return { stop, record: rec, refused: given.list }
+    return writerLoop(pr, 2, { rule: false, reason: `the reviewers found gaps: ${c.notes}`, evals: given.list, meta: given.meta, given: true }, rec)
   }
-  let last = null
-  for (let attempt = 1; attempt <= EVALS_ROUNDS; attempt++) {
+  return writerLoop(pr, 1, null, null)
+}
+
+// The record of an earlier run stays through every attempt, so a throw or a stop returns it.
+async function writerLoop(pr, first, from, rec) {
+  let last = from
+  let written = from ? { evals: from.evals, meta: from.meta } : null
+  const stopWith = stop => ({ stop, record: rec, ...(written ? { refused: written.evals, refusedMeta: written.meta } : {}) })
+  for (let attempt = first; attempt <= EVALS_ROUNDS; attempt++) {
     let w = null
     try { w = await call('evals', pr, evalsPrompt(pr, attempt, last), attempt === 1 ? `evals:${pr.id}` : `evals:${pr.id}#w${attempt}`, { schema: EVALS }) } catch (e) { w = null }
-    if (!w || !Array.isArray(w.evals)) return { stop: 'evals writer failed' }
+    if (!w || !Array.isArray(w.evals)) return stopWith('evals writer failed')
     const meta = metaOf(w, pr)
+    written = { evals: w.evals, meta }
     const bad = evalsVerdict(w.evals, pr, meta) || coverageVerdict(w.coverage, w.evals)
     const c = bad ? null : await checkEvals(pr, w.evals, meta, attempt, w.notes, w.coverage)
-    if (c && c.down) return { stop: `evals check: ${c.down}` }
+    if (c && c.down) return stopWith(`evals check: ${c.down}`)
     if (!bad && !c.notes) return { evals: w.evals, meta, record: makeRecord(pr, w.evals, meta, w.coverage) }
-    if (attempt === EVALS_ROUNDS) return { stop: bad ? `evals refused: ${bad}` : `evals check: ${c.notes}` }
+    if (attempt === EVALS_ROUNDS) return stopWith(bad ? `evals refused: ${bad}` : `evals check: ${c.notes}`)
     last = { rule: !!bad, reason: bad ? `the rule "${bad}" refused it.` : `the reviewers found gaps: ${c.notes}`, evals: w.evals }
   }
-  return { stop: 'evals writer failed' }
+  return stopWith('evals writer failed')
 }
 
 const disputePrompt = (pr, d, current, n) => `${ctx(pr)}
@@ -2183,7 +2193,7 @@ async function runPRSteps(input) {
     const rec = usableRecord(pr, written.record)
     const refused = rec && Array.isArray(written.refused) ? [{ severity: 'minor', title: `${REFUSED_LIST_TITLE}${written.stop}`, detail: JSON.stringify(written.refused) }] : []
     const findings = resumeFindings(pr).concat(refused)
-    const listOut = rec ? recordOut(rec) : written.record ? { ...(given && Array.isArray(given.list) ? { evals: given.list } : {}), evalsMeta: { ...(given ? given.meta : {}), accepted: written.record } } : given ? { evals: given.list, evalsMeta: given.meta } : {}
+    const listOut = rec ? recordOut(rec) : written.refusedMeta ? { evals: written.refused, evalsMeta: written.refusedMeta } : written.record ? { ...(given && Array.isArray(given.list) ? { evals: given.list } : {}), evalsMeta: { ...(given ? given.meta : {}), accepted: written.record } } : given ? { evals: given.list, evalsMeta: given.meta } : {}
     return { id: pr.id, ready: false, reason: written.stop, history, ...(findings.length ? { lastFindings: findings } : {}), ...minorsOut(), ...listOut, ...carriedOut(resumedDisputes(pr), resumedDeviations(pr)) }
   }
   pr = { ...pr, deviations: resumedDeviations(pr) }
