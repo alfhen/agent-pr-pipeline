@@ -794,7 +794,7 @@ Return verdict (\`ok\` or \`needs-change\`) and notes: one line for each gap or 
 ${evalsBlock(pr)}
 
 Evals to check:
-${JSON.stringify({ evals: list, ...meta }, null, 1)}${coverage ? coverageText(coverage) : ''}${writerNotes ? `\n\nThe writer's notes (an answer to an earlier needs-change; accept it when it is reasoned and true):\n${writerNotes}` : ''}`
+${JSON.stringify({ evals: list, ...meta }, null, 1)}${coverage ? coverageText(coverage) : ''}${writerNotes ? `\n\nThe writer's notes (an answer to an earlier needs-change; accept it when it is reasoned and true):\n${writerNotes}` : ''}${designRulesText(pr)}`
 
 const relatedStep = RELATED_TESTS ? `3. Then run the e2e and docs test files that import or name the modules the PR touches and are not in that list. Find them with a search (\`git grep -l -E\` for each touched module's file name and exported names, over every tracked test file in the repo, such as \`*.test.*\` and \`*.spec.*\` files in any folder, and the paths the test config's projects include, docs folders too). Run at most ${RELATED_MAX}, the files that import a touched module directly first, and name the files you left out in the check, because CI runs them. Never run the whole suite. For each file, read the repo's test config and package scripts to find the command and test project that own it (for example \`--project <name>\` in a vitest workspace), also when that project is left out of the default test command, and name the command in the check. Do not use \`${E2E_COMMAND}\` for a file outside its project. Report a file or project you could not select, or one the environment cannot run (for example a missing browser), as a check with \`refused\`: true, never as passed or failed. Name each extra file in the check, and say which test projects you ran.\n` : ''
 const refusedText = '`refused`: true for a command that a permission check denied, or for a file or project you could not run, so it did not run. A check that fails because a port is in use runs once more. Report the second run as it ended, and use `refused`: true only when the port is still in use. For the check of an eval, as an exception to the `ci` rule, a port that is still in use on the second run counts as a command that did not run here, like a refused command: result `ci`, with `ciCheck` the name of a check that covers it'
@@ -899,9 +899,7 @@ Task: fix minor findings in one pass. This is the only minor pass of this PR: no
 4. Checks: ${fastText}, and ${ownE2e}.
 5. Commit and push. If you fix no finding, push nothing and return changed false.${noDisputesText(pr) || '\n'}Return changed, headSha (\`git rev-parse HEAD\` after your push), fixed (the numbers of the findings you fixed), skipped (the number and why, for each finding you left), a short summary, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
-${prBlock(pr)}
-
-The branch head before your commits: ${signedSha || '(unknown)'}.
+${prBlock(pr)}${designRulesText(pr) || '\n'}The branch head before your commits: ${signedSha || '(unknown)'}.
 Minor findings, numbered. Findings of one file are together:
 ${numbered(findings)}`
 
@@ -1069,7 +1067,7 @@ Task: answer the review bots on pull request #${n}.
 7. After your last push and your last check, post the review-body comment from step 3 with \`gh api repos/${REPO}/issues/${n}/comments -F body=@<file>\`. Post it once for the head whenever a bot review on it has a body that is not empty, even when no body holds a finding of its own (then say so in one line). The first line of that comment must be exactly \`<!-- pipeline-bot-answer head=${headSha} -->\`: the status script reads it to know the bodies of this head are answered, and it counts them again until the comment is there. Post it last, so a run that fails before the push leaves the bodies open for a rerun.
 Return threads addressed, whether code changed, headSha (\`git rev-parse HEAD\` after your last push), closesIssues (the issue numbers you added), notes, and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
-${prBlock(pr)}`
+${prBlock(pr)}${designRulesText(pr)}`
 
 const botReviewPrompt = (pr, n, round, fromSha, answer, history, prior = [], siblings = [], issues = [], known = []) => `${reviewPrompt(pr, `bots${round}`, history, siblings)}
 
@@ -1089,7 +1087,7 @@ The output holds the land fix and every fix round since. The last round found th
 Return headSha, a summary and the findings.
 
 ${prBlock(pr)}
-
+${designRulesText(pr)}
 ${code.file ? `Land fix output file: ${code.file}` : `Land fix output:
 ${code.output}`}`
 
@@ -1102,7 +1100,7 @@ Task: bring PR #${pr.prNumber} (${pr.branch}) to a mergeable state with green CI
 4. Wait: \`bash ${PLUGIN_ROOT}/scripts/wait-ci.sh ${REPO} ${pr.prNumber} 9\`, with the Bash tool's timeout set to 600000 ms. It prints one JSON line with head, state (pending, success or failure), failed and timedOut. While timedOut is true, run it again, at most 3 calls in all. If it is still timedOut, return readyToMerge false and say so in notes.${noDisputesText(pr)}
 Return readyToMerge, headSha, notes and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
-${prBlock(pr)}`
+${prBlock(pr)}${designRulesText(pr)}`
 
 const preflightPrompt = () => `Task: check the goals document ${GOALS} on the default branch of ${REPO}.
 Read it with \`gh api repos/${REPO}/contents/${GOALS} --jq .content | base64 --decode\`. If that fails, the file does not exist.
@@ -1802,8 +1800,12 @@ async function bots(pr, n, headSha, issues, history, minors) {
   botChangedState[pr.id] = n
   delete testsOnlyState[pr.id]
   const lateMinors = []
-  const check = await botCheck(pr, n, headSha, answer, history, lateMinors, issues, minors)
-  minors.push(...lateMinors)
+  let check
+  try {
+    check = await botCheck(pr, n, headSha, answer, history, lateMinors, issues, minors)
+  } finally {
+    minors.push(...lateMinors)
+  }
   if (!check.ok) return { ok: false, reason: check.reason, lastFindings: check.lastFindings, worktree: check.worktree, headSha: answer.headSha || headSha, wait, answer, lateMinors }
   return { ok: true, headSha: check.headSha, wait, answer, lateMinors }
 }
@@ -1913,8 +1915,9 @@ async function runPR(input) {
     const rec = recordState[input.id]
     const landOut = input.landFix ? landOutState[input.id] : null
     const resume = input.resume
-    const history = input.landFix ? (resume && resume.history) : (historyState[input.id] || (resume && resume.history))
-    const raw = input.landFix ? null : (minorsState[input.id] || (resume && resume.minors))
+    const own = historyState[input.id]
+    const history = input.landFix && own && resume && Array.isArray(resume.history) ? resume.history.concat(own) : own || (resume && resume.history)
+    const raw = minorsState[input.id] || (!input.landFix && resume && resume.minors)
     const found = Array.isArray(raw) ? raw.filter(m => m && typeof m === 'object') : null
     const minors = Array.isArray(found) && found.length ? mergeDuplicates(found) : null
     let msg = 'unknown error'
@@ -1922,7 +1925,7 @@ async function runPR(input) {
     result = {
       id: input.id, ready: false, reason: `run failed: ${msg}`,
       ...(Array.isArray(history) ? { history } : {}),
-      ...(minors ? { minors } : {}),
+      ...(minors ? { [input.landFix ? 'lateMinors' : 'minors']: minors } : {}),
       ...(input.landFix && input.prNumber ? { prNumber: input.prNumber } : {}),
       ...(botChangedState[input.id] ? { codeChangedByBots: true, prNumber: botChangedState[input.id] } : {}),
       ...(rec ? recordOut(rec) : {}), ...(landOut || {}), ...carriedOut(resumedDisputes(input), resumedDeviations(input)),
@@ -2117,6 +2120,8 @@ async function runPRSteps(input) {
     const lateMinors = []
     let listOut = {}
     delete landOutState[pr.id]
+    historyState[pr.id] = history
+    minorsState[pr.id] = lateMinors
     const stopped = (reason, more) => { stopMark(history, reason); return { id: pr.id, prNumber: n, ready: false, reason, history, ...listOut, ...more } }
     const given = givenEvals(pr, rawEvals)
     if (given) {
