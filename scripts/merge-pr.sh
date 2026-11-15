@@ -2,7 +2,8 @@
 # usage: merge-pr.sh [--auto] [--person] <owner/repo> <pr> <head sha> <branch>
 # Squash-merges only if the PR is mergeable, its head is <head sha> (the commit the pipeline checked),
 # every check run and commit status passed (and there is at least one check run), and a review bot (BOT_LOGINS, a comma-separated
-# list of exact logins, default coderabbitai[bot],gitar-bot[bot]) clears bot-approval.jq. The merge call carries the sha. Deletes the branch
+# list of exact logins, default coderabbitai[bot],gitar-bot[bot]) clears bot-approval.jq (four ways: an approval on the head, an approval
+# on an older commit, answered comments on an older commit, or a clean CodeRabbit review that was asked for after the push). The merge call carries the sha. Deletes the branch
 # only after GitHub shows merged: true.
 # An agent merge runs gate-files.sh first and needs --auto: that is --auto, or CLAUDECODE set in the shell.
 # --person skips only the gate and the --auto requirement, for a merge the maintainer asked for.
@@ -50,19 +51,23 @@ gh api --paginate "repos/$R/pulls/$pr/reviews?per_page=100" >"$tmp/reviews" || {
 gh api --paginate "repos/$R/pulls/$pr/comments?per_page=100" >"$tmp/comments" || { echo "PR $pr NOT merged: cannot read the review comments"; exit 1; }
 gh api --paginate "repos/$R/issues/$pr/comments?per_page=100" >"$tmp/issue-comments" || { echo "PR $pr NOT merged: cannot read the PR comments"; exit 1; }
 gh api --paginate "repos/$R/commits/$head/check-suites?per_page=100" >"$tmp/suites" || { echo "PR $pr NOT merged: cannot read the check suites"; exit 1; }
-runs=$(jq -s -c '[.[].check_runs[] | {name, status, conclusion, app: {slug: .app.slug}}]' "$tmp/checks") || { echo "PR $pr NOT merged: unexpected check runs answer"; exit 1; }
+runs=$(jq -s -c '[.[].check_runs[] | {name, status, conclusion, started_at, head_sha, app: {slug: .app.slug}, output: {title: .output.title, summary: ((.output.summary // "")[0:200])}}]' "$tmp/checks") || { echo "PR $pr NOT merged: unexpected check runs answer"; exit 1; }
 stat=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100") || { echo "PR $pr NOT merged: cannot read the commit statuses"; exit 1; }
 sts=$(jq -s -c '[.[].statuses[] | {context, state}]' <<<"$stat") || { echo "PR $pr NOT merged: unexpected commit status answer"; exit 1; }
 # Files and --slurpfile, not --argjson: a busy PR passes the 128 KiB limit of one argument on Linux.
 echo "$runs" >"$tmp/runs"
-input=$(jq -n -c --arg head "$head" --argjson bots "$(jq -n -c --arg b "$bots" '$b | split(",")')" --arg user "$user" --slurpfile reviews "$tmp/reviews" --slurpfile comments "$tmp/comments" --slurpfile checks "$tmp/runs" \
-  '{reviews: ($reviews | add // []), comments: ($comments | add // []), checks: $checks[0], head: $head, bots: $bots, user: $user}') || { echo "PR $pr NOT merged: cannot build the bot input"; exit 1; }
+input=$(jq -n -c --arg head "$head" --argjson bots "$(jq -n -c --arg b "$bots" '$b | split(",")')" --arg user "$user" --slurpfile reviews "$tmp/reviews" --slurpfile comments "$tmp/comments" --slurpfile checks "$tmp/runs" --slurpfile issue "$tmp/issue-comments" --slurpfile suites "$tmp/suites" \
+  '{reviews: ($reviews | add // []), comments: ($comments | add // []), issueComments: ($issue | add // []), suites: [$suites[].check_suites[]], checks: $checks[0], head: $head, bots: $bots, user: $user}') || { echo "PR $pr NOT merged: cannot build the bot input"; exit 1; }
 approved=$(jq -c -f "$here/bot-approval.jq" <<<"$input") || { echo "PR $pr NOT merged: cannot judge the reviews"; exit 1; }
 appr=$(jq -r 'join(",")' <<<"$approved")
 fail=$(jq -r 'if length == 0 then "no-checks" else [.[] | select(.status != "completed" or (.conclusion | IN("success", "skipped", "neutral") | not)) | .name + ":" + (if .status != "completed" then "pending" else .conclusion end)] | join(",") end' <<<"$runs")
 sfail=$(jq -r '[.[] | select(.state != "success") | .context + ":" + .state] | join(",")' <<<"$sts")
 [ -n "$sfail" ] && fail="${fail:+$fail,}$sfail"
 echo "PR $pr mergeable=$m head=${head:0:7} approved=[$appr] failing=[$fail] mode=$mode"
+if [ -z "$appr" ]; then
+  why=$(jq -r --arg why 1 -f "$here/bot-approval.jq" <<<"$input") || { echo "PR $pr NOT merged: cannot judge the clean review"; exit 1; }
+  [ -n "$why" ] && echo "$why"
+fi
 if [ "$m" != "MERGEABLE" ] || [ "$head" != "$sha" ] || [ -z "$appr" ] || [ -n "$fail" ]; then
   echo "PR $pr NOT merged"; exit 1
 fi

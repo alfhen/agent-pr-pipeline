@@ -31,23 +31,20 @@ gh api --paginate "repos/$R/pulls/$pr/comments?per_page=100" >"$tmp/comments" ||
 gh api --paginate "repos/$R/issues/$pr/comments?per_page=100" >"$tmp/issue-comments" || fail "cannot read the PR comments"
 
 # Files and --slurpfile, not --argjson: a busy PR passes the 128 KiB limit of one argument on Linux.
-input=$(jq -n -c --arg head "$head" --argjson bots "$(jq -n -c --arg b "$bots" '$b | split(",")')" --arg user "$user" --slurpfile reviews "$tmp/reviews" --slurpfile comments "$tmp/comments" --slurpfile issue "$tmp/issue-comments" --slurpfile checks "$tmp/checks" \
-  '{reviews: ($reviews | add // []), comments: ($comments | add // []), issueComments: ($issue | add // []), checks: [$checks[].check_runs[]], head: $head, bots: $bots, user: $user}') || fail "cannot build the input"
+input=$(jq -n -c --arg head "$head" --argjson bots "$(jq -n -c --arg b "$bots" '$b | split(",")')" --arg user "$user" --slurpfile reviews "$tmp/reviews" --slurpfile comments "$tmp/comments" --slurpfile issue "$tmp/issue-comments" --slurpfile checks "$tmp/checks" --slurpfile suites "$tmp/suites" \
+  '{reviews: ($reviews | add // []), comments: ($comments | add // []), issueComments: ($issue | add // []), suites: [$suites[].check_suites[]], checks: [$checks[].check_runs[]], head: $head, bots: $bots, user: $user}') || fail "cannot build the input"
 approved=$(jq -c -f "$here/bot-approval.jq" <<<"$input") || fail "cannot judge the reviews"
 seen=$(jq -c --argjson approved "$approved" '. as $in
-  | [$approved[] | sub(" \\((answered|approved earlier)\\)$"; "") | . as $login
+  | [$approved[] | sub(" \\((answered|approved earlier|clean review)\\)$"; "") | . as $login
     | select(([$in.reviews[] | select(.user.login == $login)] | sort_by(.submitted_at) | last | .commit_id) == $in.head
         or ([$in.checks[] | select(.status == "completed" and (.app.slug // "") != "" and (.app.slug + "[bot]") == $login)] | length) > 0)]' <<<"$input") || fail "cannot judge which bots saw the head"
 open=$(jq --arg user "$user" '. as $in | def answered($t): any($in.comments[]; .in_reply_to_id == $t.id and (.user.login == $t.user.login or .user.login == $user));
   [.comments[] | select(.in_reply_to_id == null and (.user.login | IN($in.bots[])) and (answered(.) | not))] | length' <<<"$input") || fail "cannot count the threads"
 pending=$(jq -c '. as $in | [.checks[] | select(.status != "completed" and (.app.slug // "") != "" and ((.app.slug + "[bot]") | IN($in.bots[]))) | .name]' <<<"$input") || fail "cannot list the running bot checks"
 answered=$(jq -c --arg prefix "<!-- pipeline-bot-answer head=$head -->" --arg user "$user" --arg all 1 -f "$here/trusted-comment.jq" <<<"$(jq -c .issueComments <<<"$input")") || fail "cannot read the answer comments"
-# The known no-finding texts live here. Any other text counts, so an unknown format never hides a finding.
-bodies=$(jq --arg head "$head" --argjson answered "$answered" '
-  def clean: gsub("<!--(.|\n)*?-->"; "") | gsub("^\\s+|\\s+$"; "");
-  def nofinding: test("^Gitar has auto-approved this PR"; "i")
-    or (test("Actionable comments posted: 0") and (test("Outside diff range|Nitpick|Duplicate comments|comments \\([1-9]"; "i") | not));
+# The no-finding rule is in review-request.jq.
+bodies=$(jq -L "$here" --arg head "$head" --argjson answered "$answered" 'include "review-request";
   . as $in | if ($answered | length) > 0 then 0
-    else [.reviews[] | select(.commit_id == $head and (.user.login | IN($in.bots[]))) | (.body // "" | clean) as $b
+    else [.reviews[] | select(.commit_id == $head and (.user.login | IN($in.bots[]))) | (.body // "" | stripComments) as $b
       | select(($b | length) > 0 and ($b | nofinding | not))] | length end' <<<"$input") || fail "cannot count the review bodies"
 jq -n -c --arg head "$head" --argjson approved "$approved" --argjson seen "$seen" --argjson pending "$pending" --argjson open "$open" --argjson bodies "$bodies" '{head: $head, approvedBy: $approved, seenHead: $seen, pending: $pending, openThreads: $open, reviewBodies: $bodies}'
