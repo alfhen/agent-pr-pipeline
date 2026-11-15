@@ -1,5 +1,6 @@
-# Library for bot-approval.jq and bot-status.sh (include "review-request"; with jq -L scripts). It holds the rules for a review of
-# CodeRabbit that the session asked for by comment: the request, the push time, a completed review and a body with no finding.
+# Library for bot-approval.jq (include "review-request" {search: "./"}) and bot-status.sh (jq -L scripts). It holds the rules for a
+# review of CodeRabbit that the session asked for by comment: the request, the push time and a completed review (the gate), and the
+# body with no finding (the wait only: the gate's rule A refuses a count of 0).
 # No other file of scripts/ keeps a copy of these rules.
 
 def requestText: "@coderabbitai full review";

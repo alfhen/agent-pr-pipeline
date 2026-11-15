@@ -128,7 +128,7 @@ test('only the newest run of the bot App decides', () => {
 test('green CI is a successful run of an App that is not a review bot', () => {
   refused(run(mut(pr794, (fx) => { fx.checks = fx.checks.filter((c) => c !== ciRun(fx)) })), CI)
   refused(run(mut(pr794, (fx) => { ciRun(fx).app.slug = 'gitar-bot' })), CI)
-  refused(run(mut(pr794, (fx) => { ciRun(fx).conclusion = 'failure' })), /./)
+  refused(run(mut(pr794, (fx) => { ciRun(fx).conclusion = 'failure' })), CI)
   refused(run(mut(pr794, (fx) => { ciRun(fx).conclusion = 'neutral' })), CI)
 })
 
