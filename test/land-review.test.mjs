@@ -200,7 +200,8 @@ test('after PR 7 merges the next PR gets its request', () => {
   const r = two({ reviews: [approval(S)] })
   assert.ok(merged(r))
   assert.ok(r.log.includes(asked(8)), r.log.join('\n'))
-  assert.ok(r.log.indexOf(`PUT /repos/o/r/pulls/7/merge`) < 0 || r.log.findIndex((l) => l.startsWith('PUT /repos/o/r/pulls/7/merge')) < r.log.indexOf(asked(8)))
+  const put = r.log.findIndex((l) => l.startsWith('PUT /repos/o/r/pulls/7/merge'))
+  assert.ok(put >= 0 && put < r.log.indexOf(asked(8)), r.log.join('\n'))
 })
 
 for (const order of [['--review', '--person'], ['--person', '--review']]) {

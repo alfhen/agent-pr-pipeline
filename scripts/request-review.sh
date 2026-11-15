@@ -31,7 +31,7 @@ refresh() {
   gh api --paginate "repos/$R/issues/$pr/comments?per_page=100" >"$tmp/pr-comments" || no_review "cannot read the comments of the pull request"
   local since
   since=$(jq -n -r 'now - 3900 | todate')
-  gh api "repos/$R/issues/comments?since=$since&sort=created&direction=desc&per_page=100" >"$tmp/repo-comments" || no_review "cannot read the comments of the repo"
+  gh api --paginate "repos/$R/issues/comments?since=$since&sort=created&direction=desc&per_page=100" >"$tmp/repo-comments" || no_review "cannot read the comments of the repo"
   read -r c m a <<<"$(jq -n -r -L "$here" --arg user "$user" --arg push "$push" --slurpfile pc "$tmp/pr-comments" --slurpfile rc "$tmp/repo-comments" \
     "include \"review-request\"; $epoch"'
     ($pc | add // []) as $c | ($rc | add // []) as $r | ($push | t) as $p
@@ -73,8 +73,8 @@ follow() {
   while :; do
     i=$((i + 1))
     gh api --paginate "repos/$R/commits/$sha/check-runs?per_page=100" >"$tmp/runs" || no_review "cannot read the check runs"
-    run=$(jq -s -c -L "$here" --argjson q "$q" --arg app "$APP" "include \"review-request\"; $epoch"'
-      [.[].check_runs[] | select((.app.slug // "") == $app and (.started_at | t) > $q and (.started_at | t) < $q + 2700)]
+    run=$(jq -s -c -L "$here" --argjson q "$q" --argjson window "$window" --arg app "$APP" "include \"review-request\"; $epoch"'
+      [.[].check_runs[] | select((.app.slug // "") == $app and (.started_at | t) > $q and (.started_at | t) < $q + $window)]
       | sort_by(.started_at | t) | first // null' "$tmp/runs") || no_review "cannot read the check runs"
     now=$(date -u +%s)
     expired=0
