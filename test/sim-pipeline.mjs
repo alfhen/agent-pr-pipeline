@@ -5798,3 +5798,93 @@ await check('F652-3 a kept dispute with no push still stops with no progress', a
   assert.equal(x.C1.ready, false)
   assert.match(x.C1.reason, /no progress/)
 })
+// RL: a land-fix run reads the design rules, and a run that throws keeps the minors it found.
+const rlRules = { history: [], designRules: ['Refuse a path with dots'] }
+const RL_RULES = /Rules a person set after the last stop[^]*\n- Refuse a path with dots\n/
+const rlRun = async (prs, hook, par = parallel) => {
+  calls = []; cleanupCalls = []; timeline = []; logs = []
+  preflight = GOOD
+  return run({ ...base, prs }, async (p, o) => {
+    const h = hook(p, o)
+    if (h === undefined) return agent(p, o)
+    calls.push({ label: o.label, model: o.model, prompt: p })
+    return h
+  }, par, log)
+}
+const rlLand = async (withThreads, fn) => {
+  land.landOutput.add('LA')
+  if (withThreads) land.threads.add('LA')
+  try { return await fn() } finally { land.landOutput.delete('LA'); land.threads.delete('LA') }
+}
+const rlBotReview = (nit, id) => (p, o) => o.label === `botreview:${id}#1` ? reviewOf([f('major', 'bad'), f('minor', nit)]) : undefined
+const rlThrowAt = (label, id, hook) => (p, o) => { if (o.label === label) throw new Error('died'); return hook(p, o) }
+const rlLandThrows = () => rlLand(false, async () => (await rlRun(kLandPr(), (p, o) => { if (o.label === 'io:LA#endci') throw new Error('ci read crashed') })).prs[0])
+await check('RL-1 the land fix, land review, bot answer and minor fix prompts hold the design rules', async () => {
+  await kRun(kLandPr({ resume: rlRules }), { cfg: [['landOutput', 'LA'], ['threads', 'LA']] })
+  for (const l of ['landfix:LA', 'landreview:LA#1', 'botanswer:LA']) assert.match(promptOf(l), RL_RULES, l)
+  const minorHook = (p, o) => o.label === 'review:C1#1' ? reviewOf([f('minor', 'pass nit', { file: 'src/a.js' })]) : undefined
+  await hooked([{ ...only1('C1')[0], resume: { ...rlRules, minors: [], findings: [] } }], minorHook)
+  assert.match(promptOf('minorfix:C1'), RL_RULES)
+  await kRun(kLandPr(), { cfg: [['landOutput', 'LA'], ['threads', 'LA']] })
+  for (const l of ['landfix:LA', 'landreview:LA#1', 'botanswer:LA']) assert.doesNotMatch(promptOf(l), /Rules a person set/, l)
+  await hooked(only1('C1'), minorHook)
+  assert.doesNotMatch(promptOf('minorfix:C1'), /Rules a person set/)
+})
+await check('RL-3 a land-fix run that throws keeps its rows and its minors', async () => {
+  const x = await rlLandThrows()
+  assert.equal(x.ready, false)
+  assert.match(x.reason, /^run failed:.*ci read crashed/)
+  assert.ok(x.history.some(h => h.round === 'land1'), JSON.stringify(x.history))
+  assert.ok(x.lateMinors.map(m => m.title).includes('land nit'))
+})
+await check('RL-4 a run of another kind that throws keeps its minors under minors', async () => {
+  const x = await hooked(only1('C1'), (p, o) => {
+    if (o.label === 'review:C1#1') return reviewOf([f('minor', 'pass nit', { file: 'src/a.js' })])
+    if (o.label === 'open:C1') throw new Error('boom')
+  })
+  assert.match(x.C1.reason, /^run failed:.*boom/)
+  assert.ok(x.C1.minors.map(m => m.title).includes('pass nit'))
+})
+await check('RL-5 a bot check whose fixer or reviewer throws returns the minors it found', async () => {
+  const titles = list => (list || []).map(m => m.title)
+  const a = (await hooked(only1('C2'), rlThrowAt('fix:C2#bots1', 'C2', rlBotReview('bot nit', 'C2')))).C2
+  assert.match(a.reason, /^run failed:/)
+  assert.ok(titles(a.minors).includes('bot nit'), JSON.stringify(a.minors))
+  const b = (await rlRun(only1('C2'), rlThrowAt('botreview:C2#2', 'C2', rlBotReview('bot nit', 'C2')), rethrowing)).prs[0]
+  assert.match(b.reason, /^run failed:/)
+  assert.ok(titles(b.minors).includes('bot nit'), JSON.stringify(b.minors))
+  const c = (await rlLand(true, () => rlRun(kLandPr(), rlThrowAt('fix:LA#bots1', 'LA', rlBotReview('bot nit', 'LA'))))).prs[0]
+  assert.match(c.reason, /^run failed:/)
+  for (const t of ['land nit', 'bot nit']) assert.ok(titles(c.lateMinors).includes(t), JSON.stringify(c.lateMinors))
+  const d = (await rlLand(true, () => rlRun(kLandPr(), rlThrowAt('botreview:LA#2', 'LA', rlBotReview('bot nit', 'LA')), rethrowing))).prs[0]
+  assert.match(d.reason, /^run failed:/)
+  for (const t of ['land nit', 'bot nit']) assert.ok(titles(d.lateMinors).includes(t), JSON.stringify(d.lateMinors))
+})
+await check('RL-6 resume-args.sh prints the minors of a thrown land fix, and the late-minor count has them', async () => {
+  const res = await rlLandThrows()
+  const item = a1Args(res, 'LA')
+  assert.deepEqual(item.resume.minors.map(m => m.title), res.lateMinors.map(m => m.title))
+  assert.ok(item.resume.minors.map(m => m.title).includes('land nit'))
+  const out = await rlLand(false, () => rlRun([...kLandPr(), ...only1('C2')], (p, o) => { if (o.label === 'io:LA#endci') throw new Error('ci read crashed') }))
+  const all = out.prs.flatMap(p => p.lateMinors || []).map(m => m.title)
+  assert.ok(all.includes('land nit') && all.includes('late nit'), all.join())
+})
+await check('RL-7 the minors of the bot check stay the known list and show once', async () => {
+  const x = (await rlLand(true, () => rlRun(kLandPr(), rlBotReview('bot nit', 'LA')))).prs[0]
+  assert.equal(x.ready, true)
+  assert.deepEqual(x.lateMinors.map(m => m.title), ['land nit', 'bot nit', 'late nit'])
+  assert.match(promptOf('botreview:LA#2'), /already reported these minors[^\n]*bot nit/)
+  assert.match(promptOf('botreview:LA#2'), /already reported these minors[^\n]*land nit/)
+  const y = (await hooked(only1('C2'), rlBotReview('bot nit', 'C2'))).C2
+  assert.deepEqual(y.lateMinors.map(m => m.title), ['bot nit', 'late nit'])
+  assert.match(promptOf('botreview:C2#2'), /already reported these minors[^\n]*bot nit/)
+})
+await check('RL-8 SKILL.md names the design rules, the thrown land fix and the scope eval', async () => {
+  const text = readFileSync(new URL('skills/pr-pipeline/SKILL.md', root), 'utf8').split('\n')
+  const sentences = line => line.split(/(?<=\.) /)
+  const step6 = sentences(text.find(l => l.startsWith('6. **Fix.**')))
+  assert.ok(step6.some(s => s.includes('resume.designRules') && /land[- ]fix/i.test(s)))
+  assert.ok(step6.some(s => /land[- ]fix run/i.test(s) && /throw/.test(s) && s.includes('`lateMinors`') && s.includes('Step 3')))
+  const row = sentences(text.find(l => l.startsWith('| `needs human: scope`')))
+  assert.ok(row.some(s => s.includes('Touches') && s.includes('scope eval') && /rerun/.test(s)))
+})
