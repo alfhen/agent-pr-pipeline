@@ -301,3 +301,15 @@ test('the README sentence on the review bot says what the clean review is', () =
   assert.ok(line.includes('answered'))
   assert.match(line, /counts? 0[^.]*does not clear the gate/)
 })
+
+test('a pair that is already merged gets no review request', () => {
+  const s = setup()
+  put(s.fx, `${P}__pulls__7.json`, { merged: true, state: 'closed', mergeable: true, head: { sha: S, ref: 'feat/7', repo: { full_name: 'o/r' } } })
+  const r = land(s)
+  assert.equal(r.code, 0, r.out)
+  assert.ok(r.out.split('\n').some((l) => l.startsWith('MERGED #7 already')), r.out)
+  assert.equal(requested(r), false)
+  assert.ok(!r.log.some((l) => l.includes(REQ)))
+  assert.equal(merged(r), false)
+  assert.equal(r.out.trim().split('\n').pop(), 'all merged')
+})
