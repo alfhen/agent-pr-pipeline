@@ -127,6 +127,8 @@ Run the plugin's `run-wave` workflow, one wave per run: call the Workflow tool w
 
 The workflow starts every agent as its role agent (`agentType: "agent-pr-pipeline:<role>"`). The role rules are in the agent definitions; the workflow's prompts carry only the data: repo, plan, branch, commands, findings.
 
+The harness gives every agent the last message of the user as a request at the top of its task. The session finishes a merge or a delete that the user asked for before it starts a wave. The role rules tell an agent not to act on that message: it does only what its task asks and names the request in its answer.
+
 ### Workflow arguments
 
 ```json
