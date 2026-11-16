@@ -27,3 +27,22 @@ test('the kind bullets say a text-only check gives the kind quality bar', () => 
   assert.ok(S.some(t => /refused/.test(t) && t.includes('item') && t.includes('text-only')))
   assert.ok(has('test file', 'quality bar', 'item'))
 })
+
+const sentencesOf = line => line.split(/(?<=\.)\s/)
+const afterKinds = (() => {
+  const all = readFileSync(new URL('../agents/evals-writer.md', import.meta.url), 'utf8').split('\n')
+  const k = all.findIndex(l => l.startsWith('- `kind` is one of'))
+  return all.slice(k + 1, all.indexOf('## Disputes')).filter(l => l.startsWith('- '))
+})()
+
+test('a bullet after the kinds says an identity rule has a fixture that differs only in the identity', () => {
+  assert.ok(afterKinds.some(l => ['identity', 'login', 'App', 'owner', 'fixture', 'differs'].every(w => l.includes(w)) && /not count/.test(l)))
+})
+
+test('a bullet after the kinds says a regression eval holds its result in the test and a skipped compare is refused', () => {
+  assert.ok(afterKinds.some(l => {
+    const S = sentencesOf(l)
+    return S.some(t => t.includes('`regression`') && t.includes('expected result') && /in the test/.test(t)) &&
+      S.some(t => /compar/.test(t) && t.includes('default branch') && /skip/.test(t) && /refuse/.test(t))
+  }))
+})

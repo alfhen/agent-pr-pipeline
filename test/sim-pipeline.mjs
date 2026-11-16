@@ -6188,6 +6188,44 @@ await check('RE-16 on a rerun the writer prompt of a later attempt holds the des
   assert.match(await promptOf(withRules), /Rules a person set after the last stop[^]*\n- Refuse a path with dots\n/)
   assert.doesNotMatch(await promptOf(resumeWith(listOf('C1'))), /Rules a person set/)
 })
+const ewCut = (label, prompt) => {
+  const from = prompt.indexOf('PR: C1 - ')
+  const end = label === 'evals:C1' ? prompt.length : prompt.indexOf(label.startsWith('dispute') ? '\n\nThe eval in dispute:' : '\n\nEvals to check:', from)
+  return prompt.slice(from, end)
+}
+const ewBlocks = async (pr, extra = {}) => {
+  await evalsRun([pr], () => withMeta(listOf('C1')), okCheck, { productReview: 'all', ...extra })
+  const out = {}
+  for (const l of ['evals:C1', 'evalsarch:C1#1', 'evalsproduct:C1#1']) out[l] = ewCut(l, calls.find(c => c.label === l).prompt)
+  const disputeHook = (p, o) => o.label === 'evals:C1' ? withMeta(listOf('C1')) : implWith({ disputes: [{ id: 'C1-1', reason: 'wrong' }] })(p, o) || (o.label === 'dispute:C1#1' ? { ruling: 'keep', reason: 'k' } : undefined)
+  await hooked([pr], disputeHook, { evals: true, ...extra })
+  out['dispute:C1#1'] = ewCut('dispute:C1#1', calls.find(c => c.label === 'dispute:C1#1').prompt)
+  return out
+}
+const ewLines = text => text.split('\n')
+await check('EW-1 to EW-3 the PR block of the writer, the evals checks and the dispute names the QA line and its scenarios', async () => {
+  for (const b of Object.values(await ewBlocks({ ...C1PR, qa: true }))) assert.ok(ewLines(b).some(l => l.includes('QA line') && l.includes('scenario') && l.includes('eval')), b)
+  for (const b of Object.values(await ewBlocks({ ...C1PR, qa: 'try --words with empty input' }))) assert.ok(b.includes('try --words with empty input'), b)
+  for (const b of Object.values(await ewBlocks(C1PR, { qa: 'all' }))) assert.ok(ewLines(b).some(l => /QA runs/.test(l) && /no QA line/.test(l)), b)
+})
+await check('EW-4 no QA line when QA does not run, with the cause asserted', async () => {
+  for (const [pr, extra] of [[{ ...C1PR, qa: true }, { qa: false }], [C1PR, {}], [{ ...C1PR, qa: false }, { qa: 'all' }]]) {
+    await evalsRun([pr], () => withMeta(listOf('C1')), okCheck, { productReview: 'all', ...extra })
+    for (const l of ['evals:C1', 'evalsarch:C1#1', 'evalsproduct:C1#1']) assert.doesNotMatch(ewCut(l, calls.find(c => c.label === l).prompt), /QA/)
+    assert.equal(calls.filter(c => c.label.startsWith('qa:C1')).length, 0)
+  }
+})
+await check('EW-5 to EW-9 the writer rules name the identity rule, the regression rule and the regression kind for a held behaviour', async () => {
+  await evalsRun([C1PR], () => withMeta(listOf('C1')), okCheck, { productReview: 'all' })
+  const lines = rulesOf(calls.find(c => c.label === 'evals:C1').prompt).split('\n').filter(l => l.startsWith('- '))
+  assert.ok(lines.some(l => ['identity', 'login', 'App', 'owner', 'fixture', 'differs'].every(w => l.includes(w)) && /not count/.test(l)))
+  assert.ok(lines.some(l => {
+    const S = l.split(/(?<=\.)\s/)
+    return S.some(t => t.includes('`regression`') && t.includes('expected result') && /in the test/.test(t)) && S.some(t => /compar/.test(t) && t.includes('default branch') && /skip/.test(t) && /refuse/.test(t))
+  }))
+  const refusal = lines.flatMap(l => l.split(/(?<=\.)\s/)).filter(t => t.includes('`quality bar`') && t.includes('refused') && t.includes('when it runs'))
+  assert.ok(refusal.length > 0 && refusal.every(t => t.includes('`regression`') && t.includes('default branch') && /runs the code/.test(t)))
+})
 await check('RE-17 SKILL.md says an evals stop of a PR with no built branch starts the PR again with the list, and resume is for a built branch', () => {
   const row = readFileSync(new URL('skills/pr-pipeline/SKILL.md', root), 'utf8').split('\n').find(l => l.startsWith('| `evals refused: <rule>`'))
   assert.ok(row)
