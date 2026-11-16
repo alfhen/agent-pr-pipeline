@@ -3956,15 +3956,11 @@ for (const [what, answer] of [['pass true with no checks', { pass: true, checks:
   })
 }
 const acc = (check, declared = true) => ({ declared, check })
-await check('untested: a declared acceptance test that is missing or failed gives a fix round and no sign-off', async () => {
-  const missing = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? { pass: true, headSha: 'sha-C1', checks: [chk('lint')], acceptance: acc('x') } : undefined)
-  assert.match(fixCalls('C1')[0].prompt, /acceptance test did not run/)
-  assert.deepEqual(missing.C1.history[0].blockersAndMajors, ['major [test]: acceptance test did not run'])
-  assert.equal(missing.C1.history[0].testPass, false)
+await check('untested: a declared acceptance test that failed gives a fix round and no sign-off', async () => {
   const failed = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? { pass: true, headSha: 'sha-C1', checks: [chk('lint'), chk('x', { pass: false, log: 'x exploded' })], acceptance: acc('x') } : undefined)
   const prompt = fixCalls('C1')[0].prompt
   assert.match(prompt, /x exploded/)
-  assert.doesNotMatch(prompt, /acceptance test did not run/)
+  assert.doesNotMatch(prompt, /\[test\]/)
   assert.equal(failed.C1.history[0].testPass, false)
 })
 await check('untested: the same list with declared false signs off, and a passed acceptance check signs off', async () => {
@@ -6408,4 +6404,113 @@ await check('RL-12 a land-fix run that throws keeps the resumed rows first', asy
   assert.equal(x.history[0].round, 1)
   assert.equal(x.history[1].round, 'minor1')
   assert.ok(x.history.slice(2).some(h => h.round === 'land1'), JSON.stringify(x.history))
+})
+const NAME_ITEM = 'acceptance test (name not matched)'
+const testCalls = id => calls.filter(c => c.label.startsWith(`test:${id}#`))
+await check('AN-2 a name that matches no check is an untested item, no finding and no second test call', async () => {
+  const x = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint')], acceptance: acc('x') }))
+  assert.equal(x.C1.ready, true)
+  assert.equal(fixCalls('C1').length, 0)
+  assert.equal(x.C1.history.length, 1)
+  assert.equal(x.C1.history[0].testPass, true)
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, [])
+  assert.equal(testCalls('C1').length, 1)
+  assert.deepEqual(x.C1.untested, [NAME_ITEM])
+  assert.equal(x.C1.landMode, 'person')
+  assert.equal(x.C1.landWhy, `untested: ${NAME_ITEM}`)
+  assert.ok(!x.C1.land.endsWith(':auto'))
+})
+await check('AN-3 on the verifier path a name that matches no check is an untested item and no fix round', async () => {
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ acceptance: acc('x') }) }))
+  assert.equal(x.C1.ready, true)
+  assert.equal(fixCalls('C1').length, 0)
+  assert.equal(x.C1.history[0].testPass, true)
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, [])
+  assert.equal(calls.filter(c => c.label.startsWith('verify:C1#')).length, 1)
+  assert.deepEqual(x.C1.untested, [NAME_ITEM])
+  assert.ok(!x.C1.land.endsWith(':auto'))
+})
+const anRounds = round2 => hooked(only1('C1'), (p, o) => {
+  if (o.label === 'test:C1#1') return { pass: true, headSha: 'sha-C1', checks: [chk('lint')], acceptance: acc('x') }
+  if (o.label === 'review:C1#1') return reviewOf([f('major', 'x')])
+  if (o.label === 'test:C1#2') return { pass: true, headSha: 'sha-C1', ...round2 }
+  return undefined
+})
+await check('AN-4 the untested item stays when a later round has declared false, no acceptance or another unmatched name', async () => {
+  for (const round2 of [
+    { checks: [chk('lint')], acceptance: acc('x', false) },
+    { checks: [chk('lint')] },
+    { checks: [chk('lint')], acceptance: acc('y') },
+  ]) {
+    const x = await anRounds(round2)
+    assert.equal(x.C1.ready, true)
+    assert.ok(x.C1.untested.includes(NAME_ITEM), JSON.stringify(round2))
+    assert.ok(!x.C1.land.endsWith(':auto'))
+  }
+})
+await check('AN-5 only a later matched check that passed clears the untested item', async () => {
+  const a = await anRounds({ checks: [chk('lint'), chk('x')], acceptance: acc('x') })
+  assert.deepEqual(a.C1.untested, [])
+  assert.equal(a.C1.landMode, 'auto')
+  const b = await anRounds({ checks: [chk('lint'), { name: 'x', pass: false, refused: true }], acceptance: acc('x') })
+  assert.ok(b.C1.untested.includes(NAME_ITEM) && b.C1.untested.includes('x (refused)'))
+  assert.ok(!b.C1.land.endsWith(':auto'))
+})
+await check('AN-6 a failed check goes to the fixer with no acceptance finding and the PR still gets the untested item', async () => {
+  const x = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint'), chk('unit', { pass: false, log: 'boom in unit' })], acceptance: acc('x') }))
+  assert.equal(fixCalls('C1').length, 1)
+  assert.match(fixCalls('C1')[0].prompt, /boom in unit/)
+  assert.doesNotMatch(fixCalls('C1')[0].prompt, /\[test\]/)
+  assert.deepEqual(x.C1.history[0].failingChecks, ['unit'])
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, [])
+  assert.equal(x.C1.ready, true)
+  assert.ok(x.C1.untested.includes(NAME_ITEM))
+})
+await check('AN-7 a name that matches no check starts no docs fix and does not drop the minor pass', async () => {
+  const d = await hooked(only1('G1'), tested('G1', { pass: true, headSha: 'docs-G1', checks: [chk('lint')], acceptance: acc('x') }, 'docs1'))
+  assert.equal(d.G1.ready, true, JSON.stringify([d.G1.reason, calls.filter(c => c.label.includes('G1')).map(c => c.label)]))
+  assert.ok(!calls.some(c => c.label === 'docsfix:G1#1' || c.label === 'test:G1#docs2'))
+  assert.ok(d.G1.untested.includes(NAME_ITEM))
+  const m = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#minor1' ? headed({ pass: true, headSha: 'sha-minor', checks: [{ name: 'lint', pass: true }], acceptance: acc('x') }) : passHook()(p, o))
+  assert.deepEqual(m.C1.minorPass, { ran: true, kept: true, fixed: ['rename helper'] })
+  assert.equal(m.C1.land.split(':')[1], 'sha-minor')
+  assert.ok(m.C1.untested.includes(NAME_ITEM))
+  assert.ok(!m.C1.land.endsWith(':auto'))
+})
+await check('AN-8 a name that matches no check after a bot answer or a land fix starts no fix round', async () => {
+  const b = await hooked(only1('C2'), tested('C2', { pass: true, checks: [chk('unit')], acceptance: acc('x') }, 'bots1'))
+  assert.equal(b.C2.ready, true)
+  assert.ok(!calls.some(c => c.label === 'fix:C2#bots1'))
+  assert.ok(b.C2.untested.includes(NAME_ITEM))
+  assert.equal(b.C2.landMode, 'person')
+  land.landOutput.add('LA')
+  try {
+    const l = await hooked([{ ...LANDS[0], branch: 'b-LA' }], (p, o) => o.label === 'test:LA#land1' ? { headSha: ABC, pass: true, checks: [chk('unit')], acceptance: acc('x') } : undefined)
+    assert.equal(l.LA.ready, true)
+    assert.ok(!calls.some(c => c.label === 'fix:LA#land1'))
+    assert.ok(l.LA.untested.includes(NAME_ITEM))
+  } finally { land.landOutput.delete('LA') }
+})
+await check('AN-9 a plan PR has no acceptance rule and gets no untested item for the name', async () => {
+  const x = await hooked(only1('P1'), cleanReview('P1', tested('P1', { pass: true, checks: [chk('lint')], acceptance: acc('x') })))
+  assert.equal(x.P1.ready, true)
+  assert.deepEqual(x.P1.history[0].blockersAndMajors, [])
+  assert.ok(!x.P1.untested.includes(NAME_ITEM))
+})
+await check('AN-10 the acceptance sentence of the tester and verifier prompts says the name is copied and never a sentence', async () => {
+  await hooked(only1('C1'), () => undefined)
+  const t = calls.find(c => c.label === 'test:C1#1').prompt
+  assert.match(t, /character for character/)
+  assert.match(t, /never a sentence/)
+  await hooked(withEvals('C1'), verifyHook({}))
+  const v = calls.find(c => c.label === 'verify:C1#1').prompt
+  assert.match(v, /character for character/)
+  assert.match(v, /never a sentence/)
+})
+await check('AN-11 step 2 of SKILL.md says a name that matches no check is an untested item and no finding', async () => {
+  const line = readFileSync(new URL('../skills/pr-pipeline/SKILL.md', import.meta.url), 'utf8').split('\n').find(l => l.startsWith('2. **Test from a clean clone.**'))
+  const sentence = line.split('. ').find(x => /matches no check/.test(x)) || ''
+  assert.match(sentence, /untested item/)
+  assert.match(sentence, /no finding|not a finding/)
+  assert.doesNotMatch(line, /acceptance test did not run/)
 })

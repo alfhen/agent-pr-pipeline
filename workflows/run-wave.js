@@ -217,7 +217,7 @@ const foldSameAs = (findings, sameAs) => {
 }
 // The only place that reads a tester's answer. The agent's own `pass` is ignored. A refused command did not run, so it is neither
 // a pass nor a failure, and a fixer cannot clear it. The acceptance rule needs the check named by `acceptance.check`; the workflow
-// never reads the plan entry or matches names to a test.
+// never reads the plan entry or matches names to a test. A name that matches no check is an untested item, never a finding: a fixer cannot fix a name.
 const testOutcome = (pr, test) => {
   const checks = test.checks || []
   const failed = checks.filter(c => !c.pass && !c.refused)
@@ -226,13 +226,13 @@ const testOutcome = (pr, test) => {
   const acc = test.acceptance
   const rule = !!(acc && acc.declared) && pr.kind !== 'plan'
   const named = rule ? checks.filter(c => c.name === acc.check) : []
-  const accMissing = rule && named.length === 0
-  const findings = accMissing ? [{ severity: 'major', title: 'acceptance test did not run', detail: `The tester ran checks, but none is named ${JSON.stringify(acc.check || '')}, the acceptance test from the plan entry. Make sure it exists and runs.` }] : []
+  const nameMissing = rule && named.length === 0
+  const namePassed = named.some(c => c.pass && !c.refused)
   const nothingRan = failed.length === 0 && passed.length === 0
   return {
-    failed, refused, nothingRan, findings, related: test.related,
+    failed, refused, nothingRan, nameMissing, namePassed, findings: [], related: test.related,
     notRun: refused.map(c => `${c.name} (refused)`),
-    pass: !nothingRan && failed.length === 0 && !accMissing,
+    pass: !nothingRan && failed.length === 0,
   }
 }
 const evalListOf = pr => Array.isArray(pr.evals) ? pr.evals : pr.evals && Array.isArray(pr.evals.evals) ? pr.evals.evals : []
@@ -317,12 +317,19 @@ const verifyOutcome = (pr, verify) => {
   return { ...base, ...(breakCheck ? { breakCheck } : {}), ...(testsOnly ? { testsOnly: true } : {}), findings: base.findings.concat(findings), pass: base.pass && findings.length === 0, evals: { passed, failed, ci }, breakFailed }
 }
 const checkOutcome = (pr, result) => verifies(pr) ? verifyOutcome(pr, result) : testOutcome(pr, result)
-// Per PR: the refused checks of the last test round, the QA scenarios that did not run, the minor pass state no agent could confirm, and the evals a CI check covers.
+// Per PR: the refused checks of the last test round, the acceptance name that matched no check, the QA scenarios that did not run, the minor pass state no agent could confirm, and the evals a CI check covers.
 // Every test round replaces `checks`; only a verifier round replaces `evals`, so a later tester round cannot clear a `ci` item; `pass` is never replaced.
+// `name` is not replaced by a test round: only an answer whose acceptance check names a passed check clears it.
 const untestedState = {}
-const untestedFor = pr => untestedState[pr.id] || (untestedState[pr.id] = { checks: [], qa: [], pass: [], evals: [] })
-const noteTest = (pr, outcome) => { untestedFor(pr).checks = outcome.notRun }
-const untestedOf = pr => { const u = untestedFor(pr); return u.checks.concat(u.qa, u.pass, u.evals) }
+const untestedFor = pr => untestedState[pr.id] || (untestedState[pr.id] = { checks: [], qa: [], pass: [], evals: [], name: false })
+const NAME_UNMATCHED = 'acceptance test (name not matched)'
+const noteTest = (pr, outcome) => {
+  const u = untestedFor(pr)
+  u.checks = outcome.notRun
+  if (outcome.nameMissing) u.name = true
+  else if (outcome.namePassed) u.name = false
+}
+const untestedOf = pr => { const u = untestedFor(pr); return u.checks.concat(u.name ? [NAME_UNMATCHED] : [], u.qa, u.pass, u.evals) }
 const themesOf = blocking => [...new Set(blocking.map(f => f.theme).filter(Boolean))]
 const historyRow = (round, outcome, blocking, conflicts) => ({
   round, testPass: outcome.pass, failingChecks: outcome.failed.map(c => c.name), blockersAndMajors: blocking.map(findingLine),
@@ -800,7 +807,7 @@ ${JSON.stringify({ evals: list, ...meta }, null, 1)}${coverage ? coverageText(co
 
 const relatedStep = RELATED_TESTS ? `3. Then run the e2e and docs test files that import or name the modules the PR touches and are not in that list. Find them with a search (\`git grep -l -E\` for each touched module's file name and exported names, over every tracked test file in the repo, such as \`*.test.*\` and \`*.spec.*\` files in any folder, and the paths the test config's projects include, docs folders too). Run at most ${RELATED_MAX}, the files that import a touched module directly first, and name the files you left out in the check, because CI runs them. Never run the whole suite. For each file, read the repo's test config and package scripts to find the command and test project that own it (for example \`--project <name>\` in a vitest workspace), also when that project is left out of the default test command, and name the command in the check. Do not use \`${E2E_COMMAND}\` for a file outside its project. Report a file or project you could not select, or one the environment cannot run (for example a missing browser), as a check with \`refused\`: true, never as passed or failed. Name each extra file in the check, and say which test projects you ran.\n` : ''
 const refusedText = '`refused`: true for a command that a permission check denied, or for a file or project you could not run, so it did not run. A check that fails because a port is in use runs once more. Report the second run as it ended, and use `refused`: true only when the port is still in use. For the check of an eval, as an exception to the `ci` rule, a port that is still in use on the second run counts as a command that did not run here, like a refused command: result `ci`, with `ciCheck` the name of a check that covers it'
-const acceptanceText = '`acceptance`: `declared` is true when the entry has an Acceptance line that names a runnable test, and `check` is the name of the check that runs it'
+const acceptanceText = '`acceptance`: `declared` is true when the entry has an Acceptance line that names a runnable test, and `check` is the name of one of your own checks that runs it, copied character for character, never a sentence'
 const relatedText = RELATED_TESTS ? ', and `related`: the files you ran in step 3 as `files`, the test projects you ran them in as `projects`, and the files the limit left out as `leftOut` (empty lists when the search found nothing)' : ''
 const returnChecks = `pass, headSha, one entry per check with the failing log excerpt (${refusedText}), ${acceptanceText}${relatedText}`
 const testPrompt = (pr, round) => `${ctx(pr)}
@@ -1679,7 +1686,7 @@ async function minorPass(pr, signedSha, history, minors) {
     Object.assign(row, historyRow('minor1', outcome, split.blocking, split.conflicts))
     log(`${pr.id} minor check: tests ${outcome.pass ? 'pass' : 'fail'}, ${split.blocking.length} blockers/majors`)
     if (outcome.nothingRan) why = 'tests did not run'
-    else if (!outcome.pass) why = `tests failed: ${outcome.failed.map(c => c.name).join(', ') || 'acceptance test did not run'}`
+    else if (!outcome.pass) why = `tests failed: ${outcome.failed.map(c => c.name).join(', ')}`
     else if (split.blocking.length) why = `the check found ${split.blocking.length} blockers or majors`
     else noteTest(pr, outcome)
   }
