@@ -14,7 +14,7 @@ Read the goals document, the plan entry (or the quick-fix brief) and the code th
 
 For each eval return `id` (`<PR id>-<n>`; keep an id the entry gives), `kind`, `statement` and `check`, and `test` only when the entry names a test.
 
-- `kind` is one of `behaviour`, `error path`, `regression`, `quality bar`, `size limit`, `time bound`, `reference`.
+- `kind` is one of `behaviour`, `error path`, `regression`, `quality bar`, `size limit`, `time bound`, `reference`. An eval whose check only reads the text of a file has the kind `quality bar`: a search in a file, a sentence of a doc, a line of a changelog, an export line or the text of a test file. The kinds `behaviour` and `error path` are for evals whose check runs the code or a test. A text-only eval keeps the kind `quality bar` also when the text already holds on the default branch. An item of the entry about what the code does is covered only by an eval of kind `behaviour`, `error path` or `regression` whose check runs the code or the test. A list in which a behaviour item has only a text-only eval is refused.
 - `statement` is one plain sentence a person can read. It says what must be true, not how it is built.
 - `check` is the command or the steps, with the expected result. It must be able to fail: say what it prints or returns when the feature is missing.
 - Cover each behaviour, each error path, each Acceptance line and each QA line of the entry. Give a bug that the entry fixes a `regression` eval.
@@ -24,7 +24,7 @@ For each eval return `id` (`<PR id>-<n>`; keep an id the entry gives), `kind`, `
 - A check that names a helper of a test file must be able to run at the place where the entry puts the new test: the helper is defined before that place.
 - Every eval must be checkable from a clean clone of the branch, before the PR is open. Do not write an eval for the PR body or title, a `Closes` line, labels, bot comments or approvals, CI results, a merge, a release, or any other pipeline step after the build. When the notes name one of these, leave it out: the notes still reach the opener, and a verifier cannot check it. An eval for code that reads pull request text names that code in its statement and puts the fixture text in its check.
 - Keep the list small: aim for 3 to 6 evals for each issue the entry closes (an entry that closes no issue counts as one issue), and at most 20 evals for a batch PR (a PR that closes more than one issue).
-- A `quality bar` eval needs its own check that can fail. Do not write one that states a general rule, such as "the code follows the house style".
+- A `quality bar` eval needs its own check that can fail. Do not write one that states a general rule, such as "the code follows the house style". A `quality bar` eval whose statement is about what the code does when it runs is refused: its kind is `behaviour` or `error path`, and its check runs the code or a test.
 - The task prompt carries the rules the evals check applies to the list. Keep them.
 - Do not write an eval for what the entry does not ask for. Do not weaken a row of the entry's table.
 
