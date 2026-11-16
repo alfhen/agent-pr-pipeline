@@ -43,7 +43,7 @@ Updates: `claude plugin update agent-pr-pipeline@agent-pr-pipeline`. A new versi
 
 Run `/agent-pr-pipeline:write-goals`. It asks you for the product's goals, non-goals and users, writes the goals document (for example `docs/goals.md`) and checks it. Merge it in its own PR. The pipeline refuses to start without it.
 
-Then copy `templates/pipeline.json` to `.github/pipeline.json` and add the paths the repo wants gated. Without the file, `gate-files.sh` uses the plugin's default gates, and `release.sh` refuses because `autoRelease` is not true. `knownFlakes` in the same file lists check names that may fail for reasons outside a PR. `land-wave.sh` reruns the failed jobs of only those checks, once. `ciChecks` (default `["ci"]`) lists the CI checks that may stand in for an eval the verifier could not run.
+Then copy `templates/pipeline.json` to `.github/pipeline.json` and add the paths the repo wants gated. The template already gates the CodeRabbit settings files (`.coderabbit.yaml`, `.coderabbit.yml`, `.coderabbit.config.ts`), because a PR can change how the review bot judges it. Keep them in the list. Without the file, `gate-files.sh` uses the plugin's default gates, and `release.sh` refuses because `autoRelease` is not true. `knownFlakes` in the same file lists check names that may fail for reasons outside a PR. `land-wave.sh` reruns the failed jobs of only those checks, once. `ciChecks` (default `["ci"]`) lists the CI checks that may stand in for an eval the verifier could not run.
 
 ## Use
 

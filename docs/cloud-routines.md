@@ -259,7 +259,7 @@ Summary: compute the spec, let the maintainer save the setup script, then create
 
 Do these steps in order. Stay at stage 0 until the first compare is clean.
 
-1. Add `.github/pipeline.json` with a `routine` block, as in the example above.
+1. Add `.github/pipeline.json` with a `routine` block, as in the example above. In its `gates`, add `.coderabbit.yaml`, `.coderabbit.yml` and `.coderabbit.config.ts`. The fixed floor does not hold them, so the file holds them only when you add them.
 2. Add `.claude/worktrees/` to `.gitignore`. A built-in Stop hook asks a session to commit untracked files, and that folder triggers it every turn.
 3. Put no maintainer token in repo secrets.
 4. Make or update the environment and its setup script.
@@ -271,7 +271,7 @@ Do these steps in order. Stay at stage 0 until the first compare is clean.
 
 Nothing in `alfhen/tagreeve` changes until the maintainer does these steps there. Tagreeve is public and has a large backlog, and strangers file issues, so the untrusted path is the normal case.
 
-- Add `.github/pipeline.json` with `routine.pipelineVersion`, `trustedAuthors`, `triageFrom` above the newest issue or PR number of the repo (read it with `gh api "repos/alfhen/tagreeve/issues?state=all&per_page=1"`), and `typeLabels` with `feat` to `enhancement` and `docs` to `documentation`.
+- Add `.github/pipeline.json` with the three CodeRabbit settings names (`.coderabbit.yaml`, `.coderabbit.yml`, `.coderabbit.config.ts`) in `gates`, and `routine.pipelineVersion`, `trustedAuthors`, `triageFrom` above the newest issue or PR number of the repo (read it with `gh api "repos/alfhen/tagreeve/issues?state=all&per_page=1"`), and `typeLabels` with `feat` to `enhancement` and `docs` to `documentation`.
 - In `waveArgs`: `checks` `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm typecheck`, `pnpm test`; `e2eCommand` `pnpm exec vitest run --project e2e {files}`; `docsBuild` `pnpm docs:build`.
 - Add `.claude/worktrees/` to `.gitignore`.
 - Use an environment whose setup script is the printed part plus pnpm. Its network level must allow npm and the Playwright browser download. Trusted does not list the download; Custom does. Otherwise run no e2e in waves, because CI runs it: set `relatedTests` to false in `waveArgs`, and make `e2ePattern` match nothing.

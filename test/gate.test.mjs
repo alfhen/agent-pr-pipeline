@@ -125,6 +125,32 @@ test('gate: with no settings file the plugin template gates apply', () => {
   assert.equal(r.code, 0)
 })
 
+test('gate: with no settings file the template holds the CodeRabbit settings files', () => {
+  for (const name of ['.coderabbit.yaml', '.coderabbit.yml', '.coderabbit.config.ts']) {
+    const s = setup({ files: null, settings: 'missing' })
+    put(s.fx, `${PULL}__files.json`, [{ filename: name, status: 'modified' }])
+    const r = run(s, 'gate-files.sh', ['o/r', '7'])
+    assert.equal(r.code, 1, r.out)
+    assert.ok(r.out.includes(`GATED #7: ${name}`), r.out)
+  }
+  const ok = setup({ files: null, settings: 'missing' })
+  put(ok.fx, `${PULL}__files.json`, [{ filename: 'src/a.js', status: 'modified' }])
+  const r = run(ok, 'gate-files.sh', ['o/r', '7'])
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /not gated #7/)
+})
+
+test('rules text: step 8 and step 9 name the request and the fourth way, in both rule files', () => {
+  const line = (f, n) => readFileSync(join(root, f), 'utf8').split('\n').find((l) => l.startsWith(`${n}. **`))
+  const a8 = line('AGENTS.md', 8); const a9 = line('AGENTS.md', 9)
+  assert.equal(a8, line('templates/AGENTS-section.md', 8))
+  assert.equal(a9, line('templates/AGENTS-section.md', 9))
+  const merged = a9.split('. ').find((x) => x.startsWith('A PR is merged when'))
+  for (const re of [/CI passes on the head commit/, /approved/, /answered/, /raised nothing new on the head/, /completed a clean review of the head/, /asked for after the push/]) assert.match(merged, re)
+  assert.match(a8, /reviews only on request/)
+  assert.match(a8, /land step/)
+})
+
 test('gate: no settings file and no template fails closed', () => {
   const s = setup({ files: 'clean', settings: 'missing', scripts: true })
   const r = run(s, 'gate-files.sh', ['o/r', '7'])
