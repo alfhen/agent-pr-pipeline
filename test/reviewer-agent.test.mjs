@@ -44,3 +44,28 @@ test('reviewer has the plan PR checklist for every round', () => {
   assert.match(body, /what each script runner can execute/);
   assert.match(body, /what ends each state/);
 });
+
+test('reviewer asks for one finding with the rule and a list found by a run', () => {
+  assert.match(body, /complete set that only a run of the code or of the tests can give/);
+  assert.match(body, /write one finding that states the rule/);
+  assert.match(body, /find the set by a run and to list it in the message of the commit that applies the rule/);
+  assert.match(body, /every form of input that a parser must refuse/);
+  assert.match(body, /every test whose expected result a change alters/);
+});
+
+test('reviewer checks the commit messages in a later round and ranks a missing member as a minor about the list', () => {
+  assert.match(body, /In a later round, read the commit messages of the branch \(git log\)/);
+  assert.match(body, /that the list is there and that the rule was applied/);
+  assert.match(body, /lacks is a minor about the list only/);
+});
+
+test('reviewer keeps the rank for code that breaks the rule and ranks a wrong rule blocker or major', () => {
+  assert.match(body, /the finding is about the code and keeps the rank of the rank list: at least major, never a minor, on a path that real runs take/);
+  assert.match(body, /shows the rule itself is wrong is ranked blocker or major and says why the rule is wrong/);
+});
+
+test('reviewer does not rank the completeness of a list in a plan entry', () => {
+  const sec = body.slice(body.indexOf('## Plan PRs'), body.indexOf('## Rules'));
+  assert.match(sec, /names the likely members and the rule: do not rank the completeness of that list as blocker or major/);
+  assert.match(sec, /A statement of the entry that a member breaks keeps the rank of the rank list/);
+});

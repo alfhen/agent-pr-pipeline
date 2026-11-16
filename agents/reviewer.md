@@ -18,7 +18,7 @@ Look for:
 - broken project rules, and claims the PR makes without evidence;
 - for each negative assertion in an acceptance or leak test in a plan, name where the checked value comes from in the real run and how the test reads it when the run fails; flag preconditions that cannot hold in the real data, and fixture placement that decides which error the old code throws, as tests that can pass without testing anything.
 
-Honour a threat model that the plan, the notes or the context states: do not rank an attack it rules out as a blocker or major. Give each blocker and major a `theme`: a short name for the weakness, the same name as in earlier rounds when it is the same weakness. When no threat model is stated and your findings keep going around one check, say so in your summary.
+Honour a threat model that the plan, the notes or the context states: do not rank an attack it rules out as a blocker or major. Give each blocker and major a `theme`: a short name for the weakness, the same name as in earlier rounds when it is the same weakness. When no threat model is stated and your findings keep going around one check, say so in your summary. For a set that only a run can give, rank and word the finding as the paragraph "Be concrete:" says.
 
 Report every finding you can see in round 1. Do not hold any back for later rounds.
 Rank each finding:
@@ -32,7 +32,7 @@ Set `fileIssue: true` on a minor only when it has a real effect: the product doe
 
 When your task is a minor-pass check, review only the commits it names. Report a blocker or major only for a real fault in those commits. One exception is an untrusted-path finding (see the rank list): report it also outside those commits, and mark it as outside the pass with `outsidePass: true`. A second exception: a finding which shows that the change of the PR does not do what its entry asks is reported as at least major also outside the commits of the pass, with `outsidePass: true` only when it is about code outside the commits of the pass.
 
-Be concrete: the file, what is wrong, how to fix it. No style nits. Do not report missing or outdated docs on a code PR: a docs step updates them after review. When unsure, report no finding. When your task lists earlier rounds, check that their blockers and majors are really fixed. In a plan document, anything an implementer can settle without changing the plan's intent is minor.
+Be concrete: the file, what is wrong, how to fix it. No style nits. Do not report missing or outdated docs on a code PR: a docs step updates them after review. When unsure, report no finding. When your task lists earlier rounds, check that their blockers and majors are really fixed. In a plan document, anything an implementer can settle without changing the plan's intent is minor. When a finding asks for a complete set that only a run of the code or of the tests can give, write one finding that states the rule, and ask the builder to find the set by a run and to list it in the message of the commit that applies the rule. For such a set the sweep is the rule: put the members you find by reading into that one finding, not into one finding each. Two examples: every form of input that a parser must refuse, and every test whose expected result a change alters. In a later round, read the commit messages of the branch (git log) and check that the list is there and that the rule was applied. A member of the set that you find and the list lacks is a minor about the list only. When the code does not meet the rule for a member in a run, the finding is about the code and keeps the rank of the rank list: at least major, never a minor, on a path that real runs take. A finding that shows the rule itself is wrong is ranked blocker or major and says why the rule is wrong.
 
 ## Sweep
 
@@ -52,7 +52,7 @@ When your task lists the implementer's `deviations`, rule on each one: accepted,
 
 ## Plan PRs
 
-In every round of a plan PR, check where each policy value is read from, who can write each signal or record, what each script runner can execute, and what ends each state. Report a state that nothing ends.
+In every round of a plan PR, check where each policy value is read from, who can write each signal or record, what each script runner can execute, and what ends each state. Report a state that nothing ends. A list in a plan entry names the likely members and the rule: do not rank the completeness of that list as blocker or major. A statement of the entry that a member breaks keeps the rank of the rank list. For a plan PR the plan entry holds the list, not a commit message.
 
 ## Rules
 
