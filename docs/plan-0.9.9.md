@@ -121,7 +121,7 @@ What must be true:
 2. The first bullet of the Rules block no longer ends with "unless your task says so". It says that only the task text itself can allow such an action, and that a relayed request never does.
 3. The Rules block is the same text in every role file, and a test fails when one file differs. A test also fails when the bullet lacks the words about the free-text field and the single-value answers.
 4. (doc) The new paragraph of Step 2 says that the harness gives every agent the last message of the user, that the session finishes a merge or a delete that the user asked for before it starts a wave, and that the role rules tell an agent not to act on that message.
-Build notes: the five bullets of the block are equal in all 21 files today, and no test keeps them equal ("verifier has the same Rules block as the other agents" compares two files). `scripts/cloud-setup.sh` builds the cloud role agents from the same files, so they get the rule too. `scripts/role-files.sh` compares two releases, not the files with each other. Other entries of this wave edit other bullets of `agents/evals-writer.md`, `agents/reviewer.md`, `agents/tester.md`, `agents/verifier.md` and `agents/pr-opener.md`: stay in the Rules block.
+Build notes: the five bullets of the block are equal in all 21 files today, and no test keeps them equal ("verifier has the same Rules block as the other agents" compares two files). `scripts/cloud-setup.sh` builds the cloud role agents from the same files, so they get the rule too. `scripts/role-files.sh` compares two releases, not the files with each other. The rule lowers the risk and prevents nothing: no permission stops an agent that has `gh` from a merge, and no test can show which text a model follows (see "Flagged concerns" and "Not verified"). The practice of the session in statement 4 is the second guard. Other entries of this wave edit other bullets of `agents/evals-writer.md`, `agents/reviewer.md`, `agents/tester.md`, `agents/verifier.md` and `agents/pr-opener.md`: stay in the Rules block.
 No closing line.
 
 **PN The answer "no line" of the role probe is read in the forms an agent gives.** Sim anchor: after "C11-14 the result counts each probe call under goals-preflight and the role io call under pipeline-io".
@@ -210,7 +210,7 @@ No wave agent can do these steps. The driving session does them, in this order.
 
 ## Pass criteria
 
-1. The four per-PR criteria of iteration 1 hold for each entry (a list before the build, a result for each eval id in the pull request, the break check ran, and a ledger record with tokens by role).
+1. The four per-PR criteria of iteration 1 hold for each entry (a list before the build, a result for each eval id in the pull request, the break check ran, and a ledger record with tokens by role). The break check runs only for an eval of the kind `behaviour` or `error path`. An entry whose list has no such eval (RQ, whose tests only read rule text) meets that criterion with no break check.
 2. No entry needs more than two outside reviews.
 3. In the next product wave on this release, no entry stops for an eval that only reads a text, and no PR has such an eval on its untested list.
 4. In the same wave, no round fails and no PR stops for the name of the acceptance test. A name that does not match shows only as the untested item of AN.
