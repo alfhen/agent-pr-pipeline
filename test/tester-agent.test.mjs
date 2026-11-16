@@ -30,6 +30,8 @@ test('tester reports a refused command as refused and never works around it', ()
 test('tester fills acceptance honestly and reports the acceptance test as its own check', () => {
   assert.match(body, /Report the acceptance test as a check of its own/);
   assert.match(body, /Fill `acceptance` honestly: `declared` is true only when/);
+  assert.match(body, /character for character/);
+  assert.match(body, /never a sentence/);
 });
 
 test('tester also runs the e2e and docs tests that name the touched modules and says which projects ran', () => {

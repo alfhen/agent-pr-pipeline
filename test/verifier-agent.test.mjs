@@ -28,6 +28,8 @@ test('verifier has the tester related-tests and acceptance rules', () => {
   assert.match(body, /import or name the modules the PR touches/);
   assert.match(body, /at most 10 files/);
   assert.match(body, /`declared` is true only when the plan entry has an Acceptance line that names a runnable test/);
+  assert.match(body, /character for character/);
+  assert.match(body, /never a sentence/);
 });
 
 test('template has ciChecks', () => {
