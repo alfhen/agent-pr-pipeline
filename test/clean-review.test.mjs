@@ -466,3 +466,53 @@ test('rule A reads the rank of an inline comment only from its start', () => {
   refused(run(rank('<!-- coderabbit-ai-generated:v1 -->\n\nSome header\n\n**Minor**\n\ntext')), RULE_A)
   merged(run(pr793()))
 })
+
+const NOREV_PIC = '<picture><img src="https://storage.googleapis.com/coderabbit_public_assets/review-comment-icons-v1/file-minus.svg" width="16" height="16" align="absmiddle" alt=""></picture>'
+const noRev = (n, items) => `<details>\n<summary>${NOREV_PIC} Files with no reviewable changes: ${n}</summary>\n<dl>\n<dd>\n<br>\n\n${items.map((i) => '* ' + i).join('\n')}\n\n</dd>\n</dl>\n</details>\n\n`
+const AVAIL = '**Included review availability:**'
+const atAvail = (blk) => (b) => b.replace(AVAIL, blk + AVAIL)
+const with800 = (f) => run(mut(pr800, (fx) => { botReview(fx).body = f(botReview(fx).body) }))
+const OUTSIDE_FRAME = /has text outside the frame of a review, which rule A does not read/
+
+test('rule A reads the block "Files with no reviewable changes" once, after Files selected, as the frame', () => {
+  merged(run(pr800()))
+  for (const x of [with800(atAvail(noRev(1, ['pnpm-lock.yaml']))), with800(atAvail(noRev(2, ['pnpm-lock.yaml', 'apps/web/pnpm-workspace.yaml'])))]) {
+    merged(x); assert.doesNotMatch(x.out, OUTSIDE_FRAME)
+  }
+})
+
+test('rule A refuses the block "Files with no reviewable changes" when its count differs from its items', () => {
+  merged(with800(atAvail(noRev(1, ['pnpm-lock.yaml']))))
+  for (const x of [with800(atAvail(noRev(2, ['pnpm-lock.yaml']))), with800(atAvail(noRev(1, ['pnpm-lock.yaml', 'apps/web/pnpm-workspace.yaml'])))]) {
+    refused(x, RULE_A); assert.match(x.why, OUTSIDE_FRAME)
+  }
+})
+
+test('rule A refuses the block "Files with no reviewable changes" twice or at another place', () => {
+  merged(with800(atAvail(noRev(1, ['a.yaml']))))
+  const bad = [
+    atAvail(noRev(1, ['a.yaml']) + noRev(1, ['b.yaml'])),
+    (b) => { const i = b.lastIndexOf('<details>', b.indexOf('Files selected')); return b.slice(0, i) + noRev(1, ['a.yaml']) + b.slice(i) },
+    (b) => b.replace(/(Included review availability:\*\*[^\n]*\n)/, '$1\n' + noRev(1, ['a.yaml'])),
+    (b) => b.replace('</h6>', '</h6>\n\n' + noRev(1, ['a.yaml'])),
+    (b) => b.replace(/(\*\*Actionable comments posted: 1\*\*\s*)/, '$1' + noRev(1, ['a.yaml'])),
+  ]
+  for (const f of bad) { const x = with800(f); refused(x, RULE_A); assert.match(x.why, OUTSIDE_FRAME) }
+})
+
+test('rule A refuses an item of the block "Files with no reviewable changes" that is not one path', () => {
+  merged(with800(atAvail(noRev(1, ['pnpm-lock.yaml']))))
+  for (const item of ['pnpm lock.yaml', 'Critical data loss in foo.js line 10', '`pnpm-lock.yaml`', 'foo.js:10', '<b>foo.js</b>', 'pnpm-lock.yaml\nMajor: foo.js loses data']) {
+    const x = with800(atAvail(noRev(1, [item]))); refused(x, RULE_A); assert.match(x.why, OUTSIDE_FRAME)
+  }
+})
+
+test('rule A still refuses other blocks and a Files selected item without backticks', () => {
+  const unknown = [
+    atAvail(noRev(1, ['a.yaml']).replace('Files with no reviewable changes', 'Files ignored due to path filters')),
+    atAvail('<details>\n<summary>Potential issues (1)</summary>\n<dl>\n<dd>\n<br>\n\n* foo.js\n\n</dd>\n</dl>\n</details>\n\n'),
+    (b) => b.replace('* `README.md`', '* README.md'),
+  ]
+  for (const f of unknown) { const x = with800(f); refused(x, RULE_A); assert.match(x.why, OUTSIDE_FRAME) }
+  for (const b of [pr793, pr800, pr801]) merged(run(b()))
+})
