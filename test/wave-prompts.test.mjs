@@ -226,3 +226,10 @@ test('the default text of bots names the two exact logins and no sentence says l
   assert.ok(line.includes('coderabbitai[bot]') && line.includes('gitar-bot[bot]'), line)
   assert.equal(src.includes('login contains'), false)
 })
+
+test('the plan text of the open prompt is only for a plan PR, and a quick fix keeps its closing line', () => {
+  const i = src.indexOf('const openPrompt =')
+  const open = src.slice(i, src.indexOf('const bodyPrompt =', i))
+  assert.match(open, /\$\{pr\.kind === 'plan' \? ' The text of a new plan PR holds no closing keyword/)
+  assert.match(open, /\$\{pr\.quick \? ` Put "Closes #\$\{pr\.quick\.issue\}" on its own line in the body\.` : ''\}/)
+})
