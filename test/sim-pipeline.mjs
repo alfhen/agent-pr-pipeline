@@ -5990,6 +5990,7 @@ await check('TK-1 the shared rules say that an eval whose check only reads a tex
   assert.ok(has('quality bar', 'refused', 'behaviour', 'error path', 'runs'))
   assert.ok(has('item', 'behaviour', 'error path', 'regression', 'runs'))
   assert.ok(has('test file', 'quality bar', 'item'))
+  assert.ok(has('runs', 'test', 'only reads', 'quality bar'))
   assert.ok(S.some(t => /refuse/.test(t) && t.includes('item')))
   assert.ok(promptOf('evalsarch:C1#1').includes(rule))
   assert.ok(promptOf('evalsproduct:C1#1').includes(rule))
@@ -5997,6 +5998,7 @@ await check('TK-1 the shared rules say that an eval whose check only reads a tex
 await check('TK-5 the review prompt asks for an eval of kind quality bar when the check only reads a text', async () => {
   await hooked(withEvals('C1'), () => undefined)
   assert.ok(promptOf('review:C1#1').split(/(?<=\.)\s/).some(t => t.includes('only reads') && t.includes('quality bar')))
+  assert.ok(promptOf('review:C1#1').split(/(?<=\.)\s/).some(t => t.includes('runs the code') && t.includes('blocker')))
 })
 await check('TK-6 the Evals bullet of SKILL.md names the text-only rule', async () => {
   const md = readFileSync(new URL('skills/pr-pipeline/SKILL.md', root), 'utf8')
