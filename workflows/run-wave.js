@@ -2330,8 +2330,8 @@ async function checkRoles() {
       const got = await call('roleProbe', null, roleProbePrompt(), label, { schema: ROLE_LINE })
       if (!got || typeof got.version !== 'string') return null
       // The prompt shows the two words in quotes, so one pair of quotes or backticks comes off first.
-      const v = got.version.trim().replace(/^(["`])(.*)\1$/s, '$2').trim().replace(/\.$/, '')
-      return /^no line(?!\w)/i.test(v) ? NO_LINE : v
+      const v = got.version.trim().replace(/\.$/, '').replace(/^(["`])(.*)\1$/s, '$2').trim().replace(/\.$/, '')
+      return /^no line/i.test(v) ? NO_LINE : v
     }
     const first = await probe('roles:wave')
     if (first === VERSION) return {}
