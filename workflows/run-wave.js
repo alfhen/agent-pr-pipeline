@@ -1122,7 +1122,7 @@ Return ok, exists, the two counts, and missing: a short list of what is absent (
 
 // The probe has no version and no folder in it: the answer must come from the role file the session loaded.
 const roleProbePrompt = () => `Task: say which release your own instructions name.
-Your instructions hold one line of the form "Role files of release <version>.". Return that version in version. If your instructions hold no such line, return the text no line in version.
+Your instructions hold one line of the form "Role files of release <version>.". Return that version in version. If your instructions hold no such line, return the two words "no line" in version. Then version holds only those two words and nothing else.
 Run no command and read no file. Answer from your own instructions only.`
 
 const triagePrompt = pr => `${ctx(pr)}
@@ -2337,8 +2337,9 @@ async function checkRoles() {
     const probe = async label => {
       const got = await call('roleProbe', null, roleProbePrompt(), label, { schema: ROLE_LINE })
       if (!got || typeof got.version !== 'string') return null
-      const v = got.version.trim().replace(/\.$/, '')
-      return v.toLowerCase() === NO_LINE ? NO_LINE : v
+      // The prompt shows the two words in quotes, so a trailing dot and one pair of quotes or backticks come off before the test.
+      const v = got.version.trim().replace(/\.$/, '').replace(/^(["`])(.*)\1$/s, '$2').trim().replace(/\.$/, '')
+      return /^no line/i.test(v) ? NO_LINE : v
     }
     const first = await probe('roles:wave')
     if (first === VERSION) return {}
