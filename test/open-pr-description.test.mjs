@@ -25,3 +25,44 @@ test('step 9 names the Minor fixes lines and the Tests only removal after a bot 
   assert.ok(step.some(s => /Minor fixes/.test(s) && /\badds?\b/i.test(s)))
   assert.ok(step.some(s => /Tests only:/.test(s) && /bot/i.test(s) && /land fix/i.test(s)))
 })
+
+const planOpenPrompt = async notes => {
+  const src = read('workflows/run-wave.js').replace('export const meta', 'const meta')
+  const run = new Function('args', 'agent', 'parallel', 'log', `return (async () => { ${src} })()`)
+  const prompts = {}
+  const agent = async (prompt, o) => {
+    prompts[o.label] = prompt
+    if (o.label.startsWith('preflight')) return { ok: true, exists: true, goals: 1, nonGoals: 1, missing: [] }
+    if (o.label.startsWith('implement')) return { pushed: true, branch: 'b', summary: 's', acceptanceTestPassed: true }
+    if (o.label.startsWith('review:')) return { summary: 's', findings: [] }
+    if (o.label.startsWith('test:')) return { pass: true, headSha: 'sha', checks: [{ name: 'lint', pass: true }] }
+    if (o.label.startsWith('arch:')) return { verdict: 'fits', summary: 's', newConcepts: [] }
+    if (o.label.startsWith('product')) return { verdict: 'aligned', summary: 's', entries: [] }
+    if (o.label.startsWith('open:')) return { prNumber: 7, prUrl: 'u', issuesCreated: [] }
+    return null
+  }
+  const args = { repo: 'o/r', tmp: '/x', plan: 'docs/p.md', architecture: 'docs/design.md', goals: 'docs/goals.md', feedback: false, cleanup: false, prs: [{ id: 'P1', title: 't', branch: 'plan/a', kind: 'plan', notes }] }
+  await run(args, agent, async thunks => Promise.all(thunks.map(t => t().catch(() => null))), () => {})
+  return prompts['open:P1']
+}
+
+test('a plan PR gets no closing line unless the notes tell the opener to put it in, in the open prompt and the opener role', async () => {
+  for (const notes of ['entry TK closes #816 when it merges', 'PR body: Closes #45 on its own line.']) {
+    const p = await planOpenPrompt(notes)
+    assert.ok(p, 'the open prompt was built')
+    assert.ok(p.includes(notes) && p.includes('Kind: plan'))
+    const step = p.split('\n').find(l => l.startsWith('2. PR'))
+    assert.match(step, /keep all of it, including every `Closes #N` line/)
+    const marker = 'The rest of this step describes the body of a new PR.'
+    const part = sentences(step.slice(step.indexOf(marker) + marker.length + 1))
+    assert.ok(part.some(s => /closing keyword/i.test(s) && /issue number/i.test(s) && /\bunless\b/i.test(s) && /\bnotes\b/i.test(s)))
+    assert.ok(part.some(s => /\bnames? (?:an|the) issues?\b/i.test(s) && /\b(?:not|no)\b/i.test(s) && /instruction|exception/i.test(s)))
+    assert.ok(part.some(s => /\bplan\b/i.test(s) && /\bentry\b/i.test(s) && /\bcop(?:y|ied)\b/i.test(s) && /\b(?:not|never)\b/i.test(s)))
+    assert.ok(part.some(s => /\bnumber\b/i.test(s) && /\bclose\b/i.test(s) && /\bfix\b/i.test(s) && /\bresolve\b/i.test(s) && /any form/i.test(s)))
+  }
+  const line = sentences(read('agents/pr-opener.md').split('\n').find(l => l.startsWith('- Open a ready PR')))
+  assert.ok(line.some(s => /\bplan\b/i.test(s) && /closing keyword/i.test(s) && /\bunless\b/i.test(s) && /\bnotes\b/i.test(s)))
+  assert.ok(line.some(s => /\bnames? (?:an|the) issues?\b/i.test(s) && /\b(?:not|no)\b/i.test(s)))
+  assert.ok(line.some(s => /\bentry\b/i.test(s) && /\bcop(?:y|ied)\b/i.test(s) && /\b(?:not|never)\b/i.test(s)))
+  assert.ok(line.some(s => /\bclose\b/i.test(s) && /\bfix\b/i.test(s) && /\bresolve\b/i.test(s)))
+})
