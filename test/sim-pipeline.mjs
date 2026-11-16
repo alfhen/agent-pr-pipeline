@@ -5847,7 +5847,7 @@ await check('PN-1 the probe prompt shows the no-line answer as two quoted words 
   assert.ok(p.split('. ').some(t => /version/i.test(t) && /only/i.test(t) && /two words/i.test(t)))
 })
 await check('PN-2 an answer that starts with no line is the no-line answer, and one that holds the words later is not', async () => {
-  for (const a of ['no line in version', 'No line in version', 'NO LINE', 'no line.', 'no line: my instructions hold no release line']) {
+  for (const a of ['no line in version', 'No line in version', 'NO LINE', 'no line.', 'no line: my instructions hold no release line', 'no lines in version']) {
     const x = await rolesRun({ probes: [a, a] })
     assert.deepEqual(roleLabels(), ['roles:wave', 'roles:wave#2'])
     onlyRoleWarning(/^WARN role files hold no release line: /)
@@ -5860,7 +5860,7 @@ await check('PN-2 an answer that starts with no line is the no-line answer, and 
   }
 })
 await check('PN-3 one pair of quotes or backticks comes off the answer before it is tested', async () => {
-  for (const probes of [['"no line"', '"no line"'], ['`no line`', '`no line`'], ['"no line"', 'no line'], ['"no line in version"', '`no line`']]) {
+  for (const probes of [['"no line"', '"no line"'], ['`no line`', '`no line`'], ['"no line"', 'no line'], ['"no line in version"', '`no line`'], ['"no line".', '"no line".']]) {
     const x = await rolesRun({ probes })
     assert.deepEqual(roleLabels(), ['roles:wave', 'roles:wave#2'])
     onlyRoleWarning(/^WARN role files hold no release line: /)
