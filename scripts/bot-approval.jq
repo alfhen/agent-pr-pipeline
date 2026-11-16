@@ -76,7 +76,7 @@ def topRe: "\\A\\s*\\*\\*Actionable comments posted: (?<n>[0-9]+)\\*\\*\\s*"
 def parseBody:
   ([capture(topRe)] | first) as $m
   | if $m == null or ($m.items != null and ([$m.items | scan("\\* `")] | length) != ($m.fc | tonumber))
-      or ($m.nitems != null and ([$m.nitems | scan("(?:^|\\n)\\* ")] | length) != ($m.nc | tonumber)) then null
+      or ($m.nitems != null and ([$m.nitems | scan("\\* ")] | length) != ($m.nc | tonumber)) then null
     else {n: ($m.n | tonumber)} end;
 # Problems of rule A for one review of the bot on the head: a list of texts, empty when the review passes. A review with an empty
 # body and only replies is the container GitHub makes for a reply of the bot, and it has no problem.
