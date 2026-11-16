@@ -760,8 +760,8 @@ Return pushed, branch, headSha, a short summary, whether the acceptance test pas
 
 ${prBlock(pr)}`
 
-// Names no PR branch: the list is written against the default branch, so a branch cannot shape it.
 const evalsQaLine = pr => !qaRuns(pr) ? '' : pr.qa ? `\nThe entry has a QA line, and its scenarios need an eval.${typeof pr.qa === 'string' ? ` The QA line says: ${pr.qa}` : ''}` : '\nQA runs for this PR, and the entry can have no QA line: its scenarios, if it has any, need an eval.'
+// Names no PR branch: the list is written against the default branch, so a branch cannot shape it.
 const evalsBlock = pr => `PR: ${pr.id} - ${pr.title}\nKind: ${pr.kind || 'code'}${pr.quickState ? `\nQuick-fix entry (the brief for this PR, from issue #${pr.quick.issue}):\n${pr.quickState.brief}` : ''}${pr.algorithm ? '\nThe maintainer says this entry adds or changes an algorithm (Algorithm: yes).' : ''}${evalsQaLine(pr)}\nNotes for this PR:\n${pr.notes || '(none)'}${decided(pr)}`
 const evalsClone = (dir, pr) => `\`rm -rf ${TMP}/${dir} && git clone https://github.com/${REPO}.git ${TMP}/${dir}\``
 
