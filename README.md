@@ -9,7 +9,7 @@ It grew out of building [Tagreeve](https://github.com/alfhen/tagreeve) (first ca
 - **Skills.** `pr-pipeline` runs the loop: plan, waves, land and merge. `write-goals` interviews the maintainer and writes the product goals document that the pipeline needs before its first run.
 - **Role agents.** `evals-writer`, `implementer`, `tester`, `verifier`, `reviewer`, `qa`, `arch-reviewer`, `product-reviewer`, `fixer`, `docs-writer`, `docs-reviewer`, `pr-opener`, `bot-waiter`, `bot-answerer`, `land-fixer`, `merge-safety`, `goals-preflight`, `triager`, `pipeline-io`, `evaluator` and `feedback-redactor`. Each has its own rules, model, effort and the smallest tool set its role needs.
 - **Workflow.** `run-wave` runs one wave of PRs through the loop with the role agents.
-- **Scripts and templates.** The land and merge scripts, `gate-files.sh`, `plugin-version.sh`, `role-files.sh`, `semver.sh`, `bot-status.sh`, `wait-bots.sh`, `quick-brief.sh`, `pr-overlap.sh`, `io.sh`, `recover-evals.sh`, `check-syntax.sh`, `cleanup.sh`, `check-version.sh`, `scripts/release.sh`, the goals check, `scripts/file-feedback.sh`, `scripts/token-report.sh`, `scripts/ledger.sh`, `scripts/after-run.sh`, `scripts/resume-args.sh`, and the plan, goals, `AGENTS.md` and `pipeline.json` templates.
+- **Scripts and templates.** The land and merge scripts, `gate-files.sh`, `plugin-version.sh`, `role-files.sh`, `semver.sh`, `bot-status.sh`, `request-review.sh`, `wait-bots.sh`, `quick-brief.sh`, `pr-overlap.sh`, `io.sh`, `recover-evals.sh`, `check-syntax.sh`, `cleanup.sh`, `check-version.sh`, `scripts/release.sh`, the goals check, `scripts/file-feedback.sh`, `scripts/token-report.sh`, `scripts/ledger.sh`, `scripts/after-run.sh`, `scripts/resume-args.sh`, and the plan, goals, `AGENTS.md` and `pipeline.json` templates.
 
 ## Install
 
@@ -76,7 +76,7 @@ The local routine is replaced by the cloud routines once it is retired (docs/clo
 ## Needs
 
 - Claude Code with the Workflow tool and `gh` signed in.
-- A review bot on the repo, such as CodeRabbit or Gitar. Its approval, or its clean review that was asked for with `@coderabbitai full review`, is the merge gate. Another review bot needs its exact login in `BOT_LOGINS`.
+- A review bot on the repo, such as CodeRabbit or Gitar. Its approval is the merge gate. For CodeRabbit only, a clean review that was asked for with `@coderabbitai full review` also clears the gate. That is a completed review run of CodeRabbit whose findings, when it has any, are inline comments ranked Minor or Trivial that the maintainer's account answered. A review text that counts 0 comments, or that holds more than CodeRabbit's standard frame, does not clear the gate and goes to a person. Another review bot clears it by approval or by answered comments, and needs its exact login in `BOT_LOGINS`.
 - CI that runs the same checks the agents run, and the full e2e suite.
 
 ## Develop
