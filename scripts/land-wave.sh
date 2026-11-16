@@ -11,6 +11,9 @@
 # With --review, a PR that no bot has cleared (and has no open bot comment) first gets request-review.sh, which asks CodeRabbit for a
 # review (two requests at most, 64 minutes apart), so a PR can wait hours: run it in the background, one --review land at a time for a
 # repo (there is no lock). A review that did not come stops the wave with "REVIEW #<pr>: <cause>" (exit 9).
+# A PR that is already merged at the checked sha prints "MERGED #<pr> already" and the run goes on, so the same command can be run again
+# after a stop. It posts no merge record and deletes no branch for that PR. A merged PR with another head, or a closed PR that was not
+# merged, stops the wave with "STOP #<pr>: ..." (exit 5).
 person=""; review=0
 while :; do
   case "$1" in
@@ -109,6 +112,14 @@ for arg in "$@"; do parse_arg; done
 for arg in "$@"; do
   parse_arg
   auto=""; [ "$suffix" = auto ] && auto=--auto
+  pull=$(gh api "repos/$R/pulls/$pr") || { echo "cannot read #$pr"; exit 5; }
+  read -r pmerged pstate phead <<<"$(jq -r '"\(.merged // false) \(.state // "open") \(.head.sha)"' <<<"$pull")"
+  if [ "$pmerged" = true ]; then
+    [ "$phead" = "$sha" ] || { echo "STOP #$pr: merged at ${phead:0:7}, not at the checked ${sha:0:7}. A person looks at the commits that were merged."; exit 5; }
+    echo "MERGED #$pr already"
+    continue
+  fi
+  [ "$pstate" = closed ] && { echo "STOP #$pr: closed, not merged"; exit 5; }
   wait_ci
   for _ in $(seq 1 "$mtries"); do
     pull=$(gh api "repos/$R/pulls/$pr") || { echo "cannot read #$pr"; exit 5; }
