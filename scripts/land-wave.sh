@@ -90,8 +90,9 @@ ask_review() {
   st=$(bash "$here/bot-status.sh" "$R" "$pr") || { echo "STOP #$pr: cannot read the bot status"; exit 5; }
   if [ "$(jq -r '(.approvedBy | length) > 0' <<<"$st")" = true ]; then
     failed=$(gh api --paginate "repos/$R/commits/$sha/check-runs?per_page=100") || { echo "STOP #$pr: cannot read the check runs"; exit 5; }
-    failed=$(jq -s '[.[].check_runs[] | select((.app.slug // "") == "coderabbitai" and .conclusion == "success" and (.output.title // "") == "Review failed")] | length' <<<"$failed") || { echo "STOP #$pr: cannot read the check runs"; exit 5; }
-    [ "$failed" = 0 ] && return 0
+    # Same rule as fourthWhy in bot-approval.jq: only the newest bot run counts.
+    failed=$(jq -s '[.[].check_runs[] | select((.app.slug // "") == "coderabbitai" and .started_at != null)] | sort_by(.started_at) | last | (. != null and .conclusion == "success" and (.output.title // "") == "Review failed")' <<<"$failed") || { echo "STOP #$pr: cannot read the check runs"; exit 5; }
+    [ "$failed" = true ] || return 0
   elif [ "$(jq -r '.openThreads > 0 or .reviewBodies > 0' <<<"$st")" = true ]; then
     echo "REVIEW #$pr: a bot left open comments or a review body with a finding (openThreads, reviewBodies); answer them first"; exit 9
   fi

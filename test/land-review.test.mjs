@@ -266,3 +266,17 @@ test('SKILL.md says the review request needs the CodeRabbit check run', () => {
   assert.ok(line.includes('check run'))
   assert.match(line, /\bfalse\b/)
 })
+
+test('with an approval only the newest bot run decides whether a request is posted', () => {
+  const older = bot({ id: 6101, min: 20, title: 'Review failed' })
+  const newer = bot({ id: 6102, min: 10 })
+  const r1 = land(setup([[7, S, { reviews: [approval(S)], runs: [ci, older, newer] }]]))
+  assert.equal(r1.code, 0, r1.out)
+  assert.match(r1.out, /all merged/)
+  assert.ok(merged(r1))
+  assert.ok(!r1.log.some((l) => l.includes(REQ)))
+  const failedNewest = bot({ id: 6101, min: 10, title: 'Review failed' })
+  const olderDone = bot({ id: 6102, min: 20 })
+  const r2 = land(setup([[7, S, { reviews: [approval(S)], runs: [ci, failedNewest, olderDone] }]]))
+  assert.ok(requested(r2), r2.log.join('\n'))
+})
