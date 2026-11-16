@@ -5840,6 +5840,74 @@ await check('C11-14 the result counts each probe call under goals-preflight and 
   assert.equal(b['pipeline-io'], a['pipeline-io'] + 1)
   assert.equal(mainResult.agentCounts['goals-preflight'], 2)
 })
+await check('PN-1 the probe prompt shows the no-line answer as two quoted words and says version holds only them', async () => {
+  await rolesRun()
+  const p = roleCalls[0].prompt
+  assert.ok(p.includes('"no line"'))
+  assert.ok(p.split('. ').some(t => /version/i.test(t) && /only/i.test(t) && /two words/i.test(t)))
+})
+await check('PN-2 an answer that starts with no line is the no-line answer, and one that holds the words later is not', async () => {
+  for (const a of ['no line in version', 'No line in version', 'NO LINE', 'no line.', 'no line: my instructions hold no release line']) {
+    const x = await rolesRun({ probes: [a, a] })
+    assert.deepEqual(roleLabels(), ['roles:wave', 'roles:wave#2'])
+    onlyRoleWarning(/^WARN role files hold no release line: /)
+    assert.ok(roleRuns(x))
+  }
+  for (const a of ['I see no line', 'there is no line']) {
+    const x = await rolesRun({ probes: [a, a] })
+    onlyRoleWarning()
+    assert.ok(roleRuns(x))
+  }
+})
+await check('PN-3 one pair of quotes or backticks comes off the answer before it is tested', async () => {
+  for (const probes of [['"no line"', '"no line"'], ['`no line`', '`no line`'], ['"no line"', 'no line'], ['"no line in version"', '`no line`']]) {
+    const x = await rolesRun({ probes })
+    assert.deepEqual(roleLabels(), ['roles:wave', 'roles:wave#2'])
+    onlyRoleWarning(/^WARN role files hold no release line: /)
+    assert.ok(roleRuns(x))
+  }
+})
+await check('PN-4 two no-line answers give one warning that names /reload-plugins, also with no line in version', async () => {
+  for (const probes of [['no line', 'no line in version'], ['no line in version', 'no line'], ['no line in version', 'no line in version'], ['no line', 'no line']]) {
+    const x = await rolesRun({ probes })
+    assert.deepEqual(roleLabels(), ['roles:wave', 'roles:wave#2'])
+    onlyRoleWarning(/^WARN role files hold no release line: /)
+    assert.ok(lastResult.warnings[0].includes('/reload-plugins'))
+    assert.ok(roleRuns(x))
+  }
+})
+await check('PN-5 a version is read as before, and a pair that differs or is no answer still gives the could-not-run warning', async () => {
+  for (const probes of [['0.9.6.', '0.9.6'], roleSame06]) {
+    await rolesRun({ probes })
+    assert.deepEqual(roleLabels(), ['roles:wave', 'roles:wave#2', 'io:wave#roles'])
+    assert.ok(roleCalls[2].prompt.includes(`role-files.sh '/cache/apl/0.9.6' '${ROOT_V}'`))
+  }
+  await rolesRun()
+  assert.deepEqual(roleLabels(), ['roles:wave'])
+  assert.equal(lastResult.warnings.length, 0)
+  for (const probes of [['0.9.6', '0.9.5'], ['no line', '0.9.6'], ['0.9.6', 'no line in version'], ['no line in version', '0.9.6'], ['I think 0.9.6', 'I think 0.9.6'], [null]]) {
+    const x = await rolesRun({ probes })
+    assert.ok(!roleLabels().includes('io:wave#roles'))
+    onlyRoleWarning()
+    assert.ok(roleRuns(x))
+  }
+})
+await check('PN-6 a no-line or differing model answer alone refuses no PR', async () => {
+  const differ = { exitCode: 0, output: 'ROLES DIFFER implementer.md' }
+  const ids = ['C1', 'C2']
+  assert.ok(refusedRole(await rolesRun({ probes: roleSame06, io: differ, ids }), ids))
+  const quiet = async (probes, re) => {
+    const x = await rolesRun({ probes, io: differ, ids })
+    assert.ok(!Object.values(x).some(p => p.refused))
+    assert.ok(!roleLabels().includes('io:wave#roles'))
+    assert.ok(roleRuns(x))
+    onlyRoleWarning(re)
+  }
+  await quiet(['no line', 'no line'], /^WARN role files hold no release line: /)
+  await quiet(['NO LINE', 'no line'], /^WARN role files hold no release line: /)
+  await quiet(['no line', '0.9.6'])
+  await quiet(['no line in version', 'no line in version'], /^WARN role /)
+})
 await check('C10-4 an eval about code is accepted when only its check holds a trigger phrase', async () => {
   assert.match(inStatement.statement, PR_TEXT_RULE)
   assert.doesNotMatch(checkOnly.statement, PR_TEXT_RULE)
