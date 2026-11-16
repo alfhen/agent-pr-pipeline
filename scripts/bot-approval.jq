@@ -63,18 +63,20 @@ def runCfg: blk("Run configuration"; "<br>\\s*"
   + cfgLine("Layers"; "Repository YAML") + cfgLine("Review profile"; "[A-Za-z]+") + cfgLine("Plan"; "[A-Za-z]+") + cfgLine("Run ID"; "`[0-9a-f-]+`"));
 def commitsBlk: blk("Commits"; "<br>\\s*Reviewing files that changed from the base of the PR and between [0-9a-f]+ and [0-9a-f]+\\.\\s*");
 def filesBlk: blk("Files selected for processing: (?<fc>[0-9]+)"; "<br>\\s*(?<items>(?:\\* `[^\\s`:<]+`\\s*)+)");
+def noRevBlk: blk("Files with no reviewable changes: (?<nc>[0-9]+)"; "<br>\\s*(?<nitems>(?:\\* [^\\s`:<]+\\s*)+)");
 def availLine: "\\*\\*Included review availability:\\*\\* This review used your included allowance\\. Your plan provides up to [0-9]+ included reviews? per hour; [0-9]+ remain after this review\\.\\s*";
 # Only the HTML comments of the frame are cut, so any other comment is text that is left.
 def frameComment: "<!-- (?:coderabbit-ai-generated:v[0-9]+|autofix_checkbox_start|autofix_checkbox_end|\\{\"checkboxId\":\"[0-9a-f-]+\"\\}"
   + "|This is an auto-generated comment by CodeRabbit for review status|coderabbit-review-publication v[0-9]+ publication=[0-9a-f-]+ attempt=[0-9a-f-]+ batch=[0-9]+/[0-9]+) -->";
 def topRe: "\\A\\s*\\*\\*Actionable comments posted: (?<n>[0-9]+)\\*\\*\\s*"
   + "(?:---\\s*)?(?:- \\[[ x]\\]\\s*Fix comments: Fix CodeRabbit comments on this PR\\s*)?(?:" + blk("Prompt to fix all issues"; oneFence) + "\\s*)?"
-  + "(?:<h6>\\s*<details>\\s*<summary>\\s*" + pic + "Review info</summary>\\s*<dl>\\s*<dd>\\s*<br>\\s*" + runCfg + "\\s*" + commitsBlk + "\\s*" + filesBlk + "\\s*(?:" + availLine + ")?</dd>\\s*</dl>\\s*</details>\\s*</h6>\\s*)?\\z";
+  + "(?:<h6>\\s*<details>\\s*<summary>\\s*" + pic + "Review info</summary>\\s*<dl>\\s*<dd>\\s*<br>\\s*" + runCfg + "\\s*" + commitsBlk + "\\s*" + filesBlk + "\\s*(?:" + noRevBlk + "\\s*)?(?:" + availLine + ")?</dd>\\s*</dl>\\s*</details>\\s*</h6>\\s*)?\\z";
 # The count of a body that is the frame and nothing else, or null. Each part of the frame can be absent. The text inside the fence
 # of the prompt block is not read.
 def parseBody:
   ([capture(topRe)] | first) as $m
-  | if $m == null or ($m.items != null and ([$m.items | scan("\\* `")] | length) != ($m.fc | tonumber)) then null
+  | if $m == null or ($m.items != null and ([$m.items | scan("\\* `")] | length) != ($m.fc | tonumber))
+      or ($m.nitems != null and ([$m.nitems | scan("\\* ")] | length) != ($m.nc | tonumber)) then null
     else {n: ($m.n | tonumber)} end;
 # Problems of rule A for one review of the bot on the head: a list of texts, empty when the review passes. A review with an empty
 # body and only replies is the container GitHub makes for a reply of the bot, and it has no problem.
