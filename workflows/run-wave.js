@@ -317,11 +317,11 @@ const verifyOutcome = (pr, verify) => {
   return { ...base, ...(breakCheck ? { breakCheck } : {}), ...(testsOnly ? { testsOnly: true } : {}), findings: base.findings.concat(findings), pass: base.pass && findings.length === 0, evals: { passed, failed, ci }, breakFailed }
 }
 const checkOutcome = (pr, result) => verifies(pr) ? verifyOutcome(pr, result) : testOutcome(pr, result)
-// Per PR: the refused checks of the last test round, the QA scenarios that did not run, the minor pass state no agent could confirm, and the evals a CI check covers.
+// Per PR: the refused checks of the last test round, the acceptance name that matched no check, the QA scenarios that did not run, the minor pass state no agent could confirm, and the evals a CI check covers.
 // Every test round replaces `checks`; only a verifier round replaces `evals`, so a later tester round cannot clear a `ci` item; `pass` is never replaced.
+// `name` is not replaced by a test round: only an answer whose acceptance check names a passed check clears it.
 const untestedState = {}
 const untestedFor = pr => untestedState[pr.id] || (untestedState[pr.id] = { checks: [], qa: [], pass: [], evals: [], name: false })
-// `name` is not replaced by a test round: only an answer whose acceptance check names a passed check clears it.
 const NAME_UNMATCHED = 'acceptance test (name not matched)'
 const noteTest = (pr, outcome) => {
   const u = untestedFor(pr)

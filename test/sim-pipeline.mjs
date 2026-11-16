@@ -3960,7 +3960,7 @@ await check('untested: a declared acceptance test that failed gives a fix round 
   const failed = await hooked(only1('C1'), (p, o) => o.label === 'test:C1#1' ? { pass: true, headSha: 'sha-C1', checks: [chk('lint'), chk('x', { pass: false, log: 'x exploded' })], acceptance: acc('x') } : undefined)
   const prompt = fixCalls('C1')[0].prompt
   assert.match(prompt, /x exploded/)
-  assert.doesNotMatch(prompt, /acceptance test did not run/)
+  assert.doesNotMatch(prompt, /\[test\]/)
   assert.equal(failed.C1.history[0].testPass, false)
 })
 await check('untested: the same list with declared false signs off, and a passed acceptance check signs off', async () => {
@@ -6460,7 +6460,7 @@ await check('AN-6 a failed check goes to the fixer with no acceptance finding an
   const x = await hooked(only1('C1'), tested('C1', { pass: true, checks: [chk('lint'), chk('unit', { pass: false, log: 'boom in unit' })], acceptance: acc('x') }))
   assert.equal(fixCalls('C1').length, 1)
   assert.match(fixCalls('C1')[0].prompt, /boom in unit/)
-  assert.doesNotMatch(fixCalls('C1')[0].prompt, /acceptance test did not run/)
+  assert.doesNotMatch(fixCalls('C1')[0].prompt, /\[test\]/)
   assert.deepEqual(x.C1.history[0].failingChecks, ['unit'])
   assert.deepEqual(x.C1.history[0].blockersAndMajors, [])
   assert.equal(x.C1.ready, true)
