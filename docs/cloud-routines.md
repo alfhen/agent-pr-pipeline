@@ -266,6 +266,7 @@ Do these steps in order. Stay at stage 0 until the first compare is clean.
 5. Create the routines with the skill, at stage 0.
 6. Compare the `would-triage` and `would-build` lines with what you expect. Then set stage 1 in a PR.
 7. For feedback from the repo, add it to `collectFrom` in this repo's settings.
+8. If the repo has its own settings file, add `.coderabbit.yaml`, `.coderabbit.yml` and `.coderabbit.config.ts` to its `gates`. The file holds them only when you add them: the fixed floor does not hold them.
 
 ### Checklist for Tagreeve
 

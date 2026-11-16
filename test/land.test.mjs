@@ -215,6 +215,17 @@ test('gate: routine/run.sh and routine/bin/gh are held by the repo gates', () =>
   assert.match(r.out, /routine\/run\.sh/)
 })
 
+test('gate: the CodeRabbit settings files are held by the repo gates', () => {
+  for (const name of ['.coderabbit.yaml', '.coderabbit.yml', '.coderabbit.config.ts']) {
+    const s = base()
+    put(s.fx, `${CONTENTS}@ref=refs__heads__main.json`, readFileSync(join(root, '.github/pipeline.json'), 'utf8'))
+    put(s.fx, `${PULL}__files.json`, [{ filename: name, status: 'modified' }])
+    const r = run(s, 'gate-files.sh', ['o/r', '7'])
+    assert.equal(r.code, 1, r.out)
+    assert.ok(r.out.includes(`GATED #7: ${name}`), r.out)
+  }
+})
+
 const checkReads = (r) => r.log.filter((l) => /^GET .*check-runs/.test(l)).length
 
 test('land: a head with no check runs yet is waited for, then merges', () => {

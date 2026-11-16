@@ -15,7 +15,10 @@
     "**/Dockerfile*",
     "**/docker-compose*.yml",
     "**/migrations/**",
-    "**/.env*"
+    "**/.env*",
+    ".coderabbit.yaml",
+    ".coderabbit.yml",
+    ".coderabbit.config.ts"
   ],
   "knownFlakes": [],
   "ciChecks": ["ci"],

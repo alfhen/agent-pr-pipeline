@@ -21,7 +21,10 @@
     "workflows/**",
     "templates/**",
     ".claude-plugin/**",
-    "routine/**"
+    "routine/**",
+    ".coderabbit.yaml",
+    ".coderabbit.yml",
+    ".coderabbit.config.ts"
   ],
   "knownFlakes": [],
   "autoRelease": true
