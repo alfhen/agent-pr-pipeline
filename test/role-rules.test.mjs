@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 const bodyOf = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/^---\n[\s\S]*?\n---\n/, '');
 const fixer = bodyOf('agents/fixer.md');
@@ -56,7 +56,6 @@ test('the pr opener and the bot answerer write bodies to files in the temp folde
   assert.match(opener, /Untested section/);
 });
 
-import { readdirSync } from 'node:fs';
 
 const rulesOf = file => {
   const t = readFileSync(new URL(`../agents/${file}`, import.meta.url), 'utf8');
