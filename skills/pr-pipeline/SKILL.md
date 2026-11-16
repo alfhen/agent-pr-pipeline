@@ -260,6 +260,7 @@ Each loaded skill costs thousands of tokens per agent, in every round. Pair a sk
 - Point at the plan entry instead of repeating it: "Build plan entry T03 in docs/plan-1.2.md."
 - Name the review minors the PR should settle, and how, when the plan review left a choice open.
 - Give each `Closes #N` its own line. GitHub closes only the first issue on a line like `Closes #1, #2`.
+- A plan PR gets no closing line from the opener unless the notes tell it to put that line in. Notes that only name an issue are not that instruction. When the description names an issue of an entry, it writes the number with no closing word (close, fix or resolve, in any form) before it.
 - Say what the agent must not do when it is tempting: "Test only; the final diff does not change src/x.ts."
 - For a change to a hard rule, say "must not be merged by any agent" and keep it until the person approves.
 
