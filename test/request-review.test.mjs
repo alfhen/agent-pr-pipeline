@@ -347,3 +347,16 @@ test('a run of the bot with no started_at is not read as the answer and the scri
   assert.ok(!r.lines.some((l) => l.startsWith('NO REVIEW')), r.out)
   assert.equal(posts(r).length, 0)
 })
+
+test('the newest run after the newest request is the one judged', () => {
+  const requests = [comment(90), comment(30)]
+  const failed = (min) => bot({ id: 7001, min, title: 'Review failed', summary: '' })
+  const r1 = run(setup({ requests, runs: [ci, failed(20), bot({ id: 7002, min: 10 })], post: false }))
+  assert.equal(r1.code, 0, r1.out)
+  reviewed(r1, 7002)
+  assert.equal(posts(r1).length, 0)
+  const r2 = run(setup({ requests, runs: [ci, failed(10), bot({ id: 7002, min: 20 })], post: false }))
+  noReview(r2, /^NO REVIEW #7: .*two requests/)
+  assert.ok(!r2.lines.some((l) => l.startsWith('REVIEWED')), r2.out)
+  assert.equal(posts(r2).length, 0)
+})

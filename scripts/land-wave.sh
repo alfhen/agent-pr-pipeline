@@ -93,7 +93,9 @@ ask_review() {
     # Same rule as fourthWhy in bot-approval.jq: only the newest bot run counts.
     failed=$(jq -s '[.[].check_runs[] | select((.app.slug // "") == "coderabbitai" and .started_at != null)] | sort_by(.started_at) | last | (. != null and .conclusion == "success" and (.output.title // "") == "Review failed")' <<<"$failed") || { echo "STOP #$pr: cannot read the check runs"; exit 5; }
     [ "$failed" = true ] || return 0
-  elif [ "$(jq -r '.openThreads > 0 or .reviewBodies > 0' <<<"$st")" = true ]; then
+  fi
+  # A failed newest review does not take approvedBy, so the open-comment stop applies here too.
+  if [ "$(jq -r '.openThreads > 0 or .reviewBodies > 0' <<<"$st")" = true ]; then
     echo "REVIEW #$pr: a bot left open comments or a review body with a finding (openThreads, reviewBodies); answer them first"; exit 9
   fi
   rrout=$(mktemp) || { echo "STOP #$pr: cannot make a temporary file"; exit 5; }

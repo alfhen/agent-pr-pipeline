@@ -78,7 +78,7 @@ follow() {
     gh api --paginate "repos/$R/commits/$sha/check-runs?per_page=100" >"$tmp/runs" || no_review "cannot read the check runs"
     run=$(jq -s -c -L "$here" --argjson q "$q" --argjson window "$window" --arg app "$APP" "include \"review-request\"; $epoch"'
       [.[].check_runs[] | select((.app.slug // "") == $app and .started_at != null and (.started_at | t) > $q and (.started_at | t) < $q + $window)]
-      | sort_by(.started_at | t) | first // null' "$tmp/runs") || no_review "cannot read the check runs"
+      | sort_by(.started_at | t) | last // null' "$tmp/runs") || no_review "cannot read the check runs"
     now=$(date -u +%s)
     expired=0
     { [ "$now" -ge $((q + window)) ] || { [ "$tries" -gt 0 ] && [ "$i" -ge "$tries" ]; }; } && expired=1

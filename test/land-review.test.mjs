@@ -280,3 +280,24 @@ test('with an approval only the newest bot run decides whether a request is post
   const r2 = land(setup([[7, S, { reviews: [approval(S)], runs: [ci, failedNewest, olderDone] }]]))
   assert.ok(requested(r2), r2.log.join('\n'))
 })
+
+test('an approval with a failed newest review does not take approvedBy: open comments stop the land', () => {
+  const runs = [ci, bot({ id: 6001, min: 5, title: 'Review failed' })]
+  const inline = [{ id: 11, user: { login: 'coderabbitai[bot]' }, in_reply_to_id: null, body: 'x', pull_request_review_id: 5 }]
+  const r1 = land(setup([[7, S, { reviews: [approval(S)], runs, inline }]]))
+  assert.equal(r1.code, 9, r1.out)
+  assert.match(r1.out, /^REVIEW #7: /m)
+  assert.ok(!r1.log.some((l) => l.includes(REQ)))
+  assert.ok(!merged(r1))
+  const r2 = land(setup([[7, S, { reviews: [approval(S)], runs }]]))
+  assert.ok(requested(r2), r2.log.join('\n'))
+})
+
+test('the README sentence on the review bot says what the clean review is', () => {
+  const md = readFileSync(join(root, 'README.md'), 'utf8')
+  const line = md.split('\n').find((l) => l.startsWith('- A review bot on the repo'))
+  assert.ok(line.includes('@coderabbitai full review'))
+  assert.ok(line.includes('Minor or Trivial'))
+  assert.ok(line.includes('answered'))
+  assert.match(line, /counts? 0[^.]*does not clear the gate/)
+})
