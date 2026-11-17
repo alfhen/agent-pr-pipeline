@@ -25,9 +25,16 @@ test('every test file that starts the sim with spawnSync gives the call a timeou
   const starters = files.filter(f => start.test(readFileSync(here + f, 'utf8')))
   assert.ok(starters.includes('sim-filter.test.mjs') && starters.includes('land-fix-stop-returns.test.mjs'), `found ${starters}`)
   for (const f of starters) {
-    const lines = readFileSync(here + f, 'utf8').split('\n')
-    lines.forEach((l, i) => {
-      if (start.test(l)) assert.match(lines.slice(i, i + 4).join('\n'), /timeout/, `test/${f} starts the sim with no timeout`)
-    })
+    const text = readFileSync(here + f, 'utf8')
+    for (const m of text.matchAll(new RegExp(start, 'g'))) {
+      let depth = 0
+      let end = m.index + 'spawnSync'.length
+      do {
+        if (text[end] === '(') depth++
+        if (text[end] === ')') depth--
+        end++
+      } while (depth > 0 && end < text.length)
+      assert.match(text.slice(m.index, end), /\btimeout\s*:/, `test/${f} starts the sim with no timeout`)
+    }
   }
 })
