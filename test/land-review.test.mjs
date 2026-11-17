@@ -256,7 +256,7 @@ test('SKILL.md describes the review request of the land step', () => {
   assert.ok(row.includes('64 minutes'))
   assert.match(row, /two requests|request 2|second request/)
   const args = md.slice(md.indexOf('### Workflow arguments'), md.indexOf('### Role agents'))
-  assert.match(args, /botWaitMinutes[^.\n]*\b1\b/)
+  assert.match(args, /botWaitMinutes[^.\n]*\b0\b/)
 })
 
 test('SKILL.md says the review request needs the CodeRabbit check run', () => {

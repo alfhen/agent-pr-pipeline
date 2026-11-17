@@ -149,9 +149,9 @@ test('the section Driving cheaply holds the cost rules', () => {
   assert.ok(ss.some(x => /subagent/i.test(x) && /look ?up/i.test(x) && /(big|large) files?/i.test(x)))
   assert.ok(ss.some(x => /line ranges?/i.test(x) && /(big|large) files?/i.test(x)))
   const n = r.replace(/\s+/g, '')
-  for (const [k, m, e] of [['review', 'opus', 'medium'], ['evals', 'sonnet', 'high'], ['test', 'haiku', 'low'], ['open', 'haiku', 'low']]) {
-    assert.ok(n.includes(`"${k}":{"model":"${m}","effort":"${e}"}`), k)
-  }
+  assert.ok(n.includes('"minorReview":{"model":"opus","effort":"high"}'))
+  for (const k of ['review', 'test', 'open']) assert.ok(!n.includes(`"${k}":{`), k)
+  assert.ok(!n.includes('"evals":{"model":"sonnet"'))
   assert.ok(r.includes('`steps`'))
   assert.ok(ss.some(x => x.includes('`docsUpdate: false`') && /Touches line/.test(x)))
 })

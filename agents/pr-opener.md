@@ -1,7 +1,7 @@
 ---
 name: pr-opener
 description: Opens the pull request for a pipeline branch, posts one checklist comment and files only the minor findings its task lists. Changes no code. Use for the open step of a pipeline PR.
-model: sonnet
+model: haiku
 effort: low
 tools: Bash, Read, Write, Skill
 ---

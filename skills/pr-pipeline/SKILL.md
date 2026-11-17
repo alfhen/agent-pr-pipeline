@@ -146,7 +146,7 @@ The harness gives every agent the last message of the user as a request at the t
   "e2eCommand": "pnpm exec vitest run {files}",
   "maxRounds": 4,
   "planRounds": 3,
-  "botWaitMinutes": 1,
+  "botWaitMinutes": 0,
   "bots": "CodeRabbit (login \"coderabbitai[bot]\") and Gitar (login \"gitar-bot[bot]\")",
   "milestone": "1.2.0",
   "docs": ["README.md", "docs/"],
@@ -163,7 +163,7 @@ The harness gives every agent the last message of the user as a request at the t
 
 - `pluginRoot` (set it from `${CLAUDE_PLUGIN_ROOT}`): the plugin folder. It goes into every `pipeline-io` prompt, and `pipeline-io` runs scripts only from there, never from a clone of the target repo, so a PR cannot change the script that judges it. A quick fix without it stops with the reason `pluginRoot missing`. Without it a PR stops at the bot step with the same reason.
 - Policy and choices are split. Repo policy that one run must not override (`gates`, `autoRelease`) lives in `.github/pipeline.json`, read from the default branch; `templates/pipeline.json` is the default for a repo without one. Choices for one run (`feedback`, `feedbackRepo`, `rounds`, models) are workflow arguments, never in that file. The one exception is the `routine` block: it holds the policy of unattended runs (stage, `pipelineVersion`, trusted authors, limits) and the fixed wave choices for them (`waveArgs`), because no person is there to pass them. See `docs/cloud-routines.md`.
-- `botWaitMinutes`: how long the bot step waits for the review bots. For a repo whose review bot reviews only on request, pass 1: the land step asks for the review (`land-wave.sh --review`), and a longer wait ends with `approvedBy` empty.
+- `botWaitMinutes`: how long the bot step waits for the review bots (default 20). For a repo whose review bot reviews only on request, pass 0: the wait is skipped, the bot status is still read, and the land step asks for the review (`land-wave.sh --review`). A wait of any length ends with `approvedBy` empty for such a repo.
 - `plan` is optional when every PR in the wave has `quick`.
 - `checks` are the **fast** checks. Agents also run the e2e files the PR adds or changes (`e2ePattern`, run with `e2eCommand`). Testers also run up to 10 e2e and docs test files that name the touched modules, with the command that owns each. `"relatedTests": false` turns this off, for a repo that runs no e2e in waves. The full e2e suite runs only in CI, so CI must run it on every PR.
 - `architecture`: the document the architecture reviewer checks against (defaults to `spec`). Set `"architectureReview": false` to turn the step off.
@@ -176,7 +176,7 @@ The harness gives every agent the last message of the user as a request at the t
 - `skills`: which skills each step's agent loads before it starts. See "Pair skills with steps" below. Default: none.
 - `kind`: `code` (default), `docs` or `plan`. Docs and plan PRs get a Sonnet reviewer at high effort instead of Opus. Plan PRs stop after `planRounds` (default 3); fix what is left by hand, then rerun with `skipImpl`.
 
-Models and effort per step are in the table under "Role agents". Override a step for the whole wave in `steps`, for example `{ "review": { "model": "opus", "effort": "xhigh" } }`. `reviewDocs` sets the reviewer of docs and plan PRs and the docs check (default sonnet, high).
+Models and effort per step are in the table under "Role agents". Override a step for the whole wave in `steps`, for example `{ "review": { "model": "opus", "effort": "xhigh" } }`. `reviewDocs` sets the reviewer of docs and plan PRs and the docs check (default sonnet, high). `minorReview` sets the check of the minor pass (default sonnet, high). The defaults of `review` are opus and medium, and of `test` and `open` haiku and low.
 
 PR options: `quick: { issue: N }` builds issue N without a plan entry (see step 0; `id`, `title` and `branch` default from the issue number, and the default PR title is `<issue title> (#N)`, and `kind` stays `code`). `skipImpl: true` when the branch is already built (a plan PR, or a branch you pushed). `evals: [...]` or `{ evals, noErrorPath, noReference, algorithm }` gives the list by hand and skips the first writer attempt; the list still goes through the rules and the evals check, and goes to the writer when the check sends it back, except in a `landFix` run: there it is taken after the `evalsVerdict` rules check alone and gets no evals check (see step 11). `resume: { history, minors, findings, evals, designRules, evalDisputes, deviations }` to continue a PR whose rounds ran out and whose branch is built. Do not make the item by hand: run `${CLAUDE_PLUGIN_ROOT}/scripts/resume-args.sh <earlier workflow output file, or the output of recover-evals.sh> <PR id> [--max-rounds <n> --cap <c>]` and add the printed `resume` (and `prNumber`) to the PR's own `prs[]` item from the earlier run, merged into its existing `resume` so that `resume.designRules` stays. That item keeps its `branch`, `title`, `kind`, `notes` and decisions. Remove `evals` from that item: `prs[].evals` would override `resume.evals`, which holds the accepted list. Do not pass the printed item alone: it has no `branch`. `maxRounds` counts the rounds of this run, not the total: a PR with 4 rounds of history resumed with `maxRounds: 5` runs rounds 5 to 9. For one more round, pass `maxRounds: 1`. With `--max-rounds <n> --cap <c>`, `resume-args.sh` prints a `WARN` line on stderr when the rounds in the history plus `n` are more than the cap `c`, and still prints the item. The run logs `this run does at most N rounds (X to Y)` at the start. `landFix: true` with `prNumber` runs the land-fix agent for that PR, checks the code it added, then waits for and answers the bots. `architectureDecision: "..."` carries a person's answer to an architecture escalation into every agent's brief for that PR; the architecture reviewer then checks the PR follows it and does not escalate the same question again. `productDecision: "..."` carries a person's answer to a product-fit escalation in the same way. A `skipImpl` or `resume` rerun with either decision runs the fixer first to apply it (it changes nothing if the branch already follows it), then reviews. `sensitive: true` adds a security-review skill to this PR's reviewer (see below). `skills: { ... }` adds skills for this PR only, on top of the wave's `skills`. `docsUpdate: false` skips the docs step for this PR.
 
@@ -190,16 +190,17 @@ Each step runs as one agent definition from the plugin. Its body holds the role'
 | --- | --- | --- | --- | --- |
 | `evals` | `evals-writer` | opus | high | Bash, Read, Glob, Grep |
 | `impl` | `implementer` | sonnet | medium | all but Agent; own worktree |
-| `test` | `tester` | sonnet | low | Bash, Read, Glob, Grep, Skill |
+| `test` | `tester` | haiku | low | Bash, Read, Glob, Grep, Skill |
 | `verify` | `verifier` | sonnet | medium | Bash, Read, Glob, Grep, Skill |
-| `review` | `reviewer` | opus (sonnet for docs and plan PRs) | high | Bash, Read, Glob, Grep, Skill |
+| `review` | `reviewer` | opus (sonnet for docs and plan PRs) | medium (high for docs and plan PRs) | Bash, Read, Glob, Grep, Skill |
+| `minorReview` | `reviewer` | sonnet | high | Bash, Read, Glob, Grep, Skill |
 | `arch` | `arch-reviewer` | opus | high | Bash, Read, Glob, Grep, Skill |
 | `product` | `product-reviewer` | opus | high | Bash, Read, Glob, Grep, Skill |
 | `fix` | `fixer` | sonnet | medium | all but Agent; own worktree |
 | `qa` | `qa` | sonnet | medium | all but Edit, Write, NotebookEdit and Agent, so it keeps a browser tool if one is connected |
 | `docs` | `docs-writer` | sonnet | medium | all but Agent; own worktree |
 | docs check | `docs-reviewer` | sonnet | high | Bash, Read, Glob, Grep, Skill |
-| `open` | `pr-opener` | sonnet | low | Bash, Read, Write, Skill |
+| `open` | `pr-opener` | haiku | low | Bash, Read, Write, Skill |
 | `botWait` | `bot-waiter` | haiku | low | Bash |
 | `botAnswer` | `bot-answerer` | sonnet | medium | all but Agent; own worktree |
 | `landFix` | `land-fixer` | sonnet | medium | all but Agent; own worktree. Never replies on review threads; its code is checked by the land-fix check |
@@ -249,10 +250,10 @@ A wake-up after the cache has run out, 5 minutes after the last call, writes the
 
 Give a lookup in a big file to a subagent. Read big files by line ranges, never in full.
 
-Set the models of the steps with the `steps` argument. The trial settings of plan 0.9.10 are the example:
+Set the models of the steps with the `steps` argument. The defaults are cheap already. The one override that is not a default is the example:
 
 ```json
-"steps": {"review": {"model": "opus", "effort": "medium"}, "evals": {"model": "sonnet", "effort": "high"}, "test": {"model": "haiku", "effort": "low"}, "open": {"model": "haiku", "effort": "low"}}
+"steps": {"minorReview": {"model": "opus", "effort": "high"}}
 ```
 
 Pass `docsUpdate: false` for an entry whose Touches line names its docs.

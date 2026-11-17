@@ -39,7 +39,7 @@ const RELATED_TESTS = A.relatedTests !== false
 const RELATED_MAX = 10
 const E2E_COMMAND = A.e2eCommand || 'pnpm exec vitest run {files}'
 const BOTS = A.bots || 'CodeRabbit (login "coderabbitai[bot]") and Gitar (login "gitar-bot[bot]")'
-const BOT_WAIT_MIN = A.botWaitMinutes || 20
+const BOT_WAIT_MIN = A.botWaitMinutes === 0 ? 0 : (A.botWaitMinutes || 20)
 const LABEL = A.minorLabel || 'review-minor'
 const FEEDBACK = A.feedback !== false
 const CLEANUP = A.cleanup !== false
@@ -57,15 +57,16 @@ const MILESTONE_STEP = A.milestone ? `\nFirst read the milestone number: \`gh ap
 const STEPS = Object.assign({
   evals: { model: 'opus', effort: 'high' },
   impl: { model: 'sonnet', effort: 'medium' },
-  test: { model: 'sonnet', effort: 'low' },
+  test: { model: 'haiku', effort: 'low' },
   verify: { model: 'sonnet', effort: 'medium' },
-  review: { model: 'opus', effort: 'high' },
+  review: { model: 'opus', effort: 'medium' },
+  minorReview: { model: 'sonnet', effort: 'high' },
   arch: { model: 'opus', effort: 'high' },
   product: { model: 'opus', effort: 'high' },
   preflight: { model: 'haiku', effort: 'low' },
   reviewDocs: { model: 'sonnet', effort: 'high' },
   fix: { model: 'sonnet', effort: 'medium' },
-  open: { model: 'sonnet', effort: 'low' },
+  open: { model: 'haiku', effort: 'low' },
   botWait: { model: 'haiku', effort: 'low' },
   botAnswer: { model: 'sonnet', effort: 'medium' },
   landFix: { model: 'sonnet', effort: 'medium' },
@@ -382,7 +383,7 @@ const ROLES = {
   fix: { agent: 'fixer', phase: 'Fix', isolation: 'worktree' },
   minorFix: { agent: 'fixer', phase: 'Fix', isolation: 'worktree', model: 'fix', skills: 'fix' },
   minorRevert: { agent: 'fixer', phase: 'Fix', isolation: 'worktree', model: 'fix', skills: null },
-  minorReview: { agent: 'reviewer', phase: 'Review', clone: true, reviewModel: true, skills: 'review' },
+  minorReview: { agent: 'reviewer', phase: 'Review', clone: true, skills: 'review' },
   docs: { agent: 'docs-writer', phase: 'Docs', isolation: 'worktree' },
   docsReview: { agent: 'docs-reviewer', phase: 'Docs', skills: 'docs', model: 'reviewDocs', clone: true },
   open: { agent: 'pr-opener', phase: 'Open PR' },
@@ -1809,7 +1810,13 @@ const noteBots = (pr, n, b) => { if (botCodeChanged(b)) botChangedState[pr.id] =
 
 async function bots(pr, n, headSha, issues, history, minors) {
   if (!PLUGIN_ROOT) return { ok: false, reason: 'pluginRoot missing: the bot step needs it to run the status script', headSha }
-  const wait = await call('botWait', pr, waitPrompt(pr, n), `botwait:${pr.id}`, { schema: WAIT })
+  let wait
+  if (BOT_WAIT_MIN === 0) {
+    log(`${pr.id}: no bot wait, botWaitMinutes is 0`)
+    wait = { approvedBy: [], seenHead: [], openComments: 0, timedOut: true }
+  } else {
+    wait = await call('botWait', pr, waitPrompt(pr, n), `botwait:${pr.id}`, { schema: WAIT })
+  }
   if (!wait) return { ok: false, reason: 'bot wait failed', headSha }
   const st = await ioCall(pr, `io:${pr.id}#botstatus`, 'bot-status.sh', `${REPO} ${n}`, { phase: 'Bots' })
   const status = st && st.exitCode === 0 ? jsonLine(st.output) : null
