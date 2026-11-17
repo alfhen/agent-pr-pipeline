@@ -20,6 +20,7 @@ const pr800 = () => fixture('pr800-3ecb04e.json')
 const pr801 = () => fixture('pr801-da0b70d.json')
 const pr804 = () => fixture('pr804-f57c99a.json')
 const pr805 = () => fixture('pr805-f36bb8e.json')
+const nit823 = () => fixture('made-pr823-c48a68f.json')
 const mut = (base, f) => { const fx = base(); f(fx); return fx }
 const botRun = (fx) => fx.checks.find((c) => c.app.slug === 'coderabbitai' && c.conclusion === 'success')
 const ciRun = (fx) => fx.checks.find((c) => c.app.slug === 'github-actions')
@@ -339,9 +340,9 @@ test('rule A refuses a prompt block at a place or count no real body has, or wit
   merged(run(pr793())); merged(run(pr800())); merged(run(pr801()))
 })
 
-test('rule A refuses a review with a nitpick section, and the gate does not read the answer comment', () => {
-  const FRAME = /frame/
-  const answerFor = (fx) => { fx.issueComments.push({ id: 9, user: { login: 'alfhen' }, created_at: '2026-11-15T01:00:00Z', body: `<!-- pipeline-bot-answer head=${fx.head} -->\nNote, not filed: the nitpick.` }) }
+test('rule A refuses a review with a count line and a nitpick block, also when the answer comment names each item', () => {
+  const NITPICK = /nitpick block/
+  const answerFor = (fx) => { fx.issueComments.push({ id: 9, user: { login: 'alfhen' }, created_at: '2026-11-15T01:00:00Z', body: `<!-- pipeline-bot-answer head=${fx.head} -->\nNote, not filed: test/batch-d-rules.test.mjs, Pin the limited scope of the post-build exemption.` }) }
   const fx0 = made()
   assert.equal(fx0.made, true)
   assert.match(botReview(fx0).body, /\*\*Actionable comments posted: 1\*\*/)
@@ -353,14 +354,197 @@ test('rule A refuses a review with a nitpick section, and the gate does not read
   assert.equal(answer(fx0), undefined)
   merged(run(madeClean()))
   const x = run(fx0)
-  refused(x, RULE_A); assert.match(x.why, FRAME)
+  refused(x, RULE_A); assert.match(x.why, NITPICK)
   const withAnswer = mut(made, answerFor)
   assert.ok(answer(withAnswer).created_at > botReview(withAnswer).submitted_at)
   const y = run(withAnswer)
-  refused(y, RULE_A); assert.match(y.why, FRAME)
+  refused(y, RULE_A); assert.match(y.why, NITPICK)
   const z = run(mut(pr793, (fx) => { botReview(fx).body = botReview(fx).body.replace('---', nitSection(botReview(made()).body) + '\n---') }))
-  refused(z, RULE_A); assert.match(z.why, FRAME)
-  for (const f of ['bot-approval.jq', 'review-request.jq', 'merge-pr.sh']) assert.doesNotMatch(readFileSync(join(root, 'scripts', f), 'utf8'), /pipeline-bot-answer/, f)
+  refused(z, RULE_A); assert.match(z.why, NITPICK)
+  for (const f of ['review-request.jq', 'merge-pr.sh']) assert.doesNotMatch(readFileSync(join(root, 'scripts', f), 'utf8'), /pipeline-bot-answer/, f)
+})
+
+// The nitpick-only review of PR 823: no count line, no inline comment, one Trivial item for NIT_PATH.
+const NIT_PATH = 'test/wave-prompts.test.mjs'
+const NIT_TITLE = 'Check generated prompts for non-plan and quick-fix inputs.'
+const NOTE = (path, title) => `Note, not filed: ${path}, ${title}`
+const answerWith = (fx, lines, { login = fx.user, head = fx.head, at = '2026-11-15T01:00:00Z', id = 90 } = {}) => {
+  fx.issueComments.push({ id, user: { login }, created_at: at, body: `<!-- pipeline-bot-answer head=${head} -->\n${lines.join('\n')}` })
+}
+const nitAnswered = () => mut(nit823, (fx) => answerWith(fx, [NOTE(NIT_PATH, NIT_TITLE)]))
+const itemOf = (body) => body.slice(body.indexOf('`233-234`'), body.indexOf('_Source: Learnings_') + '_Source: Learnings_'.length)
+const groupOf = (body) => { const a = body.indexOf(`<details>\n<summary>${NIT_PATH}: 1`); const t = '</blockquote></details>\n\n'; return body.slice(a, body.indexOf(t + '</dd>', a) + t.length) }
+const SECOND = 'Pin the closing line of a quick fix.'
+const secondItem = (body) => itemOf(body).replace('233-234', '300-301').replace(NIT_TITLE.replace(/\.$/, ''), SECOND.replace(/\.$/, ''))
+const countTo = (body, n) => body.replace('Nitpick comments: 1<', `Nitpick comments: ${n}<`)
+// Two items in the same file (item 2 ranked `rank`), as one block of 2 items.
+const twoInOneFile = (rank = 'Trivial') => (fx) => {
+  const r = botReview(fx); const two = secondItem(r.body).replace('Trivial**', `${rank}**`)
+  r.body = countTo(r.body.replace(itemOf(r.body), itemOf(r.body) + '\n\n' + two), 2).replace(`${NIT_PATH}: 1<`, `${NIT_PATH}: 2<`)
+}
+const twoInTwoFiles = (fx) => {
+  const r = botReview(fx); const g = groupOf(r.body)
+  const g2 = g.replace(NIT_PATH, 'scripts/second.sh').replace('233-234', '300-301').replace(NIT_TITLE.replace(/\.$/, ''), SECOND.replace(/\.$/, '')).replace('Trivial**', 'Minor**')
+  r.body = countTo(r.body.replace(g, g + g2), 2)
+}
+const bodyOfNit = (base, f) => mut(base, (fx) => { botReview(fx).body = f(botReview(fx).body) })
+const withInline = (fx) => {
+  const rv = botReview(fx)
+  fx.comments.push({ id: 7001, user: { login: BOT }, in_reply_to_id: null, pull_request_review_id: rv.id, body: '<!-- coderabbit-ai-generated:v1 -->\n\n**<picture><img src="https://example.invalid/minor.svg" alt=""></picture> Minor** · **Quick win**\n\n**Pin the scope.**' })
+  fx.comments.push({ id: 7002, user: { login: fx.user }, in_reply_to_id: 7001, pull_request_review_id: 8000, body: 'Note, not filed: pinned.' })
+}
+// The second review of the same head after a request comment of the user and a newer clean run.
+const secondReview = (fx, { body = botReview(fx).body } = {}) => {
+  const rv = botReview(fx)
+  fx.issueComments.push({ id: 91, user: { login: fx.user }, created_at: '2026-11-15T01:10:00Z', body: '@coderabbitai full review' })
+  fx.checks.push({ ...botRun(fx), id: 9999, started_at: '2026-11-15T01:10:30Z', completed_at: '2026-11-15T01:11:30Z' })
+  fx.reviews.push({ ...rv, id: rv.id + 1, submitted_at: '2026-11-15T01:12:00Z', body })
+}
+
+test('rule A clears a review whose only findings are a nitpick block, when the answer comment has a line for each item', () => {
+  const fx = nitAnswered()
+  const rv = botReview(fx)
+  assert.equal(fx.comments.filter((c) => c.user.login === BOT).length, 0)
+  assert.match(rv.body, /Nitpick comments: 1<\/summary>/)
+  assert.doesNotMatch(rv.body, /Actionable comments posted/)
+  assert.ok(answer(fx).created_at > rv.submitted_at)
+  merged(run(fx))
+  const two = run(mut(nit823, (f) => { twoInTwoFiles(f); answerWith(f, ['#12 scripts/second.sh, ' + SECOND, NOTE(NIT_PATH, NIT_TITLE)]) }))
+  merged(two)
+  const bad = mut(nit823, (f) => { twoInTwoFiles(f); answerWith(f, [NOTE(NIT_PATH, NIT_TITLE)]) })
+  const y = run(bad)
+  refused(y, RULE_A); assert.match(y.why, /scripts\/second\.sh/)
+  const x = run(mut(nitAnswered, (f) => { withInline(f) }))
+  refused(x, RULE_A); assert.match(x.why, /nitpick block and an inline comment/)
+})
+
+test('rule A refuses a nitpick item whose path has an answer line but whose title has none', () => {
+  const two = (f) => { twoInOneFile()(f); return f }
+  const lines = [NOTE(NIT_PATH, NIT_TITLE), NOTE(NIT_PATH, SECOND)]
+  merged(run(mut(nit823, (f) => { two(f); answerWith(f, lines) })))
+  const cases = [
+    [NOTE(NIT_PATH, NIT_TITLE)],
+    [NOTE(NIT_PATH, NIT_TITLE), '#14 ' + NIT_PATH + ' ' + NIT_TITLE],
+    [`Note, not filed: ${NIT_PATH} ${NIT_TITLE}; ${NIT_PATH} ${SECOND}`],
+  ]
+  for (const ls of cases) {
+    const x = run(mut(nit823, (f) => { two(f); answerWith(f, ls) }))
+    refused(x, RULE_A); assert.doesNotMatch(x.why, /has no count line/); assert.match(x.why, /answer line of its own/)
+  }
+  const one = run(mut(nit823, (f) => answerWith(f, [NOTE(NIT_PATH, 'Another title.')])))
+  refused(one, RULE_A); assert.match(one.why, /answer line of its own/)
+})
+
+test('rule A does not compare the time of the answer comment, so a later review of the head with the same items clears', () => {
+  const fx = nitAnswered()
+  secondReview(fx)
+  assert.ok(answer(fx).created_at < fx.reviews.at(-1).submitted_at)
+  merged(run(fx))
+})
+
+test('rule A refuses a nitpick-only review with no answer comment of the head', () => {
+  merged(run(nitAnswered()))
+  for (const f of [(fx) => { fx.issueComments = fx.issueComments.filter((c) => c !== answer(fx)) }, (fx) => { answer(fx).body = answer(fx).body.replace(fx.head, '0'.repeat(40)) }]) {
+    const x = run(mut(nitAnswered, f))
+    refused(x, RULE_A); assert.match(x.why, /answer/); assert.doesNotMatch(x.why, /has no count line/)
+  }
+})
+
+test('rule A counts the answer comment of the user from GET /user only', () => {
+  merged(run(nitAnswered()))
+  for (const login of ['someone', BOT]) {
+    const x = run(mut(nitAnswered, (fx) => { answer(fx).user.login = login }))
+    refused(x, RULE_A); assert.match(x.why, /answer/); assert.doesNotMatch(x.why, /has no count line/)
+  }
+})
+
+test('rule A refuses a later review with a nitpick item whose path the answer comment does not name, and bot-status.sh counts the old comment', () => {
+  const ok = nitAnswered(); secondReview(ok)
+  merged(run(ok))
+  const fx = nitAnswered()
+  secondReview(fx, { body: botReview(fx).body.replace(NIT_PATH, 'scripts/new-item.sh') })
+  const x = run(fx)
+  refused(x, RULE_A); assert.match(x.why, /scripts\/new-item\.sh/)
+  const last = (r) => JSON.parse(r.out.trim().split('\n').at(-1))
+  const st = last(run(fx, { script: 'bot-status.sh' }))
+  assert.equal(st.reviewBodies, 0); assert.equal(st.openThreads, 0)
+  fx.issueComments = fx.issueComments.filter((c) => c !== answer(fx))
+  assert.ok(last(run(fx, { script: 'bot-status.sh' })).reviewBodies > 0)
+})
+
+test('rule A refuses a nitpick answer comment with no answer line', () => {
+  merged(run(nitAnswered()))
+  for (const line of ['no finding', `Not filed: ${NIT_PATH}, ${NIT_TITLE}`]) {
+    const x = run(mut(nit823, (fx) => answerWith(fx, [line])))
+    refused(x, RULE_A); assert.match(x.why, /answer line/); assert.doesNotMatch(x.why, /has no count line/)
+  }
+})
+
+test('rule A refuses a nitpick block whose count differs from its summary', () => {
+  merged(run(nitAnswered()))
+  const wrong = [(fx) => { botReview(fx).body = countTo(botReview(fx).body, 2) }, (fx) => twoInOneFile()(fx)]
+  for (const f of wrong) {
+    const x = run(mut(nit823, (fx) => { f(fx); if (f === wrong[1]) botReview(fx).body = botReview(fx).body.replace('Nitpick comments: 2<', 'Nitpick comments: 1<'); answerWith(fx, [NOTE(NIT_PATH, NIT_TITLE), NOTE(NIT_PATH, SECOND)]) }))
+    refused(x, RULE_A); assert.doesNotMatch(x.why, /has no count line/); assert.match(x.why, /number of items/)
+  }
+})
+
+test('rule A refuses a nitpick item ranked above Minor or with no rank', () => {
+  merged(run(nitAnswered()))
+  for (const f of [(b) => b.replace('</picture> Trivial**', '</picture> Major**'), (b) => b.replace('</picture> Trivial**', '</picture> Critical**'), (b) => b.replace('</picture> Trivial**', '</picture> **')]) {
+    const x = run(bodyOfNit(nitAnswered, f))
+    refused(x, RULE_A); assert.doesNotMatch(x.why, /has no count line/)
+  }
+  const m = run(bodyOfNit(nitAnswered, (b) => b.replace('</picture> Trivial**', '</picture> Major**')))
+  assert.match(m.why, /above Minor/)
+})
+
+test('rule A refuses a nitpick review with text outside the frame, also when every item has an answer', () => {
+  merged(run(nitAnswered()))
+  const sentence = 'Also check the null input of parse in foo.js; it can lose data.'
+  const outside = '<details>\n<summary>Outside diff range comments (1)</summary>\n`9-9`: **Minor**\n</details>'
+  for (const f of [(b) => b.replace('\n---\n', `\n${sentence}\n\n---\n`), (b) => b.replace('\n---\n', `\n${outside}\n\n---\n`), (b) => b.replace('_Source: Learnings_', `_Source: Learnings_\n\n${sentence}`)]) {
+    const x = run(bodyOfNit(nitAnswered, f))
+    refused(x, RULE_A); assert.match(x.why, /^clean review: rule A: review \d+ has /)
+  }
+})
+
+test('rule A refuses a body with no count line and no nitpick block, also when the answer comment exists', () => {
+  const x = run(mut(pr804, (fx) => answerWith(fx, ['Note, not filed: no finding.'], { head: fx.head })))
+  refused(x, RULE_A); assert.match(x.why, /has no count line \(Actionable comments posted: N\)/)
+})
+
+test('rule A matches the whole path and the whole title of an answer line, not a part of them', () => {
+  const shorter = bodyOfNit(nit823, (b) => b.replace(`<summary>${NIT_PATH}: 1`, '<summary>wave-prompts.test.mjs: 1'))
+  answerWith(shorter, [NOTE(NIT_PATH, NIT_TITLE)])
+  const x = run(shorter)
+  refused(x, RULE_A); assert.match(x.why, /wave-prompts\.test\.mjs/); assert.match(x.why, /answer line of its own/)
+  const LONG = NIT_TITLE.replace(/\.$/, '') + ' in detail.'
+  const holds = (lines) => mut(nit823, (fx) => {
+    twoInOneFile()(fx); botReview(fx).body = botReview(fx).body.replace(SECOND.replace(/\.$/, ''), LONG.replace(/\.$/, ''))
+    answerWith(fx, lines)
+  })
+  merged(run(holds([NOTE(NIT_PATH, NIT_TITLE), NOTE(NIT_PATH, LONG)])))
+  const y = run(holds([NOTE(NIT_PATH, NIT_TITLE), NOTE(NIT_PATH, NIT_TITLE)]))
+  refused(y, RULE_A); assert.match(y.why, /answer line of its own/)
+})
+
+test('rule A accepts an answer line with a reason after the title, and a title that holds backticks', () => {
+  merged(run(mut(nit823, (fx) => answerWith(fx, [NOTE(NIT_PATH, NIT_TITLE) + ' The tests already assert outputs.']))))
+  merged(run(mut(nit823, (fx) => answerWith(fx, ['#850 ' + NIT_PATH + ', ' + NIT_TITLE + ' (filed)']))))
+  const T = 'Check `generated` prompts for non-plan and quick-fix inputs.'
+  merged(run(mut(nit823, (fx) => { botReview(fx).body = botReview(fx).body.replace('**Check generated prompts', '**Check `generated` prompts'); answerWith(fx, [NOTE(NIT_PATH, T)]) })))
+})
+
+test('rule A does not read an item head that an example inside the fence of an item shows', () => {
+  const example = (b) => b.replace('Review comment at @', '`10`: **Minor**\n\n**Example title.**\n\nReview comment at @')
+  const fx = bodyOfNit(nit823, example); answerWith(fx, [NOTE(NIT_PATH, NIT_TITLE)])
+  assert.notEqual(botReview(fx).body, botReview(nit823()).body)
+  merged(run(fx))
+})
+
+test('rule A reads a nitpick block with one Minor item and one Trivial item in one file', () => {
+  merged(run(mut(nit823, (fx) => { twoInOneFile('Minor')(fx); answerWith(fx, [NOTE(NIT_PATH, NIT_TITLE), `#12 ${NIT_PATH}, ${SECOND}`]) })))
 })
 
 test('rule A refuses a review that holds an HTML comment other than the comments of the frame', () => {
@@ -442,14 +626,16 @@ test('a review whose raw body holds only frame comments is not an empty containe
   merged(run(pr805()))
 })
 
-test('(doc) SKILL.md says that rule A covers inline findings only and refuses a review text that holds more than the frame', () => {
+test('(doc) SKILL.md says that rule A reads the answer comment for a nitpick-only review and refuses a review text that holds more than the frame', () => {
   const skill = readFileSync(join(root, 'skills/pr-pipeline/SKILL.md'), 'utf8')
   const gate = skill.split('\n').find((l) => l.includes('bot-approval.jq') && /fourth|four ways/.test(l) && l.includes('rule A'))
   assert.ok(gate, 'the gate paragraph of Step 3 names rule A')
   assert.match(gate, /inline/); assert.match(gate, /frame/); assert.match(gate, /[Nn]itpick/); assert.match(gate, /refuses/)
   assert.doesNotMatch(gate, /findings in a review body have/)
-  assert.doesNotMatch(gate, /pipeline-bot-answer/)
+  assert.match(gate, /pipeline-bot-answer/); assert.match(gate, /path/); assert.match(gate, /answer line/)
+  assert.doesNotMatch(gate, /So a review with a nitpick section, an outside-diff section or any other block is refused/)
   assert.doesNotMatch(gate, /—/)
+  for (const f of ['review-request.jq', 'merge-pr.sh']) assert.doesNotMatch(readFileSync(join(root, 'scripts', f), 'utf8'), /pipeline-bot-answer/, f)
 })
 
 test('rule A matches the frame from the first character of the body', () => {
