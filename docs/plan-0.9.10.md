@@ -26,11 +26,11 @@ Merging this plan accepts the pick of each line. Say so before the merge to chan
 
 | # | Choice | Pick | Why |
 | --- | --- | --- | --- |
-| 1 | When the cheaper step settings become the defaults (entry ST). | Only when wave 1 costs at least 15% less for each PR item than $5.40, has at most 1.5 review rounds for each item, and no PR needs more than two outside reviews. If one of the three fails, ST is not built, and the driving session tells you the numbers. | A default that costs extra rounds saves nothing. The three numbers come from the ledger, so no person has to judge them. |
+| 1 | When the cheaper step settings become the defaults (entry ST). | Only when wave 1 costs at least 15% less for each PR item than the baseline, has at most 1.5 review rounds for each item, and no PR needs more than two outside reviews. If one of the three fails, ST is not built, and the driving session tells you the numbers. The three numbers are computed as follows. Cost: the tokens by role and token class of the ledger records, times a table of list prices by model (the model of each role comes from the wave arguments and the role defaults), summed for the wave and divided by its PR items. The docs roles (the docs writer, the docs tester and the docs reviewer) are left out of the wave 1 figure and of the baseline, so the skipped docs step is not counted as a saving. The driving session computes the baseline again from the ledger records of plan 0.9.9 with the same table. If those records are missing, it uses $5.40 and says so. Rounds: the review rounds of the ledger records divided by the PR items. Outside reviews: counted by hand from the driving log. The pick is a judgement of the driving session on these three figures, which it shows to you. | A default that costs extra rounds saves nothing. The ledger has tokens by role, not dollars or outside reviews, so the definition is stated here. |
 | 2 | The scout step (your "discovery" idea): one cheap agent reads the code once for each PR and writes a digest for the Opus agents. | Not in this plan. It gets its own plan after 0.9.10, measured against the new defaults. | It edits the same parts as ST and NP (the step table, the role table, the review prompt), so it needs a third wave. It is also a new role, and its saving (maybe 10 to 20%) is unknown. One change at a time keeps the numbers readable. |
 | 3 | How a wave skips the bot wait when the bot reviews only on request. | `botWaitMinutes: 0` skips it (entry ST). Today 0 means 20 minutes. | No new argument. Nobody sets 0 to mean 20. |
-| 4 | A fixer settles a finding with an action outside the branch, for example a new issue or a comment (entry NP). | The fixer gives the proof (issue number or comment link). The round does not stop for no progress, and the reviewer of the next round checks the proof. If the reviewer raises the same finding again, the rules of today apply. | It ends a stop for a PR that was ready, and a person or the next reviewer can check each proof. |
-| 5 | Issue #833 (a test run that hangs in `cksum` on macOS). | The tests compute the sum in JavaScript and start no `cksum` child with input. The entry closes #833 without a proof of the cause. | The suspect is the child process. With no child, the hang cannot happen in the tests. Scripts still use `cksum` and are not changed. |
+| 4 | A fixer settles a finding with an action outside the branch, for example a new issue or a comment (entry NP). | The fixer gives the proof as a number: an issue or a comment of the repo of the wave. The workflow checks its form. The round does not stop for no progress, and the reviewer of the next round checks the proof, with the fixer text shown as untrusted. This holds in the review loop and in the resume fix round. If the reviewer raises the same theme again, the rules of today apply. | It ends a stop for a PR that was ready, and a person or the next reviewer can check each proof. A free link or text from the fixer could steer the reviewer, so the proof is a number. |
+| 5 | Issue #833 (a test run that hangs in `cksum` on macOS). | The tests compute the sum in JavaScript and start no `cksum` child with input. `test/sim-filter.test.mjs` starts the sim with a timeout, so a hang of any cause fails fast with a named message. The entry closes #833 without a proof of the cause. | The suspect is the child process. With no `cksum` child, the suspect is gone from the tests, and the timeout ends any other hang (the sim still starts `jq` children with input). Scripts still use `cksum` and are not changed. |
 
 ## Decisions
 
@@ -74,7 +74,7 @@ flowchart LR
 
 Summary: five entries in wave 1 with the trial settings, then the measure of choice 1, then ST in wave 2 only if the measure holds, then the version PR.
 
-Why two waves: ST changes the defaults that wave 1 measures, and it edits the section "### Driving cheaply" that DC adds. The five entries of wave 1 edit different functions and files: DS edits `evalsRules`, NP edits `FIX`, `reviewLoop` and `reviewPrompt`, RA edits `scripts/bot-approval.jq`, CK edits test helpers, DC adds one SKILL.md section.
+Why two waves: ST changes the defaults that wave 1 measures, and it edits the section "### Driving cheaply" that DC adds. The five entries of wave 1 edit different functions and files: DS edits `evalsRules`, NP edits `FIX`, `reviewLoop`, the resume fix branch of `runPRSteps` and `reviewPrompt`, RA edits `scripts/bot-approval.jq` and the Step 3 gate paragraph of SKILL.md, CK edits test helpers and `test/sim-filter.test.mjs`, DC adds one SKILL.md section.
 
 ### Wave 1
 
@@ -89,46 +89,52 @@ Build notes: `evalsRules` holds today the rule "The Touches line is a limit: no 
 Closes #831
 
 **RA Rule A clears a review whose only findings are in a nitpick block of the body.**
-Touches: `scripts/bot-approval.jq` (`parseBody` and the regex `topRe` with its blocks, and the rule A check that prints "has no count line"), `test/clean-review.test.mjs` (new cases), `test/fixtures/clean-review/` (new fixtures).
+Touches: `scripts/bot-approval.jq` (`parseBody` and the regex `topRe` with its blocks, and the rule A check that prints "has no count line"), `skills/pr-pipeline/SKILL.md` (the paragraph of Step 3 on the gate and rule A), `test/clean-review.test.mjs` (new cases; the two pinned tests named in the build notes), `test/fixtures/clean-review/` (new fixtures).
 What must be true:
-1. A review of the head with no inline comment, whose body is the known frame plus one block "Nitpick comments: N" with N items, each ranked Minor or Trivial, and no line "Actionable comments posted: N", clears rule A when the head has a `pipeline-bot-answer` comment of the user, on the same terms as a review with answered inline Minors.
+1. A review of the head with no inline comment, whose body is the known frame plus one block "Nitpick comments: N" with N items, each ranked Minor or Trivial, and no line "Actionable comments posted: N", clears rule A when the head has a `pipeline-bot-answer` comment of the user that is later than the `submitted_at` of that review and whose body holds an answer line: an issue number (`#N`) or "Note, not filed:".
 2. The same body with no `pipeline-bot-answer` comment for the head is refused, with a line that names the missing answer.
-3. A nitpick block whose number of items differs from N is refused.
-4. A nitpick block with an item ranked above Minor is refused.
-5. A body with any text outside the known frame and the nitpick block is refused. (holds today; kind `regression`)
-6. A body with no count line and no nitpick block is refused with the line "has no count line (Actionable comments posted: N)". (holds today; kind `regression`)
-Build notes: the case "rule A" near the no-count-line test of `test/clean-review.test.mjs` pins statement 6. The body format of a nitpick block comes from the reviews on #823 and #811; copy it into a fixture.
+3. The same body with a `pipeline-bot-answer` comment that is older than the review is refused, with a line that names the order.
+4. The same body with a `pipeline-bot-answer` comment of the head that holds no answer line (for example only "no finding") is refused, with a line that names the missing answer line.
+5. A nitpick block whose number of items differs from N is refused.
+6. A nitpick block with an item ranked above Minor is refused.
+7. A body with any text outside the known frame and the nitpick block is refused. (holds today; kind `regression`)
+8. A body with no count line and no nitpick block is refused with the line "has no count line (Actionable comments posted: N)". (holds today; kind `regression`)
+9. (doc) The SKILL.md paragraph of the gate says that `bot-approval.jq` reads the `pipeline-bot-answer` comment for a nitpick-only review, and that the comment must be later than the review and hold an answer line. `review-request.jq` and `merge-pr.sh` still do not hold the text `pipeline-bot-answer`.
+Build notes: statement 1 replaces two pinned facts, so RA changes them on purpose: the test "rule A refuses a review with a nitpick section, and the gate does not read the answer comment" (it asserts that a nitpick review with an answer comment is refused, and that `bot-approval.jq` has no `pipeline-bot-answer`), and the (doc) test "SKILL.md says that rule A covers inline findings only and refuses a review text that holds more than the frame" (it asserts that the gate paragraph has no `pipeline-bot-answer`). A review with an inline Minor plus a nitpick block stays refused, as the issue does not ask to clear it. The answer line is the form that `answerLine` reads for an inline Minor. The case "rule A" near the no-count-line test of `test/clean-review.test.mjs` pins statement 8. The body format of a nitpick block comes from the reviews on #823 and #811; copy it into a fixture.
 Closes #829
 
 **NP A fixer can settle a finding with an action outside the branch.** Sim anchor: after "PN-6 a no-line or differing model answer alone refuses no PR".
-Touches: `workflows/run-wave.js` (the schema `FIX`, one new field; `reviewLoop`, the branch for `fix.changed === false`; `reviewPrompt`, one sentence), `agents/fixer.md` (one new bullet), `skills/pr-pipeline/SKILL.md` (the row of "When things go wrong" for the stop "no progress: the fix changed nothing"), `test/sim-pipeline.mjs` (one new block).
+Touches: `workflows/run-wave.js` (the schema `FIX`, one new field; `reviewLoop`, the branch for `fix.changed === false`, and the history row it pushes; `runPRSteps`, the resume fix branch with `decisionFix.changed === false`; `reviewPrompt`, one sentence and the print of the history rows), `agents/fixer.md` (one new bullet), `skills/pr-pipeline/SKILL.md` (the row of "When things go wrong" for the stop "no progress: the fix changed nothing"), `test/sim-pipeline.mjs` (one new block).
 What must be true:
-1. The schema `FIX` has a field `outside`: a list of items, each with the number of a finding, the action, and a proof (an issue number or a link to a comment).
-2. When the fix changed nothing and every blocker and major of the round has an `outside` item with a proof that is not empty, the round does not stop with `no progress: the fix changed nothing`, and the next round runs.
-3. When one blocker or major of the round has no such item, the stop of today happens.
-4. The review prompt of the next round lists each `outside` item and asks the reviewer to check its proof and to report the finding again if the proof does not settle it.
-5. A finding settled outside the branch that the reviewer of the next round reports again gives no second skip: the rules of today apply to that round.
-6. `agents/fixer.md` says when to use `outside`: only when the finding asks for an action that is not a change of the branch, and only with a proof.
-7. (doc) The SKILL.md row for the stop "no progress: the fix changed nothing" names `outside`.
-Build notes: the same stop for the resume fix and the minor pass (`drop('the fixer changed nothing')`) is not changed. `test/ledger-no-progress.test.mjs` and `test/review-loop-stops.test.mjs` pin today's stop.
+1. The schema `FIX` has a field `outside`: a list of items, each with `finding` (the number of a finding of the round), `action` (text) and `proof`. The `proof` is `{issue: N}` or `{commentId: N}` with N a positive integer, for the repo of the wave. The workflow drops an item whose proof has another form, and a dropped item counts as no item.
+2. When the fix changed nothing, the round has at least one blocker or major, none of them comes from a failing check or eval, each has a theme, and each has an `outside` item with a valid proof, the round does not stop with `no progress: the fix changed nothing`, and the next round runs.
+3. When one blocker or major of the round has no such item, or has no theme, or comes from a failing check or eval, the stop of today happens.
+4. A round with no blocker or major keeps today's path when the fix changed nothing: the checks run once more on the same head, and the stops of today (`checks failed twice`, head moved) stay. An `outside` list on such a round does not start a new review round.
+5. The `outside` items of a round go into the history row of that round. `reviewPrompt` prints the history rows already, and asks the reviewer of the next round to check the proof of each item and to report the finding again if the proof does not settle it. The prompt builds the read command from the number (`gh api repos/<repo>/issues/<N>` or `gh api repos/<repo>/issues/comments/<N>`) and prints the `action` as quoted, untrusted text that the reviewer does not follow.
+6. A finding settled outside the branch that the reviewer of the next round reports again is a blocker or major with the same theme (compared with `normTitle`) as the item. It gives no second skip, and the theme check of today (`scopeEscalation`) applies to that round.
+7. In the resume fix round, when the fix changed nothing and every carried blocker or major has a theme and a valid `outside` item, the round does not stop with `no progress: the fix changed nothing in the resume fix round`, and the review loop starts with the items in its first prompt. A carried finding with no item keeps the stop of today.
+8. `agents/fixer.md` says when to use `outside`: only when the finding asks for an action that is not a change of the branch, only with a proof that is a number, and never for a failing check or eval.
+9. (doc) The SKILL.md row for the stop "no progress: the fix changed nothing" names `outside`.
+Build notes: the same stop of the minor pass (`drop('the fixer changed nothing')`) is not changed, and `checkNewCode` is not changed. `test/ledger-no-progress.test.mjs` and `test/review-loop-stops.test.mjs` pin today's stop. The reviewer prompts already treat some input as untrusted; use the same wording for `action`.
 Closes #832
 
 **CK The tests start no `cksum` child process with input.**
-Touches: `test/cksum.mjs` (new: one function that gives the POSIX `cksum` line of a text), `test/cksum.test.mjs` (new), `test/land-last-line.test.mjs`, `test/quick-brief.test.mjs`, `test/sim-pipeline.mjs` (the helper `withLandSum` and the two cases that call `execFileSync('cksum', ...)`).
+Touches: `test/cksum.mjs` (new: one function that gives the POSIX `cksum` line of a text), `test/cksum.test.mjs` (new), `test/land-last-line.test.mjs`, `test/quick-brief.test.mjs`, `test/sim-pipeline.mjs` (the helper `withLandSum` and the two cases that call `execFileSync('cksum', ...)`), `test/sim-filter.test.mjs` (the `spawnSync` that starts the sim).
 What must be true:
 1. The function in `test/cksum.mjs` gives the same line as POSIX `cksum` for fixed texts: the empty text, one line, many lines and a text with bytes above 127. `test/cksum.test.mjs` holds the expected lines as literal values and starts no child process.
 2. No file under `test/` calls `spawnSync`, `execFileSync` or `execSync` with the command `cksum` and an input. The call of `cksum` on files in `test/role-files.test.mjs` stays.
 3. The tests that compared a sum with `cksum` before still compare the same sum, now from `test/cksum.mjs`, and fail when the sum in the output is wrong.
 4. `workflows/run-wave.js` and the scripts are not changed.
-Build notes: the workflow has its own copy of the function (`const cksum` in `run-wave.js`), which a workflow script cannot import. Do not share it.
+5. `test/sim-filter.test.mjs` starts the sim with a `timeout` (a generous bound, for example 10 minutes). When the run ends by that timeout, the test fails at once with a message that names the timeout, and does not wait.
+Build notes: the timeout covers a hang of any cause, because `test/sim-pipeline.mjs` and other tests still start `jq` and `bash` children with input, and the suspect (a nested spawn with input on macOS) is not proved. the workflow has its own copy of the function (`const cksum` in `run-wave.js`), which a workflow script cannot import. Do not share it.
 Closes #833
 
 **DC A section in SKILL.md on driving a wave cheaply.**
 Touches: `skills/pr-pipeline/SKILL.md` (new section "### Driving cheaply" directly after "### Cost and the prompt cache"), `test/skill-docs.test.mjs` (one new case).
 What must be true:
-1. (doc) The section says that the main session costs more than the agents, and that its cost is the number of calls times the size of its conversation times the price of its model.
+1. (doc) The section says that the main session is a cost of the wave next to the agents, and that its cost is the number of calls times the size of its conversation times the price of its model.
 2. (doc) It says to start a fresh main session for each plan, with the state in the plan and a log file.
-3. (doc) It says that a wake-up more than one hour after the last call writes the whole conversation to the cache again, and to land the PRs of a wave with as few commands and wake-ups as possible.
+3. (doc) It says that a wake-up after the cache has run out (5 minutes after the last call, as in the section "Cost and the prompt cache") writes the whole conversation to the cache again, and to land the PRs of a wave with as few commands and wake-ups as possible. It gives no other time to live.
 4. (doc) It says to give a lookup in a big file to a subagent, and to read big files by line ranges.
 5. (doc) It names the `steps` argument with the trial settings of this plan as the example, and `docsUpdate: false` for an entry whose Touches line names its docs.
 
@@ -149,7 +155,7 @@ Build notes: `STEPS` merges the `steps` argument for each step key. `ROLES.minor
 ## Steps of the driving session
 
 1. Run wave 1 with the trial settings and `docsUpdate: false`. Land each PR under the standing rule.
-2. Read the ledger records of wave 1 (`after-run.sh`): cost for each PR item, review rounds, outside reviews. Compare them with plan 0.9.9 and tell the maintainer, with the result of choice 1.
+2. Read the ledger records of wave 1 (`after-run.sh`). Compute the three figures of choice 1: the cost for each PR item (tokens by role and token class times the list price of the model of each role, with the docs roles left out of wave 1 and of the baseline), the review rounds for each item, and the outside reviews (counted by hand from the driving log). Compute the baseline again from the ledger records of plan 0.9.9 with the same price table. Compare, and tell the maintainer, with the result of choice 1 as a judgement on these figures.
 3. If the measure holds, run wave 2. If not, skip ST and go to the version PR.
 4. The version PR and release 0.9.10.
 
@@ -165,7 +171,7 @@ Build notes: `STEPS` merges the `steps` argument for each step key. `ROLES.minor
 ## Pass criteria
 
 1. The four per-PR criteria of iteration 1 hold for each entry of wave 1 (a list before the build, a result for each eval id, the break check ran where an eval of kind `behaviour` or `error path` exists, and a ledger record with tokens by role).
-2. The driving session reports the cost of wave 1 for each PR item and by role, the rounds and the outside reviews, next to plan 0.9.9.
+2. The driving session reports the cost of wave 1 for each PR item and by role (computed as in choice 1, with the docs roles left out), the rounds and the outside reviews, next to plan 0.9.9.
 3. No entry needs more than two outside reviews.
 4. In the next product wave on 0.9.10, no PR stops with `docs check: rounds exhausted` because of a scope eval.
 5. The entries file at most 2 issues.
@@ -177,12 +183,13 @@ Build notes: `STEPS` merges the `steps` argument for each step key. `ROLES.minor
 ## Flagged concerns
 
 - **The trial can lower review quality.** Opus at medium effort can miss a fault that high effort finds. The outside review is the guard, and criterion 3 measures it. Choice 1 stops ST when rounds go up.
-- **NP lets a PR go on with no change of the branch.** The proof is checked only by the next reviewer. A reviewer of NP must check that a fixer cannot use `outside` for a finding that asks for a code change: statement 6 and the check of the next round are the guard.
-- **RA widens what clears by script.** Only a nitpick block with Minor or Trivial items and an answer for the head clears. A reviewer of RA must check that the parse still refuses any other text.
+- **NP lets a PR go on with no change of the branch.** The proof is checked only by the next reviewer. A reviewer of NP must check that a fixer cannot use `outside` for a finding that asks for a code change or for a failing check, that the proof is a number checked by the workflow, and that the fixer text reaches the reviewer only as quoted data: statements 1, 3, 5, 6 and 8 and the check of the next round are the guard.
+- **RA widens what clears by script.** Only a nitpick block with Minor or Trivial items and an answer comment that is later than the review and holds an answer line clears. A reviewer of RA must check that the parse still refuses any other text, and that the gate does not clear on an old marker.
 - **ST changes four role files.** A session that has not reloaded is refused at its first wave with `role files differ:`. That is the intended guard.
 
 ## Not verified
 
-- The cause of the hang in #833. Only the child process is removed from the tests.
+- The cause of the hang in #833. Only the `cksum` child is removed from the tests, and a timeout makes any hang fail fast.
+- Whether the cache of the main session of the driver lasts longer than 5 minutes. DC uses the 5 minutes of the section "Cost and the prompt cache".
 - How much the trial settings save. Wave 1 measures it.
 - The exact text of a CodeRabbit nitpick block in every case. The fixtures come from two reviews.
