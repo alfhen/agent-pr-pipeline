@@ -458,18 +458,35 @@ test('rule A counts the answer comment of the user from GET /user only', () => {
   }
 })
 
-test('rule A refuses a later review with a nitpick item whose path the answer comment does not name, and bot-status.sh counts the old comment', () => {
-  const ok = nitAnswered(); secondReview(ok)
+const listsFirst = () => mut(nit823, (fx) => answerWith(fx, ['<!-- pipeline-reviews ' + botReview(fx).id + ' -->', NOTE(NIT_PATH, NIT_TITLE)]))
+const lastOf = (r) => JSON.parse(r.out.trim().split('\n').at(-1))
+
+test('rule A refuses a later review with a nitpick item whose path the answer comment does not name, and bot-status.sh counts the later review the comment does not list', () => {
+  const ok = listsFirst(); secondReview(ok)
   merged(run(ok))
-  const fx = nitAnswered()
+  const fx = listsFirst()
   secondReview(fx, { body: botReview(fx).body.replace(NIT_PATH, 'scripts/new-item.sh') })
   const x = run(fx)
   refused(x, RULE_A); assert.match(x.why, /scripts\/new-item\.sh/)
-  const last = (r) => JSON.parse(r.out.trim().split('\n').at(-1))
-  const st = last(run(fx, { script: 'bot-status.sh' }))
-  assert.equal(st.reviewBodies, 0); assert.equal(st.openThreads, 0)
+  const st = lastOf(run(fx, { script: 'bot-status.sh' }))
+  assert.equal(st.reviewBodies, 1); assert.equal(st.openThreads, 0)
+  const both = mut(() => fx, (g) => { answer(g).body = answer(g).body.replace(/pipeline-reviews (\d+)/, 'pipeline-reviews $1,' + (botReview(g).id + 1)) })
+  assert.equal(lastOf(run(both, { script: 'bot-status.sh' })).reviewBodies, 0)
   fx.issueComments = fx.issueComments.filter((c) => c !== answer(fx))
-  assert.ok(last(run(fx, { script: 'bot-status.sh' })).reviewBodies > 0)
+  assert.ok(lastOf(run(fx, { script: 'bot-status.sh' })).reviewBodies > 0)
+})
+
+test('rule A clears two reviews of one head with one nitpick item each when two answer comments each answer one', () => {
+  const build = (path) => {
+    const fx = listsFirst()
+    secondReview(fx, { body: botReview(fx).body.replace(NIT_PATH, 'scripts/new-item.sh') })
+    answerWith(fx, ['<!-- pipeline-reviews ' + (botReview(fx).id + 1) + ' -->', NOTE(path, NIT_TITLE)], { id: 92, at: '2026-11-15T01:20:00Z' })
+    return fx
+  }
+  const fx = build('scripts/new-item.sh')
+  merged(run(fx))
+  assert.equal(lastOf(run(fx, { script: 'bot-status.sh' })).reviewBodies, 0)
+  refused(run(build('scripts/other.sh')), RULE_A)
 })
 
 test('rule A refuses a nitpick answer comment with no answer line', () => {
