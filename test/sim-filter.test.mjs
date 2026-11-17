@@ -14,7 +14,8 @@ const runSim = filter => {
   delete env.SIM_CASE_FILTER;
   if (filter !== undefined) env.SIM_CASE_FILTER = filter;
   const r = spawnSync(process.execPath, [simPath], { encoding: 'utf8', env, maxBuffer: 64 * 1024 * 1024, timeout: SIM_TIMEOUT_MS });
-  assert.ok(!r.error, `the sim run ended by the timeout of ${SIM_TIMEOUT_MS} ms: ${r.error}`);
+  assert.notEqual(r.error?.code, 'ETIMEDOUT', `the sim run ended by the timeout of ${SIM_TIMEOUT_MS} ms`);
+  assert.ok(!r.error, `the sim run failed to finish: ${r.error}`);
   const oks = r.stdout.split('\n').filter(l => l.startsWith('ok  '));
   return { status: r.status, oks, out: r.stdout + r.stderr };
 };
