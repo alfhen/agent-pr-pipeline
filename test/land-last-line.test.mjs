@@ -6,6 +6,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, chmodSync, readFileSync, rmSync 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import cksum from './cksum.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const GIT_ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' }
@@ -53,7 +54,7 @@ test('the last line holds the cksum and the byte length of every line before it'
   assert.equal(r.status, 0, r.stderr)
   const lines = body(r.stdout)
   const last = lines.pop()
-  const [crc, bytes] = spawnSync('cksum', { input: lines.join('\n'), encoding: 'utf8' }).stdout.trim().split(/\s+/)
+  const [crc, bytes] = cksum(lines.join('\n')).split(' ')
   assert.equal(last, `land-commits: sum ${crc}:${bytes}`)
   assert.match(lines.join('\n'), /hand resolved/)
 })
@@ -79,7 +80,7 @@ for (const word of ['log', 'diff-tree', '--parents', '--name-only', 'merge-base'
 
 const sumLine = (lines) => {
   const last = lines.pop()
-  const [crc, bytes] = spawnSync('cksum', { input: Buffer.from(lines.join('\n'), 'utf8'), encoding: 'utf8' }).stdout.trim().split(/\s+/)
+  const [crc, bytes] = cksum(lines.join('\n')).split(' ')
   return { last, want: `land-commits: sum ${crc}:${bytes}` }
 }
 

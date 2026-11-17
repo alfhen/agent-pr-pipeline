@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
+import cksum from './cksum.mjs'
 
 const src = readFileSync(new URL('../workflows/run-wave.js', import.meta.url), 'utf8').replace('export const meta', 'const meta')
 const RealDate = globalThis.Date
@@ -216,7 +217,7 @@ const agentRaw = async (prompt, o) => {
 const putText = prompt => /\n(`{3,})\n([\s\S]*?)\n\1\n/.exec(prompt)[2]
 // A pipeline-io answer as the real agent returns it: the script's text between the two io.sh lines. The fake's own exitCode stays in the answer and must be ignored.
 const NO_CODE_LINE = 'land-commits: no code added by the land fix'
-const withLandSum = text => { const [crc, bytes] = spawnSync('cksum', { input: text, encoding: 'utf8' }).stdout.trim().split(/\s+/); return `${text}\nland-commits: sum ${crc}:${bytes}` }
+const withLandSum = text => { const [crc, bytes] = cksum(text).split(' '); return `${text}\nland-commits: sum ${crc}:${bytes}` }
 const ioWrap = (label, out) => out && label.startsWith('io:') && typeof out.exitCode === 'number' && !out.raw
   ? { exitCode: out.exitCode, output: `pipeline-io: begin\n${out.output}${out.output ? '\n' : ''}pipeline-io: exit ${out.exitCode}` } : out
 const agent = async (prompt, o) => {
@@ -1693,10 +1694,9 @@ await check('quick: the fence is longer than any backtick run in the entry', asy
   assert.ok(putText(put).includes('```x```'))
 })
 await check('quick: the sum in the put command equals cksum of the entry', async () => {
-  const { execFileSync } = await import('node:child_process')
   const put = forPr('QM', /^io:QM#put$/)[0].prompt
   const sum = /--sum (\d+:\d+)/.exec(put)[1]
-  const out = execFileSync('cksum', { input: putText(put) }).toString().trim().split(/\s+/)
+  const out = cksum(putText(put)).split(' ')
   assert.equal(sum, `${out[0]}:${out[1]}`)
 })
 const quickOne = async (id, issue, extra = {}) => {
@@ -4363,11 +4363,10 @@ await check('merge safety: an exit-0 gate output with extra lines around "not ga
   }
 })
 await check('quick: a newline at the end of the last new concept does not change the sum', async () => {
-  const { execFileSync } = await import('node:child_process')
   TRIAGES.QZ = triage('build', 'M', 'medium', { newConcepts: ['a thing\n'] })
   await simulate({ ...quickBase, prs: [{ id: 'QZ', quick: { issue: 96 }, branch: 'fix/QZ' }] })
   const put = calls.find(c => c.label === 'io:QZ#put').prompt
-  const out = execFileSync('cksum', { input: putText(put) }).toString().trim().split(/\s+/)
+  const out = cksum(putText(put)).split(' ')
   assert.equal(/--sum (\d+:\d+)/.exec(put)[1], `${out[0]}:${out[1]}`)
   assert.ok(!/\n$/.test(putText(put)))
 })

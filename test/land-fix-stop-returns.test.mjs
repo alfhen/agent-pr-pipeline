@@ -5,11 +5,14 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const simPath = fileURLToPath(new URL('./sim-pipeline.mjs', import.meta.url))
+const SIM_TIMEOUT_MS = 10 * 60 * 1000
 const ids = [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 18, 19, 20]
 
 test('BR2 sim cases all run and pass', () => {
   const env = { ...process.env, SIM_CASE_FILTER: 'BR2-' }
-  const r = spawnSync(process.execPath, [simPath], { encoding: 'utf8', env, maxBuffer: 64 * 1024 * 1024 })
+  const r = spawnSync(process.execPath, [simPath], { encoding: 'utf8', env, maxBuffer: 64 * 1024 * 1024, timeout: SIM_TIMEOUT_MS })
+  assert.notEqual(r.error?.code, 'ETIMEDOUT', `the sim run ended by the timeout of ${SIM_TIMEOUT_MS} ms`)
+  assert.ok(!r.error, `the sim run failed to finish: ${r.error}`)
   assert.equal(r.status, 0, r.stdout + r.stderr)
   const oks = r.stdout.split('\n').filter(l => l.startsWith('ok  BR2-'))
   for (const id of ids) assert.ok(oks.some(l => l.startsWith(`ok  BR2-${id}:`)), `BR2-${id} did not run`)
