@@ -6079,6 +6079,46 @@ await check('TK-8 evalsVerdict accepts every kind, quality bar included, and ref
   const y = await evalsRun(resumeWith(kinds.map((k, i) => ev(`C1-${i + 1}`, k === 'quality bar' ? 'quality bars' : k))), noWriter)
   assert.equal(y.C1.reason, 'evals refused: eval C1-4 has no valid kind')
 })
+const DS_RUN = (pr = C1PR) => evalsRun([pr], () => withMeta(listOf('C1')), okCheck, { productReview: 'all' })
+const DS_LABELS = ['evals:C1', 'evalsarch:C1#1', 'evalsproduct:C1#1']
+const dsRule = prompt => rulesOf(prompt).split('\n').find(l => l.startsWith('- ') && l.split(/(?<=\.)\s/).some(t => ['Touches line', 'README', 'markdown docs', 'docs site', 'docs step runs'].every(w => t.includes(w))))
+await check('DS-1 the rule list allows the files of the docs step for a scope eval, in all three prompts', async () => {
+  await DS_RUN()
+  const line = dsRule(promptOf('evals:C1'))
+  assert.ok(line, 'the writer prompt has no docs rule')
+  for (const l of DS_LABELS.slice(1)) assert.ok(rulesOf(promptOf(l)).includes(line), `${l} lacks the docs rule`)
+  for (const w of ['any file', 'every file', 'all files']) assert.ok(!line.includes(w), `the docs rule widens: ${w}`)
+})
+await check('DS-2 the docs rule says the eval does not fail and names the stop', async () => {
+  await DS_RUN()
+  const line = dsRule(promptOf('evals:C1'))
+  assert.ok(line, 'the writer prompt has no docs rule')
+  assert.ok(line.split(/(?<=\.)\s/).some(t => t.includes('does not fail') && t.includes('docs step')))
+  assert.ok(line.includes('docs check: rounds exhausted'))
+  for (const l of DS_LABELS.slice(1)) assert.ok(rulesOf(promptOf(l)).includes(line), `${l} lacks the docs rule`)
+})
+await check('DS-3 evals-writer.md holds one bullet for the docs step, after the quality bar bullet', async () => {
+  const lines = readFileSync(new URL('../agents/evals-writer.md', import.meta.url), 'utf8').split('\n')
+  const idx = lines.map((l, i) => l.startsWith('- ') && l.includes('docs step') && l.includes('docs check: rounds exhausted') ? i : -1).filter(i => i >= 0)
+  assert.equal(idx.length, 1)
+  for (const w of ['Touches line', 'does not fail', 'README']) assert.ok(lines[idx[0]].includes(w), w)
+  assert.ok(lines[idx[0] - 1].includes('A `quality bar` eval needs its own check'))
+})
+await check('DS-4 the Touches line limit stays in the writer prompt and both evals checks', async () => {
+  await DS_RUN()
+  for (const l of ['evals:C1', ...DS_LABELS.slice(1)]) assert.ok(rulesOf(promptOf(l)).includes('The Touches line is a limit: no eval needs a file outside it.'), `${l} lost the Touches line limit sentence`)
+})
+await check('DS-7 with docsUpdate false the three prompts do not allow the docs step files', async () => {
+  await DS_RUN()
+  const on = DS_LABELS.map(l => promptOf(l))
+  await DS_RUN({ ...C1PR, docsUpdate: false })
+  DS_LABELS.forEach((l, i) => {
+    const off = promptOf(l)
+    assert.ok(dsRule(on[i]), `docsUpdate true: ${l} lacks the docs rule`)
+    assert.notEqual(off, on[i], `docsUpdate false: ${l} prompt is unchanged`)
+    assert.ok(!rulesOf(off).split('\n').some(r => r.includes('README') && r.includes('docs step')) || /docs step (does not|will not) run|no docs step/i.test(off), `docsUpdate false: ${l} still allows the docs files`)
+  })
+})
 await check('C10-11 a resumed list, a reviewer eval and a land-fix list accept a check-only trigger and refuse a statement one', async () => {
   const withIt = where => listOf('C1').concat(codeEval('C1-3', where))
   assert.match(codeEval('C1-3', 'statement').statement, PR_TEXT_RULE)
