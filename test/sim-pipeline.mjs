@@ -6463,6 +6463,15 @@ await check('RV-7 the row needs human: scope of SKILL.md names the rule for a li
   assert.match(rows[0], /list that only a run can give/)
   assert.match(rows[0], /finds the set by a run and the PR lists it/)
 })
+await check('RA-1 step 7 of the answer prompt asks one line for each finding of a body, with its file path, its title and an issue number or a Note', async () => {
+  await landRun({ bodies: ['C1'] }, only('C1'))
+  const prompt = calls.find(c => c.label === 'botanswer:C1').prompt
+  const step = /^7\. .*$/m.exec(prompt)[0]
+  assert.match(step, /file path/)
+  assert.match(step, /title/)
+  assert.match(step, /#N/)
+  assert.match(step, /Note, not filed:/)
+})
 await check('F652-3 a failing eval and a fixer dispute with no push go to the writer, not to the no-progress stop', async () => {
   const newEval = ev('C1-1', 'behaviour', { statement: 'C1-1 checkable from the branch' })
   const x = await disputeRun(listOf('C1'), disputeFlow({ ruling: 'change', reason: 'not checkable', eval: newEval }))
