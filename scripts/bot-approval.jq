@@ -48,6 +48,7 @@ def answered($t): any($in.comments[]; .in_reply_to_id == $t.id and (.user.login 
 | def isRankMinor: . == "Minor" or . == "Trivial";
 # The rank word of an inline comment, as CodeRabbit writes it: **<picture>..</picture> Minor**.
 def rankOf: stripComments | (first(capture("\\A\\*\\*(<picture>.*?</picture>)?\\s*(?<w>[A-Za-z]+)\\*\\*").w) // null);
+# Nitpick answer lines (nitAnswerLines) need the #N or "Note, not filed:" at the start of the line; an inline reply may hold #N anywhere.
 def answerLine: gsub("^\\s+|\\s+$"; "") | (test("#[0-9]+") or startswith("Note, not filed:"));
 # Rule A ranks inline findings, and the items of a nitpick block when the review has no count line and no inline comment.
 # The body of a review must be exactly the frame of the real CodeRabbit bodies, each block at
