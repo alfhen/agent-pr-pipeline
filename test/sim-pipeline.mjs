@@ -1464,12 +1464,15 @@ await check('each agent file exists and its defaults match the workflow defaults
   const files = readdirSync(new URL('agents/', root)).map(f => f.replace(/\.md$/, '')).sort()
   assert.deepEqual(files, [...new Set(Object.values(AGENT_OF))].sort())
   const docsOrPlan = c => c.label.startsWith('review:') && /^(D|P)\d/.test(c.label.split(':')[1])
-  for (const c of calls.filter(c => !docsOrPlan(c))) {
+  const minorPass = c => c.label.startsWith('minorreview:')
+  for (const c of calls.filter(c => !docsOrPlan(c) && !minorPass(c))) {
     const fm = frontmatter(c.agentType.split(':')[1])
     assert.equal(fm.name, c.agentType.split(':')[1])
     assert.equal(`${fm.model}/${fm.effort}`, `${c.model}/${c.effort}`, c.label)
   }
   assert.equal(`${calls.find(c => c.label === 'review:D1#1').model}`, 'sonnet')
+  const pinned = { reviewer: 'opus/medium', tester: 'haiku/low', 'pr-opener': 'haiku/low' }
+  for (const [name, want] of Object.entries(pinned)) assert.equal(`${frontmatter(name).model}/${frontmatter(name).effort}`, want, name)
 })
 await check('only the land fixer keeps a 1-hour cache', () => {
   for (const name of new Set(Object.values(AGENT_OF))) {
@@ -6750,4 +6753,117 @@ await check('AN-11 step 2 of SKILL.md says a name that matches no check is an un
   assert.match(sentence, /untested item/)
   assert.match(sentence, /no finding|not a finding/)
   assert.doesNotMatch(line, /acceptance test did not run/)
+})
+
+await check('ST-1 the reviewer of a code PR runs on Opus at medium effort by default', async () => {
+  await simulate({ ...base, prs: only('C1') })
+  const c = calls.find(c => c.label === 'review:C1#1')
+  assert.equal(`${c.model}/${c.effort}`, 'opus/medium')
+})
+await check('ST-2 the tester and the PR opener run on Haiku at low effort by default', async () => {
+  await simulate({ ...base, prs: only('C1') })
+  for (const l of ['test:C1#1', 'open:C1']) {
+    const c = calls.find(c => c.label === l)
+    assert.equal(`${c.model}/${c.effort}`, 'haiku/low', l)
+  }
+})
+await check('ST-3 the evals writer and the architecture reviewer stay on Opus at high effort', async () => {
+  await evalsRun([C1PR], () => withMeta(listOf('C1')))
+  for (const l of ['evals:C1', 'arch:C1#1']) {
+    const c = calls.find(c => c.label === l)
+    assert.equal(`${c.model}/${c.effort}`, 'opus/high', l)
+  }
+})
+const stRec = []
+const stHook = (p, o) => {
+  if (o.label === 'minorreview:C1' || o.label === 'review:C1#1') stRec.push(`${o.label} ${o.model}/${o.effort}`)
+  return passHook()(p, o)
+}
+const stMinor = () => stRec.filter(r => r.startsWith('minorreview:'))
+await check('ST-4 the minor-pass check runs on its own step minorReview, and the step review does not change it', async () => {
+  stRec.length = 0
+  await hooked(only1('C1'), stHook)
+  assert.deepEqual(stMinor(), ['minorreview:C1 sonnet/high'])
+  stRec.length = 0
+  await hooked(only1('C1'), stHook, { steps: { review: { model: 'haiku', effort: 'low' } } })
+  assert.deepEqual(stRec.filter(r => r.startsWith('review:')), ['review:C1#1 haiku/low'])
+  assert.deepEqual(stMinor(), ['minorreview:C1 sonnet/high'])
+})
+await check('ST-5 a steps argument for minorReview sets the model and effort of the minor-pass check', async () => {
+  stRec.length = 0
+  await hooked(only1('C1'), stHook, { steps: { minorReview: { model: 'opus', effort: 'xhigh' } } })
+  assert.deepEqual(stMinor(), ['minorreview:C1 opus/xhigh'])
+})
+await check('ST-6 the review loop uses review for a code PR and reviewDocs for a docs or plan PR', async () => {
+  await simulate({ ...base, steps: { review: { model: 'haiku', effort: 'max' }, reviewDocs: { model: 'sonnet', effort: 'xhigh' } }, prs: only('C1', 'D1', 'P1') })
+  const at = l => { const c = calls.find(c => c.label === l); return `${c.model}/${c.effort}` }
+  assert.equal(at('review:C1#1'), 'haiku/max')
+  assert.equal(at('review:D1#1'), 'sonnet/xhigh')
+  assert.equal(at('review:P1#1'), 'sonnet/xhigh')
+})
+await check('ST-7 the frontmatter of the reviewer, tester and PR opener holds the new defaults', () => {
+  const fm = n => readFileSync(new URL(`agents/${n}.md`, root), 'utf8').split('\n')
+  assert.ok(fm('reviewer').includes('model: opus') && fm('reviewer').includes('effort: medium'))
+  for (const n of ['tester', 'pr-opener']) assert.ok(fm(n).includes('model: haiku') && fm(n).includes('effort: low'), n)
+})
+const stBotWait = { approvedBy: [], seenHead: [], openComments: 0, timedOut: true }
+await check('ST-9 botWaitMinutes 0 runs no bot-wait agent, reads the bot status, and gives the result of a wait that saw nothing', async () => {
+  await hooked(only1('C1'), () => undefined, { botWaitMinutes: 1 })
+  assert.ok(calls.some(c => c.label === 'botwait:C1'))
+  const A = await hooked(only1('C1'), (p, o) => o.label === 'botwait:C1' ? stBotWait : undefined)
+  const B = await hooked(only1('C1'), () => undefined, { botWaitMinutes: 0 })
+  assert.ok(!calls.some(c => c.label.startsWith('botwait:')))
+  const ls = calls.map(c => c.label)
+  assert.ok(ls.indexOf('io:C1#botstatus') > ls.indexOf('open:C1'))
+  assert.ok(logs.some(l => /botWaitMinutes\D*0\b/.test(l)))
+  assert.equal(B.C1.ready, true)
+  for (const k of ['ready', 'reason', 'approvedBy', 'landMode', 'codeChangedByBots']) assert.deepEqual(B.C1[k], A.C1[k], k)
+  assert.deepEqual(B.C1.land.split(':').slice(1), A.C1.land.split(':').slice(1))
+})
+await check('ST-10 botWaitMinutes 0 in a land-fix run skips the wait and ends as it does with a wait', async () => {
+  const d = await landRun({}, only('L1'))
+  assert.equal(d.L1.ready, true)
+  assert.deepEqual(ran(/^botwait:/), ['botwait:L1'])
+  const z = await landRun({}, only('L1'), { botWaitMinutes: 0 })
+  assert.deepEqual(ran(/^botwait:/), [])
+  assert.ok(logs.some(l => /botWaitMinutes\D*0\b/.test(l)))
+  assert.equal(z.L1.ready, true)
+  assert.equal(z.L1.reason, undefined)
+  assert.deepEqual(z.L1.approvedBy, d.L1.approvedBy)
+})
+await check('ST-11 botWaitMinutes 0 with a failing bot status script stops the PR with bot status failed', async () => {
+  const w = await landRun({ statusDown: ['C1'] }, only('C1'))
+  assert.deepEqual(ran(/^botwait:/), ['botwait:C1'])
+  assert.match(w.C1.reason, /^bot status failed:/)
+  const x = await landRun({ statusDown: ['C1'] }, only('C1'), { botWaitMinutes: 0 })
+  assert.equal(x.C1.ready, false)
+  assert.match(x.C1.reason, /^bot status failed: bot-status: cannot read the reviews/)
+  assert.deepEqual(ran(/^botwait:/), [])
+  assert.ok(logs.some(l => /botWaitMinutes\D*0\b/.test(l)))
+  assert.deepEqual(ran(/^(safety:|io:.*#gate)/), [])
+})
+await check('ST-12 the bot wait lasts at most 20 minutes by default', async () => {
+  await simulate({ ...base, prs: only('C1') })
+  assert.ok(calls.find(c => c.label === 'botwait:C1').prompt.includes('for at most 20 minutes'))
+})
+await check('ST-13 the botWaitMinutes item and example of SKILL.md say to pass 0 for a request-only bot', () => {
+  const t = readFileSync(new URL('../skills/pr-pipeline/SKILL.md', import.meta.url), 'utf8')
+  const s = t.slice(t.indexOf('### Workflow arguments'), t.indexOf('### Role agents'))
+  assert.ok(s.includes('"botWaitMinutes": 0') && !s.includes('"botWaitMinutes": 1'))
+  const b = s.split('\n').find(l => l.startsWith('- `botWaitMinutes`'))
+  assert.match(b, /only on request/)
+  assert.match(b, /\b0\b/)
+  assert.match(b, /skip/i)
+  assert.doesNotMatch(b, /pass 1\b/)
+})
+await check('ST-14 SKILL.md states the new defaults and the step minorReview', () => {
+  const t = readFileSync(new URL('../skills/pr-pipeline/SKILL.md', import.meta.url), 'utf8')
+  const s = t.slice(t.indexOf('### Workflow arguments'), t.indexOf('### Role agents'))
+  assert.match(s, /`minorReview`[^.\n]*sonnet[^.\n]*high/)
+  const rows = t.slice(t.indexOf('### Role agents'), t.indexOf('### Cost and the prompt cache')).split('\n')
+  const row = p => rows.find(l => l.startsWith(p))
+  assert.match(row('| `review` |'), /opus[\s\S]*medium/)
+  assert.match(row('| `test` | `tester` |'), /haiku[\s\S]*low/)
+  assert.match(row('| `open` | `pr-opener` |'), /haiku[\s\S]*low/)
+  assert.match(row('| `minorReview` |'), /reviewer[\s\S]*sonnet[\s\S]*high/)
 })

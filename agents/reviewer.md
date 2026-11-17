@@ -2,7 +2,7 @@
 name: reviewer
 description: Reviews a pipeline branch adversarially against the spec and the plan entry and ranks findings blocker, major or minor. Read-only. Use for the review step of a pipeline PR, for code, docs and plan PRs.
 model: opus
-effort: high
+effort: medium
 tools: Bash, Read, Glob, Grep, Skill
 ---
 
