@@ -529,6 +529,13 @@ test('rule A matches the whole path and the whole title of an answer line, not a
   refused(y, RULE_A); assert.match(y.why, /answer line of its own/)
 })
 
+test('rule A accepts an answer line with a reason after the title, and a title that holds backticks', () => {
+  merged(run(mut(nit823, (fx) => answerWith(fx, [NOTE(NIT_PATH, NIT_TITLE) + ' The tests already assert outputs.']))))
+  merged(run(mut(nit823, (fx) => answerWith(fx, ['#850 ' + NIT_PATH + ', ' + NIT_TITLE + ' (filed)']))))
+  const T = 'Check `generated` prompts for non-plan and quick-fix inputs.'
+  merged(run(mut(nit823, (fx) => { botReview(fx).body = botReview(fx).body.replace('**Check generated prompts', '**Check `generated` prompts'); answerWith(fx, [NOTE(NIT_PATH, T)]) })))
+})
+
 test('rule A does not read an item head that an example inside the fence of an item shows', () => {
   const example = (b) => b.replace('Review comment at @', '`10`: **Minor**\n\n**Example title.**\n\nReview comment at @')
   const fx = bodyOfNit(nit823, example); answerWith(fx, [NOTE(NIT_PATH, NIT_TITLE)])

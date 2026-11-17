@@ -107,13 +107,15 @@ def parseBody:
 def answerBodies: [$issue[] | objects | select($user != null and (.user | objects | .login) == $user and ((.body | strings) // "" | startswith("<!-- pipeline-bot-answer head=" + $in.head + " -->"))) | .body];
 def nitAnswerLines: [answerBodies[] | split("\n")[1:][] | gsub("^\\s+|\\s+$"; "") | select(test("\\A#[0-9]+") or startswith("Note, not filed:"))];
 def nitName: sub("[\\s.]+\\z"; "");
-# The line names the item when, after its #N or "Note, not filed:" start, it is the whole path and the whole title, in either order.
-# A match by substring would let the path of one file clear an item of a file whose path it ends with.
+# The line names the item when, after its #N or "Note, not filed:" start, it holds the whole path and the whole title (a reason may
+# follow). A substring match would let the path of one file clear an item of a file whose path it ends with, and the title of one
+# item clear an item whose title it starts.
+def reEsc: gsub("(?<c>[\\\\.^$*+?()\\[\\]{}|/-])"; "\\" + .c);
 def nitNames($l; $it):
   ($l | gsub("`"; "") | sub("\\A#[0-9]+"; "") | ltrimstr("Note, not filed:") | gsub("^\\s+|\\s+$"; "")) as $r
-  | ($it.path) as $p | ($it.t | nitName) as $t
-  | (($r | startswith($p)) and ($r[$p | length:] | test("\\A[\\s,:;]") and (sub("\\A[\\s,:;]+"; "") | nitName) == $t))
-    or (($r | endswith($p)) and ($r[: ($r | length) - ($p | length)] | test("[\\s,:;]\\z") and (sub("[\\s,:;]+\\z"; "") | nitName) == $t));
+  | ($it.path | gsub("`"; "")) as $p | ($it.t | gsub("`"; "") | nitName) as $t
+  | ($r | test("(\\A|[\\s,:;(])" + ($p | reEsc) + "(\\z|[\\s,:;)])"))
+    and ($r | test("(\\A|[\\s,:;(])" + ($t | reEsc) + "(\\z|[.:;,)])"));
 def nitProblems($id; $nit):
   nitAnswerLines as $lines
   | $nit.items as $items
