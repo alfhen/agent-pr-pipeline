@@ -239,6 +239,24 @@ Every agent request is billed by its prompt. A cached prompt prefix costs a tent
 
 Summary: each agent caches its own conversation well; between agents only the tools and the role's system prompt are shared. Skills and long global CLAUDE.md files are paid again by every agent.
 
+### Driving cheaply
+
+The main session is a cost of the wave next to the agents. Its cost is the number of calls times the size of its conversation times the price of its model.
+
+Start a fresh main session for each plan. Keep the state in the plan and in a log file, so a new session can read it and go on.
+
+A wake-up after the cache has run out, 5 minutes after the last call, writes the whole conversation to the cache again. Land the PRs of a wave with as few commands and wake-ups as possible.
+
+Give a lookup in a big file to a subagent. Read big files by line ranges, never in full.
+
+Set the models of the steps with the `steps` argument. The trial settings of plan 0.9.10 are the example:
+
+```json
+"steps": {"review": {"model": "opus", "effort": "medium"}, "evals": {"model": "sonnet", "effort": "high"}, "test": {"model": "haiku", "effort": "low"}, "open": {"model": "haiku", "effort": "low"}}
+```
+
+Pass `docsUpdate: false` for an entry whose Touches line names its docs.
+
 ### Pair skills with steps
 
 `skills` maps a step name to a list of skill names. Each agent of that step gets an instruction, at the start of its prompt, to load those skills with the Skill tool before it works. The step names are `impl`, `test`, `review`, `arch`, `product`, `fix`, `docs`, `open`, `botAnswer`, `landFix` and `preflight`. `review` covers the reviewer of every kind of PR, also the `reviewDocs` model. `docs` covers the docs agent and the reviewer of its commits. The bot waiter, the evaluator and the redactor get no skills. An unknown step name stops the workflow before any agent starts.
