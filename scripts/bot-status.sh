@@ -5,8 +5,8 @@
 # is on the head, or their check run on the head has completed. openThreads counts
 # the inline threads a bot opened that have no reply of that bot or of the user from GET /user. pending lists the bot check runs on the head that have not completed:
 # a bot posts its review body just before its check run completes. reviewBodies counts the bot reviews on the head whose
-# body can hold a finding: not empty, and not a known no-finding text. It is 0 once an answer comment for the head is on
-# the PR: the comment starts with <!-- pipeline-bot-answer head=<sha> --> and is by the account from GET /user (trusted-comment.jq). Exits 1 when a GitHub read fails.
+# body can hold a finding: not empty, and not a known no-finding text. A review whose id is in the second line of a trusted
+# answer comment of the head, <!-- pipeline-reviews <id>,<id> -->, is not counted. Such a comment starts with <!-- pipeline-bot-answer head=<sha> --> and is by the account from GET /user (trusted-comment.jq). A comment with no such line lists no review. Times are not compared. Exits 1 when a GitHub read fails.
 R=$1; pr=$2
 [ -n "$pr" ] || { echo "usage: bot-status.sh <owner/repo> <pr>"; exit 2; }
 here=$(dirname "$0")
@@ -42,9 +42,10 @@ open=$(jq --arg user "$user" '. as $in | def answered($t): any($in.comments[]; .
   [.comments[] | select(.in_reply_to_id == null and (.user.login | IN($in.bots[])) and (answered(.) | not))] | length' <<<"$input") || fail "cannot count the threads"
 pending=$(jq -c '. as $in | [.checks[] | select(.status != "completed" and (.app.slug // "") != "" and ((.app.slug + "[bot]") | IN($in.bots[]))) | .name]' <<<"$input") || fail "cannot list the running bot checks"
 answered=$(jq -c --arg prefix "<!-- pipeline-bot-answer head=$head -->" --arg user "$user" --arg all 1 -f "$here/trusted-comment.jq" <<<"$(jq -c .issueComments <<<"$input")") || fail "cannot read the answer comments"
-# The no-finding rule is in review-request.jq.
+# The no-finding rule is in review-request.jq. A review counts unless a trusted answer comment lists its id on its second line.
 bodies=$(jq -L "$here" --arg head "$head" --argjson answered "$answered" 'include "review-request";
-  . as $in | if ($answered | length) > 0 then 0
-    else [.reviews[] | select(.commit_id == $head and (.user.login | IN($in.bots[]))) | (.body // "" | stripComments) as $b
-      | select(($b | length) > 0 and ($b | nofinding | not))] | length end' <<<"$input") || fail "cannot count the review bodies"
+  . as $in
+  | [$answered[] | split("\n")[1] // "" | rtrimstr("\r") | capture("^<!-- pipeline-reviews (?<ids>[0-9]+(,[0-9]+)*) -->$") | .ids | split(",")[]] as $listed
+  | [.reviews[] | select(.commit_id == $head and (.user.login | IN($in.bots[]))) | select((.id | tostring) as $id | $listed | index($id) | not) | (.body // "" | stripComments) as $b
+    | select(($b | length) > 0 and ($b | nofinding | not))] | length' <<<"$input") || fail "cannot count the review bodies"
 jq -n -c --arg head "$head" --argjson approved "$approved" --argjson seen "$seen" --argjson pending "$pending" --argjson open "$open" --argjson bodies "$bodies" '{head: $head, approvedBy: $approved, seenHead: $seen, pending: $pending, openThreads: $open, reviewBodies: $bodies}'

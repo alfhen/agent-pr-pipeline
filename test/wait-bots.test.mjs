@@ -110,7 +110,8 @@ const status = (reviews, issueComments = []) => {
   assert.equal(r.status, 0, r.stderr)
   return JSON.parse(r.stdout).reviewBodies
 }
-const rev = (body, commit = HEAD, login = 'coderabbitai[bot]') => ({ user: { login }, state: 'COMMENTED', commit_id: commit, submitted_at: '2026-01-01T00:00:00Z', body })
+let nextId = 100
+const rev = (body, commit = HEAD, login = 'coderabbitai[bot]', id = nextId++, at = '2026-01-01T00:00:00Z') => ({ id, user: { login }, state: 'COMMENTED', commit_id: commit, submitted_at: at, body })
 
 test('reviewBodies counts a CodeRabbit body with an Outside diff range section', () => {
   assert.equal(status([rev('Actionable comments posted: 0\n\n<details><summary>Outside diff range comments (1)</summary>x</details>')]), 1)
@@ -145,22 +146,59 @@ test('reviewBodies counts an unknown text', () => {
 })
 
 const marker = (head = HEAD) => `<!-- pipeline-bot-answer head=${head} -->\nAnswered.`
-const answer = (login, body = marker(), association = 'NONE') => ({ user: { login }, author_association: association, body })
+const listing = (ids, head = HEAD, rest = 'Note, not filed: x, y') => `<!-- pipeline-bot-answer head=${head} -->\n<!-- pipeline-reviews ${ids.join(',')} -->\n${rest}`
+const answer = (login, body = marker(), association = 'NONE', at = '2026-01-01T00:30:00Z') => ({ user: { login }, author_association: association, created_at: at, body })
 const ME = 'pipeline-bot-account'
+const NEW = 'Something new'
 
-test('reviewBodies is 0 when an answer comment for the head is by the running account', () => {
-  assert.equal(status([rev('Something new')], [answer(ME)]), 0)
-  assert.equal(status([rev('Something new')], [answer('someone', marker(), 'OWNER'), answer(ME)]), 0)
+test('reviewBodies does not count a review whose id is on the second line of a trusted answer comment', () => {
+  const two = () => [rev(NEW, HEAD, undefined, 101), rev(NEW, HEAD, undefined, 102)]
+  assert.equal(status(two(), [answer(ME, listing([101, 102]))]), 0)
+  assert.equal(status(two(), [answer(ME, listing([101]))]), 1)
+  assert.equal(status(two(), [answer(ME, `<!-- pipeline-bot-answer head=${HEAD} -->\nNote, not filed: x, y\n<!-- pipeline-reviews 101,102 -->`)]), 2)
 })
 
-test('reviewBodies ignores an answer comment from another account, even an OWNER one, for another head, or without the marker at the start', () => {
-  assert.equal(status([rev('Something new')], [answer('someone', marker(), 'OWNER'), answer('other', marker(), 'COLLABORATOR')]), 1)
-  assert.equal(status([rev('Something new')], [answer(ME, marker(OLD))]), 1)
-  assert.equal(status([rev('Something new')], [answer(ME, `quoted ${marker()}`)]), 1)
+test('reviewBodies is 0 when the trusted answer comments of the head list every review between them', () => {
+  const two = () => [rev(NEW, HEAD, undefined, 101), rev(NEW, HEAD, undefined, 102)]
+  assert.equal(status(two(), [answer(ME, listing([101])), answer(ME, listing([102]))]), 0)
+  assert.equal(status(two(), [answer(ME, listing([101]))]), 1)
 })
 
-test('reviewBodies is 0 when a rerun left two answer comments by the running account', () => {
-  assert.equal(status([rev('Something new')], [answer(ME), answer(ME)]), 0)
+test('reviewBodies counts a later review of the head that the answer comment does not list', () => {
+  const rs = () => [rev(NEW, HEAD, undefined, 101, '2026-01-01T00:00:00Z'), rev(NEW, HEAD, undefined, 102, '2026-01-01T01:00:00Z')]
+  assert.equal(status(rs(), [answer(ME, listing([101]))]), 1)
+  assert.equal(status(rs(), [answer(ME, listing([101, 102]))]), 0)
+})
+
+test('reviewBodies compares no times: an older review that is not listed counts, a newer one that is listed does not', () => {
+  const at = '2026-01-01T02:00:00Z'
+  const old = [rev(NEW, HEAD, undefined, 101), rev(NEW, HEAD, undefined, 102)]
+  assert.equal(status(old, [answer(ME, listing([101]), 'NONE', at)]), 1)
+  const later = [rev(NEW, HEAD, undefined, 101), rev(NEW, HEAD, undefined, 102, '2026-01-01T03:00:00Z')]
+  assert.equal(status(later, [answer(ME, listing([101, 102]), 'NONE', at)]), 0)
+})
+
+test('reviewBodies counts every review when the answer comment has no pipeline-reviews line', () => {
+  const two = [rev(NEW, HEAD, undefined, 101), rev(NEW, HEAD, undefined, 102)]
+  assert.equal(status(two, [answer(ME)]), 2)
+  assert.equal(status([two[0]], [answer(ME)]), 1)
+  assert.equal(status(two, [answer(ME, listing([101, 102]))]), 0)
+})
+
+test('reviewBodies counts every review with no answer comment, and a later no-finding review adds nothing', () => {
+  assert.equal(status([rev(NEW, HEAD, undefined, 101), rev(NEW, HEAD, undefined, 102)], []), 2)
+  const c = [answer(ME, listing([101]))]
+  assert.equal(status([rev(NEW, HEAD, undefined, 101), rev('**Actionable comments posted: 0**', HEAD, undefined, 102)], c), 0)
+  assert.equal(status([rev(NEW, HEAD, undefined, 101), rev(NEW, HEAD, undefined, 102)], c), 1)
+})
+
+test('reviewBodies ignores an answer comment from another account or for another head, and a review by a person', () => {
+  const r = () => [rev(NEW, HEAD, undefined, 101)]
+  assert.equal(status(r(), [answer(ME, listing([101]))]), 0)
+  assert.equal(status(r(), [answer('someone', listing([101]), 'OWNER')]), 1)
+  assert.equal(status(r(), [answer(ME, listing([101], OLD))]), 1)
+  assert.equal(status(r(), [answer(ME, `quoted ${listing([101])}`)]), 1)
+  assert.equal(status([...r(), rev(NEW, HEAD, 'alice', 102)], [answer(ME, listing([101]))]), 0)
 })
 
 test('wait-bots keeps polling while a bot check run is still running, and the body then counts', () => {

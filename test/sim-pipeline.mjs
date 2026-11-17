@@ -6511,6 +6511,26 @@ await check('RA-1 step 7 of the answer prompt asks one line for each finding of 
   assert.match(step, /#N/)
   assert.match(step, /Note, not filed:/)
 })
+const step7 = async () => {
+  await landRun({ bodies: ['C1'] }, only('C1'))
+  return /^7\. .*$/m.exec(calls.find(c => c.label === 'botanswer:C1').prompt)[0]
+}
+await check('AA-12 step 7 of the answer prompt says the answer line holds only its start, its file path and its title, and nothing else', async () => {
+  const step = await step7()
+  assert.match(step, /holds only its start \(`#N` or `Note, not filed:`\), its file path and its title, as the review prints them, and nothing else/)
+})
+await check('AA-13 step 7 of the answer prompt puts the reason of a Note on the next line and names the form that rule A refuses', async () => {
+  const step = await step7()
+  assert.match(step, /reason for a `Note, not filed:` goes on the next line, never on the answer line/)
+  assert.match(step, /after the title with only a space or a dash/)
+})
+await check('AA-14 step 7 of the answer prompt asks a new comment with the review ids on the second line, not one comment for each head', async () => {
+  const step = await step7()
+  assert.ok(step.includes('<!-- pipeline-reviews <id>,<id> -->'))
+  assert.match(step, /second line/)
+  assert.match(step, /post a new comment for the head/i)
+  assert.doesNotMatch(step, /Post it once for the head/)
+})
 await check('F652-3 a failing eval and a fixer dispute with no push go to the writer, not to the no-progress stop', async () => {
   const newEval = ev('C1-1', 'behaviour', { statement: 'C1-1 checkable from the branch' })
   const x = await disputeRun(listOf('C1'), disputeFlow({ ruling: 'change', reason: 'not checkable', eval: newEval }))

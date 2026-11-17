@@ -251,7 +251,7 @@ test('SKILL.md describes the review request of the land step', () => {
   assert.match(s3, /two requests|request 2|second request/i)
   const step10 = lines.find((l) => l.startsWith('10. **Bots'))
   for (const w of ['land step', 'botWaitMinutes', 'request']) assert.ok(step10.includes(w), w)
-  assert.match(step10, /botWaitMinutes[^.]*\b1\b/)
+  assert.match(step10, /botWaitMinutes[^.]*\b0\b/)
   const row = lines.find((l) => l.startsWith('| Bot rate-limited'))
   assert.ok(row.includes('64 minutes'))
   assert.match(row, /two requests|request 2|second request/)
