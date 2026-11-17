@@ -8,11 +8,13 @@ const simPath = fileURLToPath(new URL('./sim-pipeline.mjs', import.meta.url));
 const simSource = readFileSync(simPath, 'utf8');
 const names = [...simSource.matchAll(/^await check\('((?:[^'\\]|\\.)*)'/gm)].map(m => m[1].replace(/\\(.)/g, '$1'));
 
+const SIM_TIMEOUT_MS = 10 * 60 * 1000;
 const runSim = filter => {
   const env = { ...process.env };
   delete env.SIM_CASE_FILTER;
   if (filter !== undefined) env.SIM_CASE_FILTER = filter;
-  const r = spawnSync(process.execPath, [simPath], { encoding: 'utf8', env, maxBuffer: 64 * 1024 * 1024 });
+  const r = spawnSync(process.execPath, [simPath], { encoding: 'utf8', env, maxBuffer: 64 * 1024 * 1024, timeout: SIM_TIMEOUT_MS });
+  assert.ok(!r.error, `the sim run ended by the timeout of ${SIM_TIMEOUT_MS} ms: ${r.error}`);
   const oks = r.stdout.split('\n').filter(l => l.startsWith('ok  '));
   return { status: r.status, oks, out: r.stdout + r.stderr };
 };

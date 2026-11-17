@@ -6,13 +6,14 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFi
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import cksum from './cksum.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const SCRIPT = join(root, 'scripts/quick-brief.sh')
 const ENTRY = 'Touches: src/a.js\nAcceptance: node --test passes'
 
 const sumOf = s => {
-  const out = spawnSync('cksum', { input: s, encoding: 'utf8' }).stdout.trim().split(/\s+/)
+  const out = cksum(s).split(' ')
   return `${out[0]}:${out[1]}`
 }
 
