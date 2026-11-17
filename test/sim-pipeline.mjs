@@ -1471,6 +1471,8 @@ await check('each agent file exists and its defaults match the workflow defaults
     assert.equal(`${fm.model}/${fm.effort}`, `${c.model}/${c.effort}`, c.label)
   }
   assert.equal(`${calls.find(c => c.label === 'review:D1#1').model}`, 'sonnet')
+  const pinned = { reviewer: 'opus/medium', tester: 'haiku/low', 'pr-opener': 'haiku/low' }
+  for (const [name, want] of Object.entries(pinned)) assert.equal(`${frontmatter(name).model}/${frontmatter(name).effort}`, want, name)
 })
 await check('only the land fixer keeps a 1-hour cache', () => {
   for (const name of new Set(Object.values(AGENT_OF))) {
