@@ -128,3 +128,30 @@ test('facts that already match the code stay', () => {
   assert.ok(line('- `scripts/ledger.sh').includes('`no eval results:`'))
   assert.match(line('2. **Test from a clean clone.**'), /up to 10 e2e and docs test files/)
 })
+
+test('the section Driving cheaply holds the cost rules', () => {
+  const i = skill.indexOf('\n### Driving cheaply\n')
+  assert.ok(i >= 0, 'no section')
+  const r = skill.slice(i, skill.indexOf('\n#', i + 2))
+  const ss = sentences(r)
+  assert.ok(ss.some(x => /main session/i.test(x) && /cost/i.test(x) && /agents/i.test(x)))
+  assert.match(r, /number of calls[^.]*times[^.]*(size|length)[^.]*conversation[^.]*times[^.]*price[^.]*model/i)
+  assert.ok(ss.some(x => /(fresh|new) main session/i.test(x) && /(each|every) plan/i.test(x)))
+  assert.ok(ss.some(x => /state/i.test(x) && /plan/i.test(x) && /log file/i.test(x)))
+  assert.ok(ss.some(x => /wake-up/i.test(x) && /cache/i.test(x) && /whole conversation/i.test(x)))
+  assert.ok(ss.some(x => /land/i.test(x) && /as few/i.test(x) && /commands/i.test(x) && /wake-ups/i.test(x)))
+  assert.match(r, /5 minutes/)
+  assert.ok(!/cacheTtl/i.test(r))
+  for (const x of ss.filter(y => /cache|time to live|\bTTL\b/i.test(y))) {
+    assert.ok(!/\b(an|one) hour\b/i.test(x), x)
+    for (const m of x.match(/\d+(\.\d+)?\s*-?\s*(seconds?|minutes?|mins?|hours?|h|days?)\b/gi) || []) assert.match(m, /^5\s*-?\s*minutes?$/i)
+  }
+  assert.ok(ss.some(x => /subagent/i.test(x) && /look ?up/i.test(x) && /(big|large) files?/i.test(x)))
+  assert.ok(ss.some(x => /line ranges?/i.test(x) && /(big|large) files?/i.test(x)))
+  const n = r.replace(/\s+/g, '')
+  for (const [k, m, e] of [['review', 'opus', 'medium'], ['evals', 'sonnet', 'high'], ['test', 'haiku', 'low'], ['open', 'haiku', 'low']]) {
+    assert.ok(n.includes(`"${k}":{"model":"${m}","effort":"${e}"}`), k)
+  }
+  assert.ok(r.includes('`steps`'))
+  assert.ok(ss.some(x => x.includes('`docsUpdate: false`') && /Touches line/.test(x)))
+})
