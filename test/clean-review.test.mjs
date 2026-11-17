@@ -514,6 +514,28 @@ test('rule A refuses a body with no count line and no nitpick block, also when t
   refused(x, RULE_A); assert.match(x.why, /has no count line \(Actionable comments posted: N\)/)
 })
 
+test('rule A matches the whole path and the whole title of an answer line, not a part of them', () => {
+  const shorter = bodyOfNit(nit823, (b) => b.replace(`<summary>${NIT_PATH}: 1`, '<summary>wave-prompts.test.mjs: 1'))
+  answerWith(shorter, [NOTE(NIT_PATH, NIT_TITLE)])
+  const x = run(shorter)
+  refused(x, RULE_A); assert.match(x.why, /wave-prompts\.test\.mjs/); assert.match(x.why, /answer line of its own/)
+  const LONG = NIT_TITLE.replace(/\.$/, '') + ' in detail.'
+  const holds = (lines) => mut(nit823, (fx) => {
+    twoInOneFile()(fx); botReview(fx).body = botReview(fx).body.replace(SECOND.replace(/\.$/, ''), LONG.replace(/\.$/, ''))
+    answerWith(fx, lines)
+  })
+  merged(run(holds([NOTE(NIT_PATH, NIT_TITLE), NOTE(NIT_PATH, LONG)])))
+  const y = run(holds([NOTE(NIT_PATH, NIT_TITLE), NOTE(NIT_PATH, NIT_TITLE)]))
+  refused(y, RULE_A); assert.match(y.why, /answer line of its own/)
+})
+
+test('rule A does not read an item head that an example inside the fence of an item shows', () => {
+  const example = (b) => b.replace('Review comment at @', '`10`: **Minor**\n\n**Example title.**\n\nReview comment at @')
+  const fx = bodyOfNit(nit823, example); answerWith(fx, [NOTE(NIT_PATH, NIT_TITLE)])
+  assert.notEqual(botReview(fx).body, botReview(nit823()).body)
+  merged(run(fx))
+})
+
 test('rule A reads a nitpick block with one Minor item and one Trivial item in one file', () => {
   merged(run(mut(nit823, (fx) => { twoInOneFile('Minor')(fx); answerWith(fx, [NOTE(NIT_PATH, NIT_TITLE), `#12 ${NIT_PATH}, ${SECOND}`]) })))
 })

@@ -90,7 +90,8 @@ def nitParse($nit; $total):
     | select(.path | startswith("Nitpick comments") | not)] as $files
   | [range(0; $files | length) as $i
       | ($nit[$files[$i].s : (if $i + 1 < ($files | length) then $files[$i + 1].s else ($nit | length) end)]) as $chunk
-      | [$chunk | capture(itemHead(true); "g") | {path: $files[$i].path, w, t}] as $its
+      | ($chunk | gsub("<!-- ai-agent-prompt:start -->[\\s\\S]*?<!-- ai-agent-prompt:end -->"; "") | gsub("```[\\s\\S]*?```"; "")) as $heads
+      | [$heads | capture(itemHead(true); "g") | {path: $files[$i].path, w, t}] as $its
       | {k: $files[$i].k, its: $its}] as $groups
   | ($groups | map(.its) | add // []) as $items
   | {items: $items, countsFit: (($items | length) == $total and all($groups[]; .k == (.its | length)))};
@@ -105,8 +106,14 @@ def parseBody:
 # "Note, not filed:". The marker is the one bot-status.sh reads.
 def answerBodies: [$issue[] | objects | select($user != null and (.user | objects | .login) == $user and ((.body | strings) // "" | startswith("<!-- pipeline-bot-answer head=" + $in.head + " -->"))) | .body];
 def nitAnswerLines: [answerBodies[] | split("\n")[1:][] | gsub("^\\s+|\\s+$"; "") | select(test("\\A#[0-9]+") or startswith("Note, not filed:"))];
-def nitName: sub("\\.$"; "");
-def nitNames($l; $it): ($l | contains($it.path)) and ($l | contains($it.t | nitName));
+def nitName: sub("[\\s.]+\\z"; "");
+# The line names the item when, after its #N or "Note, not filed:" start, it is the whole path and the whole title, in either order.
+# A match by substring would let the path of one file clear an item of a file whose path it ends with.
+def nitNames($l; $it):
+  ($l | gsub("`"; "") | sub("\\A#[0-9]+"; "") | ltrimstr("Note, not filed:") | gsub("^\\s+|\\s+$"; "")) as $r
+  | ($it.path) as $p | ($it.t | nitName) as $t
+  | (($r | startswith($p)) and ($r[$p | length:] | test("\\A[\\s,:;]") and (sub("\\A[\\s,:;]+"; "") | nitName) == $t))
+    or (($r | endswith($p)) and ($r[: ($r | length) - ($p | length)] | test("[\\s,:;]\\z") and (sub("[\\s,:;]+\\z"; "") | nitName) == $t));
 def nitProblems($id; $nit):
   nitAnswerLines as $lines
   | $nit.items as $items
