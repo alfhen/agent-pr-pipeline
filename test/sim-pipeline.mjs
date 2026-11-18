@@ -6955,7 +6955,7 @@ await check('RW-12 the bot check of an answer run is the verifier with a list, t
   assert.ok(rwLabels().includes('test:AN#bots1') && !rwLabels().includes('verify:AN#bots1'))
   await rwRun(rwItem(), { codeChanged: false })
   const l = rwLabels()
-  assert.ok(!l.includes('verify:AN#bots1') && !l.includes('test:AN#bots1') && !l.includes('botreview:AN'))
+  assert.ok(!l.includes('verify:AN#bots1') && !l.includes('test:AN#bots1') && !l.some(x => x.startsWith('botreview:AN')))
   assert.ok(l.includes('botanswer:AN'))
 })
 await check('RW-13 an answer run is not ready when nothing was answered or a count is still above 0', async () => {
@@ -6999,7 +6999,7 @@ await check('RW-16 the land value of an answer run is the head after the answer 
   assert.notEqual(a.headSha, RW_H)
   assert.ok(!a.land.endsWith(':auto'))
   assert.equal(a.landMode, 'person')
-  assert.ok(!rwLabels().includes('safety:AN'))
+  assert.ok(!rwLabels().some(x => x.startsWith('safety:AN')))
   const b = await rwRun(rwItem(), { codeChanged: false })
   assert.equal(b.land, `8:${RW_H}`)
   assert.equal(b.landMode, 'person')

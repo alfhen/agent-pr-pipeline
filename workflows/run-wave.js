@@ -1962,7 +1962,7 @@ async function runPR(input) {
     result = {
       id: input.id, ready: false, reason: `run failed: ${msg}`,
       ...(Array.isArray(history) ? { history } : {}),
-      ...(minors ? { [input.landFix ? 'lateMinors' : 'minors']: minors } : {}),
+      ...(minors ? { [input.landFix || input.answer ? 'lateMinors' : 'minors']: minors } : {}),
       ...((input.landFix || input.answer) && input.prNumber ? { prNumber: input.prNumber } : {}),
       ...(botChangedState[input.id] ? { codeChangedByBots: true, prNumber: botChangedState[input.id] } : {}),
       ...(rec ? recordOut(rec) : {}), ...(landOut || {}), ...carriedOut(resumedDisputes(input), resumedDeviations(input)),
