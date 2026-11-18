@@ -12,15 +12,9 @@
 # review (two requests at most, 64 minutes apart), so a PR can wait hours: run it in the background, one --review land at a time for a
 # repo (there is no lock). A review that did not come stops the wave with "REVIEW #<pr>: <cause>" (exit 9). Open bot comments or an
 # unanswered review body, before the request or in the review that came, stop it with "ANSWER #<pr> <sha>: ..." (exit 10).
-# land-wave.sh --head-ref <owner/repo> <pr> prints "REF <head branch> <head repo>" and merges nothing.
 # A PR that is already merged at the checked sha prints "MERGED #<pr> already" and the run goes on, so the same command can be run again
 # after a stop. It posts no merge record and deletes no branch for that PR. A merged PR with another head, or a closed PR that was not
 # merged, stops the wave with "STOP #<pr>: ..." (exit 5).
-if [ "$1" = --head-ref ]; then
-  [ -n "$3" ] || { echo "usage: land-wave.sh --head-ref <owner/repo> <pr>"; exit 2; }
-  pull=$(gh api "repos/$2/pulls/$3" 2>&1) || { echo "cannot read #$3 ($pull)"; exit 1; }
-  jq -r '"REF " + (.head.ref // "") + " " + (.head.repo.full_name // "")' <<<"$pull"; exit 0
-fi
 person=""; review=0
 while :; do
   case "$1" in
