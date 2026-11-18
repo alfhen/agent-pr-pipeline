@@ -10,7 +10,8 @@
 # are rerun once and CI is awaited again; only a check that still fails stops the wave.
 # With --review, a PR that no bot has cleared (and has no open bot comment) first gets request-review.sh, which asks CodeRabbit for a
 # review (two requests at most, 64 minutes apart), so a PR can wait hours: run it in the background, one --review land at a time for a
-# repo (there is no lock). A review that did not come stops the wave with "REVIEW #<pr>: <cause>" (exit 9).
+# repo (there is no lock). A review that did not come stops the wave with "REVIEW #<pr>: <cause>" (exit 9). Open bot comments or an
+# unanswered review body, before the request or in the review that came, stop it with "ANSWER #<pr> <sha>: ..." (exit 10).
 # A PR that is already merged at the checked sha prints "MERGED #<pr> already" and the run goes on, so the same command can be run again
 # after a stop. It posts no merge record and deletes no branch for that PR. A merged PR with another head, or a closed PR that was not
 # merged, stops the wave with "STOP #<pr>: ..." (exit 5).
@@ -87,6 +88,14 @@ parse_arg() {
   [[ "$pr" =~ ^[0-9]+$ ]] || { echo "need a PR number in $arg"; exit 2; }
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "need the full 40-character commit id in $arg: a short id cannot match the PR head. Use the land value from the workflow result as it is."; exit 2; }
 }
+# Exit 10 sends the PR to an answer run; merge-pr.sh refusals stay exit 5 because the answer agent starts only on these counts.
+answer_stop() {
+  local threads bodies
+  read -r threads bodies <<<"$(jq -r '"\(.openThreads // 0) \(.reviewBodies // 0)"' <<<"$1")"
+  if [ "$threads" -gt 0 ] || [ "$bodies" -gt 0 ]; then
+    echo "ANSWER #$pr $sha: $threads threads, $bodies review bodies; run the bots step with answer: true, then land again"; exit 10
+  fi
+}
 # Runs between the WAITING test and merge-pr.sh. Returns when merge-pr.sh should run; stops the wave when no review came.
 ask_review() {
   local st failed rrout rrc cause
@@ -98,14 +107,15 @@ ask_review() {
     [ "$failed" = true ] || return 0
   fi
   # A failed newest review does not take approvedBy, so the open-comment stop applies here too.
-  if [ "$(jq -r '.openThreads > 0 or .reviewBodies > 0' <<<"$st")" = true ]; then
-    echo "REVIEW #$pr: a bot left open comments or a review body with a finding (openThreads, reviewBodies); answer them first"; exit 9
-  fi
+  answer_stop "$st"
   rrout=$(mktemp) || { echo "STOP #$pr: cannot make a temporary file"; exit 5; }
   bash "$here/request-review.sh" "$R" "$pr" "$sha" | tee "$rrout"; rrc=${PIPESTATUS[0]}
   cause=$(tail -n 1 "$rrout"); rm -f "$rrout"
-  [ "$rrc" = 0 ] && return 0
-  echo "REVIEW #$pr: ${cause#NO REVIEW #$pr: }"; exit 9
+  [ "$rrc" = 0 ] || { echo "REVIEW #$pr: ${cause#NO REVIEW #$pr: }"; exit 9; }
+  # The review that came may have left comments; an approval of a bot still goes to merge-pr.sh.
+  st=$(bash "$here/bot-status.sh" "$R" "$pr") || { echo "STOP #$pr: cannot read the bot status"; exit 5; }
+  [ "$(jq -r '(.approvedBy | length) > 0' <<<"$st")" = true ] && return 0
+  answer_stop "$st"
 }
 # Every argument is checked before the first gh call, so a bad one cannot stop the run after an earlier PR has merged.
 for arg in "$@"; do parse_arg; done

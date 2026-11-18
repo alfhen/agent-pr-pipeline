@@ -82,6 +82,11 @@ const STEPS = Object.assign({
 if (!REPO || !TMP || !Array.isArray(A.prs)) throw new Error('args needs repo, tmp, plan and prs')
 if (!PLAN && !A.prs.every(pr => pr.quick)) throw new Error('args needs plan, unless every PR is a quick fix')
 for (const pr of A.prs) {
+  if (!pr.answer) continue
+  if (!Number.isInteger(pr.prNumber) || pr.prNumber < 1) throw new Error(`prs[${pr.id}].answer needs prNumber: the PR to answer`)
+  for (const field of ['landFix', 'resume', 'skipImpl', 'quick']) if (pr[field]) throw new Error(`prs[${pr.id}].answer cannot be combined with ${field}`)
+}
+for (const pr of A.prs) {
   if (!pr.quick) continue
   if (!Number.isInteger(pr.quick.issue) || pr.quick.issue < 1) throw new Error(`prs[${pr.id}].quick needs issue: the issue number`)
   pr.id = pr.id || `Q${pr.quick.issue}`
@@ -1057,7 +1062,7 @@ async function endFacts(pr, n, expected) {
   if (state.head !== status.head) return { ok: false, reason: `final facts: head moved while reading (${state.head} is not ${status.head})` }
   if (!expected || !status.head.startsWith(expected)) return { ok: false, reason: `final facts: head moved (${status.head} does not extend the checked ${expected})`, head: status.head }
   const failed = Array.isArray(state.failed) ? state.failed : []
-  const facts = { head: status.head, approvedBy: status.approvedBy, ci: { state: state.state, failed } }
+  const facts = { head: status.head, approvedBy: status.approvedBy, ci: { state: state.state, failed }, openThreads: status.openThreads || 0, reviewBodies: status.reviewBodies || 0 }
   if (state.state === 'failure') {
     const reason = `CI failed on the head ${status.head}: ${failed.join(', ') || 'unnamed check'}`
     // red is not a stop for landing: land-wave.sh decides what red CI means (known flakes, LAND FIX), so the caller still builds the land value.
@@ -1288,7 +1293,7 @@ async function landFor(pr, n, sha) {
   }
   const pair = `${n}:${sha}`
   const person = (why, more) => ({ land: pair, landMode: 'person', landWhy: why, ...more })
-  const rerunReason = pr.landFix ? 'a land fix run' : pr.resume ? 'a resume run after exhausted rounds' : pr.skipImpl ? 'a skipImpl rerun'
+  const rerunReason = pr.answer ? 'an answer run' : pr.landFix ? 'a land fix run' : pr.resume ? 'a resume run after exhausted rounds' : pr.skipImpl ? 'a skipImpl rerun'
     : pr.architectureDecision || pr.productDecision ? 'a run after an escalation' : null
   if (rerunReason) return person(`${rerunReason}: only a normal first run can get :auto`)
   const untested = untestedOf(pr)
@@ -1893,7 +1898,7 @@ const denylistFor = (changedPaths, results) => {
 const noEvaluation = () => ({ feedback: [], denylist: [], source: REPO, feedbackRepo: FEEDBACK_REPO })
 async function evaluateWave(prs) {
   const none = noEvaluation()
-  if (!FEEDBACK || A.prs.every(pr => pr.landFix || pr.resume || (pr.skipImpl && pr.kind !== 'plan'))) return none
+  if (!FEEDBACK || A.prs.every(pr => pr.landFix || pr.answer || pr.resume || (pr.skipImpl && pr.kind !== 'plan'))) return none
   const evaluation = await call('evaluate', null, evaluatePrompt(prs, { ...agentCounts }), 'evaluate:wave', { schema: EVALUATION })
   if (!evaluation) {
     log('evaluation failed: no feedback this run')
@@ -1945,7 +1950,7 @@ async function runPR(input) {
     result = await runPRSteps(input)
   } catch (e) {
     const rec = recordState[input.id]
-    const landOut = input.landFix ? landOutState[input.id] : null
+    const landOut = input.landFix || input.answer ? landOutState[input.id] : null
     const resume = input.resume
     const own = historyState[input.id]
     const history = input.landFix && own && resume && Array.isArray(resume.history) ? resume.history.concat(own) : own || (resume && resume.history)
@@ -1958,7 +1963,7 @@ async function runPR(input) {
       id: input.id, ready: false, reason: `run failed: ${msg}`,
       ...(Array.isArray(history) ? { history } : {}),
       ...(minors ? { [input.landFix ? 'lateMinors' : 'minors']: minors } : {}),
-      ...(input.landFix && input.prNumber ? { prNumber: input.prNumber } : {}),
+      ...((input.landFix || input.answer) && input.prNumber ? { prNumber: input.prNumber } : {}),
       ...(botChangedState[input.id] ? { codeChangedByBots: true, prNumber: botChangedState[input.id] } : {}),
       ...(rec ? recordOut(rec) : {}), ...(landOut || {}), ...carriedOut(resumedDisputes(input), resumedDeviations(input)),
     }
@@ -2156,7 +2161,7 @@ async function runPRSteps(input) {
   }
   const rawEvals = pr.evalsIn
   pr = { ...pr, evalsIn: undefined, record: undefined }
-  if (pr.landFix) {
+  if (pr.landFix || pr.answer) {
     const n = pr.prNumber
     const history = []
     const lateMinors = []
@@ -2181,10 +2186,30 @@ async function runPRSteps(input) {
       landOutState[pr.id] = listOut
       pr = { ...pr, evals: given.list, evalsMeta: meta }
     }
-    if (!PLUGIN_ROOT) return stopped('pluginRoot missing: the land-fix check needs it to run land-commits.sh')
+    if (!PLUGIN_ROOT) return stopped(pr.answer ? 'pluginRoot missing: the answer run needs it to read the bot status' : 'pluginRoot missing: the land-fix check needs it to run land-commits.sh')
     if (given) ciChecksState[pr.id] = await ciChecksOf(pr)
     const was = await readHead(pr, n, 'landhead')
     if (was.fail) return stopped(was.fail)
+    if (pr.answer) {
+      if (was.head !== pr.headSha) return stopped(`answer run: the PR head ${was.head} is not the headSha ${pr.headSha} of the ANSWER line`)
+      const a = noteBots(pr, n, await bots(pr, n, was.head, [], history, lateMinors))
+      const facts = () => ({ headSha: a.headSha, codeChangedByBots: botCodeChanged(a), lastFindings: a.lastFindings, worktree: a.worktree, lateMinors, untested: untestedOf(pr) })
+      if (!a.ok) return stopped(a.reason, facts())
+      if (!a.answer) return stopped('nothing was answered: the bot status had no open thread or review body on the head', facts())
+      const sync = await syncUntested(pr, n, null)
+      if (!sync.ok) return stopped(sync.reason, facts())
+      const end = await endFacts(pr, n, a.headSha)
+      if (!end.ok && !end.red) return stopped(end.reason, { ...facts(), headSha: end.head || a.headSha, ci: end.ci, approvedBy: end.approvedBy })
+      if (end.openThreads > 0 || end.reviewBodies > 0) return stopped(`nothing was answered: ${end.openThreads} open threads and ${end.reviewBodies} review bodies remain after the answer agent`, { ...facts(), headSha: end.head })
+      const landing = await landFor(pr, n, end.head)
+      if (landing.landRefused) return stopped(landing.landWhy, { ...facts(), headSha: end.head })
+      if (end.red) return stopped(end.reason, { ...facts(), headSha: end.head, ci: end.ci, approvedBy: end.approvedBy, ...landing })
+      return {
+        id: pr.id, prNumber: n, ready: true, headSha: end.head, ...landing, untested: untestedOf(pr), notes: a.answer.notes,
+        ci: end.ci, approvedBy: end.approvedBy || a.wait.approvedBy || [], botNotes: a.wait.notes, codeChangedByBots: botCodeChanged(a),
+        lateMinors, history, ...listOut,
+      }
+    }
     const before = was.head
     const r = await call('landFix', pr, landFixPrompt(pr), `landfix:${pr.id}`, { schema: LANDFIX })
     if (!r || !r.readyToMerge) return stopped('land fix not ready', { headSha: r && r.headSha, notes: r && r.notes })
@@ -2384,7 +2409,7 @@ const finish = async result => {
   if (clonesOn) result.cleanup = await cleanupRun(null, cleanupArgs('clones', shq(TMP), '--all', ...keepOpen.map(shq)), 'all')
   return result
 }
-const needsGoals = A.prs.some(pr => !pr.landFix)
+const needsGoals = A.prs.some(pr => !pr.landFix && !pr.answer)
 const [versionLines, pre, roles] = await parallel([
   () => checkVersion(),
   () => needsGoals ? call('preflight', null, preflightPrompt(), 'preflight:goals', { schema: PREFLIGHT }) : Promise.resolve(null),

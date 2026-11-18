@@ -24,6 +24,11 @@ const ci = { id: 1, name: 'ci', app: { slug: 'github-actions' }, status: 'comple
 const bot = ({ id = 5151, min = 0, conclusion = 'success', title = 'Finished', summary = 'Result: Success - Review completed', slug = 'coderabbitai' } = {}) =>
   ({ id, name: 'CodeRabbit', app: { slug }, status: 'completed', conclusion, started_at: min === 0 ? isoSec(0) : iso(min), output: { title, summary } })
 const approval = (sha) => ({ id: 1, user: { login: 'gitar-bot[bot]' }, state: 'APPROVED', body: '', commit_id: sha, submitted_at: iso(30) })
+const botInline = (login = 'coderabbitai[bot]') => ({ id: 11, user: { login }, in_reply_to_id: null, body: 'x', pull_request_review_id: 5 })
+const findingReview = (sha) => ({ id: 5, user: { login: 'coderabbitai[bot]' }, state: 'COMMENTED', body: '**Actionable comments posted: 1**', commit_id: sha, submitted_at: iso(30) })
+const answerLine = (sha, t, b) => `ANSWER #7 ${sha}: ${t} threads, ${b} review bodies; run the bots step with answer: true, then land again`
+const noAnswer = (r) => assert.ok(!r.out.split('\n').some((l) => l.startsWith('ANSWER #')), r.out)
+const noMergePr = (r) => assert.ok(!r.out.split('\n').some((l) => l.startsWith('PR 7 mergeable=')), r.out)
 const request = (min, id) => ({ id, user: { login: 'alfhen' }, body: REQ, created_at: iso(min) })
 
 // One PR of the base fixture: green CI, no approval, no thread, no review body. The request is answered with a comment 30 seconds old.
@@ -80,26 +85,27 @@ test('a PR that is not MERGEABLE gets no request and goes on to merge-pr.sh, whi
   const r = land(setup([[7, S, { mergeable: null }]]))
   assert.equal(r.code, 5, r.out)
   assert.match(r.out, /PR 7 mergeable=UNKNOWN/)
-  assert.match(r.out, /STOP #7 not merged/)
+  assert.match(r.out, /^STOP #7 not merged/m)
+  noAnswer(r)
   assert.ok(!r.log.some((l) => l.includes(REQ)))
   assert.equal(reviewsReads(r), 1)
 })
 
-test('an unanswered bot inline comment stops with REVIEW and exit 9, with no request', () => {
-  const inline = [{ id: 11, user: { login: 'coderabbitai[bot]' }, in_reply_to_id: null, body: 'x', pull_request_review_id: 5 }]
-  const r = land(setup([[7, S, { inline }]]))
-  assert.equal(r.code, 9, r.out)
-  assert.match(r.out, /^REVIEW #7: /m)
+test('an unanswered bot inline comment stops with ANSWER and exit 10, with no request', () => {
+  const r = land(setup([[7, S, { inline: [botInline()] }]]))
+  assert.equal(r.code, 10, r.out)
+  assert.ok(r.out.split('\n').includes(answerLine(S, 1, 0)), r.out)
+  assert.ok(!r.out.split('\n').some((l) => l.startsWith('PR 7 mergeable=')))
   assert.ok(!r.log.some((l) => l.includes(REQ)))
   assert.ok(!merged(r))
   assert.equal(reviewsReads(r), 1)
 })
 
-test('a bot review body with a finding stops with REVIEW and exit 9, with no request', () => {
-  const reviews = [{ id: 5, user: { login: 'coderabbitai[bot]' }, state: 'COMMENTED', body: '**Actionable comments posted: 1**', commit_id: S, submitted_at: iso(30) }]
-  const r = land(setup([[7, S, { reviews }]]))
-  assert.equal(r.code, 9, r.out)
-  assert.match(r.out, /^REVIEW #7: /m)
+test('a bot review body with a finding stops with ANSWER and exit 10, with no request', () => {
+  const r = land(setup([[7, S, { reviews: [findingReview(S)] }]]))
+  assert.equal(r.code, 10, r.out)
+  assert.ok(r.out.split('\n').includes(answerLine(S, 0, 1)), r.out)
+  assert.ok(!r.out.split('\n').some((l) => l.startsWith('PR 7 mergeable=')))
   assert.ok(!r.log.some((l) => l.includes(REQ)))
   assert.ok(!merged(r))
   assert.equal(reviewsReads(r), 1)
@@ -140,6 +146,7 @@ test('after two failed reviews the land stops with REVIEW and merges nothing', (
   const r = run(setup([[7, S, { reviews: [approval(S)], runs, requests }]], requests), ['--review', 'o/r', `7:${S}`])
   assert.equal(r.code, 9, r.out)
   assert.match(r.out, /^REVIEW #7: /m)
+  noAnswer(r)
   assert.ok(!merged(r))
   assert.ok(!r.log.some((l) => l.includes(REQ)))
 })
@@ -168,6 +175,8 @@ test('no review after the request stops with NO REVIEW and a REVIEW line with th
   assert.ok(no, r.out)
   const cause = no.slice('NO REVIEW #7: '.length)
   assert.ok(r.out.split('\n').includes(`REVIEW #7: ${cause}`), r.out)
+  assert.equal(r.code, 9)
+  noAnswer(r)
   assert.ok(!merged(r))
 })
 
@@ -181,19 +190,121 @@ test('a failed read of bot-status.sh posts no request, merges nothing and stops 
   assert.ok(!merged(r))
 })
 
+// A swapRuns PR whose request also copies more fixture files, so the review that comes leaves comments.
+const afterRequest = (copies) => {
+  const s = setup([[7, S, { swapRuns: [ci, bot({ id: 5151 })] }]])
+  const then = `${P}__issues__7__comments.POST.then`
+  let extra = ''
+  for (const [name, dest, v] of copies) { put(s.fx, name, v); extra += `${name} ${P}__pulls__7__${dest}.json\n` }
+  put(s.fx, then, readFileSync(join(s.fx, then), 'utf8') + extra)
+  return s
+}
+const withApprovalFrom = (login) => ({ ...approval(S), user: { login } })
+
+test('a review that leaves an inline comment after the request stops with ANSWER and exit 10', () => {
+  const r = land(afterRequest([['inline-after.json', 'comments', [botInline()]]]))
+  assert.match(r.out, /REVIEWED #7 run 5151/)
+  assert.equal(r.code, 10, r.out)
+  assert.ok(r.out.split('\n').includes(answerLine(S, 1, 0)), r.out)
+  noMergePr(r)
+  assert.ok(!merged(r))
+})
+
+test('a review body with a finding after the request stops with ANSWER and exit 10', () => {
+  const r = land(afterRequest([['reviews-after.json', 'reviews', [findingReview(S)]]]))
+  assert.equal(r.code, 10, r.out)
+  assert.ok(r.out.split('\n').includes(answerLine(S, 0, 1)), r.out)
+  noMergePr(r)
+  assert.ok(!merged(r))
+})
+
+test('a review from a login that is not a bot gives no approval after the request', () => {
+  const r = land(afterRequest([['reviews-after.json', 'reviews', [withApprovalFrom('alice')]], ['inline-after.json', 'comments', [botInline()]]]))
+  assert.equal(r.code, 10, r.out)
+  assert.match(r.out, new RegExp(`^ANSWER #7 ${S}: 1 threads`, 'm'))
+  noMergePr(r)
+  assert.ok(!merged(r))
+})
+
+test('after the request an approval of a bot merges even with an open thread', () => {
+  const r = land(afterRequest([['reviews-after.json', 'reviews', [approval(S)]], ['inline-after.json', 'comments', [botInline()]]]))
+  assert.match(r.out, /REVIEWED #7 run 5151/)
+  assert.ok(r.out.split('\n').some((l) => l.startsWith('PR 7 mergeable=')), r.out)
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /all merged/)
+  assert.ok(merged(r))
+  noAnswer(r)
+})
+
+test('after the request an approval of a bot merges even with a review body with a finding', () => {
+  const r = land(afterRequest([['reviews-after.json', 'reviews', [approval(S), findingReview(S)]]]))
+  assert.ok(r.out.split('\n').some((l) => l.startsWith('PR 7 mergeable=')), r.out)
+  assert.equal(r.code, 0, r.out)
+  assert.ok(merged(r))
+  noAnswer(r)
+})
+
+test('a failed second read of the bot status stops with exit 5 and no merge-pr.sh call', () => {
+  const s = afterRequest([])
+  put(s.fx, 'err-after.txt', 'HTTP 500')
+  const then = `${P}__issues__7__comments.POST.then`
+  put(s.fx, then, readFileSync(join(s.fx, then), 'utf8') + `err-after.txt ${P}__pulls__7__reviews.GET.error\n`)
+  const r = land(s)
+  assert.match(r.out, /REVIEWED #7 run 5151/)
+  assert.equal(r.code, 5, r.out)
+  assert.match(r.out, /^STOP #7: cannot read the bot status/m)
+  noMergePr(r)
+  assert.ok(!merged(r))
+})
+
+test('the answer stop uses the head of a pair that is the PR head', () => {
+  const r = run(setup([[7, B, { inline: [botInline()] }]]), ['--review', 'o/r', `7:${B}`])
+  assert.equal(r.code, 10, r.out)
+  assert.match(r.out, new RegExp(`^ANSWER #7 ${B}: 1 threads`, 'm'))
+  const replied = [botInline(), { id: 12, user: { login: 'alfhen' }, in_reply_to_id: 11, body: 'done', pull_request_review_id: 6 }]
+  const r2 = run(setup([[7, B, { inline: replied }]]), ['--review', 'o/r', `7:${B}`])
+  noAnswer(r2)
+  assert.ok(requested(r2), r2.log.join('\n'))
+})
+
+test('an open inline comment of a login that is not a bot gets the request and no ANSWER', () => {
+  const r = land(setup([[7, S, { inline: [botInline('alice')] }]]))
+  assert.ok(requested(r), r.log.join('\n'))
+  noAnswer(r)
+  assert.notEqual(r.code, 10)
+})
+
+test('before the request an approval of a bot merges even with an open thread', () => {
+  const r = land(setup([[7, S, { reviews: [approval(S)], inline: [botInline()] }]]))
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /all merged/)
+  assert.ok(merged(r))
+  assert.ok(!requested(r))
+  noAnswer(r)
+})
+
+test('before the request an approval of a login that is not a bot still gives the ANSWER stop', () => {
+  const r = land(setup([[7, S, { reviews: [withApprovalFrom('alice')], inline: [botInline()] }]]))
+  assert.equal(r.code, 10, r.out)
+  assert.match(r.out, new RegExp(`^ANSWER #7 ${S}: 1 threads`, 'm'))
+  assert.ok(!merged(r))
+  assert.ok(!requested(r))
+})
+
 const two = (o7) => run(setup([[7, S, o7], [8, S8, {}]]), ['--review', 'o/r', `7:${S}`, `8:${S8}`])
 
 test('the wave stops at an unanswered bot comment and posts no request for the next PR', () => {
-  const r = two({ inline: [{ id: 11, user: { login: 'coderabbitai[bot]' }, in_reply_to_id: null, body: 'x', pull_request_review_id: 5 }] })
-  assert.equal(r.code, 9, r.out)
-  assert.match(r.out, /^REVIEW #7: /m)
+  const r = two({ inline: [botInline()] })
+  assert.equal(r.code, 10, r.out)
+  assert.match(r.out, /^ANSWER #7 /m)
   assert.ok(!r.log.some((l) => l.includes('/pulls/8') || l.includes('/issues/8/')))
 })
 
 test('the wave stops at a PR that merge-pr.sh refuses and posts no request for the next PR', () => {
   const r = two({ mergeable: null })
   assert.equal(r.code, 5, r.out)
-  assert.match(r.out, /STOP #7 not merged/)
+  assert.match(r.out, /^STOP #7 not merged/m)
+  noAnswer(r)
   assert.ok(!r.log.some((l) => l.includes('/issues/8/')))
 })
 
@@ -220,6 +331,8 @@ test('--review alone in an agent shell is refused by merge-pr.sh', () => {
   const r = run(setup([[7, S, { reviews: [approval(S)] }]]), ['--review', 'o/r', `7:${S}`], { CLAUDECODE: '1' })
   assert.equal(r.code, 5, r.out)
   assert.match(r.out, /NOT merged/)
+  assert.match(r.out, /^STOP #7 not merged/m)
+  noAnswer(r)
   assert.ok(!merged(r))
 })
 
@@ -283,10 +396,10 @@ test('with an approval only the newest bot run decides whether a request is post
 
 test('an approval with a failed newest review does not take approvedBy: open comments stop the land', () => {
   const runs = [ci, bot({ id: 6001, min: 5, title: 'Review failed' })]
-  const inline = [{ id: 11, user: { login: 'coderabbitai[bot]' }, in_reply_to_id: null, body: 'x', pull_request_review_id: 5 }]
+  const inline = [botInline()]
   const r1 = land(setup([[7, S, { reviews: [approval(S)], runs, inline }]]))
-  assert.equal(r1.code, 9, r1.out)
-  assert.match(r1.out, /^REVIEW #7: /m)
+  assert.equal(r1.code, 10, r1.out)
+  assert.match(r1.out, /^ANSWER #7 /m)
   assert.ok(!r1.log.some((l) => l.includes(REQ)))
   assert.ok(!merged(r1))
   const r2 = land(setup([[7, S, { reviews: [approval(S)], runs }]]))
@@ -312,4 +425,30 @@ test('a pair that is already merged gets no review request', () => {
   assert.ok(!r.log.some((l) => l.includes(REQ)))
   assert.equal(merged(r), false)
   assert.equal(r.out.trim().split('\n').pop(), 'all merged')
+})
+
+const skillLines = () => readFileSync(join(root, 'skills/pr-pipeline/SKILL.md'), 'utf8').split('\n')
+const stepThree = () => {
+  const lines = skillLines()
+  const start = lines.findIndex((l) => l.startsWith('## Step 3'))
+  return lines.slice(start + 1, start + 1 + lines.slice(start + 1).findIndex((l) => l.startsWith('## ')))
+}
+
+test('SKILL.md Step 3 says what to do on an ANSWER line', () => {
+  const line = stepThree().find((l) => l.startsWith('With `--review`, the land step asks for the review'))
+  for (const w of ['ANSWER #', 'answer: true', 'prNumber', 'headSha', 'evals', 'evalsMeta', '--person --review', '--auto', 'reviews.review_progress', 'check run']) assert.ok(line.includes(w), w)
+  assert.match(line, /botWaitMinutes[^.\n]*\b0\b/)
+  assert.match(line, /never[^.]*first run/)
+  assert.match(line, /not ready[^.]*(do not land|person decides)/)
+  const old = stepThree().join('\n').split(/(?<=\.)\s+/).filter((x) => /openThreads|reviewBodies/.test(x) && x.includes('REVIEW #<pr>: ') && x.includes('exit 9'))
+  assert.deepEqual(old, [])
+})
+
+test('SKILL.md has a row for ANSWER with exit 10 and the REVIEW row keeps only a review that did not come', () => {
+  const lines = skillLines()
+  const answer = lines.find((l) => l.startsWith('| `ANSWER #'))
+  assert.match(answer, /exit 10/)
+  const review = lines.find((l) => l.startsWith('| `REVIEW #n: <cause>`'))
+  assert.match(review, /none came|did not come/)
+  assert.doesNotMatch(review, /open comments|review body/)
 })
