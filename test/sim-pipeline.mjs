@@ -7486,3 +7486,23 @@ await check('SC-R1-1 a file name with a shell character reaches the scout only i
   assert.equal(scouts.length, 1)
   assert.ok(scouts[0].prompt.includes(`mv "$t" '/h/.claude/plugins/data/pl-mk/maps/o-r/app%2Froutes%2Fposts.$id.tsx@${SC_A}.md'`))
 })
+
+await check('SC-R1-2 the scout command block, run in one bash call, makes the map file', async () => {
+  const file = 'app/routes/posts.$id.tsx'
+  await scRun(only1('C1'), scHook({ first: [scL(file, SC_A, false)] }))
+  const prompt = scCalls('scout:')[0].prompt
+  assert.match(prompt, /one Bash call|single Bash call|same Bash call/i)
+  const start = prompt.indexOf('t=$(mktemp')
+  const mvAt = prompt.indexOf('mv "$t"', start)
+  const block = prompt.slice(start, prompt.indexOf('\n', mvAt))
+  const dir = mkdtempSync(join(tmpdir(), 'scr12-'))
+  const folder = join(dir, 'maps')
+  mkdirSync(folder)
+  const cmd = block.split('/h/.claude/plugins/data/pl-mk/maps/o-r').join(folder).replace('<map text>', 'MAP')
+  const r = spawnSync('bash', ['-c', cmd], { encoding: 'utf8' })
+  assert.equal(r.status, 0, r.stderr)
+  const out = join(folder, `app%2Froutes%2Fposts.$id.tsx@${SC_A}.md`)
+  assert.equal(readFileSync(out, 'utf8').trim(), 'MAP')
+  assert.deepEqual(readdirSync(folder).filter(n => n.startsWith('.scout.')), [])
+  rmSync(dir, { recursive: true, force: true })
+})

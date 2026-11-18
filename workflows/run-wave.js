@@ -2104,8 +2104,10 @@ const scoutPrompt = (clone, folder, file, path) => `Task: write the map of one f
 Clone folder: ${clone} (a clone of the default branch). Read only the file \`${file}\` there. Change no file of the clone.
 Map file: ${path}
 In the map, list each function or section of the file with its line range (first and last line) and a few words on what it holds. Keep the map short.
-Write the map to a temporary file made with \`mktemp\` in the folder of the map file, then run one \`mv\` of that temporary file to the map file. Run these two commands exactly as they are, because the names hold characters that a shell would change if they were not quoted:
-t=$(mktemp ${shq(folder)}/.scout.XXXXXX)
+Write the map to a temporary file made with \`mktemp\` in the folder of the map file, then run one \`mv\` of that temporary file to the map file. Run the whole block in the same Bash call, because a shell variable does not last to the next call. Replace the line <map text> with the map, and keep the other lines exactly as they are, because the names hold characters that a shell would change if they were not quoted:
+t=$(mktemp ${shq(folder)}/.scout.XXXXXX) && cat > "$t" <<'SCOUT_MAP_END'
+<map text>
+SCOUT_MAP_END
 mv "$t" ${shq(path)}
 Write no other file.
 Return written true when the map file is in place.`
