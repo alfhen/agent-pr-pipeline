@@ -13,7 +13,7 @@ Two changes that cut the cost of a wave.
 
 The first is for a repo whose review bot reviews only when the land step asks. When that review has comments, the land stops today, and the main session reads each comment and writes each answer by hand. That is the most costly kind of work, because the main session has the longest conversation. After this plan the land command says which run to start, and one short workflow run answers the comments with the answer agent that the wave already has. The main session then runs the land again.
 
-The second is for the check of the list of evals. When the check sends a list back, the writer makes a new list and the check reads all of it again, up to three times. In one wave of 0.9.10 the check ran 18 times and was the largest cost of the wave. After this plan the check of a later attempt gets the reasons it gave before and the ids of the items that did not change. It rules on the changed items and on the reasons, and it does not judge again an item that it accepted before.
+The second is for the check of the list of evals. When the check sends a list back, the writer makes a new list and the check reads all of it again, up to three times. In one wave of 0.9.10 the check ran 18 times and was the largest cost of the wave. After this plan the check of a later attempt gets the reasons of the last list that a check ruled on, and the ids of the items that did not change since that list. It rules on the changed items and on the reasons, and it does not judge again an item that a check read before and did not name.
 
 What you do: merge this plan. The wave runs after the merge.
 
@@ -23,8 +23,8 @@ Merging this plan accepts the pick of each line. Say so before the merge to chan
 
 | # | Choice | Pick | Why |
 | --- | --- | --- | --- |
-| 1 | How the land step gets the answers to the comments of a review it asked for (entry RW). | The land command stops with a new line `ANSWER #<pr>` and its own exit code. The main session runs one workflow run with `answer: true` for that PR, which runs only the bots step (the answer agent, and the check of a code change that the answer made). Then it runs the land again. | A script cannot start an agent. The bots step and its checks exist already, so the run adds no new role and no new rule for the answers. |
-| 2 | What the check of a later attempt of the list reads (entry EC). | The full new list, as today, plus the reasons of the last check and the ids of the items that are the same as in the last list. It does not judge again an unchanged item that the last check did not name. | The check still sees the whole list, so it can see an item that a change made wrong. It does less work on the items it already accepted. |
+| 1 | How the land step gets the answers to the comments of a review it asked for (entry RW). | The land command stops with a new line `ANSWER #<pr>` and its own exit code. The main session runs one workflow run with `answer: true` for that PR, which runs only the bots step (the answer agent, and the check of a code change that the answer made, with the verifier when the PR has an eval list). Then it runs the land again. A refusal of `merge-pr.sh` keeps today's stop and is not sent to this run. | A script cannot start an agent. The bots step and its checks exist already, so the run adds no new role and no new rule for the answers. |
+| 2 | What the check of a later attempt of the list reads (entry EC). | The full new list, as today, plus the reasons of the last list that a check ruled on and the ids of the items that are the same as in that list. It does not judge again an unchanged item that the check did not name. A list that a rule refused was never checked: after it, and on attempt 1, the check judges the full list. | The check still sees the whole list, so it can see an item that a change made wrong. It does less work on the items it already accepted. |
 
 ## Decisions
 
@@ -59,34 +59,37 @@ flowchart LR
 
 Summary: one wave of two entries, then the version PR.
 
-Why one wave: RW edits `scripts/land-wave.sh`, the start of `runPRSteps` (a new branch for `answer`), SKILL.md Step 3 and the row of "When things go wrong" for the new stop. EC edits `evalsCheckPrompt` and `writerLoop`. The two entries edit different functions of `workflows/run-wave.js` and use different sim anchors.
+Why one wave: RW edits `scripts/land-wave.sh`, the argument loop, `needsGoals`, `evaluateWave`, `landFor`, the catch of `runPR` and the start of `runPRSteps` (a new branch for `answer`) in `workflows/run-wave.js`, SKILL.md Step 3 and the row of "When things go wrong" for the new stop. EC edits `writerLoop`, `checkEvals` and `evalsCheckPrompt`. No function or part is in both entries. The two entries edit different functions of `workflows/run-wave.js` and use different sim anchors.
 
 ### Wave 1
 
 **RW The land step names an answer run, and the workflow can run only the bots step for an open PR.** Sim anchor: after "ST-14 SKILL.md states the new defaults and the step minorReview".
-Touches: `scripts/land-wave.sh` (the stop after `ask_review` for open comments, and the stop after a refusal of `merge-pr.sh` whose cause is a missing answer of the user), `workflows/run-wave.js` (`runPRSteps`, a new branch for a PR item with `answer: true`, next to the `landFix` branch), `skills/pr-pipeline/SKILL.md` (Step 3, one paragraph; the row of "When things go wrong" for `ANSWER #<pr>`), `test/land-review.test.mjs` (new cases; the cases that pin `REVIEW #<pr>` with exit 9 for open comments change to the new line), `test/sim-pipeline.mjs` (one new block).
+Touches: `scripts/land-wave.sh` (the stop after `ask_review` for open comments), `workflows/run-wave.js` (the argument loop at the top, next to the `quick` check; the `needsGoals` line; the skip test of `evaluateWave`; `landFor`, one new `rerunReason`; the catch of `runPR`, which keeps `prNumber` for an answer item; `runPRSteps`, a new branch for a PR item with `answer: true`, next to the `landFix` branch), `skills/pr-pipeline/SKILL.md` (Step 3, one paragraph; the row of "When things go wrong" for `ANSWER #<pr>`), `test/land-review.test.mjs` (new cases; the cases that pin `REVIEW #<pr>` with exit 9 for open comments change to the new line), `test/sim-pipeline.mjs` (one new block).
 What must be true:
 1. When `ask_review` finds open bot comments or an unanswered review body on the head, `land-wave.sh` prints `ANSWER #<pr>: <openThreads> threads, <reviewBodies> review bodies; run the bots step with answer: true, then land again` and exits 10. It posts no review request.
-2. When `merge-pr.sh` refuses the PR and its cause line names a missing reply or a missing answer of the user (the lines that start with `clean review: not every top-level inline comment of the bot has a reply of the user` or `clean review: rule A:` and name an answer), `land-wave.sh` prints the same `ANSWER #<pr>` line and exits 10.
-3. Every other refusal of `merge-pr.sh` keeps today's line `STOP #<pr> not merged` and exit 5. (holds today; kind `regression`)
-4. A review that did not come keeps `REVIEW #<pr>: <cause>` and exit 9. (holds today; kind `regression`)
-5. A PR item with `answer: true` and `prNumber` runs no evals writer, no implementer, no review loop, no minor pass, no docs step and no open step. It reads the head, runs `bots()` for the PR, and ends with the result fields that a land-fix run gives (`land`, `untested`, `ready`).
-6. In such a run, when the answer agent changed code, the bot check of today runs on the new commits. When it changed no code, no check runs. (holds today; kind `regression` for the bots step itself)
-7. A PR item with `answer: true` and no `prNumber` is refused at the start with a line that names the missing `prNumber`, and runs no agent.
-8. The result of an `answer: true` run never gets `:auto`.
-9. (doc) Step 3 of SKILL.md says what to do on `ANSWER #<pr>`: run the workflow with one PR item `{id, title, branch, prNumber, answer: true}`, then run the land command again. The row of "When things go wrong" names the line and exit 10.
-Build notes: the `landFix` branch of `runPRSteps` shows the sequence (head read, `bots`, `syncUntested`, end facts, `landFor`); the new branch is that sequence with no land-fix agent and no `landFixCheck`. `land-wave.sh` reads the cause line that `merge-pr.sh` prints after `approved=[]`.
+2. Every refusal of `merge-pr.sh` keeps today's line `STOP #<pr> not merged` and exit 5, whatever its cause. (holds today; kind `regression`)
+3. A review that did not come keeps `REVIEW #<pr>: <cause>` and exit 9. (holds today; kind `regression`)
+4. A PR item with `answer: true` and `prNumber` runs no evals writer, no implementer, no review loop, no minor pass, no docs step and no open step. It reads the head, runs `bots()` for the PR, and ends with the result fields that a land-fix run gives (`land`, `untested`, `ready`).
+5. The item takes the earlier `evals` and `evalsMeta` as the `landFix` item does. The branch reads them with `givenEvals` and `evalsVerdict`, and sets `ciChecksState` with `ciChecksOf`, before `bots()`.
+6. In such a run, when the answer agent changed code, the bot check of today runs on the new commits: the verifier when the item has an eval list, the tester when it has none. When the answer agent changed no code, no check runs. (holds today; kind `regression` for the bots step itself)
+7. An `answer: true` run ends with `ready: false` and a reason that says nothing was answered, when `bots()` ran no answer agent, or when the bot-status counts of open threads or open review bodies are still above 0 after the answer agent ran.
+8. A PR item with `answer: true` and no `prNumber`, or with `answer: true` and any of `landFix`, `resume`, `skipImpl` or `quick`, makes the run throw at the argument loop, before any agent, with a message that names the item and the missing or wrong field.
+9. A run in which every item has `answer: true` starts no goals preflight agent, no evaluation agent and no safety agent. The version check and the role probe run as for any run.
+10. The result of an `answer: true` run never gets `:auto`: its `land` value has the form `<pr>:<sha>` with the mode `person`.
+11. (doc) Step 3 of SKILL.md says what to do on `ANSWER #<pr>`: run the workflow with one PR item `{id, title, branch, prNumber, answer: true, evals}` (`evals` as for a land fix, when the PR has a list), then run the land command again; when the answer run ends not ready, do not land again, a person decides. The row of "When things go wrong" names the line and exit 10.
+Build notes: the `landFix` branch of `runPRSteps` shows the sequence (given list, head read, `bots`, `syncUntested`, end facts, `landFor`); the new branch is that sequence with no land-fix agent and no `landFixCheck`. The loop stops because `bot-status.sh` counts a thread as answered once the bot or the user replied, so one reply of the answer agent clears the counts that `ask_review` reads. A gate refusal of `merge-pr.sh` (a missing reply of the user, a nitpick with no answer line) is not sent to the answer run, because `bots()` starts the answer agent only on those counts and they can both be 0 in that case. A sim case in which both counts are 0 for an `answer: true` item pins statement 7.
 
 **EC The check of a later attempt of the list rules on what changed.** Sim anchor: after "C10-3 an evalsRounds value of 1 or 2 gives one or two writer calls".
-Touches: `workflows/run-wave.js` (`writerLoop`, the data it gives to the check of attempts 2 and 3; `evalsCheckPrompt`, one new part for a later attempt), `test/sim-pipeline.mjs` (one new block).
+Touches: `workflows/run-wave.js` (`writerLoop`, which keeps the last list that a check ruled on and its notes; `checkEvals`, one new optional parameter for them, which the call of `settleDisputes` does not pass; `evalsCheckPrompt`, one new part for a later attempt), `test/sim-pipeline.mjs` (one new block).
 What must be true:
-1. On attempt 2 and 3 of the writer, the arch and product check prompts hold the reasons that the last check gave (its notes), as quoted data.
-2. The same prompts hold the ids of the evals of the new list whose statement, kind and check are the same as in the last list.
-3. The same prompts tell the reviewer to rule on the changed and new evals and on each reason of the last check, and not to judge again an unchanged eval that the last check did not name. The reviewer can still send the list back for an unchanged eval when a change of another eval made it wrong, and it says so.
-4. On attempt 1 the check prompts hold none of these parts. (holds today; kind `regression`)
-5. The check prompts of every attempt still hold the full list, the coverage map and the writer notes. (holds today; kind `regression`)
-6. A list in which every eval changed gives an empty list of unchanged ids, and the prompt says so.
-Build notes: the last list and the last reasons are in `writerLoop` already (the `last` value that `evalsPrompt` gets). Compare evals by id, statement, kind and check. The sim cases "E01-2 the writer notes reach the evals check on a later attempt" and "C10-1" to "C10-3" pin today's prompts and calls.
+1. The checked list is the last list on which `checkEvals` ruled. A list that `evalsVerdict` or `coverageVerdict` refused is not a checked list. A list given to `writeEvals` that passed the check of round 1 is a checked list for attempt 2.
+2. On attempt 2 and 3, when a checked list exists, the arch and product check prompts hold the notes of that check, as quoted data.
+3. In the same case the prompts hold the ids of the evals of the new list whose statement, kind and check are the same as in the checked list.
+4. In the same case the prompts tell the reviewer to rule on the changed and new evals and on each reason of the checked list, and not to judge again an unchanged eval that the notes did not name. The reviewer can still send the list back for an unchanged eval when a change of another eval made it wrong, and it says so.
+5. When no checked list exists, the check prompts hold none of these parts and the check judges the full list. This is the case on attempt 1, and on attempt 2 after a rule refused attempt 1. When attempt 1 was checked and a rule refused attempt 2, attempt 3 compares with the list of attempt 1 and gives its notes. (holds today for attempt 1; kind `regression` for that part)
+6. The check prompts of every attempt still hold the full list, the coverage map and the writer notes. (holds today; kind `regression`)
+7. A new list in which every eval changed gives an empty list of unchanged ids, and the prompt says so.
+Build notes: `last` in `writerLoop` also holds a rule refusal, so it cannot serve as the checked list; keep a second value that is set only when `checkEvals` returned a result. Compare evals by id, statement, kind and check. The sim cases "E01-2 the writer notes reach the evals check on a later attempt" and "C10-1" to "C10-3" pin today's prompts and calls. A sim case where a rule refuses attempt 1 and attempt 2 is checked pins statement 5.
 
 ## Steps of the driving session
 
@@ -115,10 +118,10 @@ Build notes: the last list and the last reasons are in `writerLoop` already (the
 
 ## Flagged concerns
 
-- **EC can let a wrong eval pass.** An unchanged eval that the last check missed is not judged again. The check of attempt 1 judged every eval, and the reviewer can still name one that a change made wrong.
+- **EC can let a wrong eval pass.** An unchanged eval that the checked list's check missed is not judged again. The first check of an eval judged it in full, a rule refusal never counts as a check, and the reviewer can still name an eval that a change made wrong.
 - **RW lets an agent write the answers to an outside review.** The answers follow the same rules as the bots step of today, and the gate (rule A) reads them as it does now.
 
 ## Not verified
 
 - How much EC saves. The cost of a check is mostly the files it loads, not the list it reads.
-- That every cause line of `merge-pr.sh` for a missing answer starts with one of the two texts of RW statement 2.
+- That one reply of the answer agent clears the counts of `bot-status.sh` for every open thread and review body that `ask_review` finds.
