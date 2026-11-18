@@ -7012,6 +7012,11 @@ await check('RW-17 an answer run stops when the head is not the headSha of the i
   await rwRun(rwItem(), {})
   assert.ok(rwLabels().includes('botanswer:AN'))
 })
+await check('RW-23 the answer agent stops before any write when the PR moved after the status read', async () => {
+  await rwRun(rwItem(), {})
+  const prompt = calls.find(c => c.label === 'botanswer:AN').prompt
+  assert.match(prompt, new RegExp(`git rev-parse HEAD\\\`\\. When it is not ${RW_H}, the PR moved[^\\n]*reply nowhere, edit nothing, push nothing`))
+})
 await check('RW-18 an answer run that throws keeps prNumber', async () => {
   const hk = rwHook({ codeChanged: false, hook: (p, o) => { if (o.label === 'io:AN#endci') throw new Error('ci read crashed') } })
   const a = (await rlRun([rwItem()], hk)).prs[0]

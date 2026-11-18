@@ -201,6 +201,21 @@ const afterRequest = (copies) => {
 }
 const withApprovalFrom = (login) => ({ ...approval(S), user: { login } })
 
+test('a head that moved during the request stops with HEAD MOVED, not ANSWER', () => {
+  const s = afterRequest([['inline-after.json', 'comments', [botInline()]]])
+  put(s.fx, 'pull-moved.json', { merged: false, mergeable: true, head: { sha: B, ref: 'feat/7', repo: { full_name: 'o/r' } } })
+  put(s.fx, `${P}__commits__${B}__check-runs.json`, { check_runs: [ci] })
+  put(s.fx, `${P}__commits__${B}__check-suites.json`, { check_suites: [] })
+  const then = `${P}__issues__7__comments.POST.then`
+  put(s.fx, then, readFileSync(join(s.fx, then), 'utf8') + `pull-moved.json ${P}__pulls__7.json\n`)
+  const r = land(s)
+  assert.match(r.out, /REVIEWED #7 run 5151/)
+  assert.equal(r.code, 6, r.out)
+  assert.match(r.out, /^HEAD MOVED #7/m)
+  noAnswer(r)
+  noMergePr(r)
+})
+
 test('a review that leaves an inline comment after the request stops with ANSWER and exit 10', () => {
   const r = land(afterRequest([['inline-after.json', 'comments', [botInline()]]]))
   assert.match(r.out, /REVIEWED #7 run 5151/)

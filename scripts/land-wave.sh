@@ -96,10 +96,16 @@ answer_stop() {
     echo "ANSWER #$pr $sha: $threads threads, $bodies review bodies; run the bots step with answer: true, then land again"; exit 10
   fi
 }
+# The review request can take an hour, so a status read must name the checked head before it routes the PR.
+status_head() {
+  local h; h=$(jq -r '.head // ""' <<<"$1")
+  [ "$h" = "$sha" ] || { echo "HEAD MOVED #$pr: checked ${sha:0:7}, now ${h:0:7}. Check the new head before merging."; exit 6; }
+}
 # Runs between the WAITING test and merge-pr.sh. Returns when merge-pr.sh should run; stops the wave when no review came.
 ask_review() {
   local st failed rrout rrc cause
   st=$(bash "$here/bot-status.sh" "$R" "$pr") || { echo "STOP #$pr: cannot read the bot status"; exit 5; }
+  status_head "$st"
   if [ "$(jq -r '(.approvedBy | length) > 0' <<<"$st")" = true ]; then
     failed=$(gh api --paginate "repos/$R/commits/$sha/check-runs?per_page=100") || { echo "STOP #$pr: cannot read the check runs"; exit 5; }
     # Same rule as fourthWhy in bot-approval.jq: only the newest bot run counts.
@@ -114,6 +120,7 @@ ask_review() {
   [ "$rrc" = 0 ] || { echo "REVIEW #$pr: ${cause#NO REVIEW #$pr: }"; exit 9; }
   # The review that came may have left comments; an approval of a bot still goes to merge-pr.sh.
   st=$(bash "$here/bot-status.sh" "$R" "$pr") || { echo "STOP #$pr: cannot read the bot status"; exit 5; }
+  status_head "$st"
   [ "$(jq -r '(.approvedBy | length) > 0' <<<"$st")" = true ] && return 0
   answer_stop "$st"
 }
