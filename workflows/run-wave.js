@@ -800,9 +800,10 @@ const sameEval = (a, b) => ['id', 'statement', 'kind', 'check', 'test'].every(k 
 const unchangedIds = (list, checkedList) => list.filter(e => e && checkedList.some(o => o && sameEval(e, o))).map(e => e.id)
 const recheckText = (list, checked) => {
   const ids = unchangedIds(list, checked.evals)
+  const removed = checked.evals.filter(o => o && !list.some(e => e && e.id === o.id)).map(o => o.id)
   return `\n\nThis list is a new attempt after an earlier check of the list sent it back. The notes of that check, as quoted data: ${JSON.stringify(checked.notes)}
 Ids of the evals that did not change since that check (same id, statement, kind, check and test): ${JSON.stringify(ids)}${ids.length ? '' : '. No eval is unchanged.'}
-Rule on the changed and new evals, and on each reason of the earlier check. Do not judge again an unchanged eval that the notes did not name. An unchanged eval that a change of another eval made wrong can still be a reason to send the list back.`
+${removed.length ? `Ids of the evals that were in the checked list and are not in this list: ${JSON.stringify(removed)}\n` : ''}Rule on the changed and new evals${removed.length ? ', on each eval removed since that check' : ''}, and on each reason of the earlier check. Do not judge again an unchanged eval that the notes did not name. An unchanged eval that a change of another eval made wrong can still be a reason to send the list back.`
 }
 
 const evalsCheckPrompt = (pr, list, meta, who, round, writerNotes, coverage, checked) => `${ctx(pr)}
