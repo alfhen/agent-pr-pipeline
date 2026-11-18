@@ -2,6 +2,7 @@
 # usage: filemap.sh <owner/repo> <plan file> <entry id> <cache folder> <clone folder>
 # Prints one JSON line {"cache"} with the absolute cache folder, then for each file named in backticks on the Touches line
 # of the plan entry that exists at the head of a shallow clone of the default branch, one line {"file","blob","map","present"}.
+# Tokens in backticks count also inside brackets; the workflow parser of the Touches line skips bracketed notes.
 # Writes only into the cache folder and the clone folder, and never deletes the clone folder (cleanup.sh clones does).
 # FILEMAP_REMOTE: a local path used in place of the GitHub URL, for tests.
 R=$1; plan=$2; id=$3; cache=$4; clone=$5
@@ -27,7 +28,7 @@ if [ ! -d "$clone" ]; then
 fi
 
 [ -f "$clone/$plan" ] || fail "no plan file $plan"
-grep -qF "**$id " "$clone/$plan" || fail "no entry $id"
+awk -v id="$id" 'index($0, "**" id " ") == 1 { found = 1 } END { exit !found }' "$clone/$plan" || fail "no entry $id"
 touches=$(awk -v id="$id" '
   index($0, "**" id " ") == 1 { inside = 1; next }
   inside && (/^\*\*/ || /^#/) { exit }
@@ -39,7 +40,8 @@ find "$cache" -maxdepth 1 -type f -name '*@*.md' -mtime +30 -delete 2>/dev/null
 printf '{"cache":"%s"}\n' "$(json "$cache")"
 seen=$'\n'
 while IFS= read -r tok; do
-  path=${tok#\`}; path=${path%\`}
+  path=${tok#\`}; path=${path%\`}; path=${path#./}
+  case "$path" in *[[:cntrl:]]*) continue ;; esac
   [ -n "$path" ] || continue
   case "$seen" in *$'\n'"$path"$'\n'*) continue ;; esac
   seen+="$path"$'\n'

@@ -1,8 +1,8 @@
 // Runs filemap.sh against a real temporary git repo (FILEMAP_REMOTE replaces the GitHub URL).
-import { test } from 'node:test'
+import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -17,6 +17,7 @@ const must = (cwd, ...args) => { const r = git(cwd, ...args); assert.equal(r.sta
 const put = (dir, file, text) => { mkdirSync(join(dir, file, '..'), { recursive: true }); writeFileSync(join(dir, file), text) }
 
 const PLAN = [
+  'Intro mentions **ZZ thing** here.',
   '**FM First entry.**',
   'Touches: `a.js` (`runPRSteps`, `lib/`), `lib/b/c.js`, `lib`, `missing.js`, `dev.js`, nob.js by name only.',
   'What must be true: `plain.txt` is named here.',
@@ -26,8 +27,13 @@ const PLAN = [
   ''
 ].join('\n')
 
+const dirs = []
+after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }) })
+
 const build = ({ extraMain = {} } = {}) => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'filemap-test-')))
+  dirs.push(dir)
+  mkdirSync(join(dir, 'home'))
   const remote = join(dir, 'R'); const work = join(dir, 'work')
   must(dir, 'init', '-q', '--bare', '-b', 'main', remote)
   must(dir, 'clone', '-q', remote, work)
@@ -37,11 +43,11 @@ const build = ({ extraMain = {} } = {}) => {
   must(work, 'add', '.'); must(work, 'commit', '-qm', 'main'); must(work, 'push', '-q', 'origin', 'main')
   must(work, 'checkout', '-q', '-b', 'dev')
   put(work, 'dev.js', 'dev'); must(work, 'add', '.'); must(work, 'commit', '-qm', 'dev'); must(work, 'push', '-q', 'origin', 'dev')
-  return { dir, remote, cache: join(dir, 'cache'), clone: join(dir, 'tmp', 'filemap-FM') }
+  return { dir, home: join(dir, 'home'), remote, cache: join(dir, 'cache'), clone: join(dir, 'tmp', 'filemap-FM') }
 }
 const run = (t, { id = 'FM', cache = t.cache, clone = t.clone, env = {}, cwd = t.dir, path } = {}) => {
   const r = spawnSync('bash', [join(root, 'scripts/filemap.sh'), 'o/r', 'plan.md', id, cache, clone], {
-    encoding: 'utf8', cwd, env: { ...GIT_ENV, FILEMAP_REMOTE: t.remote, ...(path ? { PATH: path } : {}), ...env }
+    encoding: 'utf8', cwd, env: { ...GIT_ENV, HOME: t.home, FILEMAP_REMOTE: t.remote, ...(path ? { PATH: path } : {}), ...env }
   })
   const lines = r.stdout.split('\n').filter(Boolean).map((l) => JSON.parse(l))
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, lines, files: lines.filter((l) => 'file' in l), out: r.stdout + r.stderr }
@@ -73,6 +79,7 @@ test('FM-1 the GitHub URL of the repo is used without the override', () => {
   })
   assert.equal(r.status, 1)
   assert.match(r.stderr, /^filemap: cannot clone/m)
+  noJsonOnStderr(r)
   assert.ok(readFileLog(log).includes('https://github.com/o/r'))
 })
 const readFileLog = (p) => spawnSync('cat', [p], { encoding: 'utf8' }).stdout
@@ -117,10 +124,20 @@ test('FM-4 no stderr line is a JSON line, in success and in each error', () => {
   const plain = join(t.dir, 'plain'); writeFileSync(plain, 'x')
   const cases = [
     run(t), run(t, { id: 'ZZ' }), run(t, { cache: 'maps' }),
-    run(t, { cache: '~/maps', env: { HOME: '' } }), run(t, { cache: join(plain, 'maps') })
+    run(t, { cache: '~/maps', env: { HOME: '' } }), run(t, { cache: join(plain, 'maps') }),
+    run(t, { clone: join(t.dir, 'k2'), env: { FILEMAP_REMOTE: join(t.dir, 'nope') } }), run(t, { clone: join(t.dir, 'k3', 'x'), env: { FILEMAP_REMOTE: join(t.dir, 'nope') } })
   ]
-  assert.deepEqual(cases.map((r) => r.status), [0, 1, 1, 1, 1])
+  assert.deepEqual(cases.map((r) => r.status), [0, 1, 1, 1, 1, 1, 1])
   for (const r of cases) noJsonOnStderr(r)
+})
+
+test('FM-4 a missing plan file prints no plan file and no JSON on stderr', () => {
+  const t = build()
+  assert.equal(run(t).status, 0)
+  const r = spawnSync('bash', [join(root, 'scripts/filemap.sh'), 'o/r', 'nope.md', 'FM', t.cache, t.clone], { encoding: 'utf8', env: { ...GIT_ENV, HOME: t.home, FILEMAP_REMOTE: t.remote } })
+  assert.equal(r.status, 1)
+  assert.match(r.stderr, /^filemap: no plan file nope\.md$/m)
+  noJsonOnStderr(r)
 })
 
 test('FM-5 a function name, a folder or a missing file prints no line; a file does', () => {
@@ -163,14 +180,17 @@ test('FM-7 only map files older than 30 days are deleted', () => {
 test('FM-8 creates the cache folder and writes only there and into the clone folder', () => {
   const t = build()
   const [home, tmp, cwd] = ['h', 't', 'w'].map((n) => emptyDir(t, n))
-  const snapshot = () => spawnSync('find', [t.dir, '-not', '-path', `${t.remote}*`, '-not', '-path', `${join(t.dir, 'tmp')}*`, '-not', '-path', `${join(t.dir, 'a')}*`, '-not', '-path', `${join(t.dir, 'work')}*`], { encoding: 'utf8' }).stdout
-  const before = snapshot()
   const cache = join(t.dir, 'a', 'b', 'cache')
+  const parents = new Set([join(t.dir, 'a'), join(t.dir, 'a', 'b'), join(t.dir, 'tmp')])
+  const skip = [t.remote, join(t.dir, 'work'), cache, t.clone]
+  const snapshot = () => spawnSync('find', [t.dir], { encoding: 'utf8' }).stdout.split('\n')
+    .filter((p) => p && !skip.some((x) => p === x || p.startsWith(`${x}/`)))
+  const before = snapshot()
   const r = run(t, { cache, cwd, env: { HOME: home, TMPDIR: tmp } })
   assert.equal(r.status, 0, r.stderr)
   assert.ok(existsSync(cache))
   for (const d of [home, tmp, cwd]) assert.deepEqual(readdirSync(d), [])
-  assert.equal(snapshot(), before)
+  assert.deepEqual(snapshot().filter((p) => !parents.has(p)), before)
 })
 
 test('FM-9 a relative cache folder prints cache folder must be absolute and exits 1', () => {
