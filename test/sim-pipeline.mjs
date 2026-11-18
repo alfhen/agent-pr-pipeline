@@ -5705,6 +5705,143 @@ await check('C10-3 an evalsRounds value of 1 or 2 gives one or two writer calls'
     assert.equal(x.C1.reason, 'evals refused: no error path')
   }
 })
+const NOTES_MARK = 'The notes of that check, as quoted data:'
+const UNCH_MARK = 'Ids of the evals that did not change since that check'
+const RULE_MARK = 'Rule on the changed and new evals, and on each reason of the earlier check.'
+const unchangedPart = p => (p.split('\n').find(l => l.startsWith(UNCH_MARK)) || '')
+const sentBackOn1 = notes => o => /#1$/.test(o.label) ? { verdict: 'needs-change', notes } : okCheck()
+const ec1 = () => evalsRun([C1PR], () => withMeta(listOf('C1'), { notes: 'wn' }), sentBackOn1('r1 gap "x"'), { productReview: 'all' })
+await check('EC-1 the notes of the round 1 check reach the check prompts of attempt 2', async () => {
+  await ec1()
+  for (const l of ['evalsarch:C1#2', 'evalsproduct:C1#2']) assert.ok(promptOf(l).includes(JSON.stringify('architecture: r1 gap "x"; product: r1 gap "x"')), l)
+})
+await check('EC-2 on attempt 3 the check prompts hold the notes of attempt 2 and not those of attempt 1', async () => {
+  await evalsRun([C1PR], () => withMeta(listOf('C1')), o => /#1$/.test(o.label) ? { verdict: 'needs-change', notes: 'first-gap' } : /#2$/.test(o.label) ? { verdict: 'needs-change', notes: 'second-gap' } : okCheck())
+  const p = promptOf('evalsarch:C1#3')
+  assert.ok(p.includes(JSON.stringify('architecture: second-gap')))
+  assert.ok(!p.includes('first-gap'))
+})
+await check('EC-3 the check prompts name as unchanged only the evals that are the same in every field', async () => {
+  const a1 = withMeta([ev('C1-1', 'behaviour'), ev('C1-2', 'error path'), ev('C1-3', 'behaviour', { test: 't1' }), ev('C1-8', 'behaviour'), ev('C1-9', 'behaviour')])
+  const a2 = withMeta([ev('C1-1', 'behaviour'), ev('C1-2', 'error path', { check: 'other; expect ok' }), ev('C1-3', 'behaviour', { test: 't2' }), ev('C1-8', 'regression'), ev('C1-9', 'behaviour', { statement: 'C1-9 changed' }), ev('C1-6', 'behaviour')])
+  let n = 0
+  await evalsRun([C1PR], () => ++n === 1 ? a1 : a2, sentBackOn1('gap'))
+  const part = unchangedPart(promptOf('evalsarch:C1#2'))
+  assert.ok(part.includes('"C1-1"'))
+  for (const id of ['C1-2', 'C1-3', 'C1-8', 'C1-9', 'C1-6']) assert.ok(!part.includes(`"${id}"`), id)
+})
+await check('EC-4 an eval with the same fields but another id is not named as unchanged', async () => {
+  const first = withMeta([ev('C1-1', 'behaviour', { statement: 'S1', check: 'run S1; expect ok' }), ev('C1-2', 'error path')])
+  const run = async second => {
+    let n = 0
+    await evalsRun([C1PR], () => ++n === 1 ? first : withMeta(second), sentBackOn1('gap'))
+    return unchangedPart(promptOf('evalsarch:C1#2'))
+  }
+  const same = [ev('C1-1', 'behaviour', { statement: 'S1', check: 'run S1; expect ok' }), ev('C1-2', 'error path', { check: 'other; expect ok' })]
+  assert.ok((await run(same)).includes('"C1-1"'))
+  const renamed = [ev('C1-1x', 'behaviour', { statement: 'S1', check: 'run S1; expect ok' }), ev('C1-2', 'error path', { check: 'other; expect ok' })]
+  const part = await run(renamed)
+  assert.ok(part.startsWith(UNCH_MARK) && !part.includes('"C1-1"') && !part.includes('"C1-1x"'))
+})
+await check('EC-5 the check prompts of a later attempt tell the reviewer what to rule on', async () => {
+  await ec1()
+  for (const l of ['evalsarch:C1#2', 'evalsproduct:C1#2']) {
+    const p = promptOf(l)
+    assert.ok(p.includes('Rule on the changed and new evals'), l)
+    assert.ok(p.includes('on each reason of the earlier check'), l)
+    assert.ok(p.includes('Do not judge again an unchanged eval that the notes did not name'), l)
+  }
+})
+await check('EC-6 the check prompts of a later attempt keep the way to send the list back for an unchanged eval', async () => {
+  await ec1()
+  for (const l of ['evalsarch:C1#2', 'evalsproduct:C1#2']) assert.ok(promptOf(l).includes('An unchanged eval that a change of another eval made wrong can still be a reason to send the list back.'), l)
+})
+await check('EC-7 the check prompts of attempt 1 hold the full list and no later-attempt part', async () => {
+  await ec1()
+  for (const l of ['evalsarch:C1#1', 'evalsproduct:C1#1']) {
+    const p = promptOf(l)
+    for (const m of [NOTES_MARK, UNCH_MARK, RULE_MARK]) assert.ok(!p.includes(m), `${l} ${m}`)
+    assert.ok(p.includes(JSON.stringify({ evals: listOf('C1'), noErrorPath: '', noReference: '', algorithm: false }, null, 1)), l)
+  }
+})
+await check('EC-8 a list that a rule refused is not a checked list', async () => {
+  await evalsRun([C1PR], () => withMeta(listOf('C1')), sentBackOn1('gap'))
+  let p = promptOf('evalsarch:C1#2')
+  assert.ok(p.includes(NOTES_MARK) && p.includes(UNCH_MARK))
+  let n = 0
+  await evalsRun([C1PR], () => ++n === 1 ? withMeta([ev('C1-1', 'behaviour')]) : withMeta(listOf('C1')), sentBackOn1('gap'))
+  assert.ok(promptOf('evals:C1#w2').includes('the rule "no error path" refused it.'))
+  assert.ok(!evalLabels('C1').includes('evalsarch:C1#1'))
+  p = promptOf('evalsarch:C1#2')
+  assert.ok(!p.includes(NOTES_MARK) && !p.includes(UNCH_MARK))
+  n = 0
+  await evalsRun([C1PR], () => ++n === 1 ? { evals: listOf('C1'), coverage: [] } : withMeta(listOf('C1')), sentBackOn1('gap'))
+  assert.ok(promptOf('evals:C1#w2').includes('the rule "no coverage" refused it.'))
+  p = promptOf('evalsarch:C1#2')
+  assert.ok(!p.includes(NOTES_MARK) && !p.includes(UNCH_MARK))
+})
+await check('EC-9 after a refused attempt 2 the check of attempt 3 compares with attempt 1', async () => {
+  let n = 0
+  const lists = [withMeta(listOf('C1')), withMeta([ev('C1-1', 'behaviour', { statement: 'other' })]), withMeta([ev('C1-1', 'behaviour'), ev('C1-2', 'error path', { check: 'new; expect ok' })])]
+  await evalsRun([C1PR], () => lists[n++], sentBackOn1('first-gap'))
+  const p = promptOf('evalsarch:C1#3')
+  assert.ok(p.includes(JSON.stringify('architecture: first-gap')))
+  const part = unchangedPart(p)
+  assert.ok(part.includes('"C1-1"') && !part.includes('"C1-2"'))
+})
+await check('EC-10 a given list that the round 1 check sent back is the checked list of attempt 2', async () => {
+  await evalsRun([{ ...C1PR, evals: listOf('C1') }], () => withMeta([ev('C1-1', 'behaviour'), ev('C1-2', 'error path', { check: 'new; expect ok' })]), o => o.label === 'evalsarch:C1#1' ? { verdict: 'needs-change', notes: 'given-gap' } : okCheck())
+  const labels = evalLabels('C1')
+  for (const l of ['evalsarch:C1#1', 'evals:C1#w2', 'evalsarch:C1#2']) assert.ok(labels.includes(l), l)
+  const p = promptOf('evalsarch:C1#2')
+  assert.ok(p.includes(JSON.stringify('architecture: given-gap')))
+  const part = unchangedPart(p)
+  assert.ok(part.includes('"C1-1"') && !part.includes('"C1-2"'))
+})
+await check('EC-11 a given list that passes the round 1 check starts no writer', async () => {
+  await evalsRun([{ ...C1PR, evals: listOf('C1') }], noWriter)
+  const labels = evalLabels('C1')
+  assert.ok(labels.indexOf('evalsarch:C1#1') >= 0 && labels.indexOf('evalsarch:C1#1') < labels.indexOf('implement:C1'))
+  assert.ok(!labels.includes('evals:C1#w2') && !labels.includes('evalsarch:C1#2'))
+})
+await check('EC-12 the check prompts of every attempt hold the full list, the coverage and the writer notes', async () => {
+  let n = 0
+  const lists = [1, 2, 3].map(k => [ev('C1-1', 'behaviour', { statement: `C1-1 v${k}` }), ev('C1-2', 'error path', { check: `run v${k}; expect ok` })])
+  const metas = lists.map((l, i) => withMeta(l, { notes: `wn${i + 1}`, coverage: [{ item: `Item v${i + 1}`, evals: ['C1-1', 'C1-2'] }] }))
+  await evalsRun([C1PR], () => metas[n++], o => /#3$/.test(o.label) ? okCheck() : { verdict: 'needs-change', notes: 'gap' })
+  for (const k of [1, 2, 3]) {
+    const p = promptOf(`evalsarch:C1#${k}`)
+    assert.ok(p.includes(JSON.stringify({ evals: lists[k - 1], noErrorPath: '', noReference: '', algorithm: false }, null, 1)), `list ${k}`)
+    assert.ok(p.includes(JSON.stringify(metas[k - 1].coverage, null, 1)), `coverage ${k}`)
+    assert.ok(p.includes(`wn${k}`), `notes ${k}`)
+    for (const j of [1, 2, 3]) if (j !== k) assert.ok(!p.includes(`C1-1 v${j}`) && !p.includes(`Item v${j}`), `attempt ${j} leaked into ${k}`)
+  }
+})
+await check('EC-19 a rejection with no notes makes the next check judge the full list', async () => {
+  let n = 0
+  const second = withMeta([ev('C1-1', 'behaviour'), ev('C1-2', 'error path', { check: 'new; expect ok' })])
+  await evalsRun([C1PR], () => ++n === 1 ? withMeta(listOf('C1')) : second, o => /#1$/.test(o.label) ? { verdict: 'needs-change' } : okCheck())
+  const p = promptOf('evalsarch:C1#2')
+  for (const m of [NOTES_MARK, UNCH_MARK, RULE_MARK]) assert.ok(!p.includes(m), m)
+})
+await check('EC-13 when every eval changed the prompt says that no eval is unchanged', async () => {
+  let n = 0
+  const second = withMeta([ev('C1-1', 'behaviour', { statement: 'C1-1 new' }), ev('C1-2', 'error path', { check: 'new; expect ok' }), ev('C1-3', 'behaviour')])
+  await evalsRun([C1PR], () => ++n === 1 ? withMeta(listOf('C1')) : second, sentBackOn1('all-gap'))
+  const p = promptOf('evalsarch:C1#2')
+  assert.ok(p.includes(JSON.stringify('architecture: all-gap')))
+  assert.ok(unchangedPart(p).includes('[]'))
+  assert.ok(p.includes('No eval is unchanged.'))
+})
+await check('EC-18 the check of a dispute change holds no later-attempt part', async () => {
+  const newEval = ev('C1-1', 'behaviour', { statement: 'C1-1 after the dispute' })
+  const x = await a01Result([C1PR], c01Dispute([{ id: 'C1-1', reason: 'wrong' }], { ruling: 'change', reason: 'c', eval: newEval }, okCheck()), { writer: () => withMeta(listOf('C1')), check: sentBackOn1('r1 gap') })
+  const labels = calls.map(c => c.label)
+  assert.ok(labels.includes('evalsarch:C1#2') && labels.includes('evalsarch:C1#d1'))
+  assert.equal(x.C1.evals.find(e => e.id === 'C1-1').statement, 'C1-1 after the dispute')
+  const p = promptOf('evalsarch:C1#d1')
+  for (const m of [NOTES_MARK, UNCH_MARK, RULE_MARK, 'r1 gap']) assert.ok(!p.includes(m), m)
+})
 const WAVE_V = src.match(/^const VERSION = '([^']+)'$/m)[1]
 const ROOT_V = '/cache/apl/' + WAVE_V
 const ROLE_KEYS = ['agentCounts', 'cleanup', 'denylist', 'feedback', 'feedbackRepo', 'prs', 'source', 'warnings']
