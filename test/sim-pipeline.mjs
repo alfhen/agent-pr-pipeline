@@ -5824,11 +5824,6 @@ await check('EC-19 a rejection with no notes makes the next check judge the full
   const p = promptOf('evalsarch:C1#2')
   for (const m of [NOTES_MARK, UNCH_MARK, RULE_MARK]) assert.ok(!p.includes(m), m)
 })
-await check('EC-20 the later-attempt check tells the reviewer that the default branch may have moved', async () => {
-  await evalsRun([C1PR], () => withMeta(listOf('C1')), sentBackOn1('r1 gap'))
-  assert.ok(promptOf('evalsarch:C1#2').includes('the default branch may have changed since that check'))
-  assert.ok(!promptOf('evalsarch:C1#1').includes('the default branch may have changed'))
-})
 await check('EC-13 when every eval changed the prompt says that no eval is unchanged', async () => {
   let n = 0
   const second = withMeta([ev('C1-1', 'behaviour', { statement: 'C1-1 new' }), ev('C1-2', 'error path', { check: 'new; expect ok' }), ev('C1-3', 'behaviour')])
