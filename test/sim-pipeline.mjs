@@ -7493,8 +7493,8 @@ await check('SC-R1-2 the scout command block, run in one bash call, makes the ma
   const prompt = scCalls('scout:')[0].prompt
   assert.match(prompt, /one Bash call|single Bash call|same Bash call/i)
   const start = prompt.indexOf('t=$(mktemp')
-  const mvAt = prompt.indexOf('mv "$t"', start)
-  const block = prompt.slice(start, prompt.indexOf('\n', mvAt))
+  const endTag = prompt.indexOf('\nSCOUT_MAP_END_', start)
+  const block = prompt.slice(start, prompt.indexOf('\n', endTag + 1 + 'SCOUT_MAP_END_'.length) )
   const dir = mkdtempSync(join(tmpdir(), 'scr12-'))
   try {
     const folder = join(dir, 'maps')
@@ -7505,6 +7505,35 @@ await check('SC-R1-2 the scout command block, run in one bash call, makes the ma
     const out = join(folder, `app%2Froutes%2Fposts.$id.tsx@${SC_A}.md`)
     assert.equal(readFileSync(out, 'utf8').trim(), 'MAP')
     assert.deepEqual(readdirSync(folder).filter(n => n.startsWith('.scout.')), [])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+await check('SC-R3-1 the scout command moves the map into place only after cat succeeds', async () => {
+  const file = 'app/routes/posts.$id.tsx'
+  await scRun(only1('C1'), scHook({ first: [scL(file, SC_A, false)] }))
+  const prompt = scCalls('scout:')[0].prompt
+  const start = prompt.indexOf('t=$(mktemp')
+  const endTag = prompt.indexOf('\nSCOUT_MAP_END_', start)
+  const block = prompt.slice(start, prompt.indexOf('\n', endTag + 1 + 'SCOUT_MAP_END_'.length))
+  assert.ok(/\bcat\b/.test(block))
+  const dir = mkdtempSync(join(tmpdir(), 'scr31-'))
+  try {
+    const mk = name => { const f = join(dir, name); mkdirSync(f); return f }
+    const cmdFor = f => block.split('/h/.claude/plugins/data/pl-mk/maps/o-r').join(f).replace('<map text>', 'MAP')
+    const name = `app%2Froutes%2Fposts.$id.tsx@${SC_A}.md`
+    const ok = mk('ok')
+    const r = spawnSync('bash', ['-c', cmdFor(ok)], { encoding: 'utf8' })
+    assert.equal(r.status, 0, r.stderr)
+    assert.equal(readFileSync(join(ok, name), 'utf8').trim(), 'MAP')
+    assert.deepEqual(readdirSync(ok).filter(n => n.includes('.scout.')), [])
+    const bin = mk('bin')
+    writeFileSync(join(bin, 'cat'), '#!/bin/bash\nhead -c 2\nexit 1\n', { mode: 0o755 })
+    const bad = mk('bad')
+    spawnSync('bash', ['-c', cmdFor(bad)], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } })
+    assert.ok(!existsSync(join(bad, name)))
+    assert.deepEqual(readdirSync(bad).filter(n => n.includes('.scout.')), [])
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

@@ -2104,10 +2104,9 @@ Clone folder: ${clone} (a clone of the default branch). Read only the file \`${f
 Map file: ${path}
 In the map, list each function or section of the file with its line range (first and last line) and a few words on what it holds. Keep the map short.
 Write the map to a temporary file made with \`mktemp\` in the folder of the map file, then run one \`mv\` of that temporary file to the map file. Run the whole block in the same Bash call, because a shell variable does not last to the next call. Replace the line <map text> with the map, and keep the other lines exactly as they are, because the names hold characters that a shell would change if they were not quoted:
-t=$(mktemp ${shq(folder)}/.scout.XXXXXX) && cat > "$t" <<'SCOUT_MAP_END_${blob.slice(0, 12)}'
+t=$(mktemp ${shq(folder)}/.scout.XXXXXX) && cat > "$t" <<'SCOUT_MAP_END_${blob.slice(0, 12)}' && mv "$t" ${shq(path)} || { rm -f "$t"; exit 1; }
 <map text>
 SCOUT_MAP_END_${blob.slice(0, 12)}
-mv "$t" ${shq(path)}
 Write no other file.
 Return written true when the map file is in place.`
 const SCOUT = { type: 'object', properties: { written: { type: 'boolean' } } }
