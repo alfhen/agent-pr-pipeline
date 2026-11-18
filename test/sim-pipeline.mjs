@@ -6946,12 +6946,10 @@ await check('RW-10b an answer item with no evals property runs the bots step, an
   assert.equal(b.ready, false)
   assert.match(b.reason, /^evals refused: empty list/)
 })
-await check('RW-14b an answer-only run needs no plan, and a normal item still does', async () => {
-  const noPlan = { ...base, plan: undefined }
-  const a = (await hookedOut([rwItem()], rwHook(), { plan: undefined, botWaitMinutes: 0 })).prs[0]
+await check('RW-14b an answer-only run with no plan is refused, with the plan it runs', async () => {
+  await assert.rejects(hookedOut([rwItem()], rwHook(), { plan: undefined, botWaitMinutes: 0 }), /args needs plan/)
+  const a = (await hookedOut([rwItem()], rwHook(), { botWaitMinutes: 0 })).prs[0]
   assert.equal(a.ready, true)
-  assert.ok(calls.every(c => !/Plan: undefined/.test(c.prompt || '')), 'no prompt names an undefined plan')
-  await assert.rejects(simulate({ ...noPlan, prs: [rwItem(), only1('C1')[0]] }), /args needs plan/)
 })
 await check('RW-11 an answer item whose earlier list is refused ends not ready and runs no answer agent', async () => {
   const a = await rwRun(rwItem({ evals: [ev('AN-1', 'behaviour')] }), {})
