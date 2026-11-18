@@ -803,7 +803,7 @@ const recheckText = (list, checked) => {
   const removed = checked.evals.filter(o => o && !list.some(e => e && e.id === o.id)).map(o => o.id)
   return `\n\nThis list is a new attempt after an earlier check of the list sent it back. The notes of that check, as quoted data: ${JSON.stringify(checked.notes)}
 Ids of the evals that did not change since that check (same id, statement, kind, check and test): ${JSON.stringify(ids)}${ids.length ? '' : '. No eval is unchanged.'}
-${removed.length ? `Ids of the evals that were in the checked list and are not in this list: ${JSON.stringify(removed)}\n` : ''}Rule on the changed and new evals${removed.length ? ', on each eval removed since that check' : ''}, and on each reason of the earlier check. Do not judge again an unchanged eval that the notes did not name. An unchanged eval that a change of another eval made wrong can still be a reason to send the list back.`
+${removed.length ? `Ids of the evals that were in the checked list and are not in this list: ${JSON.stringify(removed)}\n` : ''}Rule on the changed and new evals${removed.length ? ', on each eval removed since that check' : ''}, and on each reason of the earlier check. Do not judge again an unchanged eval that the notes did not name, except that the default branch may have changed since that check: an unchanged eval that the default branch now meets is still a reason to send the list back. An unchanged eval that a change of another eval made wrong can still be a reason to send the list back.`
 }
 
 const evalsCheckPrompt = (pr, list, meta, who, round, writerNotes, coverage, checked) => `${ctx(pr)}
@@ -2047,12 +2047,16 @@ async function checkEvals(pr, list, meta, round, writerNotes, coverage, checked)
     () => productRuns(pr) ? call('evalsProduct', pr, evalsCheckPrompt(pr, list, meta, 'product', round, writerNotes, coverage, checked), `evalsproduct:${pr.id}#${round}`, { schema: EVALSCHECK }) : Promise.resolve(undefined),
   ])
   const notes = []
+  let vague = false
   for (const [who, r] of [['architecture', arch], ['product', product]]) {
     if (r === undefined) continue
     if (!r) return { down: `the ${who} reviewer did not answer` }
-    if (r.verdict !== 'ok') notes.push(`${who}: ${reasonOf(r.notes) || 'needs change'}`)
+    if (r.verdict !== 'ok') {
+      if (!reasonOf(r.notes)) vague = true
+      notes.push(`${who}: ${reasonOf(r.notes) || 'needs change'}`)
+    }
   }
-  return { notes: notes.join('; ') }
+  return { notes: notes.join('; '), vague }
 }
 
 // Gets the accepted list for a PR before the build step of this run. { stop } ends the PR, { evals, meta } is the list, {} means no list (the tester path).
@@ -2074,7 +2078,7 @@ async function writeEvals(pr, raw) {
     if (!c.down && !c.notes) return { evals: given.list, meta: given.meta, record: makeRecord(pr, given.list, given.meta) }
     const stop = `evals check: ${c.down || c.notes}`
     if (c.down || !EVALS_ON || EVALS_ROUNDS < 2) return { stop, record: rec, refused: given.list }
-    return writerLoop(pr, 2, { rule: false, reason: `the reviewers found gaps: ${c.notes}`, evals: given.list, meta: given.meta, given: true, notes: c.notes }, rec)
+    return writerLoop(pr, 2, { rule: false, reason: `the reviewers found gaps: ${c.notes}`, evals: given.list, meta: given.meta, given: true, notes: c.notes, vague: c.vague }, rec)
   }
   return writerLoop(pr, 1, null, null)
 }
@@ -2082,7 +2086,7 @@ async function writeEvals(pr, raw) {
 // The record of an earlier run stays through every attempt, so a throw or a stop returns it.
 async function writerLoop(pr, first, from, rec) {
   let last = from
-  let checked = from && !from.rule && from.given ? { evals: from.evals, notes: from.notes } : null
+  let checked = from && !from.rule && from.given && !from.vague ? { evals: from.evals, notes: from.notes } : null
   let written = from ? { evals: from.evals, meta: from.meta } : null
   const stopWith = stop => ({ stop, record: rec, ...(written ? { refused: written.evals, refusedMeta: written.meta } : {}) })
   for (let attempt = first; attempt <= EVALS_ROUNDS; attempt++) {
@@ -2093,7 +2097,8 @@ async function writerLoop(pr, first, from, rec) {
     written = { evals: w.evals, meta }
     const bad = evalsVerdict(w.evals, pr, meta) || coverageVerdict(w.coverage, w.evals)
     const c = bad ? null : await checkEvals(pr, w.evals, meta, attempt, w.notes, w.coverage, checked)
-    if (c && !c.down) checked = { evals: w.evals, notes: c.notes }
+    // A rejection with no reason gives the next check nothing to narrow on, so that check judges the full list.
+    if (c && !c.down) checked = c.vague ? null : { evals: w.evals, notes: c.notes }
     if (c && c.down) return stopWith(`evals check: ${c.down}`)
     if (!bad && !c.notes) return { evals: w.evals, meta, record: makeRecord(pr, w.evals, meta, w.coverage) }
     if (attempt === EVALS_ROUNDS) return stopWith(bad ? `evals refused: ${bad}` : `evals check: ${c.notes}`)

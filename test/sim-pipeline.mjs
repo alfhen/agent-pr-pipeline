@@ -5806,13 +5806,28 @@ await check('EC-11 a given list that passes the round 1 check starts no writer',
 })
 await check('EC-12 the check prompts of every attempt hold the full list, the coverage and the writer notes', async () => {
   let n = 0
-  await evalsRun([C1PR], () => withMeta(listOf('C1'), { notes: `wn${++n}` }), o => /#3$/.test(o.label) ? okCheck() : { verdict: 'needs-change', notes: 'gap' })
+  const lists = [1, 2, 3].map(k => [ev('C1-1', 'behaviour', { statement: `C1-1 v${k}` }), ev('C1-2', 'error path', { check: `run v${k}; expect ok` })])
+  const metas = lists.map((l, i) => withMeta(l, { notes: `wn${i + 1}`, coverage: [{ item: `Item v${i + 1}`, evals: ['C1-1', 'C1-2'] }] }))
+  await evalsRun([C1PR], () => metas[n++], o => /#3$/.test(o.label) ? okCheck() : { verdict: 'needs-change', notes: 'gap' })
   for (const k of [1, 2, 3]) {
     const p = promptOf(`evalsarch:C1#${k}`)
-    assert.ok(p.includes(JSON.stringify({ evals: listOf('C1'), noErrorPath: '', noReference: '', algorithm: false }, null, 1)), `list ${k}`)
-    assert.ok(p.includes(JSON.stringify(defaultCoverage(listOf('C1')), null, 1)), `coverage ${k}`)
+    assert.ok(p.includes(JSON.stringify({ evals: lists[k - 1], noErrorPath: '', noReference: '', algorithm: false }, null, 1)), `list ${k}`)
+    assert.ok(p.includes(JSON.stringify(metas[k - 1].coverage, null, 1)), `coverage ${k}`)
     assert.ok(p.includes(`wn${k}`), `notes ${k}`)
+    for (const j of [1, 2, 3]) if (j !== k) assert.ok(!p.includes(`C1-1 v${j}`) && !p.includes(`Item v${j}`), `attempt ${j} leaked into ${k}`)
   }
+})
+await check('EC-19 a rejection with no notes makes the next check judge the full list', async () => {
+  let n = 0
+  const second = withMeta([ev('C1-1', 'behaviour'), ev('C1-2', 'error path', { check: 'new; expect ok' })])
+  await evalsRun([C1PR], () => ++n === 1 ? withMeta(listOf('C1')) : second, o => /#1$/.test(o.label) ? { verdict: 'needs-change' } : okCheck())
+  const p = promptOf('evalsarch:C1#2')
+  for (const m of [NOTES_MARK, UNCH_MARK, RULE_MARK]) assert.ok(!p.includes(m), m)
+})
+await check('EC-20 the later-attempt check tells the reviewer that the default branch may have moved', async () => {
+  await evalsRun([C1PR], () => withMeta(listOf('C1')), sentBackOn1('r1 gap'))
+  assert.ok(promptOf('evalsarch:C1#2').includes('the default branch may have changed since that check'))
+  assert.ok(!promptOf('evalsarch:C1#1').includes('the default branch may have changed'))
 })
 await check('EC-13 when every eval changed the prompt says that no eval is unchanged', async () => {
   let n = 0
