@@ -1617,8 +1617,8 @@ async function minorScope(pr) {
 }
 
 // The branch head on GitHub, for a failed revert: the agents' own answers can name a sha the branch no longer holds. Null when unreadable.
-async function branchHead(pr) {
-  const io = await ioCall(pr, `io:${pr.id}#minorhead`, 'gate-files.sh', `${REPO} --head ${pr.branch}`)
+async function branchHead(pr, label = 'minorhead') {
+  const io = await ioCall(pr, `io:${pr.id}#${label}`, 'gate-files.sh', `${REPO} --head ${pr.branch}`)
   const m = io && io.exitCode === 0 ? /^HEAD (\S+)$/m.exec(io.output) : null
   return m ? m[1] : null
 }
@@ -2192,12 +2192,20 @@ async function runPRSteps(input) {
     if (was.fail) return stopped(was.fail)
     if (pr.answer) {
       if (was.head !== pr.headSha) return stopped(`answer run: the PR head ${was.head} is not the headSha ${pr.headSha} of the ANSWER line`)
+      // The answer agent pushes pr.branch and replies on n: a branch that is not the head of PR n would get the push and the replies in two places.
+      const wrongBranch = (tip, head) => `answer run: the branch ${pr.branch} is at ${tip || 'an unreadable head'}, not at the head ${head} of PR #${n}`
+      const startTip = await branchHead(pr, 'answerbranch0')
+      if (startTip !== was.head) return stopped(wrongBranch(startTip, was.head))
       const a = noteBots(pr, n, await bots(pr, n, was.head, [], history, lateMinors))
       const facts = () => ({ headSha: a.headSha, codeChangedByBots: botCodeChanged(a), lastFindings: a.lastFindings, worktree: a.worktree, lateMinors, untested: untestedOf(pr) })
       if (!a.ok) return stopped(a.reason, facts())
       if (!a.answer) return stopped('nothing was answered: the bot status had no open thread or review body on the head', facts())
       const sync = await syncUntested(pr, n, null)
       if (!sync.ok) return stopped(sync.reason, facts())
+      const prNow = await readHead(pr, n, 'landhead2')
+      if (prNow.fail) return stopped(prNow.fail, facts())
+      const endTip = await branchHead(pr, 'answerbranch1')
+      if (endTip !== prNow.head) return stopped(wrongBranch(endTip, prNow.head), facts())
       const end = await endFacts(pr, n, a.headSha)
       if (!end.ok && !end.red) return stopped(end.reason, { ...facts(), headSha: end.head || a.headSha, ci: end.ci, approvedBy: end.approvedBy })
       if (end.openThreads > 0 || end.reviewBodies > 0) return stopped(`nothing was answered: ${end.openThreads} open threads and ${end.reviewBodies} review bodies remain after the answer agent`, { ...facts(), headSha: end.head })

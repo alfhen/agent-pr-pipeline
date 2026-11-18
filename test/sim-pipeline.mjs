@@ -6893,9 +6893,15 @@ const RW_H = 'a'.repeat(40)
 const RW_H2 = 'e'.repeat(40)
 const rwItem = (extra = {}) => ({ id: 'AN', title: 't', branch: 'b-AN', prNumber: 8, headSha: RW_H, answer: true, ...extra })
 const rwStatus = (label, head, t, b) => ioWrap(label, { exitCode: 0, output: JSON.stringify({ head, approvedBy: [], seenHead: [], pending: [], openThreads: t, reviewBodies: b }) })
-const rwHook = ({ start = RW_H, first = [1, 0], end = [0, 0], codeChanged = true, answerHead = RW_H2, refused = false, hook } = {}) => (p, o) => {
+const rwHook = ({ start = RW_H, first = [1, 0], end = [0, 0], codeChanged = true, answerHead = RW_H2, refused = false, branches, hook } = {}) => (p, o) => {
   if (hook) { const h = hook(p, o); if (h !== undefined) return h }
   const endHead = codeChanged ? answerHead : start
+  if (/^io:AN#answerbranch/.test(o.label)) {
+    const b = /--head ([^\s`'"]+)/.exec(p)[1]
+    const tip = branches ? branches[b] : (o.label.endsWith('0') ? start : endHead)
+    return ioWrap(o.label, tip ? { exitCode: 0, output: `HEAD ${tip}` } : { exitCode: 1, output: 'no such branch' })
+  }
+  if (o.label === 'io:AN#landhead2') return ioWrap(o.label, { exitCode: 0, output: JSON.stringify({ head: endHead, approvedBy: [] }) })
   if (o.label === 'io:AN#landhead') return ioWrap(o.label, { exitCode: 0, output: JSON.stringify({ head: start, approvedBy: [] }) })
   if (o.label === 'io:AN#botstatus') return rwStatus(o.label, start, first[0], first[1])
   if (o.label === 'io:AN#endstatus') return rwStatus(o.label, endHead, end[0], end[1])
@@ -7024,6 +7030,35 @@ await check('RW-17 an answer run stops when the head is not the headSha of the i
   assert.ok(!rwLabels().includes('botanswer:AN'))
   await rwRun(rwItem(), {})
   assert.ok(rwLabels().includes('botanswer:AN'))
+})
+await check('RW-23 an answer run is bound to the head branch of its PR', async () => {
+  const X = 'c'.repeat(40)
+  const L = () => rwLabels()
+  // The push of the answer agent moves the item branch in the map.
+  const run = async (branch, map) => {
+    const branches = { ...map }
+    const hk = rwHook({ answerHead: X, branches, hook: (p, o) => { if (o.label === 'botanswer:AN') branches[branch] = X } })
+    // Bot-status reads of #8 report the head of b-AN, the real head branch.
+    const wrap = (p, o) => {
+      if (o.label === 'io:AN#landhead2') return ioWrap(o.label, { exitCode: 0, output: JSON.stringify({ head: branches['b-AN'], approvedBy: [] }) })
+      return hk(p, o)
+    }
+    return (await hookedOut([rwItem({ branch })], wrap, { botWaitMinutes: 0 })).prs[0]
+  }
+  let a = await run('b-other', { 'b-AN': RW_H, 'b-other': RW_H2 })
+  assert.equal(a.ready, false)
+  assert.ok(a.reason.includes('b-other') && a.reason.includes(RW_H2.slice(0, 7)), a.reason)
+  assert.ok(!L().includes('botanswer:AN'))
+  a = await run('b-AN', { 'b-AN': RW_H, 'b-other': RW_H2 })
+  assert.ok(L().includes('botanswer:AN'))
+  assert.ok(!/b-other/.test(a.reason || ''))
+  a = await run('b-other', { 'b-AN': RW_H, 'b-other': RW_H })
+  assert.equal(a.ready, false)
+  assert.ok(a.reason.includes('b-other'), a.reason)
+  assert.ok(!String(a.land || '').includes(X))
+  a = await run('b-AN', { 'b-AN': RW_H, 'b-other': RW_H })
+  assert.equal(a.ready, true)
+  assert.equal(a.land, `8:${X}`)
 })
 await check('RW-18 an answer run that throws keeps prNumber', async () => {
   const hk = rwHook({ codeChanged: false, hook: (p, o) => { if (o.label === 'io:AN#endci') throw new Error('ci read crashed') } })
