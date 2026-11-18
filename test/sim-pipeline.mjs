@@ -7024,3 +7024,183 @@ await check('ST-14 SKILL.md states the new defaults and the step minorReview', (
   assert.match(row('| `open` | `pr-opener` |'), /haiku[\s\S]*low/)
   assert.match(row('| `minorReview` |'), /reviewer[\s\S]*sonnet[\s\S]*high/)
 })
+
+// RW: an answer run (answer: true) runs only the bots step for an open PR.
+const RW_H = 'a'.repeat(40)
+const RW_H2 = 'e'.repeat(40)
+const rwItem = (extra = {}) => ({ id: 'AN', title: 't', branch: 'b-AN', prNumber: 8, headSha: RW_H, answer: true, ...extra })
+const rwStatus = (label, head, t, b) => ioWrap(label, { exitCode: 0, output: JSON.stringify({ head, approvedBy: [], seenHead: [], pending: [], openThreads: t, reviewBodies: b }) })
+const rwHook = ({ start = RW_H, first = [1, 0], end = [0, 0], codeChanged = true, answerHead = RW_H2, refused = false, branches, hook } = {}) => (p, o) => {
+  if (hook) { const h = hook(p, o); if (h !== undefined) return h }
+  const endHead = codeChanged ? answerHead : start
+  if (/^io:AN#answerbranch/.test(o.label)) {
+    const b = /--head ([^\s`'"]+)/.exec(p)[1]
+    const tip = branches ? branches[b] : (o.label.endsWith('0') ? start : endHead)
+    return ioWrap(o.label, tip ? { exitCode: 0, output: `HEAD ${tip}` } : { exitCode: 1, output: 'no such branch' })
+  }
+  if (o.label === 'io:AN#landhead2') return ioWrap(o.label, { exitCode: 0, output: JSON.stringify({ head: endHead, approvedBy: [] }) })
+  if (o.label === 'io:AN#landhead') return ioWrap(o.label, { exitCode: 0, output: JSON.stringify({ head: start, approvedBy: [] }) })
+  if (o.label === 'io:AN#botstatus') return rwStatus(o.label, start, first[0], first[1])
+  if (o.label === 'io:AN#endstatus') return rwStatus(o.label, endHead, end[0], end[1])
+  if (o.label === 'io:AN#endci') return ioWrap(o.label, { exitCode: 0, output: JSON.stringify({ head: endHead, state: 'success', failed: [], timedOut: false }) })
+  if (o.label === 'botanswer:AN') return { codeChanged, headSha: endHead, closesIssues: [], notes: 'n', worktree: '/wt/AN' }
+  if (o.label === 'test:AN#bots1') return { pass: true, headSha: answerHead, checks: refused ? [chk('unit'), { name: 'lint', pass: false, refused: true }] : [chk('lint')] }
+  if (o.label === 'verify:AN#bots1') return { pass: true, headSha: answerHead, checks: [chk('lint')], evals: [...p.matchAll(/^Eval (\S+) \[([^\]]*)\]/gm)].map(m => ({ id: m[1], result: 'pass', evidence: 'ok', breakCheck: /^(behaviour|error path)$/.test(m[2]) ? 'fails-without-change' : 'not-applicable' })) }
+  return undefined
+}
+const rwRun = async (item, o) => (await hookedOut([item], rwHook(o), { botWaitMinutes: 0 })).prs[0]
+const rwLabels = () => calls.map(c => c.label)
+const RW_FORBIDDEN = /^(evals|evalsarch|evalsproduct|implement|review|arch|product|qa|minorfix|minorreview|minorrevert|docs|docsreview|docsfix|landfix|landreview):/
+const rwList = { evals: [ev('AN-1', 'behaviour'), ev('AN-2', 'error path')], noErrorPath: '' }
+
+await check('RW-9 an answer item runs only the bots step, with at most the one body update open agent', async () => {
+  const a = await rwRun(rwItem(), { refused: true })
+  const l = rwLabels()
+  assert.ok(l.includes('botanswer:AN'))
+  assert.deepEqual(l.filter(x => x.startsWith('open:')), ['open:AN#body'])
+  assert.ok(!l.some(x => RW_FORBIDDEN.test(x)), l.join(' '))
+  assert.ok(!l.some(x => /^(test|verify):AN#\d+$/.test(x)))
+  assert.equal(typeof a.land, 'string')
+  assert.ok(Array.isArray(a.untested) && a.untested.length > 0)
+  assert.equal(a.ready, true)
+  assert.equal(a.prNumber, 8)
+  const b = await rwRun(rwItem(), {})
+  assert.equal(rwLabels().filter(x => x.startsWith('open:')).length, 0)
+  assert.deepEqual(b.untested, [])
+  await rwRun(rwItem({ answer: undefined }), {})
+  assert.ok(rwLabels().includes('implement:AN'))
+})
+await check('RW-10 an answer item takes the earlier list as a land fix does and reads the CI checks first', async () => {
+  const a = await rwRun(rwItem({ evals: rwList }), {})
+  const l = rwLabels()
+  assert.ok(l.indexOf('io:AN#cichecks') >= 0 && l.indexOf('io:AN#cichecks') < l.indexOf('io:AN#botstatus'))
+  const v = calls.find(c => c.label === 'verify:AN#bots1')
+  assert.ok(v.prompt.includes('Eval AN-1') && v.prompt.includes('Eval AN-2'))
+  assert.ok(!l.includes('test:AN#bots1'))
+  assert.deepEqual(a.evals.map(e => e.id), ['AN-1', 'AN-2'])
+  assert.equal(typeof a.evalsMeta, 'object')
+  assert.ok(!l.includes('evals:AN'))
+})
+await check('RW-10b an answer item with no evals property runs the bots step, and an empty list is refused', async () => {
+  const a = await rwRun(rwItem(), {})
+  assert.equal(a.ready, true)
+  assert.ok(rwLabels().includes('botanswer:AN'))
+  const b = await rwRun(rwItem({ evals: { evals: [], noErrorPath: '' } }), {})
+  assert.equal(b.ready, false)
+  assert.match(b.reason, /^evals refused: empty list/)
+})
+await check('RW-14b an answer-only run with no plan is refused, with the plan it runs', async () => {
+  await assert.rejects(hookedOut([rwItem()], rwHook(), { plan: undefined, botWaitMinutes: 0 }), /args needs plan/)
+  const a = (await hookedOut([rwItem()], rwHook(), { botWaitMinutes: 0 })).prs[0]
+  assert.equal(a.ready, true)
+})
+await check('RW-11 an answer item whose earlier list is refused ends not ready and runs no answer agent', async () => {
+  const a = await rwRun(rwItem({ evals: [ev('AN-1', 'behaviour')] }), {})
+  assert.equal(a.ready, false)
+  assert.equal(a.reason, 'evals refused: no error path')
+  assert.ok(!rwLabels().includes('botanswer:AN'))
+  const b = await rwRun(rwItem({ evals: { evals: [ev('AN-1', 'behaviour')], noErrorPath: 'the error path is a text' } }), {})
+  assert.ok(rwLabels().includes('botanswer:AN'))
+  assert.ok(!/evals refused/.test(b.reason || ''))
+  assert.ok(!rwLabels().includes('implement:AN'))
+})
+await check('RW-12 the bot check of an answer run is the verifier with a list, the tester without, and none without a code change', async () => {
+  await rwRun(rwItem({ evals: rwList }), {})
+  assert.ok(rwLabels().includes('verify:AN#bots1') && !rwLabels().includes('test:AN#bots1'))
+  await rwRun(rwItem(), {})
+  assert.ok(rwLabels().includes('test:AN#bots1') && !rwLabels().includes('verify:AN#bots1'))
+  await rwRun(rwItem(), { codeChanged: false })
+  const l = rwLabels()
+  assert.ok(!l.includes('verify:AN#bots1') && !l.includes('test:AN#bots1') && !l.some(x => x.startsWith('botreview:AN')))
+  assert.ok(l.includes('botanswer:AN'))
+})
+await check('RW-13 an answer run is not ready when nothing was answered or a count is still above 0', async () => {
+  const ok = await rwRun(rwItem(), { codeChanged: false })
+  assert.equal(ok.ready, true)
+  const nothing = /nothing (was )?answered/i
+  const a = await rwRun(rwItem(), { codeChanged: false, first: [0, 0] })
+  assert.ok(!rwLabels().includes('botanswer:AN'))
+  assert.equal(a.ready, false)
+  assert.match(a.reason, nothing)
+  const b1 = await rwRun(rwItem(), { codeChanged: false, end: [1, 0] })
+  assert.equal(b1.ready, false)
+  assert.match(b1.reason, nothing)
+  const b2 = await rwRun(rwItem(), { codeChanged: false, end: [0, 1] })
+  assert.equal(b2.ready, false)
+  assert.match(b2.reason, nothing)
+})
+await check('RW-14 an answer item without prNumber, or with landFix, resume, skipImpl or quick, throws before any agent', async () => {
+  const bad = [[rwItem({ prNumber: undefined }), 'prNumber'], [rwItem({ landFix: true }), 'landFix'], [rwItem({ resume: { history: [] } }), 'resume'], [rwItem({ skipImpl: true }), 'skipImpl'], [rwItem({ quick: { issue: 5 } }), 'quick']]
+  for (const [item, field] of bad) {
+    await assert.rejects(simulate({ ...base, prs: [item] }), e => e.message.includes('AN') && e.message.includes(field), field)
+    assert.deepEqual(calls, [])
+    assert.deepEqual(timeline, [])
+  }
+  await rwRun(rwItem(), {})
+})
+await check('RW-15 a run of answer items only starts no goals preflight, evaluation or safety agent', async () => {
+  await hookedOut([rwItem()], rwHook(), { botWaitMinutes: 0 })
+  const all = [...calls.map(c => c.label), ...timeline]
+  assert.ok(!all.some(x => /^(preflight|evaluate|safety):/.test(x)), all.join(' '))
+  assert.ok(timeline.includes('io:wave#version'))
+  assert.ok(timeline.some(x => x.startsWith('roles:wave') || x === 'io:wave#roles'))
+  await hookedOut([rwItem(), ...only1('C1')], rwHook(), { botWaitMinutes: 0 })
+  const both = [...calls.map(c => c.label), ...timeline]
+  assert.ok(both.includes('preflight:goals') && both.includes('evaluate:wave'))
+})
+await check('RW-16 the land value of an answer run is the head after the answer agent, in mode person', async () => {
+  const a = await rwRun(rwItem(), {})
+  assert.equal(a.land, `8:${a.headSha}`)
+  assert.equal(a.headSha, RW_H2)
+  assert.notEqual(a.headSha, RW_H)
+  assert.ok(!a.land.endsWith(':auto'))
+  assert.equal(a.landMode, 'person')
+  assert.ok(!rwLabels().some(x => x.startsWith('safety:AN')))
+  const b = await rwRun(rwItem(), { codeChanged: false })
+  assert.equal(b.land, `8:${RW_H}`)
+  assert.equal(b.landMode, 'person')
+})
+await check('RW-17 an answer run stops when the head is not the headSha of the item', async () => {
+  const a = await rwRun(rwItem(), { start: RW_H2 })
+  assert.equal(a.ready, false)
+  assert.ok(a.reason.includes(RW_H) && a.reason.includes(RW_H2), a.reason)
+  assert.ok(!rwLabels().includes('botanswer:AN'))
+  await rwRun(rwItem(), {})
+  assert.ok(rwLabels().includes('botanswer:AN'))
+})
+await check('RW-23 an answer run is bound to the head branch of its PR', async () => {
+  const X = 'c'.repeat(40)
+  const L = () => rwLabels()
+  // The push of the answer agent moves the item branch in the map.
+  const run = async (branch, map) => {
+    const branches = { ...map }
+    const hk = rwHook({ answerHead: X, branches, hook: (p, o) => { if (o.label === 'botanswer:AN') branches[branch] = X } })
+    // Bot-status reads of #8 report the head of b-AN, the real head branch.
+    const wrap = (p, o) => {
+      if (o.label === 'io:AN#landhead2') return ioWrap(o.label, { exitCode: 0, output: JSON.stringify({ head: branches['b-AN'], approvedBy: [] }) })
+      return hk(p, o)
+    }
+    return (await hookedOut([rwItem({ branch })], wrap, { botWaitMinutes: 0 })).prs[0]
+  }
+  let a = await run('b-other', { 'b-AN': RW_H, 'b-other': RW_H2 })
+  assert.equal(a.ready, false)
+  assert.ok(a.reason.includes('b-other') && a.reason.includes(RW_H2.slice(0, 7)), a.reason)
+  assert.ok(!L().includes('botanswer:AN'))
+  a = await run('b-AN', { 'b-AN': RW_H, 'b-other': RW_H2 })
+  assert.ok(L().includes('botanswer:AN'))
+  assert.ok(!/b-other/.test(a.reason || ''))
+  a = await run('b-other', { 'b-AN': RW_H, 'b-other': RW_H })
+  assert.equal(a.ready, false)
+  assert.ok(a.reason.includes('b-other'), a.reason)
+  assert.ok(!String(a.land || '').includes(X))
+  a = await run('b-AN', { 'b-AN': RW_H, 'b-other': RW_H })
+  assert.equal(a.ready, true)
+  assert.equal(a.land, `8:${X}`)
+})
+await check('RW-18 an answer run that throws keeps prNumber', async () => {
+  const hk = rwHook({ codeChanged: false, hook: (p, o) => { if (o.label === 'io:AN#endci') throw new Error('ci read crashed') } })
+  const a = (await rlRun([rwItem()], hk)).prs[0]
+  assert.equal(a.ready, false)
+  assert.match(a.reason, /^run failed:/)
+  assert.equal(a.prNumber, 8)
+})
