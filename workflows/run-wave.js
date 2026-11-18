@@ -2196,6 +2196,10 @@ async function runPRSteps(input) {
       const wrongBranch = (tip, head) => `answer run: the branch ${pr.branch} is at ${tip || 'an unreadable head'}, not at the head ${head} of PR #${n}`
       const startTip = await branchHead(pr, 'answerbranch0')
       if (startTip !== was.head) return stopped(wrongBranch(startTip, was.head))
+      const ref = await ioCall(pr, `io:${pr.id}#answerref`, 'land-wave.sh', `--head-ref ${REPO} ${n}`, { phase: 'Land fix' })
+      const refm = ref && ref.exitCode === 0 ? /^REF (\S+) (\S+)$/m.exec(ref.output) : null
+      if (!refm) return stopped(`answer run: cannot read the head branch of PR #${n}`)
+      if (refm[1] !== pr.branch || refm[2].toLowerCase() !== REPO.toLowerCase()) return stopped(`answer run: the head of PR #${n} is the branch ${refm[1]} of ${refm[2]}, not the branch ${pr.branch} of the item`)
       const a = noteBots(pr, n, await bots(pr, n, was.head, [], history, lateMinors))
       const facts = () => ({ headSha: a.headSha, codeChangedByBots: botCodeChanged(a), lastFindings: a.lastFindings, worktree: a.worktree, lateMinors, untested: untestedOf(pr) })
       if (!a.ok) return stopped(a.reason, facts())

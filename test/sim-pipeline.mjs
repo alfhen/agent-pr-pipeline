@@ -6893,8 +6893,9 @@ const RW_H = 'a'.repeat(40)
 const RW_H2 = 'e'.repeat(40)
 const rwItem = (extra = {}) => ({ id: 'AN', title: 't', branch: 'b-AN', prNumber: 8, headSha: RW_H, answer: true, ...extra })
 const rwStatus = (label, head, t, b) => ioWrap(label, { exitCode: 0, output: JSON.stringify({ head, approvedBy: [], seenHead: [], pending: [], openThreads: t, reviewBodies: b }) })
-const rwHook = ({ start = RW_H, first = [1, 0], end = [0, 0], codeChanged = true, answerHead = RW_H2, refused = false, branches, hook } = {}) => (p, o) => {
+const rwHook = ({ start = RW_H, first = [1, 0], end = [0, 0], codeChanged = true, answerHead = RW_H2, refused = false, branches, headRef = 'b-AN', hook } = {}) => (p, o) => {
   if (hook) { const h = hook(p, o); if (h !== undefined) return h }
+  if (o.label === 'io:AN#answerref') return ioWrap(o.label, { exitCode: 0, output: `REF ${headRef} o/r` })
   const endHead = codeChanged ? answerHead : start
   if (/^io:AN#answerbranch/.test(o.label)) {
     const b = /--head ([^\s`'"]+)/.exec(p)[1]
@@ -7035,9 +7036,9 @@ await check('RW-23 an answer run is bound to the head branch of its PR', async (
   const X = 'c'.repeat(40)
   const L = () => rwLabels()
   // The push of the answer agent moves the item branch in the map.
-  const run = async (branch, map) => {
+  const run = async (branch, map, headRef = 'b-AN') => {
     const branches = { ...map }
-    const hk = rwHook({ answerHead: X, branches, hook: (p, o) => { if (o.label === 'botanswer:AN') branches[branch] = X } })
+    const hk = rwHook({ answerHead: X, branches, headRef, hook: (p, o) => { if (o.label === 'botanswer:AN') branches[branch] = X } })
     // Bot-status reads of #8 report the head of b-AN, the real head branch.
     const wrap = (p, o) => {
       if (o.label === 'io:AN#landhead2') return ioWrap(o.label, { exitCode: 0, output: JSON.stringify({ head: branches['b-AN'], approvedBy: [] }) })
@@ -7052,13 +7053,18 @@ await check('RW-23 an answer run is bound to the head branch of its PR', async (
   a = await run('b-AN', { 'b-AN': RW_H, 'b-other': RW_H2 })
   assert.ok(L().includes('botanswer:AN'))
   assert.ok(!/b-other/.test(a.reason || ''))
-  a = await run('b-other', { 'b-AN': RW_H, 'b-other': RW_H })
+  a = await run('b-other', { 'b-AN': RW_H, 'b-other': RW_H }, 'b-other')
   assert.equal(a.ready, false)
   assert.ok(a.reason.includes('b-other'), a.reason)
   assert.ok(!String(a.land || '').includes(X))
   a = await run('b-AN', { 'b-AN': RW_H, 'b-other': RW_H })
   assert.equal(a.ready, true)
   assert.equal(a.land, `8:${X}`)
+  // Two branches at the same sha: only the head ref of the PR tells them apart.
+  a = await run('b-other', { 'b-AN': RW_H, 'b-other': RW_H })
+  assert.equal(a.ready, false)
+  assert.ok(a.reason.includes('b-AN') && a.reason.includes('b-other'), a.reason)
+  assert.ok(!L().includes('botanswer:AN'))
 })
 await check('RW-18 an answer run that throws keeps prNumber', async () => {
   const hk = rwHook({ codeChanged: false, hook: (p, o) => { if (o.label === 'io:AN#endci') throw new Error('ci read crashed') } })
