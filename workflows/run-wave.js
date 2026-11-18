@@ -2100,11 +2100,14 @@ const readMapLines = output => {
   }
   return { lines, dropped }
 }
-const scoutPrompt = (clone, file, path) => `Task: write the map of one file of ${REPO}.
+const scoutPrompt = (clone, folder, file, path) => `Task: write the map of one file of ${REPO}.
 Clone folder: ${clone} (a clone of the default branch). Read only the file \`${file}\` there. Change no file of the clone.
 Map file: ${path}
 In the map, list each function or section of the file with its line range (first and last line) and a few words on what it holds. Keep the map short.
-Write the map to a temporary file made with \`mktemp\` in the folder of the map file, then run one \`mv\` of that temporary file to the map file. Write no other file.
+Write the map to a temporary file made with \`mktemp\` in the folder of the map file, then run one \`mv\` of that temporary file to the map file. Run these two commands exactly as they are, because the names hold characters that a shell would change if they were not quoted:
+t=$(mktemp ${shq(folder)}/.scout.XXXXXX)
+mv "$t" ${shq(path)}
+Write no other file.
 Return written true when the map file is in place.`
 const SCOUT = { type: 'object', properties: { written: { type: 'boolean' } } }
 const mapBlock = pr => {
@@ -2140,7 +2143,7 @@ async function scoutStep(pr, raw) {
         const label = `scout:${pr.id}:${++scoutCount}`
         const path = mapPath(folder, line)
         scoutState[key] = (async () => {
-          try { return !!await call('scout', pr, scoutPrompt(clone, line.file, path), label, { schema: SCOUT }) } catch (e) { return false }
+          try { return !!await call('scout', pr, scoutPrompt(clone, folder, line.file, path), label, { schema: SCOUT }) } catch (e) { return false }
         })()
       }
       waits.push(scoutState[key])

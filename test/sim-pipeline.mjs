@@ -7478,3 +7478,11 @@ await check('SC-16 SKILL.md names the scout argument, the role row and the measu
   const cheap = section('Driving cheaply').split(/(?<=\.)\s+/).find(s => s.includes('scout'))
   for (const re of [/measure/i, /wave before/i, /default/i]) assert.match(cheap, re)
 })
+
+await check('SC-R1-1 a file name with a shell character reaches the scout only in a quoted mv command', async () => {
+  const file = 'app/routes/posts.$id.tsx'
+  await scRun(only1('C1'), scHook({ first: [scL(file, SC_A, false)] }))
+  const scouts = scCalls('scout:')
+  assert.equal(scouts.length, 1)
+  assert.ok(scouts[0].prompt.includes(`mv "$t" '/h/.claude/plugins/data/pl-mk/maps/o-r/app%2Froutes%2Fposts.$id.tsx@${SC_A}.md'`))
+})
