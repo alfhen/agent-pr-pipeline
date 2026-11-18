@@ -796,7 +796,16 @@ ${JSON.stringify(coverage, null, 1)}
 Judge each item: do the evals it names cover it?
 Which bullet, invariant, issue or brief line of the entry has no item? Each such gap means verdict \`needs-change\`, and you name each gap in the notes. A line that names only a step after the build (the text or title of the pull request, labels, CI, a merge or a release) gets no item, and its missing item is not a gap; for a line that also names something testable, the testable part still needs an item.`
 
-const evalsCheckPrompt = (pr, list, meta, who, round, writerNotes, coverage) => `${ctx(pr)}
+const sameEval = (a, b) => ['id', 'statement', 'kind', 'check', 'test'].every(k => a[k] === b[k])
+const unchangedIds = (list, checkedList) => list.filter(e => e && checkedList.some(o => o && sameEval(e, o))).map(e => e.id)
+const recheckText = (list, checked) => {
+  const ids = unchangedIds(list, checked.evals)
+  return `\n\nThis list is a new attempt after an earlier check of the list sent it back. The notes of that check, as quoted data: ${JSON.stringify(checked.notes)}
+Ids of the evals that did not change since that check (same id, statement, kind, check and test): ${JSON.stringify(ids)}${ids.length ? '' : '. No eval is unchanged.'}
+Rule on the changed and new evals, and on each reason of the earlier check. Do not judge again an unchanged eval that the notes did not name. An unchanged eval that a change of another eval made wrong can still be a reason to send the list back.`
+}
+
+const evalsCheckPrompt = (pr, list, meta, who, round, writerNotes, coverage, checked) => `${ctx(pr)}
 
 Task: check the list of evals for this PR${who === 'product' ? ' against the product goals' : ' against the architecture'}. Nothing is built yet, so you check the list and the entry, not code.
 1. Clone the default branch: ${evalsClone(`evals-${who}-${pr.id}-r${round}`, pr)} and cd there. Read ${who === 'product' ? GOALS : ARCH}, then ${ref(pr)} (the entry of this PR).
@@ -808,7 +817,7 @@ Return verdict (\`ok\` or \`needs-change\`) and notes: one line for each gap or 
 ${evalsBlock(pr)}
 
 Evals to check:
-${JSON.stringify({ evals: list, ...meta }, null, 1)}${coverage ? coverageText(coverage) : ''}${writerNotes ? `\n\nThe writer's notes (an answer to an earlier needs-change; accept it when it is reasoned and true):\n${writerNotes}` : ''}${designRulesText(pr)}`
+${JSON.stringify({ evals: list, ...meta }, null, 1)}${coverage ? coverageText(coverage) : ''}${writerNotes ? `\n\nThe writer's notes (an answer to an earlier needs-change; accept it when it is reasoned and true):\n${writerNotes}` : ''}${checked ? recheckText(list, checked) : ''}${designRulesText(pr)}`
 
 const relatedStep = RELATED_TESTS ? `3. Then run the e2e and docs test files that import or name the modules the PR touches and are not in that list. Find them with a search (\`git grep -l -E\` for each touched module's file name and exported names, over every tracked test file in the repo, such as \`*.test.*\` and \`*.spec.*\` files in any folder, and the paths the test config's projects include, docs folders too). Run at most ${RELATED_MAX}, the files that import a touched module directly first, and name the files you left out in the check, because CI runs them. Never run the whole suite. For each file, read the repo's test config and package scripts to find the command and test project that own it (for example \`--project <name>\` in a vitest workspace), also when that project is left out of the default test command, and name the command in the check. Do not use \`${E2E_COMMAND}\` for a file outside its project. Report a file or project you could not select, or one the environment cannot run (for example a missing browser), as a check with \`refused\`: true, never as passed or failed. Name each extra file in the check, and say which test projects you ran.\n` : ''
 const refusedText = '`refused`: true for a command that a permission check denied, or for a file or project you could not run, so it did not run. A check that fails because a port is in use runs once more. Report the second run as it ended, and use `refused`: true only when the port is still in use. For the check of an eval, as an exception to the `ci` rule, a port that is still in use on the second run counts as a command that did not run here, like a refused command: result `ci`, with `ciCheck` the name of a check that covers it'
@@ -2031,10 +2040,10 @@ const resumedDisputes = pr => resumedList(pr, 'evalDisputes', d => d && typeof d
 const resumedDeviations = pr => resumedList(pr, 'deviations', d => d && reasonOf(d.what))
 const carriedOut = (disputes, deviations) => ({ ...(disputes && disputes.length ? { evalDisputes: disputes } : {}), ...(deviations && deviations.length ? { deviations } : {}) })
 
-async function checkEvals(pr, list, meta, round, writerNotes, coverage) {
+async function checkEvals(pr, list, meta, round, writerNotes, coverage, checked) {
   const [arch, product] = await parallel([
-    () => archRuns(pr) ? call('evalsArch', pr, evalsCheckPrompt(pr, list, meta, 'architecture', round, writerNotes, coverage), `evalsarch:${pr.id}#${round}`, { schema: EVALSCHECK }) : Promise.resolve(undefined),
-    () => productRuns(pr) ? call('evalsProduct', pr, evalsCheckPrompt(pr, list, meta, 'product', round, writerNotes, coverage), `evalsproduct:${pr.id}#${round}`, { schema: EVALSCHECK }) : Promise.resolve(undefined),
+    () => archRuns(pr) ? call('evalsArch', pr, evalsCheckPrompt(pr, list, meta, 'architecture', round, writerNotes, coverage, checked), `evalsarch:${pr.id}#${round}`, { schema: EVALSCHECK }) : Promise.resolve(undefined),
+    () => productRuns(pr) ? call('evalsProduct', pr, evalsCheckPrompt(pr, list, meta, 'product', round, writerNotes, coverage, checked), `evalsproduct:${pr.id}#${round}`, { schema: EVALSCHECK }) : Promise.resolve(undefined),
   ])
   const notes = []
   for (const [who, r] of [['architecture', arch], ['product', product]]) {
@@ -2064,7 +2073,7 @@ async function writeEvals(pr, raw) {
     if (!c.down && !c.notes) return { evals: given.list, meta: given.meta, record: makeRecord(pr, given.list, given.meta) }
     const stop = `evals check: ${c.down || c.notes}`
     if (c.down || !EVALS_ON || EVALS_ROUNDS < 2) return { stop, record: rec, refused: given.list }
-    return writerLoop(pr, 2, { rule: false, reason: `the reviewers found gaps: ${c.notes}`, evals: given.list, meta: given.meta, given: true }, rec)
+    return writerLoop(pr, 2, { rule: false, reason: `the reviewers found gaps: ${c.notes}`, evals: given.list, meta: given.meta, given: true, notes: c.notes }, rec)
   }
   return writerLoop(pr, 1, null, null)
 }
@@ -2072,6 +2081,7 @@ async function writeEvals(pr, raw) {
 // The record of an earlier run stays through every attempt, so a throw or a stop returns it.
 async function writerLoop(pr, first, from, rec) {
   let last = from
+  let checked = from && !from.rule && from.given ? { evals: from.evals, notes: from.notes } : null
   let written = from ? { evals: from.evals, meta: from.meta } : null
   const stopWith = stop => ({ stop, record: rec, ...(written ? { refused: written.evals, refusedMeta: written.meta } : {}) })
   for (let attempt = first; attempt <= EVALS_ROUNDS; attempt++) {
@@ -2081,7 +2091,8 @@ async function writerLoop(pr, first, from, rec) {
     const meta = metaOf(w, pr)
     written = { evals: w.evals, meta }
     const bad = evalsVerdict(w.evals, pr, meta) || coverageVerdict(w.coverage, w.evals)
-    const c = bad ? null : await checkEvals(pr, w.evals, meta, attempt, w.notes, w.coverage)
+    const c = bad ? null : await checkEvals(pr, w.evals, meta, attempt, w.notes, w.coverage, checked)
+    if (c && !c.down) checked = { evals: w.evals, notes: c.notes }
     if (c && c.down) return stopWith(`evals check: ${c.down}`)
     if (!bad && !c.notes) return { evals: w.evals, meta, record: makeRecord(pr, w.evals, meta, w.coverage) }
     if (attempt === EVALS_ROUNDS) return stopWith(bad ? `evals refused: ${bad}` : `evals check: ${c.notes}`)
