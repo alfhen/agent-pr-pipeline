@@ -266,7 +266,6 @@ const breakCheckState = {}
 const mapsState = {}
 const mapPathsState = {}
 const scoutState = {}
-let scoutCount = 0
 const TEST_FILE = new RegExp(`${E2E_PATTERN}|(^|/)(tests?|__tests__|__snapshots__)/|(^|/)spec/.*\\.rb$|(^|/)[^/]*\\.Tests?/|\\.(test|spec)\\.[cm]?[jt]sx?$|_test\\.go$|(^|/)test_[^/]*\\.py$|_test\\.py$|_spec\\.rb$|\\.snap$|Tests\\.cs$`)
 // Docs Markdown never changes behaviour, so the break check has nothing to take out of it. Any other Markdown may be a prompt and does change behaviour, so the list is short and closed. The `docs` argument is not used here: it can name a docs site with code.
 const DOC_FILE = /(^|\/)docs\/.*\.md$|(^|\/)(README|CHANGELOG|CONTRIBUTING)\.md$/i
@@ -2100,14 +2099,14 @@ const readMapLines = output => {
   }
   return { lines, dropped }
 }
-const scoutPrompt = (clone, folder, file, path) => `Task: write the map of one file of ${REPO}.
+const scoutPrompt = (clone, folder, file, path, blob) => `Task: write the map of one file of ${REPO}.
 Clone folder: ${clone} (a clone of the default branch). Read only the file \`${file}\` there. Change no file of the clone.
 Map file: ${path}
 In the map, list each function or section of the file with its line range (first and last line) and a few words on what it holds. Keep the map short.
 Write the map to a temporary file made with \`mktemp\` in the folder of the map file, then run one \`mv\` of that temporary file to the map file. Run the whole block in the same Bash call, because a shell variable does not last to the next call. Replace the line <map text> with the map, and keep the other lines exactly as they are, because the names hold characters that a shell would change if they were not quoted:
-t=$(mktemp ${shq(folder)}/.scout.XXXXXX) && cat > "$t" <<'SCOUT_MAP_END'
+t=$(mktemp ${shq(folder)}/.scout.XXXXXX) && cat > "$t" <<'SCOUT_MAP_END_${blob.slice(0, 12)}'
 <map text>
-SCOUT_MAP_END
+SCOUT_MAP_END_${blob.slice(0, 12)}
 mv "$t" ${shq(path)}
 Write no other file.
 Return written true when the map file is in place.`
@@ -2139,13 +2138,15 @@ async function scoutStep(pr, raw) {
     const first = await read('filemap')
     if (first.failed) { maps.missing.push(first.failed); return }
     const waits = []
+    let n = 0
     for (const line of first.lines.filter(l => !l.present)) {
+      n++
       const key = JSON.stringify([line.file, line.blob])
       if (!scoutState[key]) {
-        const label = `scout:${pr.id}:${++scoutCount}`
+        const label = `scout:${pr.id}:${n}`
         const path = mapPath(folder, line)
         scoutState[key] = (async () => {
-          try { return !!await call('scout', pr, scoutPrompt(clone, folder, line.file, path), label, { schema: SCOUT }) } catch (e) { return false }
+          try { return !!await call('scout', pr, scoutPrompt(clone, folder, line.file, path, line.blob), label, { schema: SCOUT }) } catch (e) { return false }
         })()
       }
       waits.push(scoutState[key])
@@ -2200,7 +2201,7 @@ async function writerLoop(pr, first, from, rec) {
     let w = null
     try { w = await call('evals', pr, evalsPrompt(pr, attempt, last), attempt === 1 ? `evals:${pr.id}` : `evals:${pr.id}#w${attempt}`, { schema: EVALS }) } catch (e) { w = null }
     if (!w || !Array.isArray(w.evals)) return stopWith('evals writer failed')
-    if (mapsState[pr.id] && reasonOf(w.mapNote)) mapsState[pr.id].notes.push(reasonOf(w.mapNote))
+    if (mapsState[pr.id] && reasonOf(w.mapNote) && !mapsState[pr.id].notes.includes(reasonOf(w.mapNote))) mapsState[pr.id].notes.push(reasonOf(w.mapNote))
     const meta = metaOf(w, pr)
     written = { evals: w.evals, meta }
     const bad = evalsVerdict(w.evals, pr, meta) || coverageVerdict(w.coverage, w.evals)
