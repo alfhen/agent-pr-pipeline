@@ -146,11 +146,11 @@ Why statement 6: in 0.9.13 to 0.9.15, three faults passed every review and test 
 ## Pass criteria
 
 1. The four per-PR criteria of iteration 1 hold for RS, BT, EW and DF.
-6. The canary item of DF statement 4 runs on 0.9.16 before the product repo moves to it, and the driving session reports its result.
 2. In the measured wave, the median number of shell calls of an evals writer agent is at most 20 (0.8.0 wave 1: about 30).
 3. In the measured wave, at most half of the first lists are sent back (0.8.0 wave 1: 6 of 8).
 4. In the measured wave, the mean weighted tokens of the evals writer per item is at least 25% lower than in 0.8.0 wave 1 (351k).
 5. No item of the measured wave stops on the break check of an eval whose subject is in a changed test file. When the measured wave has no such eval, this criterion is not measured, and the driving session says so; BT's sim block proves the outcome text, and only a real run can prove the verifier's answer (statement 1 of BT).
+6. The canary item of DF statement 4 runs on 0.9.16 before the product repo moves to it, and the driving session reports its result.
 
 ## Release
 
