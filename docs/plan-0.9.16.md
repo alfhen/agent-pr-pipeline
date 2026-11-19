@@ -115,7 +115,7 @@ Touches: `workflows/run-wave.js` (`evalsPrompt`, its numbered steps; `evalsRules
 6. `evalsRules` has one new rule, so the writer and the evals check both get it: when the code of the entry reads a kind of file that a repo already holds (a plan, a doc, a config file, a workflow file, the output of a tool), at least one eval of kind behaviour or error path runs that code on a real file of that kind, copied from the default branch of the repo or named by its path there, and not only on a fixture the eval makes up. When no real file of that kind exists, the writer says so in `notes`, and the rule does not apply.
 7. (doc) `agents/evals-writer.md` states the rule of statement 6.
 
-**DF Dogfooding: QA on real input for new scripts and steps, and a canary run after each release.** Sim anchor: the last case of the file at the time of the build, after the block of EW.
+**DF Dogfooding: QA on real input for new scripts and steps, and a canary run after each release.** Sim anchor: the case `F659: the last verifier round decides tests only`, after the block of BT, so it does not depend on the block of EW in the same wave.
 Touches: `skills/pr-pipeline/SKILL.md` ("## Step 1: write the plan, then review the plan", one item of the plan-author checklist and one sentence in the paragraph on the rest of the plan review; "## Step 3: land and merge from the main session", the paragraph on `release.sh`, one paragraph on the canary run), `templates/plan.md` (the `QA:` line), `workflows/run-wave.js` (`reviewPrompt`, the part for a plan PR, one sentence), `test/sim-pipeline.mjs` (one new block).
 
 1. (doc) The plan-author checklist has one more item: an entry that adds or changes a script, a workflow step or a role agent has a **QA:** line, and that line runs the built thing on real input, read-only: a real file from the default branch of this repo or of a repo the pipeline runs on (for example a real plan file for a script that reads plans). The item says that made-up input alone is not enough for that QA line.
@@ -126,7 +126,7 @@ Touches: `skills/pr-pipeline/SKILL.md` ("## Step 1: write the plan, then review 
 
 ## Steps of the driving session
 
-1. After release 0.9.15 and the merge of this plan: run wave 1 (RS and BT), land them one at a time, then wave 2 (EW), land it.
+1. After release 0.9.15 and the merge of this plan: run wave 1 (RS and BT), land them one at a time, then wave 2 (EW and DF), land them one at a time.
 2. The version PR and release 0.9.16.
 2a. The canary run of DF statement 4, on 0.9.16: one small real item of this repo, with no `scout` argument (RS statement 2 checks the log line). The product repo moves to 0.9.16 only after it.
 3. The measure: the next build wave of the product repo runs on 0.9.16 with no `scout` argument. The driving session counts, from the transcripts, the shell calls of each evals writer and the share of first lists that the evals check sends back, and compares them with the product repo's 0.8.0 wave 1.
@@ -145,7 +145,8 @@ Why statement 6: in 0.9.13 to 0.9.15, three faults passed every review and test 
 
 ## Pass criteria
 
-1. The four per-PR criteria of iteration 1 hold for RS, BT and EW.
+1. The four per-PR criteria of iteration 1 hold for RS, BT, EW and DF.
+6. The canary item of DF statement 4 runs on 0.9.16 before the product repo moves to it, and the driving session reports its result.
 2. In the measured wave, the median number of shell calls of an evals writer agent is at most 20 (0.8.0 wave 1: about 30).
 3. In the measured wave, at most half of the first lists are sent back (0.8.0 wave 1: 6 of 8).
 4. In the measured wave, the mean weighted tokens of the evals writer per item is at least 25% lower than in 0.8.0 wave 1 (351k).
@@ -153,7 +154,7 @@ Why statement 6: in 0.9.13 to 0.9.15, three faults passed every review and test 
 
 ## Release
 
-- 0.9.16 is RS, BT and EW. The version PR merges without an outside review when it changes only the version, the release line of `agents/goals-preflight.md`, the release list and the file list.
+- 0.9.16 is RS, BT, EW and DF. The version PR merges without an outside review when it changes only the version, the release line of `agents/goals-preflight.md`, the release list and the file list.
 
 ## Flagged concerns
 
