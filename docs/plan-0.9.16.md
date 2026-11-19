@@ -32,7 +32,7 @@ Merging this plan accepts the pick of each line. Say so before the merge to chan
 | 2 | A wave that still passes `scout`. | The workflow ignores it and writes one log line: `scout: removed in 0.9.16, ignored`. The run goes on. | A product repo can keep an old argument for one wave without a stop. Refusing the run would cost more than the line. |
 | 3 | The maps already on disk, in the plugin data folder. | Left as they are. The docs say that the folder `maps/` of the plugin data folder can be removed by hand. | The workflow has no filesystem, and a delete of a shared folder by a script is a risk with no gain. The files are small. |
 | 4 | How the writer checks its own list. | One numbered step in the writer prompt, before it returns: check the list against the same rules the evals check applies (`evalsRules`) and against the refusal reasons named in this plan. No new agent. | A second agent would add a call, which is the cost this plan cuts. The rules text is shared, so the two cannot drift. |
-| 5 | The fix of #864. | The verifier may set `not-applicable` for a behaviour or error path eval only with a `breakWhy` that starts `subject in test file ` and names one changed test file, the same file as the eval's `test`. The run then does not stop, and the eval goes on the untested list, so the maintainer merges the PR. Any other `not-applicable` for those kinds stays invalid, as today. | The verifier is not an attacker; the rule guards against an honest mistake. The untested list keeps a person on every use, so no agent merges on the verifier's word. Running the default branch's test file against the reverted tree cannot work when the PR adds the case. |
+| 5 | The fix of #864. | The stop of #864 comes from the verifier answering `passes-without-change` for a test whose subject is in a changed test file. The run already accepts `not-applicable` for a behaviour or error path eval without a stop: it is no finding, and the eval goes on the untested list, so the maintainer merges the PR. BT changes the verifier prompt so that the verifier gives that answer in this case, with a `breakWhy` that starts `subject in test file `, and changes the untested text to quote the `breakWhy`. No gate and no path check is added. | The verifier is not an attacker; the rule guards against an honest mistake. The untested list keeps a person on every use, so no agent merges on the verifier's word. Running the default branch's test file against the reverted tree cannot work when the PR adds the case. |
 
 ## Decisions
 
@@ -63,7 +63,7 @@ flowchart LR
 
 Summary: RS and BT in wave 1, in parallel; EW in wave 2; then the version PR.
 
-Why two waves: RS removes a line of `evalsPrompt` and EW edits the steps of the same prompt, so they go one after the other. BT edits `verifyPrompt`, `verifyOutcome`, `testsOnlyBranch` and the end-of-item cleanup, which RS and EW do not touch. RS and BT use different sim anchors in different parts of `test/sim-pipeline.mjs`.
+Why two waves: RS removes a line of `evalsPrompt` and EW edits the steps of the same prompt, so they go one after the other. BT edits `verifyPrompt` and `verifyOutcome`, which RS and EW do not touch. RS and BT use different sim anchors in different parts of `test/sim-pipeline.mjs`.
 
 ### Wave 1
 
@@ -80,19 +80,19 @@ Touches: `workflows/run-wave.js` (`SCOUT_ON`; `STEPS`, the entry `scout`; `ROLES
 
 Build notes: the role-file check (`role files differ:`) iterates the folder `agents/`, so the removal of `agents/scout.md` changes the file list; `scripts/manifest.sh --write` updates `.claude-plugin/files.txt`. `test/token-report-roles.test.mjs` and `test/role-files.test.mjs` may list the roles; the builder runs them and lists every test it changes in its PR.
 
-**BT The break check gives an eval whose subject is in a changed test file to a person, not a stop.** Closes #864. Sim anchor: the case `F659: the last verifier round decides tests only`, after the helper `withChanged`, which BT's cases use.
-Touches: `workflows/run-wave.js` (`verifyPrompt`, the break check step; `verifyOutcome`, the branch for `not-applicable`; a new state map `changedFilesState`, next to `testsOnlyState`; `testsOnlyBranch`, which sets it; the line that deletes `testsOnlyState` at the end of the item, which deletes it too), `test/sim-pipeline.mjs` (one new block).
+**BT The verifier gives an eval whose subject is in a changed test file a `not-applicable`, not a `passes-without-change`.** Closes #864. Sim anchor: the case `F659: the last verifier round decides tests only`, after the helper `withChanged`, which BT's cases use.
+Touches: `workflows/run-wave.js` (`verifyPrompt`, the break check step; `verifyOutcome`, the text of the untested item for `not-applicable`), `test/sim-pipeline.mjs` (one new block).
 
-Threat model: the verifier is not an attacker. The rule guards against an honest mistake of the verifier. It never lets an agent merge a PR on the verifier's word alone: every accepted use goes on the untested list, and a PR with an untested item is merged by the maintainer.
+What the code does today: for an eval of kind behaviour or error path that passed, `breakCheck` `not-applicable` is already no finding and no stop. The eval stays in `passed`, it is in the group `notApplicable` of the result's `breakCheck`, and it is on the untested list as `<id> (break check not run: not-applicable is not valid for kind <kind>)`, so a person merges the PR. The stop of #864 comes only from `passes-without-change`, which is a major finding. BT adds no gate, no state map and no path check: the answer is already safe, because every use lands on the untested list.
 
-1. When the verifier returns, for an eval of kind behaviour or error path that passed, `breakCheck` `not-applicable` with a `breakWhy` that starts `subject in test file `, the text after that prefix up to the first whitespace is exactly a path of the PR's changed-file list, that path matches the test pattern, and the eval's `test` field names the same path, then the run does not stop on it: it is not a finding, the eval counts as passed, and it is in the group `notApplicable` of the result's `breakCheck`.
-2. Each such eval is on the untested list as `<id> (break check not applicable: subject in test file <path>)`, so the PR is merged by a person.
-3. The same answer is treated as today (the untested list names the eval with `not-applicable is not valid for kind <kind>`) when the named path is not in the changed list, does not match the test pattern, or differs from the `test` field, or when the changed list could not be read. The list of an earlier round is not reused.
-4. A `not-applicable` for kind behaviour or error path with any other `breakWhy` is treated as today. (holds today; kind `regression`)
-5. The break check step of `verifyPrompt` tells the verifier when to give that answer: the code that the test of the eval checks is itself defined in a test file that the PR changes, so taking the change out of the files that are not tests cannot change the result. It says that a test that only calls a helper of its own file, and through it runs a changed source file, still gets the break check.
-6. An eval with `passes-without-change` is a major finding as today. (holds today; kind `regression`)
+Threat model: the verifier is not an attacker. The rule guards against an honest mistake of the verifier. A person merges every PR with an untested item, so no agent merges on the verifier's word.
 
-Build notes: `testsOnlyBranch` already reads the changed files with `gate-files.sh --changed` into a local variable, and keeps only its boolean. BT keeps the list in `changedFilesState[pr.id]` (set when the list is read, set to null when the read fails or the list is empty, deleted where `testsOnlyState` is deleted). `verifyOutcome` is synchronous and reads that state. The existing `#changed` stub of the sim answers `CHANGED <json>`, which is all BT needs. The test pattern is `TEST_FILE`.
+1. The break check step of `verifyPrompt` tells the verifier when to give `not-applicable` for a behaviour or error path eval: the code that the test of the eval checks is itself defined in a test file that the PR changes, so taking the change out of the files that are not tests cannot change the result. The `breakWhy` then starts `subject in test file ` and names that file. The step says that a test that only calls a helper of its own file, and through it runs a changed source file, still gets the break check.
+2. For such an answer, the untested item is `<id> (break check not applicable: <breakWhy>)`, so a person sees the verifier's reason. A `not-applicable` for these kinds with no `breakWhy` keeps the text of today. This text is the only change in the code outcome.
+3. A `not-applicable` for these kinds is still no finding and no stop, and the eval still counts as passed and is in the group `notApplicable`. (holds today; kind `regression`)
+4. An eval with `passes-without-change` is a major finding as today. (holds today; kind `regression`)
+
+Build notes: the change in `verifyOutcome` is the line that builds `why` for `not-applicable`. Only a run of the verifier can show that the prompt makes it give the answer, so pass criterion 5 is the measure of statement 1.
 
 ### Wave 2
 
@@ -140,7 +140,7 @@ Touches: `workflows/run-wave.js` (`evalsPrompt`, its numbered steps), `agents/ev
 
 - **Fewer calls can mean less reading.** A writer that batches its reads may still read the same text, which is fine, but a writer that reads less to meet the aim can miss a fact. Pass criterion 3 watches the refusals; a rise shows it.
 - **The self-check can grow the writer's output.** The step asks for a check, not a written report: the writer changes the list and says in `notes` only what it changed.
-- **BT trusts a file name the verifier gives.** Each use goes on the untested list, so a person merges the PR. The workflow checks that the file is an exact path of the changed list, that it matches the test pattern and that it is the eval's own test file. It cannot check that the eval's subject is really defined there. Statement 6 keeps the `breakWhy` in the result, so a person can see each use.
+- **BT trusts the verifier's word that the subject is in a test file.** Each use goes on the untested list with the verifier's `breakWhy`, so a person merges the PR and reads the reason. The workflow checks nothing more; a mistaken answer costs one person merge, not a wrong agent merge. The prompt change is the only thing that stops #864, so pass criterion 5 is its only measure.
 - **RS removes a role file.** A session that has not reloaded is refused with `role files differ:`.
 
 ## Not verified
