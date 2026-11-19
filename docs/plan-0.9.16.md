@@ -58,12 +58,15 @@ Merging this plan accepts the pick of each line. Say so before the merge to chan
 flowchart LR
   RS[RS remove the scouts] --> EW[EW cheaper evals writer]
   BT[BT break check and test files] --> EW
+  BT --> DF[DF dogfooding rules]
   EW --> V[Version PR and release 0.9.16]
+  DF --> V
+  V --> C[Canary item on 0.9.16]
 ```
 
-Summary: RS and BT in wave 1, in parallel; EW in wave 2; then the version PR.
+Summary: RS and BT in wave 1, in parallel; EW and DF in wave 2, in parallel; then the version PR and the canary run.
 
-Why two waves: RS removes a line of `evalsPrompt` and EW edits the steps of the same prompt, so they go one after the other. BT edits `verifyPrompt` and `verifyOutcome`, which RS and EW do not touch. RS and BT use different sim anchors in different parts of `test/sim-pipeline.mjs`.
+Why two waves: RS removes a line of `evalsPrompt` and EW edits the steps of the same prompt, so they go one after the other. DF edits `reviewPrompt`, `templates/plan.md` and Step 1 and Step 3 of SKILL.md, which EW does not touch; the SKILL.md sentence of EW is in the section Driving cheaply. BT edits `verifyPrompt` and `verifyOutcome`, which RS and EW do not touch. RS and BT use different sim anchors in different parts of `test/sim-pipeline.mjs`.
 
 ### Wave 1
 
@@ -112,11 +115,23 @@ Touches: `workflows/run-wave.js` (`evalsPrompt`, its numbered steps; `evalsRules
 6. `evalsRules` has one new rule, so the writer and the evals check both get it: when the code of the entry reads a kind of file that a repo already holds (a plan, a doc, a config file, a workflow file, the output of a tool), at least one eval of kind behaviour or error path runs that code on a real file of that kind, copied from the default branch of the repo or named by its path there, and not only on a fixture the eval makes up. When no real file of that kind exists, the writer says so in `notes`, and the rule does not apply.
 7. (doc) `agents/evals-writer.md` states the rule of statement 6.
 
+**DF Dogfooding: QA on real input for new scripts and steps, and a canary run after each release.** Sim anchor: the last case of the file at the time of the build, after the block of EW.
+Touches: `skills/pr-pipeline/SKILL.md` ("## Step 1: write the plan, then review the plan", one item of the plan-author checklist and one sentence in the paragraph on the rest of the plan review; "## Step 3: land and merge from the main session", the paragraph on `release.sh`, one paragraph on the canary run), `templates/plan.md` (the `QA:` line), `workflows/run-wave.js` (`reviewPrompt`, the part for a plan PR, one sentence), `test/sim-pipeline.mjs` (one new block).
+
+1. (doc) The plan-author checklist has one more item: an entry that adds or changes a script, a workflow step or a role agent has a **QA:** line, and that line runs the built thing on real input, read-only: a real file from the default branch of this repo or of a repo the pipeline runs on (for example a real plan file for a script that reads plans). The item says that made-up input alone is not enough for that QA line.
+2. (doc) The `QA:` line of `templates/plan.md` says the same in one sentence.
+3. For a plan PR, the review prompt tells the reviewer that an entry that adds or changes a script, a workflow step or a role agent and has no QA line on real input is a major finding. For a code PR the prompt does not have that sentence.
+4. (doc) Step 3 of `skills/pr-pipeline/SKILL.md` has a paragraph on the canary run: after a release and before any product repo moves to the new version, the main session runs one small real item of this repo (a quick fix or a docs entry) on the new version, with every option that the release added or changed turned on. A product repo moves only after the canary item is ready with no stop that the release caused. When it fails, a fix release comes first.
+5. A code PR whose plan entry has no QA line gets no QA agent, as today. (holds today; kind `regression`)
+
 ## Steps of the driving session
 
 1. After release 0.9.15 and the merge of this plan: run wave 1 (RS and BT), land them one at a time, then wave 2 (EW), land it.
 2. The version PR and release 0.9.16.
+2a. The canary run of DF statement 4, on 0.9.16: one small real item of this repo, with no `scout` argument (RS statement 2 checks the log line). The product repo moves to 0.9.16 only after it.
 3. The measure: the next build wave of the product repo runs on 0.9.16 with no `scout` argument. The driving session counts, from the transcripts, the shell calls of each evals writer and the share of first lists that the evals check sends back, and compares them with the product repo's 0.8.0 wave 1.
+
+Why DF: the same three faults were found only by the first real wave after a release. A QA agent that runs a new script on a real file, and one canary item after each release, run a new version on real work before a product repo does.
 
 Why statement 6: in 0.9.13 to 0.9.15, three faults passed every review and test and failed on the first real run: the file map script found no files in a real plan whose Touches list is on the title line; a Haiku scout broke the given write command; an eval list tested a docs change on made-up files and missed a broken line of the real doc. Each test used input that the agents made up. A test on one real file of the same kind would have found the first and the third.
 
