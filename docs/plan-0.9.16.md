@@ -85,7 +85,7 @@ Touches: `workflows/run-wave.js` (`verifyPrompt`, the break check step; `verifyO
 
 What the code does today: for an eval of kind behaviour or error path that passed, `breakCheck` `not-applicable` is already no finding and no stop. The eval stays in `passed`, it is in the group `notApplicable` of the result's `breakCheck`, and it is on the untested list as `<id> (break check not run: not-applicable is not valid for kind <kind>)`, so a person merges the PR. The stop of #864 comes only from `passes-without-change`, which is a major finding. BT adds no gate, no state map and no path check: the answer is already safe, because every use lands on the untested list.
 
-Threat model: the verifier is not an attacker. The rule guards against an honest mistake of the verifier. A person merges every PR with an untested item, so no agent merges on the verifier's word.
+Threat model: the verifier is not an attacker. The rule guards against an honest mistake of the verifier. A person merges every PR with an untested item, so no agent merges on the verifier's word. A tests-only round (every changed file is a test or a docs file) is out of this rule: it has its own `testsOnly` path, which sets `not-applicable` for every eval and adds its own line to the PR, as today.
 
 1. The break check step of `verifyPrompt` tells the verifier when to give `not-applicable` for a behaviour or error path eval: the code that the test of the eval checks is itself defined in a test file that the PR changes, so taking the change out of the files that are not tests cannot change the result. The `breakWhy` then starts `subject in test file ` and names that file. The step says that a test that only calls a helper of its own file, and through it runs a changed source file, still gets the break check.
 2. For such an answer, the untested item is `<id> (break check not applicable: <breakWhy>)`, so a person sees the verifier's reason. A `not-applicable` for these kinds with no `breakWhy` keeps the text of today. This text is the only change in the code outcome.
@@ -101,12 +101,12 @@ Touches: `workflows/run-wave.js` (`evalsPrompt`, its numbered steps), `agents/ev
 
 1. The writer prompt tells the writer to read in few shell calls, with about 15 calls as the aim, and gives one example command that prints several files or line ranges in one call.
 2. The writer prompt has a step before the return: check the list against the rules for the list (the text of `evalsRules`, which the evals check also gets) and against each refusal reason below, and change the list before returning it. The reasons, by name:
-   - a bullet, invariant, Acceptance line or QA line of the entry with no eval;
+   - a bullet, invariant, Acceptance line or QA line of the entry with no eval (a line that names only a step after the build, such as the text of the pull request, labels, CI, a merge or a release, needs no eval, as today);
    - a check command that cannot print what the eval says, for example a `grep -F` pattern with a backslash inside single quotes, or a test filter whose run always reports skipped tests;
    - a negative case that differs from its positive case in more than one thing;
    - a negative test that does not first assert that its input holds the value it is about;
    - two evals whose checks contradict each other on the same test.
-3. The self-check step adds no agent call: the number of agent calls of an item with evals is the same as on the default branch.
+3. The self-check step adds no agent call: the writer does the check in the same agent run, and the workflow starts no agent for it. (A first list that now passes can save the second writer and check calls, so the total count of an item can be lower.)
 4. (doc) `agents/evals-writer.md` says to read in batched calls and to check the list against the refusal reasons before returning it.
 5. (doc) "### Driving cheaply" of `skills/pr-pipeline/SKILL.md` says in one sentence that the cost of the evals writer grows with its number of shell calls.
 
@@ -130,7 +130,7 @@ Touches: `workflows/run-wave.js` (`evalsPrompt`, its numbered steps), `agents/ev
 2. In the measured wave, the median number of shell calls of an evals writer agent is at most 20 (0.8.0 wave 1: about 30).
 3. In the measured wave, at most half of the first lists are sent back (0.8.0 wave 1: 6 of 8).
 4. In the measured wave, the mean weighted tokens of the evals writer per item is at least 25% lower than in 0.8.0 wave 1 (351k).
-5. No item of the measured wave stops on the break check of an eval whose subject is in a changed test file.
+5. No item of the measured wave stops on the break check of an eval whose subject is in a changed test file. When the measured wave has no such eval, this criterion is not measured, and the driving session says so; BT's sim block proves the outcome text, and only a real run can prove the verifier's answer (statement 1 of BT).
 
 ## Release
 
