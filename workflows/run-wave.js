@@ -2101,7 +2101,7 @@ const readMapLines = output => {
   return { lines, dropped }
 }
 // Per run (TMP) and per item, so the cleanup of one item never names the temp files of another item or run.
-const scoutPrefix = pr => `${cksum(TMP).replace(':', '-')}-${String(pr.id).replace(/[^A-Za-z0-9-]/g, '-')}`
+const scoutPrefix = pr => `${cksum(TMP).replace(':', '-')}-${String(pr.id).replace(/[^A-Za-z0-9-]/g, '-')}-${cksum(String(pr.id)).replace(':', '-')}`
 const scoutPrompt = (clone, folder, file, path, blob, prefix) => `Task: write the map of one file of ${REPO}.
 Clone folder: ${clone} (a clone of the default branch). Read only the file \`${file}\` there. Change no file of the clone.
 Map file: ${path}
@@ -2144,10 +2144,12 @@ async function scoutStep(pr, raw) {
     const waits = []
     const prefix = scoutPrefix(pr)
     let n = 0
+    let started = 0
     for (const line of first.lines.filter(l => !l.present)) {
       n++
       const key = JSON.stringify([line.file, line.blob])
       if (!scoutState[key]) {
+        started++
         const label = `scout:${pr.id}:${n}`
         const path = mapPath(folder, line)
         scoutState[key] = (async () => {
@@ -2158,7 +2160,7 @@ async function scoutStep(pr, raw) {
     }
     const ended = await parallel(waits.map(w => () => w))
     // A scout that edited the write block can leave a temp file; this runs also when every scout failed.
-    if (waits.length) {
+    if (started) {
       try { await ioCall(pr, `io:${pr.id}#scoutclean`, 'filemap.sh', `--cleanup ${shq(folder)} ${prefix}`, { phase: 'Evals' }) } catch (e) { /* the maps stay correct without it */ }
     }
     let last = first

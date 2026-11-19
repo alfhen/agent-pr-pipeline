@@ -3,7 +3,7 @@
 # Prints one JSON line {"cache"} with the absolute cache folder, then for each file named in backticks on the Touches line
 # of the plan entry (on its title line after Touches:, else on the first later line that starts with Touches:) that exists at the head of a shallow clone of the default branch, one line {"file","blob","map","present"}.
 # Tokens in backticks count also inside brackets; the workflow parser of the Touches line skips bracketed notes.
-# Writes only into the cache folder and the clone folder, and never deletes the clone folder (cleanup.sh clones does).
+# Writes only into the cache folder and the clone folder (--cleanup deletes only its matching temp files directly in the maps folder), and never deletes the clone folder (cleanup.sh clones does).
 # usage: filemap.sh --cleanup <maps folder> <prefix>
 # Removes the regular files .scout.<prefix>.?????? directly in the folder (the temp files of the scouts of one run and item). The prefix must match [A-Za-z0-9-]+.
 # FILEMAP_REMOTE: a local path used in place of the GitHub URL, for tests.
