@@ -1451,7 +1451,7 @@ const frontmatter = name => {
   const text = readFileSync(new URL(`agents/${name}.md`, root), 'utf8')
   return Object.fromEntries(text.split('---')[1].trim().split('\n').map(l => [l.slice(0, l.indexOf(':')), l.slice(l.indexOf(':') + 1).trim()]))
 }
-const AGENT_OF = { evals: 'evals-writer', evalsarch: 'arch-reviewer', evalsproduct: 'product-reviewer', botreview: 'reviewer', landreview: 'reviewer', qa: 'qa', docsfix: 'docs-writer', implement: 'implementer', test: 'tester', verify: 'verifier', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight', triage: 'triager', io: 'pipeline-io', safety: 'merge-safety', evaluate: 'evaluator', redact: 'feedback-redactor', scout: 'scout' }
+const AGENT_OF = { evals: 'evals-writer', evalsarch: 'arch-reviewer', evalsproduct: 'product-reviewer', botreview: 'reviewer', landreview: 'reviewer', qa: 'qa', docsfix: 'docs-writer', implement: 'implementer', test: 'tester', verify: 'verifier', review: 'reviewer', arch: 'arch-reviewer', product: 'product-reviewer', fix: 'fixer', docs: 'docs-writer', docsreview: 'docs-reviewer', open: 'pr-opener', botwait: 'bot-waiter', botanswer: 'bot-answerer', landfix: 'land-fixer', preflight: 'goals-preflight', triage: 'triager', io: 'pipeline-io', safety: 'merge-safety', evaluate: 'evaluator', redact: 'feedback-redactor' }
 const WRITERS = ['implementer', 'fixer', 'docs-writer', 'bot-answerer', 'land-fixer']
 await simulate(base)
 await check('every call names its role agent from the plugin', () => {
@@ -7205,428 +7205,57 @@ await check('RW-18 an answer run that throws keeps prNumber', async () => {
   assert.equal(a.prNumber, 8)
 })
 
-// SC: the scout step writes the missing maps of the files on the Touches line.
-const SC_P = '/h/.claude/plugins/cache/mk/pl/0.9.12'
-const SC_F = '/h/.claude/plugins/data/pl-mk/maps/o-r/'
-const scHex = c => c.repeat(40)
-const SC_A = scHex('a')
-const scL = (file, blob, present, extra = {}) => JSON.stringify({ file, blob, map: `/evil/${file}.md`, present, ...extra })
-const scEvents = []
-const scAsLines = (v, id) => typeof v === 'function' ? v(id) : v
-const scPresent = lines => lines.map(l => l.replace('"present":false', '"present":true'))
-const scTimeout = ms => new Promise(r => setTimeout(r, ms))
-// A hook for the io answers of filemap.sh (the first read and the read after the scouts), the scout answers and the evals writer.
-const scHook = ({ first = [], second, scout = () => ({ written: true }), evals, more } = {}) => async (p, o) => {
-  if (more) { const h = await more(p, o); if (h !== undefined) return h }
-  const id = o.label.split(':')[1].split('#')[0]
-  if (/io\.sh filemap\.sh/.test(p)) {
-    const again = o.label.endsWith('#filemap2')
-    const lines = again && second !== undefined ? scAsLines(second, id) : again ? scPresent(scAsLines(first, id)) : scAsLines(first, id)
-    return ioWrap(o.label, { exitCode: 0, output: ['{"cache":"/h/other"}', ...lines].join('\n') })
-  }
-  if (o.label.startsWith('scout:')) return scout(p, o)
-  if (/^evals:/.test(o.label)) return evals ? evals(p, o) : withMeta(listOf(id))
-  return undefined
-}
-const scRunOut = async (prs, hook, extra = {}) => {
-  calls = []; cleanupCalls = []; timeline = []; logs = []; scEvents.length = 0
-  preflight = GOOD
-  return run({ ...base, evals: true, scout: true, pluginRoot: SC_P, ...extra, prs }, async (p, o) => {
-    scEvents.push(`start:${o.label}`)
-    const h = await hook(p, o)
-    if (h === undefined) { const out = await agent(p, o); scEvents.push(`end:${o.label}`); return out }
-    calls.push({ label: o.label, model: o.model, effort: o.effort, agentType: o.agentType, isolation: o.isolation, schema: o.schema, prompt: p })
-    scEvents.push(`end:${o.label}`)
-    return h
-  }, parallel, log)
-}
-const scRun = async (prs, hook, extra) => Object.fromEntries((await scRunOut(prs, hook, extra)).prs.map(x => [x.id, x]))
-const scCalls = prefix => calls.filter(c => c.label.startsWith(prefix))
-const scFilemap = () => calls.filter(c => /io\.sh filemap\.sh (?!--cleanup)/.test(c.prompt))
-const scClean = id => calls.filter(c => c.label.startsWith(`io:${id}#`) && /io\.sh filemap\.sh --cleanup /.test(c.prompt))
-// The write block of a scout prompt: from the mktemp line to the line after the end word.
-const scBlock = prompt => {
-  const start = prompt.indexOf('t=$(mktemp')
-  const endTag = prompt.indexOf('\nSCOUT_MAP_END_', start)
-  const afterEnd = prompt.indexOf('\n', endTag + 1)
-  return prompt.slice(start, prompt.indexOf('\n', afterEnd + 1))
-}
-const scAt = label => scEvents.indexOf(label)
-const scEvalsPrompt = (id = 'C1') => calls.find(c => c.label === `evals:${id}`).prompt
-
-await check('SC-1 the scout step stays off unless the wave passes scout: true', async () => {
-  const hook = () => scHook({ first: [scL('src/a.js', SC_A, false)] })
-  const on = await scRun(only1('C1'), hook())
-  assert.ok(scFilemap().length >= 1)
-  assert.equal(scCalls('scout:C1:').length, 1)
-  assert.ok(scFilemap()[0].prompt.includes('io.sh filemap.sh'))
-  assert.ok(scEvalsPrompt().includes(SC_F))
-  assert.ok(on.C1.maps)
-  const off = await scRun(only1('C1'), hook(), { scout: undefined })
-  assert.equal(scFilemap().length, 0)
-  assert.ok(!calls.some(c => c.label.startsWith('scout:')))
-  assert.ok(!calls.some(c => c.prompt.includes('plugins/data/')))
-  assert.equal(off.C1.maps, undefined)
-  assert.ok(calls.some(c => c.label === 'evals:C1'))
-})
-await check('SC-2 the file map script runs through the io role before the evals writer, with a folder built from pluginRoot', async () => {
-  const lines = [scL('src/a.js', SC_A, false)]
-  await scRun(only1('C1'), scHook({ first: lines }))
-  const first = scFilemap()[0]
-  assert.equal(first.agentType, 'agent-pr-pipeline:pipeline-io')
-  assert.ok(first.prompt.includes(`bash ${SC_P}/scripts/io.sh filemap.sh`))
-  const args = /io\.sh filemap\.sh (.*)`\n/.exec(first.prompt)[1].split(' ').map(a => a.replace(/^'|'$/g, '').replace(/\/$/, ''))
-  assert.deepEqual(args, ['o/r', 'docs/p.md', 'C1', '/h/.claude/plugins/data/pl-mk/maps/o-r', '/x/filemap-C1'])
-  assert.ok(!args.some(a => a.includes('b1')))
-  assert.ok(scAt('start:io:C1#filemap') < scAt('start:evals:C1'))
-  await scRun(only1('C1'), scHook({ first: lines }), { pluginRoot: '/h/.claude/plugins/cache/zz/pl/0.9.12' })
-  assert.ok(scFilemap()[0].prompt.includes("'/h/.claude/plugins/data/pl-zz/maps/o-r'"))
-})
-await check('SC-3 only JSON lines of the right shape start a scout, and no path of the answers reaches a prompt', async () => {
-  const bt = 'back' + String.fromCharCode(96) + 'tick.js'
-  const lines = [
-    'filemap: a note', '{"cache":"/h/other"}', scL('src/a.js', SC_A, false, { map: '/evil/a.md' }), scL('/abs.js', SC_A, false), scL('../up.js', SC_A, false),
-    scL('src/../x.js', SC_A, false), scL('sp ace.js', SC_A, false), scL(bt, SC_A, false), scL('ctl\u0007.js', SC_A, false),
-    scL('src/z.js', 'z'.repeat(40), false), scL('src/short.js', 'a'.repeat(39), false), scL('src/long.js', 'a'.repeat(41), false),
-  ]
-  const x = await scRun(only1('C1'), scHook({ first: lines, scout: () => ({ map: '/evil/scout.md' }) }))
-  const scouts = scCalls('scout:C1:')
-  assert.equal(scouts.length, 1)
-  assert.ok(scouts[0].prompt.includes('src/a.js') && scouts[0].prompt.includes(`${SC_F}src%2Fa.js@${SC_A}.md`))
-  for (const f of ['/abs.js', '../up.js', 'src/../x.js', 'sp ace.js', bt, 'src/z.js', 'src/short.js', 'src/long.js']) assert.ok(x.C1.maps.missing.includes(f), f)
-  assert.ok(!calls.some(c => c.prompt.includes('/evil/') || c.prompt.includes('/h/other')))
-})
-await check('SC-4 the cache line and the map field are never used, and brackets and 64-character blobs pass', async () => {
-  const B64 = 'b'.repeat(64)
-  const lines = [scL('src/a.js', SC_A, false, { map: `/etc/src%2Fa.js@${SC_A}.md` }), scL('app/[slug]/page.tsx', B64, false, { map: `/etc/app%2F[slug]%2Fpage.tsx@${B64}.md` })]
-  await scRun(only1('C1'), scHook({ first: ['{"cache":"/etc"}', ...lines] }))
-  const scouts = scCalls('scout:C1:')
-  assert.equal(scouts.length, 2)
-  assert.ok(scouts.some(c => c.prompt.includes(`${SC_F}src%2Fa.js@${SC_A}.md`)))
-  assert.ok(scouts.some(c => c.prompt.includes(`${SC_F}app%2F[slug]%2Fpage.tsx@${B64}.md`)))
-  assert.ok(!calls.some(c => c.prompt.includes('/etc/')))
-})
-await check('SC-5 each missing map gets one scout on Haiku at low effort, all at the same time, with a prompt that names no entry', async () => {
-  const B = scHex('b'); const Cc = scHex('c')
-  const lines = [scL('src/a.js', SC_A, true), scL('src/b.js', B, false), scL('src/c.js', Cc, false)]
-  let started = 0
-  let release
-  const gate = new Promise(r => { release = r })
-  const scout = async () => { if (++started === 2) release(); await Promise.race([gate, scTimeout(500)]); assert.equal(started, 2, 'the scouts did not start at the same time'); return { written: true } }
-  await scRun([{ ...C1PR, notes: 'NOTE-SC5' }], scHook({ first: lines, scout }))
-  const scouts = scCalls('scout:C1:')
-  assert.equal(scouts.length, 2)
-  assert.equal(new Set(scouts.map(c => c.label)).size, 2)
-  for (const c of scouts) {
-    assert.match(c.label, /^scout:C1:\d+$/)
-    assert.equal(c.agentType, 'agent-pr-pipeline:scout')
-    assert.equal(c.model, 'haiku')
-    assert.equal(c.effort, 'low')
-    assert.equal(c.isolation, undefined)
-    assert.ok(!c.prompt.includes('src/a.js'))
-    assert.ok(c.prompt.includes('/x/filemap-C1'))
-    assert.match(c.prompt, /line range/i)
-    assert.match(c.prompt, /function|section/i)
-    for (const t of ['docs/p.md', 'docs/goals.md', 'docs/design.md', 'Notes for this PR', 'NOTE-SC5', 'PR: C1']) assert.ok(!c.prompt.includes(t), t)
-    assert.doesNotMatch(c.prompt, /verdict|findings?\b|severity|review the (entry|PR)/i)
-  }
-  for (const [file, blob] of [['b', B], ['c', Cc]]) {
-    const mine = scouts.filter(c => c.prompt.includes(`src/${file}.js`))
-    assert.equal(mine.length, 1)
-    assert.ok(mine[0].prompt.includes(`${SC_F}src%2F${file}.js@${blob}.md`))
-  }
-})
-await check('SC-6 items of one run share one scout for a path and blob, and the clone stays until it ends', async () => {
-  const same = [scL('src/a.js', SC_A, false)]
-  const scout = async () => { await scTimeout(30); return { written: true } }
-  await scRun(only('C1', 'C2'), scHook({ first: same, scout }))
-  const scouts = scCalls('scout:')
-  assert.equal(scouts.length, 1)
-  const ended = scAt(`end:${scouts[0].label}`)
-  assert.ok(ended > 0)
-  assert.ok(scAt('start:evals:C1') > ended && scAt('start:evals:C2') > ended)
-  const owner = scouts[0].label.split(':')[1]
-  assert.ok(scAt(`start:io:${owner}#cleanupclones`) > ended)
-  await scRun(only('C1', 'C2'), scHook({ first: id => id === 'C1' ? same : [scL('src/b.js', SC_A, false)], scout }))
-  assert.equal(scCalls('scout:').length, 2)
-  await scRun(only('C1', 'C2'), scHook({ first: id => id === 'C1' ? same : [scL('src/a.js', scHex('c'), false)], scout }))
-  assert.equal(scCalls('scout:').length, 2)
-})
-await check('SC-7 the evals writer gets the paths of the maps that exist after the scouts, with the rules for a map', async () => {
-  const B = scHex('b')
-  const first = [scL('src/a.js', SC_A, false), scL('src/b.js', B, false)]
-  const second = [scL('src/a.js', SC_A, true), scL('src/b.js', B, false), scL('src/z.js', 'z'.repeat(40), true, { map: '/evil/z.md' })]
-  await scRun(only1('C1'), scHook({ first, second }))
-  const reads = scFilemap().filter(c => c.label === 'io:C1#filemap' || c.label === 'io:C1#filemap2')
-  assert.equal(reads.length, 2)
-  const lastScoutEnd = Math.max(...scCalls('scout:C1:').map(c => scAt(`end:${c.label}`)))
-  assert.ok(scAt('start:io:C1#filemap2') > lastScoutEnd && scAt('start:io:C1#filemap2') < scAt('start:evals:C1'))
-  const withMaps = scEvalsPrompt()
-  assert.ok(withMaps.includes(`${SC_F}src%2Fa.js@${SC_A}.md`))
-  for (const t of ['src%2Fb.js@', 'src%2Fz.js', '/evil/']) assert.ok(!withMaps.includes(t), t)
-  await scRun(only1('C1'), scHook({ first, second }), { scout: undefined })
-  const baseLines = new Set(scEvalsPrompt().split('\n'))
-  const part = withMaps.split('\n').filter(l => !baseLines.has(l)).join('\n')
-  assert.ok(part.includes(`${SC_F}src%2Fa.js@${SC_A}`))
-  for (const re of [/default branch/i, /line ranges?/i, /move/i, /not instructions/i, /mapNote/]) assert.match(part, re)
-  const base = [...baseLines].join('\n')
-  assert.doesNotMatch(base, /not instructions/i)
-  assert.doesNotMatch(base, /mapNote/)
-  assert.ok(!base.includes('/maps/o-r/'))
-})
-await check('SC-8 only the evals writer gets map paths', async () => {
-  const hook = scHook({ first: [scL('src/a.js', SC_A, true)], more: (p, o) => o.label === 'review:C1#1' ? reviewOf([fe('major', 'x')]) : undefined })
-  await scRun(only1('C1'), hook)
-  assert.ok(scEvalsPrompt().includes(SC_F))
-  const labels = calls.map(c => c.label)
-  for (const l of ['evalsarch:C1', 'implement:C1', 'review:C1', 'arch:C1', 'fix:C1']) assert.ok(labels.some(x => x.startsWith(l)), l)
-  assert.ok(labels.some(x => x.startsWith('verify:C1') || x.startsWith('test:C1')))
-  for (const c of calls.filter(c => /^(evalsarch|evalsproduct|implement|test|verify|fix|review|arch):/.test(c.label))) {
-    assert.ok(!c.prompt.includes('/maps/o-r/') && !c.prompt.includes('plugins/data/'), c.label)
-  }
-})
-await check('SC-9 the scout step runs only for an item whose evals writer runs', async () => {
-  const hook = () => scHook({ first: [scL('src/a.js', SC_A, false)], scout: () => null })
-  await scRun(only1('C1'), hook())
-  assert.equal(scFilemap().length, 1)
-  assert.ok(scCalls('scout:').length >= 1)
-  assert.equal(scCalls('evals:C1').length, 1)
-  const none = (why = () => {}) => {
-    assert.equal(scFilemap().length, 0)
+// RS: the scout step is removed; an argument `scout` is ignored with one log line.
+const RS_P = '/h/.claude/plugins/cache/mk/pl/0.9.12'
+const RS_LOG = 'scout: removed in 0.9.16, ignored'
+// Answers the removed filemap and scout calls so the negative tests would see them if they came back.
+const rsHook = (p, o) => /filemap\.sh/.test(p) && !/--cleanup/.test(p) ? ioWrap(o.label, { exitCode: 0, output: JSON.stringify({ file: 'src/a.js', blob: 'a'.repeat(40), present: o.label.endsWith('#filemap2') }) }) : o.label.startsWith('scout:') ? { written: true } : undefined
+const rsC1 = () => calls.map(c => c.label).filter(l => l.split(':')[1].split('#')[0] === 'C1')
+await check('RS-1 with scout: true no scout agent and no file map read starts, and the result has no maps', async () => {
+  evalsPlan.writer = (o, p, id) => withMeta(listOf(id))
+  try {
+    const mapLine = rsHook('bash io.sh filemap\u002esh x', { label: 'io:C1#filemap' })
+    assert.ok(mapLine && JSON.stringify(mapLine).includes('src/a.js'))
+    const out = await hookedOut(only('C1', 'C2'), rsHook, { evals: true, pluginRoot: RS_P, scout: true })
+    assert.ok(calls.some(c => c.label === 'evals:C1'))
     assert.ok(!calls.some(c => c.label.startsWith('scout:')))
-    why()
-  }
-  const noEvals = id => () => assert.ok(!calls.some(c => c.label === `evals:${id}`))
-  await scRun(only1('C1'), hook(), { evals: false })
-  none(noEvals('C1'))
-  await scRun([{ ...C1PR, evals: listOf('C1') }], hook())
-  none(() => { noEvals('C1')(); assert.ok(calls.find(c => c.label.startsWith('evalsarch:C1')).prompt.includes('C1-1')) })
-  await scRun([{ ...C1PR, skipImpl: true }], hook())
-  none(noEvals('C1'))
-  delete briefs.QS
-  await scRun([{ id: 'QS', quick: { issue: 40 }, branch: 'fix/QS' }], hook())
-  none(() => assert.ok(calls.some(c => c.label.startsWith('triage:QS'))))
-  await scRun([{ ...C1PR, resume: { history: [] } }], hook())
-  none(noEvals('C1'))
-  await scRun([{ ...C1PR, landFix: true, prNumber: 8 }], hook())
-  none(() => { noEvals('C1')(); assert.ok(calls.some(c => c.label === 'io:C1#landhead')) })
-  const withRw = async (p, o) => { const h = await hook()(p, o); return h !== undefined ? h : rwHook()(p, o) }
-  await scRun([rwItem()], withRw, { botWaitMinutes: 0 })
-  none(() => { noEvals('AN')(); assert.ok(calls.some(c => c.label === 'botanswer:AN')) })
-  await scRun([rwItem({ answer: undefined })], hook(), { botWaitMinutes: 0 })
-  assert.equal(scFilemap().length, 1)
-  await scRun([{ ...C1PR, kind: 'docs' }], hook())
-  none(noEvals('C1'))
-  await scRun([{ ...C1PR, kind: 'plan' }], hook())
-  none(noEvals('C1'))
+    assert.ok(![...calls, ...cleanupCalls].some(c => /filemap\.sh/.test(c.prompt)))
+    assert.equal('maps' in out.prs.find(x => x.id === 'C1'), false)
+    assert.ok(logs.includes(RS_LOG))
+  } finally { evalsPlan.writer = () => null }
 })
-await check('SC-10 a failed script, a failed scout or an unwritten map does not stop the item', async () => {
-  const B = scHex('b')
-  const fail = { exitCode: 1, output: 'filemap: cannot create /h/.claude/plugins/data/pl-mk/maps/o-r' }
-  for (const answer of [(p, o) => ioWrap(o.label, fail), () => null]) {
-    const x = await scRun(only1('C1'), scHook({ first: [], more: (p, o) => /io\.sh filemap\.sh/.test(p) ? answer(p, o) : undefined }))
-    assert.equal(scCalls('scout:').length, 0)
-    assert.ok(!scEvalsPrompt().includes('/maps/o-r/'))
-    assert.equal(x.C1.ready, true)
-  }
-  const pair = [scL('src/a.js', SC_A, false), scL('src/b.js', B, false)]
-  const after = [scL('src/a.js', SC_A, true), scL('src/b.js', B, false)]
-  for (const scout of [p => p.includes('src/b.js') ? null : { written: true }, p => { if (p.includes('src/b.js')) throw new Error('scout died'); return { written: true } }]) {
-    const x = await scRun(only1('C1'), scHook({ first: pair, second: after, scout }))
-    assert.equal(x.C1.ready, true)
-    assert.ok(scEvalsPrompt().includes(`${SC_F}src%2Fa.js@`) && !scEvalsPrompt().includes('src%2Fb.js@'))
-    assert.ok(x.C1.maps.missing.includes('src/b.js'))
-  }
-  const y = await scRun(only1('C1'), scHook({ first: pair, second: pair }))
-  assert.equal(y.C1.ready, true)
-  assert.deepEqual([...y.C1.maps.missing].sort(), ['src/a.js', 'src/b.js'])
-  assert.equal(y.C1.maps.written, 0)
-})
-await check('SC-11 a pluginRoot of another form gives no map step and the result names the cause', async () => {
-  const hook = () => scHook({ first: [scL('src/a.js', SC_A, false)], scout: () => null })
-  const x = await scRun(only1('C1'), hook(), { pluginRoot: '/plug' })
-  assert.equal(scFilemap().length, 0)
-  assert.ok(!calls.some(c => c.label.startsWith('scout:')))
-  assert.ok(calls.some(c => c.label === 'evals:C1'))
-  assert.equal(x.C1.ready, true)
-  assert.match(JSON.stringify(x.C1.maps.missing), /pluginRoot|\/plug/)
-  await scRun(only1('C1'), hook())
-  assert.equal(scFilemap().length, 1)
-})
-await check('SC-12 the result has maps.files, maps.written, maps.missing and the mapNote of every writer attempt', async () => {
-  const B = scHex('b'); const Cc = scHex('c')
-  const first = [scL('src/a.js', SC_A, true), scL('src/b.js', B, false), scL('src/c.js', Cc, false)]
-  const second = [scL('src/a.js', SC_A, true), scL('src/b.js', B, true), scL('src/c.js', Cc, false)]
-  const x = await scRun(only1('C1'), scHook({ first, second, evals: () => withMeta(listOf('C1'), { mapNote: 'MAPNOTE-1' }) }))
-  assert.ok(calls.find(c => c.label === 'evals:C1').schema.properties.mapNote)
-  assert.deepEqual([...x.C1.maps.files].sort(), ['src/a.js', 'src/b.js'])
-  assert.equal(x.C1.maps.written, 1)
-  assert.deepEqual(x.C1.maps.missing, ['src/c.js'])
-  assert.ok(JSON.stringify(x.C1.maps.notes).includes('MAPNOTE-1'))
-  const more = (p, o) => o.label === 'evalsarch:C1#1' ? { verdict: 'needs-change', notes: 'a gap' } : o.label === 'evalsarch:C1#2' ? { verdict: 'ok', notes: '' } : undefined
-  const y = await scRun(only1('C1'), scHook({ first, second, more, evals: (p, o) => withMeta(listOf('C1'), { mapNote: o.label.endsWith('#w2') ? 'MAPNOTE-2' : 'MAPNOTE-1' }) }))
-  assert.ok(calls.some(c => c.label === 'evals:C1#w2'))
-  assert.ok(JSON.stringify(y.C1.maps.notes).includes('MAPNOTE-2'))
-})
-await check('SC-13 a steps argument for scout sets the model and effort of every scout', async () => {
-  const hook = () => scHook({ first: [scL('src/a.js', SC_A, false), scL('src/b.js', scHex('b'), false)] })
-  await scRun(only1('C1'), hook(), { steps: { scout: { model: 'sonnet', effort: 'high' } } })
-  assert.equal(scCalls('scout:').length, 2)
-  for (const c of scCalls('scout:')) assert.deepEqual([c.model, c.effort], ['sonnet', 'high'])
-  await scRun(only1('C1'), hook())
-  assert.equal(scCalls('scout:').length, 2)
-  for (const c of scCalls('scout:')) assert.deepEqual([c.model, c.effort], ['haiku', 'low'])
-})
-await check('SC-16 SKILL.md names the scout argument, the role row and the measure rule', () => {
-  const text = readFileSync(new URL('skills/pr-pipeline/SKILL.md', root), 'utf8')
-  const section = h => text.split(/^### /m).find(s => s.startsWith(h + '\n'))
-  const arg = section('Workflow arguments').split('\n').find(l => l.startsWith('- `scout`'))
-  for (const re of [/true/, /off|default.*false|false.*default/, /\/maps\/<owner>-<repo>/, /CLAUDE_PLUGIN_DATA|plugins\/data\//, /`maps`/]) assert.match(arg, re)
-  assert.ok(section('Role agents').split('\n').some(l => l.startsWith('| `scout` | `scout` | haiku | low | Bash, Read, Glob, Grep')))
-  const cheap = section('Driving cheaply').split(/(?<=\.)\s+/).find(s => s.includes('scout'))
-  for (const re of [/measure/i, /wave before/i, /default/i]) assert.match(cheap, re)
-})
-
-await check('SC-R1-1 a file name with a shell character reaches the scout only in a quoted mv command', async () => {
-  const file = 'app/routes/posts.$id.tsx'
-  await scRun(only1('C1'), scHook({ first: [scL(file, SC_A, false)] }))
-  const scouts = scCalls('scout:')
-  assert.equal(scouts.length, 1)
-  assert.ok(scouts[0].prompt.includes(`mv "$t" '/h/.claude/plugins/data/pl-mk/maps/o-r/app%2Froutes%2Fposts.$id.tsx@${SC_A}.md'`))
-})
-
-await check('SC-R1-2 the scout command block, run in one bash call, makes the map file', async () => {
-  const file = 'app/routes/posts.$id.tsx'
-  await scRun(only1('C1'), scHook({ first: [scL(file, SC_A, false)] }))
-  const prompt = scCalls('scout:')[0].prompt
-  assert.match(prompt, /one Bash call|single Bash call|same Bash call/i)
-  const block = scBlock(prompt)
-  const dir = mkdtempSync(join(tmpdir(), 'scr12-'))
+await check('RS-2 a wave with scout: true logs the removal once, and another argument name logs nothing', async () => {
+  evalsPlan.writer = (o, p, id) => withMeta(listOf(id))
   try {
-    const folder = join(dir, 'maps')
-    mkdirSync(folder)
-    const cmd = block.split('/h/.claude/plugins/data/pl-mk/maps/o-r').join(folder).replace('<map text>', 'MAP')
-    const r = spawnSync('bash', ['-c', cmd], { encoding: 'utf8' })
-    assert.equal(r.status, 0, r.stderr)
-    const out = join(folder, `app%2Froutes%2Fposts.$id.tsx@${SC_A}.md`)
-    assert.equal(readFileSync(out, 'utf8').trim(), 'MAP')
-    assert.deepEqual(readdirSync(folder).filter(n => n.startsWith('.scout.')), [])
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
+    const go = async extra => {
+      const out = await hookedOut(only('C1', 'C2'), rsHook, { evals: true, pluginRoot: RS_P, ...extra })
+      return { out, n: logs.filter(l => l === RS_LOG).length, c1: rsC1() }
+    }
+    const a = await go({ scout: true })
+    const b = await go({})
+    const c = await go({ scouts: true })
+    assert.equal(a.n, 1)
+    assert.ok(a.out.prs.every(x => x.ready === true))
+    assert.deepEqual(a.c1, b.c1)
+    assert.equal(b.n, 0)
+    assert.equal(c.n, 0)
+  } finally { evalsPlan.writer = () => null }
 })
-
-await check('SC-R3-1 the scout command moves the map into place only after cat succeeds', async () => {
-  const file = 'app/routes/posts.$id.tsx'
-  await scRun(only1('C1'), scHook({ first: [scL(file, SC_A, false)] }))
-  const prompt = scCalls('scout:')[0].prompt
-  const block = scBlock(prompt)
-  assert.ok(/\bcat\b/.test(block))
-  const dir = mkdtempSync(join(tmpdir(), 'scr31-'))
+await check('RS-3 no prompt holds the file map text and the evals schema has no mapNote', async () => {
+  let schema = null
+  evalsPlan.writer = (o, p, id) => { schema = o.schema; return withMeta(listOf(id)) }
   try {
-    const mk = name => { const f = join(dir, name); mkdirSync(f); return f }
-    const cmdFor = f => block.split('/h/.claude/plugins/data/pl-mk/maps/o-r').join(f).replace('<map text>', 'MAP')
-    const name = `app%2Froutes%2Fposts.$id.tsx@${SC_A}.md`
-    const ok = mk('ok')
-    const r = spawnSync('bash', ['-c', cmdFor(ok)], { encoding: 'utf8' })
-    assert.equal(r.status, 0, r.stderr)
-    assert.equal(readFileSync(join(ok, name), 'utf8').trim(), 'MAP')
-    assert.deepEqual(readdirSync(ok).filter(n => n.includes('.scout.')), [])
-    const bin = mk('bin')
-    writeFileSync(join(bin, 'cat'), '#!/bin/bash\nhead -c 2\nexit 1\n', { mode: 0o755 })
-    const bad = mk('bad')
-    spawnSync('bash', ['-c', cmdFor(bad)], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } })
-    assert.ok(!existsSync(join(bad, name)))
-    assert.deepEqual(readdirSync(bad).filter(n => n.includes('.scout.')), [])
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
+    await hookedOut(only('C1', 'C2'), rsHook, { evals: true, pluginRoot: RS_P, scout: true })
+    assert.ok(schema.properties.coverage)
+    assert.equal('mapNote' in schema.properties, false)
+    assert.ok(![...calls, ...cleanupCalls].some(c => c.prompt.includes('File maps:') || c.prompt.includes('mapNote')))
+  } finally { evalsPlan.writer = () => null }
 })
-
-// Q854: the scout write block fails safe, the scouts' temp files are cleaned, and map names never start with a dot.
-const q854Block = async () => {
-  await scRun(only1('C1'), scHook({ first: [scL('src/a.js', SC_A, false)] }))
-  return scBlock(scCalls('scout:')[0].prompt)
-}
-const q854Run = async (edit, { env = {}, text = 'MAP' } = {}) => {
-  const block = await q854Block()
-  const dir = mkdtempSync(join(tmpdir(), 'q854-'))
+await check('RS-7 a code item with no scout argument starts the same agents in the same order', async () => {
+  evalsPlan.writer = (o, p, id) => withMeta(listOf(id))
   try {
-    const folder = join(dir, 'maps'); mkdirSync(folder)
-    const out = join(folder, `src%2Fa.js@${SC_A}.md`)
-    let cmd = block.split('/h/.claude/plugins/data/pl-mk/maps/o-r').join(folder).replace(/^<map text>\n/m, text === null ? '' : `${text}\n`)
-    cmd = edit(cmd, out)
-    const r = spawnSync('bash', ['-c', cmd], { encoding: 'utf8', env: { ...process.env, ...env } })
-    return { r, published: existsSync(out), temp: readdirSync(folder).filter(n => n.includes('.scout.')) }
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-}
-await check('Q854-a an edited heredoc end line publishes no map', async () => {
-  const x = await q854Run((cmd, out) => cmd.replace(/^(SCOUT_MAP_END_\w+)$/m, `$1 && mv "$t" '${out}' || { rm -f "$t"; exit 1; }`))
-  assert.equal(x.published, false)
-})
-await check('Q854-b a cat that fails after a partial write publishes no map and leaves no temp file', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'q854bin-'))
-  try {
-    writeFileSync(join(dir, 'cat'), '#!/bin/bash\nhead -c 2\nexit 1\n', { mode: 0o755 })
-    const x = await q854Run(c => c, { env: { PATH: `${dir}:${process.env.PATH}` } })
-    assert.equal(x.published, false)
-    assert.deepEqual(x.temp, [])
-    assert.notEqual(x.r.status, 0)
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-await check('Q854-c an empty map text publishes no map, leaves no temp file and exits non-zero', async () => {
-  const x = await q854Run(c => c, { text: null })
-  assert.equal(x.published, false)
-  assert.deepEqual(x.temp, [])
-  assert.notEqual(x.r.status, 0)
-})
-await check('Q854-d the unedited block publishes the map text and leaves no temp file', async () => {
-  const x = await q854Run(c => c)
-  assert.equal(x.r.status, 0, x.r.stderr)
-  assert.equal(x.published, true)
-  assert.deepEqual(x.temp, [])
-})
-const q854Prefix = c => /filemap\.sh --cleanup '[^']*' (\S+)`/.exec(c.prompt)[1]
-const q854Slow = scout => scHook({ first: [scL('src/a.js', SC_A, false), scL('src/b.js', scHex('b'), false)], scout })
-await check('Q854-e one cleanup call after the scouts of an item end, also when every scout fails', async () => {
-  const variants = [() => ({ written: true }), () => null, () => ({ written: false }), () => { throw new Error('scout died') }]
-  for (const v of variants) {
-    const seen = []
-    await scRun(only1('C1'), q854Slow(async (p, o) => {
-      seen.push(p)
-      await scTimeout(30)
-      scEvents.push(`done:${o.label}`)
-      return v()
-    }))
-    const cl = scClean('C1')
-    assert.equal(cl.length, 1)
-    assert.equal(cl[0].agentType, 'agent-pr-pipeline:pipeline-io')
-    assert.match(cl[0].prompt, /filemap\.sh --cleanup '\/h\/\.claude\/plugins\/data\/pl-mk\/maps\/o-r' [A-Za-z0-9-]+`/)
-    const prefix = q854Prefix(cl[0])
-    assert.ok(prefix.includes('C1') && prefix !== '.scout.')
-    const start = scAt(`start:${cl[0].label}`)
-    const labels = [...new Set(scEvents.filter(e => e.startsWith('done:scout:C1:')).map(e => e.slice(5)))]
-    assert.equal(labels.length, 2)
-    for (const l of labels) assert.ok(start > scEvents.lastIndexOf(`done:${l}`))
-    assert.equal(seen.length >= 2, true)
-    for (const p of seen) assert.ok(p.includes(`/.scout.${prefix}.XXXXXX)`))
-  }
-})
-await check('Q854-f the scout temp prefix differs for each item and each TMP, and repeats for the same item and TMP', async () => {
-  const hook = () => scHook({ first: id => [scL(`src/${id}.js`, SC_A, false)] })
-  const prefixes = async (ids, tmp) => {
-    await scRun(only(...ids), hook(), { tmp })
-    return Object.fromEntries(ids.map(id => [id, q854Prefix(scClean(id)[0])]))
-  }
-  const x1 = await prefixes(['C1', 'C2'], '/x')
-  assert.notEqual(x1.C1, x1.C2)
-  assert.ok(!scCalls('scout:C2:')[0].prompt.includes(`.scout.${x1.C1}.`))
-  const x2 = await prefixes(['C1'], '/x')
-  assert.equal(x2.C1, x1.C1)
-  const y = await prefixes(['C1'], '/y')
-  assert.notEqual(y.C1, x1.C1)
+    const out = await hookedOut(only('C1', 'C2'), rsHook, { evals: true, pluginRoot: RS_P })
+    assert.deepEqual(rsC1(), ['evals:C1', 'evalsarch:C1#1', 'implement:C1', 'io:C1#cichecks', 'io:C1#changed1', 'verify:C1#1', 'review:C1#1', 'arch:C1#1', 'docs:C1', 'open:C1', 'io:C1#overlap', 'botwait:C1', 'io:C1#botstatus', 'io:C1#endstatus', 'io:C1#endci', 'io:C1#gate', 'safety:C1#land'])
+    assert.ok(out.prs.every(x => x.ready === true))
+  } finally { evalsPlan.writer = () => null }
 })
