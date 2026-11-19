@@ -1,4 +1,4 @@
-07e62a03d19418bad785fec7627c624cc35a7c6c .claude-plugin/plugin.json
+011384dce108e9fe0ceb6360dbdbb64f2e68b421 .claude-plugin/plugin.json
 1da6c0450898e128817e23ef191cca4874b2afb6 agents/arch-reviewer.md
 584ffde3f28d6622f52ce8833095dabed0660d1f agents/bot-answerer.md
 8ff1d0cb8926c2085b59a5ab19f9b4745d917e99 agents/bot-waiter.md
@@ -8,7 +8,7 @@ f6b47f8e4a2e63856d34fa57791cf803564589ea agents/evals-writer.md
 d8f3ca1fb8bf9b86b123457824781ee307c6e184 agents/evaluator.md
 a1bc52ebbd0513d20ea2fd5a91f3fe3d2451a3c4 agents/feedback-redactor.md
 585862fc69191891f58aea645a062e7370c2a94d agents/fixer.md
-52209cec8260c96b424bae58650cbbd8c9c72d9f agents/goals-preflight.md
+ea28fb375c629d022798c7a042c3769ccc2a7ca9 agents/goals-preflight.md
 076e0d823461342f94c07167c46e29618504b43b agents/implementer.md
 c51e8f6f4bcfab3b949f489db00f45103a9029c6 agents/land-fixer.md
 25b0f581f16354fda115c114acbe3b999d0d078c agents/merge-safety.md
@@ -39,7 +39,7 @@ e0e2e324c059c2330d243afe4d57f483589e5c26 scripts/cleanup.sh
 0931b3b18882cd8a73f185a75162f67f7ef7f304 scripts/cloud-setup.sh
 d508219c1c08296e6ad22c490f3038340f293dac scripts/feedback-outbox.sh
 d07564b65d2e4ce9fbbba62aca6e338b1b5e6f5e scripts/file-feedback.sh
-6cb6478ed43b06603d82160134c6d9cadfcd61ec scripts/filemap.sh
+e8190538a716ea51f7edeac2e58f4df7953bd4e6 scripts/filemap.sh
 1a05e0393a8800ccc9b7beb29ce876f2ed56cad9 scripts/gate-files.sh
 370cc37a9cba0231d79835144ae2d98cd956cec0 scripts/io.sh
 8a899db3a8bf3b31f312b05e0e12b58c308e40c7 scripts/land-commits.sh
@@ -73,4 +73,4 @@ c88d84c0c8bec56464f43b659905df19ea7d3c3e templates/AGENTS-section.md
 da1165c50617506cd97855bf1c610e267359baf3 templates/goals.md
 8a65bfd89229a161d3145ee10463748798442d0c templates/pipeline.json
 6b0a2f86463e38249d69c80e7a82cec53b63f16e templates/plan.md
-4dc2ba499a14589f64eeb07812b1ece5e1dbf033 workflows/run-wave.js
+ac427d58dfb6452dd8f99945e7f05677941ad2e3 workflows/run-wave.js
