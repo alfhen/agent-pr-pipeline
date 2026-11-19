@@ -394,14 +394,14 @@ test('Q854 the cleanup removes only the temp files of the given prefix', () => {
   const keep = ['.scout.r1-C2.abc123', '.scout.r1-C10.abc123', '.scout.r2-C1.abc123', `src%2Fa.js@${hex}.md`, `%2Egithub%2Fx@${hex}.md`, `.scout.r1-C1.m@${hex}.md`, 'sub/.scout.r1-C1.abc123']
   touch(d, '.scout.r1-C1.abc123')
   for (const f of keep) touch(d, f)
-  mkdirSync(join(d, '.scout.r1-C1.dir'))
+  mkdirSync(join(d, '.scout.r1-C1.dir123'))
   const outside = join(t.dir, 'outside.txt')
   writeFileSync(outside, 'target')
-  symlinkSync(outside, join(d, '.scout.r1-C1.lnk'))
+  symlinkSync(outside, join(d, '.scout.r1-C1.lnk123'))
   const r = cleanup(t, d, 'r1-C1')
   assert.equal(r.status, 0, r.stderr)
   assert.ok(!existsSync(join(d, '.scout.r1-C1.abc123')))
-  for (const f of [...keep, '.scout.r1-C1.dir', '.scout.r1-C1.lnk']) assert.ok(existsSync(join(d, f)), f)
+  for (const f of [...keep, '.scout.r1-C1.dir123', '.scout.r1-C1.lnk123']) assert.ok(existsSync(join(d, f)), f)
   assert.equal(readFileSync(outside, 'utf8'), 'target')
 })
 
