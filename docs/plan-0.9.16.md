@@ -96,8 +96,8 @@ Build notes: the change in `verifyOutcome` is the line that builds `why` for `no
 
 ### Wave 2
 
-**EW The evals writer reads in batched calls and checks its own list first.** Sim anchor: the last case of the file at the time of the build.
-Touches: `workflows/run-wave.js` (`evalsPrompt`, its numbered steps), `agents/evals-writer.md` (one paragraph on batched reads, one on the self-check), `test/sim-pipeline.mjs` (one new block), `skills/pr-pipeline/SKILL.md` (one sentence in "### Driving cheaply").
+**EW The evals writer reads in batched calls, checks its own list first, and tests on real input.** Sim anchor: the last case of the file at the time of the build.
+Touches: `workflows/run-wave.js` (`evalsPrompt`, its numbered steps; `evalsRules`, one new rule), `agents/evals-writer.md` (one paragraph on batched reads, one on the self-check, one rule on real input), `test/sim-pipeline.mjs` (one new block), `skills/pr-pipeline/SKILL.md` (one sentence in "### Driving cheaply").
 
 1. The writer prompt tells the writer to read in few shell calls, with about 15 calls as the aim, and gives one example command that prints several files or line ranges in one call.
 2. The writer prompt has a step before the return: check the list against the rules for the list (the text of `evalsRules`, which the evals check also gets) and against each refusal reason below, and change the list before returning it. The reasons, by name:
@@ -109,12 +109,16 @@ Touches: `workflows/run-wave.js` (`evalsPrompt`, its numbered steps), `agents/ev
 3. The self-check step adds no agent call: the writer does the check in the same agent run, and the workflow starts no agent for it. (A first list that now passes can save the second writer and check calls, so the total count of an item can be lower.)
 4. (doc) `agents/evals-writer.md` says to read in batched calls and to check the list against the refusal reasons before returning it.
 5. (doc) "### Driving cheaply" of `skills/pr-pipeline/SKILL.md` says in one sentence that the cost of the evals writer grows with its number of shell calls.
+6. `evalsRules` has one new rule, so the writer and the evals check both get it: when the code of the entry reads a kind of file that a repo already holds (a plan, a doc, a config file, a workflow file, the output of a tool), at least one eval of kind behaviour or error path runs that code on a real file of that kind, copied from the default branch of the repo or named by its path there, and not only on a fixture the eval makes up. When no real file of that kind exists, the writer says so in `notes`, and the rule does not apply.
+7. (doc) `agents/evals-writer.md` states the rule of statement 6.
 
 ## Steps of the driving session
 
 1. After release 0.9.15 and the merge of this plan: run wave 1 (RS and BT), land them one at a time, then wave 2 (EW), land it.
 2. The version PR and release 0.9.16.
 3. The measure: the next build wave of the product repo runs on 0.9.16 with no `scout` argument. The driving session counts, from the transcripts, the shell calls of each evals writer and the share of first lists that the evals check sends back, and compares them with the product repo's 0.8.0 wave 1.
+
+Why statement 6: in 0.9.13 to 0.9.15, three faults passed every review and test and failed on the first real run: the file map script found no files in a real plan whose Touches list is on the title line; a Haiku scout broke the given write command; an eval list tested a docs change on made-up files and missed a broken line of the real doc. Each test used input that the agents made up. A test on one real file of the same kind would have found the first and the third.
 
 ## Not in this plan
 
