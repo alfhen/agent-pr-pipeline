@@ -37,6 +37,8 @@
       "Agent(agent-pr-pipeline:evaluator)",
       "Agent(feedback-redactor)",
       "Agent(agent-pr-pipeline:feedback-redactor)",
+      "Agent(scout)",
+      "Agent(agent-pr-pipeline:scout)",
       "Agent(fixer)",
       "Agent(agent-pr-pipeline:fixer)",
       "Agent(goals-preflight)",

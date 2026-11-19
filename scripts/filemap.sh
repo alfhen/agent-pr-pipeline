@@ -45,6 +45,10 @@ while IFS= read -r tok; do
   [ -n "$path" ] || continue
   case "$seen" in *$'\n'"$path"$'\n'*) continue ;; esac
   seen+="$path"$'\n'
+  entry=$(git -C "$clone" ls-tree HEAD -- "$path" 2>/dev/null) || continue
+  mode=${entry%% *}
+  # a symlink is a blob too, and the scout would read its target outside the clone
+  case "$mode" in 100644|100755) ;; *) continue ;; esac
   [ "$(git -C "$clone" cat-file -t "HEAD:$path" 2>/dev/null)" = blob ] || continue
   blob=$(git -C "$clone" rev-parse "HEAD:$path") || continue
   map="$cache/${path//\//%2F}@$blob.md"

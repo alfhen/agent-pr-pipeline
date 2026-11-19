@@ -2,7 +2,7 @@
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, symlinkSync, mkdtempSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -265,4 +265,22 @@ test('FM-16 cleanup.sh clones removes filemap-<id> for its id and keeps it for a
   assert.ok(existsSync(clone))
   assert.equal(clones('FM').trim(), `REMOVED ${realpathSync(T)}/filemap-FM`)
   assert.ok(!existsSync(clone))
+})
+
+test('FM-17 a tracked symlink on the Touches line gets no line, a normal file does', () => {
+  const plan = ['**FM Entry.**', 'Touches: `src/a.js`, `bin/run.sh`, `src/link.js`, `app/[slug]/page.tsx`.', ''].join('\n')
+  const lines = (t) => run(t).files.map((l) => l.file).sort()
+  const t = build({ extraMain: { 'plan.md': plan, 'src/a.js': 'a', 'bin/run.sh': '#!/bin/sh\n', 'app/[slug]/page.tsx': 'p' } })
+  const w = join(t.dir, 'work')
+  must(w, 'checkout', '-q', 'main')
+  chmodSync(join(w, 'bin/run.sh'), 0o755)
+  symlinkSync(join(t.dir, 'outside.txt'), join(w, 'src/link.js'))
+  must(w, 'add', '.'); must(w, 'commit', '-qm', 'link'); must(w, 'push', '-q', 'origin', 'main')
+  const r = run(t)
+  assert.equal(r.status, 0)
+  assert.match(must(t.clone, 'ls-tree', 'HEAD', '--', 'src/link.js'), /^120000 /)
+  assert.match(must(t.clone, 'ls-tree', 'HEAD', '--', 'bin/run.sh'), /^100755 /)
+  assert.deepEqual(r.files.map((l) => l.file).sort(), ['app/[slug]/page.tsx', 'bin/run.sh', 'src/a.js'])
+  const u = build({ extraMain: { 'plan.md': plan, 'src/a.js': 'a', 'bin/run.sh': '#!/bin/sh\n', 'app/[slug]/page.tsx': 'p', 'src/link.js': 'x' } })
+  assert.deepEqual(lines(u), ['app/[slug]/page.tsx', 'bin/run.sh', 'src/a.js', 'src/link.js'])
 })

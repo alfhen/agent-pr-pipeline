@@ -173,6 +173,7 @@ The harness gives every agent the last message of the user as a request at the t
 - `feedback`: `false` turns the end-of-run evaluation off. `feedbackRepo`: where feedback is filed (default `alfhen/agent-pr-pipeline`). The redactor runs only when `repo` differs from it.
 - `docs`: where the docs are, for example `["README.md", "docs/", "site/"]`. Without it the docs agent finds them. `docsBuild`: the command that builds the docs site, if any. `docsUpdate: false` turns the docs step off for the wave (or for one PR). `docsRounds`: rounds for the docs check (default 2). `breakCheck`: `false` turns the break check of step 2 off for the wave.
 - `evals`: `false` turns the evals writer off for the wave (step 1). `evalsRounds`: writer attempts in all when a refusal or the evals check asks for changes (default 3).
+- `scout`: `true` turns on the scout step for code PRs whose evals writer runs (default `false`, off). A Haiku scout writes a map of each file of the Touches line that has none, in the fixed maps folder `<CLAUDE_PLUGIN_DATA of the plugin>/maps/<owner>-<repo>` (the workflow builds it from `pluginRoot`, as `<config>/plugins/data/<plugin>-<marketplace>/maps/<owner>-<repo>`), and only the evals writer gets the map paths. A PR result then has the key `maps` with `files`, `written`, `missing` and `notes`.
 - `skills`: which skills each step's agent loads before it starts. See "Pair skills with steps" below. Default: none.
 - `kind`: `code` (default), `docs` or `plan`. Docs and plan PRs get a Sonnet reviewer at high effort instead of Opus. Plan PRs stop after `planRounds` (default 3); fix what is left by hand, then rerun with `skipImpl`.
 
@@ -211,6 +212,7 @@ Each step runs as one agent definition from the plugin. Its body holds the role'
 | `safety` | `merge-safety` | opus | high | Bash, Read, Glob, Grep |
 | `evaluate` | `evaluator` | sonnet | medium | Bash, Read, Glob, Grep |
 | `redact` | `feedback-redactor` | haiku | low | Read |
+| `scout` | `scout` | haiku | low | Bash, Read, Glob, Grep |
 
 The quick-brief `put` runs under the `brief` step, not `io`; override `brief` to change it.
 
@@ -257,6 +259,8 @@ Set the models of the steps with the `steps` argument. The defaults are cheap al
 ```
 
 Pass `docsUpdate: false` for an entry whose Touches line names its docs.
+
+Measure a wave with `scout: true` against the wave before it, in agent calls and tokens, before the scout becomes a default.
 
 ### Pair skills with steps
 
