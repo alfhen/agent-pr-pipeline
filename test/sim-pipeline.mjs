@@ -7208,6 +7208,7 @@ await check('RW-18 an answer run that throws keeps prNumber', async () => {
 // RS: the scout step is removed; an argument `scout` is ignored with one log line.
 const RS_P = '/h/.claude/plugins/cache/mk/pl/0.9.12'
 const RS_LOG = 'scout: removed in 0.9.16, ignored'
+// Answers the removed filemap and scout calls so the negative tests would see them if they came back.
 const rsHook = (p, o) => /filemap\.sh/.test(p) && !/--cleanup/.test(p) ? ioWrap(o.label, { exitCode: 0, output: JSON.stringify({ file: 'src/a.js', blob: 'a'.repeat(40), present: o.label.endsWith('#filemap2') }) }) : o.label.startsWith('scout:') ? { written: true } : undefined
 const rsC1 = () => calls.map(c => c.label).filter(l => l.split(':')[1].split('#')[0] === 'C1')
 await check('RS-1 with scout: true no scout agent and no file map read starts, and the result has no maps', async () => {
