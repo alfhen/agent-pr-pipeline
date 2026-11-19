@@ -2,7 +2,7 @@
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, symlinkSync, mkdtempSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { readFileSync, chmodSync, existsSync, mkdirSync, symlinkSync, mkdtempSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -329,4 +329,92 @@ test('FM-18 a title-line list wins over a later Touches: line; a title without o
   const t = build({ extraMain: { 'plan.md': TITLE_PLAN, '.github/workflows/release.yml': 'y', 'scripts/release.sh': 's', 'pre.js': 'p' } })
   assert.ok(!titleFiles(t, 'T12').includes('nob.js'))
   assert.deepEqual(titleFiles(t, 'NT'), ['a.js'])
+})
+
+const DOT_PATHS = ['.github/pipeline.json', '.env', 'app/routes/posts.$id.tsx', 'app/[slug]/page.tsx', 'src/.config/x.js', 'src/a.js']
+const dotPlan = ['**DT Dot entry.**', `Touches: ${DOT_PATHS.map((f) => '`' + f + '`').join(', ')}.`, ''].join('\n')
+const buildDot = () => build({ extraMain: { 'plan.md': dotPlan, ...Object.fromEntries(DOT_PATHS.map((f) => [f, f])) } })
+const mapKeyOfRunWave = (() => {
+  const line = readFileSync(join(root, 'workflows/run-wave.js'), 'utf8').split('\n').find((l) => l.startsWith('const mapKey = '))
+  return new Function(`${line}\nreturn mapKey`)()
+})()
+
+test('Q854 a path with a leading dot gets %2E in its map name, any other path keeps its name', () => {
+  const t = buildDot()
+  const r = run(t, { id: 'DT' })
+  assert.equal(r.status, 0, r.stderr)
+  const gh = r.files.find((l) => l.file === '.github/pipeline.json')
+  assert.equal(gh.map, `${t.cache}/%2Egithub%2Fpipeline.json@${gh.blob}.md`)
+  assert.equal(gh.present, false)
+  const src = r.files.find((l) => l.file === 'src/a.js')
+  assert.equal(src.map, `${t.cache}/src%2Fa.js@${src.blob}.md`)
+  writeFileSync(join(t.cache, `.github%2Fpipeline.json@${gh.blob}.md`), 'old')
+  assert.equal(run(t, { id: 'DT' }).files.find((l) => l.file === '.github/pipeline.json').present, false)
+  writeFileSync(gh.map, 'new')
+  assert.equal(run(t, { id: 'DT' }).files.find((l) => l.file === '.github/pipeline.json').present, true)
+})
+
+test('Q854 mapKey of run-wave.js and filemap.sh give the same map name, and none starts with a dot', () => {
+  const t = buildDot()
+  const r = run(t, { id: 'DT' })
+  assert.equal(r.files.length, DOT_PATHS.length)
+  for (const l of r.files) {
+    const name = l.map.slice(t.cache.length + 1)
+    assert.equal(name, `${mapKeyOfRunWave(l.file)}@${l.blob}.md`, l.file)
+    assert.ok(!name.startsWith('.'), name)
+  }
+  assert.ok(r.files.some((l) => l.map.endsWith(`/src%2F.config%2Fx.js@${l.blob}.md`)))
+})
+
+test('Q854 mapKey follows the escape rule for generated paths', () => {
+  const chars = 'abcXYZ019._$[]-'
+  let seed = 7
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n }
+  for (let i = 0; i < 500; i++) {
+    const segs = Array.from({ length: 1 + rnd(4) }, () => {
+      let seg = Array.from({ length: 1 + rnd(5) }, () => chars[rnd(chars.length)]).join('')
+      if (seg === '.' || seg === '..' || /^\.\.+$/.test(seg)) seg = 'x' + seg
+      return seg
+    })
+    if (rnd(2)) segs[0] = '.' + segs[0].replace(/^\.+/, '')
+    const p = segs.join('/')
+    const want = (p.startsWith('.') ? '%2E' + p.slice(1) : p).replace(/\//g, '%2F')
+    assert.equal(mapKeyOfRunWave(p), want, p)
+    assert.ok(!mapKeyOfRunWave(p).startsWith('.'))
+  }
+})
+
+const cleanup = (t, dir, prefix) => spawnSync('bash', [join(root, 'scripts/filemap.sh'), '--cleanup', dir, prefix], { encoding: 'utf8', env: { ...GIT_ENV, HOME: t.home } })
+const touch = (dir, name, text = 'x') => { mkdirSync(join(dir, name, '..'), { recursive: true }); writeFileSync(join(dir, name), text) }
+
+test('Q854 the cleanup removes only the temp files of the given prefix', () => {
+  const t = build()
+  const d = emptyDir(t, 'maps')
+  const hex = 'a'.repeat(40)
+  const keep = ['.scout.r1-C2.abc123', '.scout.r1-C10.abc123', '.scout.r2-C1.abc123', `src%2Fa.js@${hex}.md`, `%2Egithub%2Fx@${hex}.md`, `.scout.r1-C1.m@${hex}.md`, 'sub/.scout.r1-C1.abc123']
+  touch(d, '.scout.r1-C1.abc123')
+  for (const f of keep) touch(d, f)
+  mkdirSync(join(d, '.scout.r1-C1.dir123'))
+  const outside = join(t.dir, 'outside.txt')
+  writeFileSync(outside, 'target')
+  symlinkSync(outside, join(d, '.scout.r1-C1.lnk123'))
+  const r = cleanup(t, d, 'r1-C1')
+  assert.equal(r.status, 0, r.stderr)
+  assert.ok(!existsSync(join(d, '.scout.r1-C1.abc123')))
+  for (const f of [...keep, '.scout.r1-C1.dir123', '.scout.r1-C1.lnk123']) assert.ok(existsSync(join(d, f)), f)
+  assert.equal(readFileSync(outside, 'utf8'), 'target')
+})
+
+test('Q854 the cleanup refuses an empty or malformed prefix and deletes nothing', () => {
+  const t = build()
+  const d = emptyDir(t, 'maps')
+  const files = ['.scout.r1-C1.abc123', '.scout.r2-C2.abc123', `src%2Fa.js@${'b'.repeat(40)}.md`]
+  for (const f of files) touch(d, f)
+  for (const prefix of ['', '*', 'r1-C1/x', '../r1', '..', 'r1.C1']) {
+    const r = cleanup(t, d, prefix)
+    assert.notEqual(r.status, 0, JSON.stringify(prefix))
+    assert.deepEqual(readdirSync(d).sort(), [...files].sort(), JSON.stringify(prefix))
+  }
+  assert.equal(cleanup(t, d, 'r1-C1').status, 0)
+  assert.deepEqual(readdirSync(d).sort(), files.slice(1).sort())
 })
