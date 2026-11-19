@@ -1,7 +1,7 @@
 #!/bin/bash
 # usage: filemap.sh <owner/repo> <plan file> <entry id> <cache folder> <clone folder>
 # Prints one JSON line {"cache"} with the absolute cache folder, then for each file named in backticks on the Touches line
-# of the plan entry that exists at the head of a shallow clone of the default branch, one line {"file","blob","map","present"}.
+# of the plan entry (on its title line after Touches:, else on the first later line that starts with Touches:) that exists at the head of a shallow clone of the default branch, one line {"file","blob","map","present"}.
 # Tokens in backticks count also inside brackets; the workflow parser of the Touches line skips bracketed notes.
 # Writes only into the cache folder and the clone folder, and never deletes the clone folder (cleanup.sh clones does).
 # FILEMAP_REMOTE: a local path used in place of the GitHub URL, for tests.
@@ -30,7 +30,7 @@ fi
 [ -f "$clone/$plan" ] || fail "no plan file $plan"
 awk -v id="$id" 'index($0, "**" id " ") == 1 { found = 1 } END { exit !found }' "$clone/$plan" || fail "no entry $id"
 touches=$(awk -v id="$id" '
-  index($0, "**" id " ") == 1 { inside = 1; next }
+  index($0, "**" id " ") == 1 { i = index($0, "Touches:"); if (i) { print substr($0, i); exit } inside = 1; next }
   inside && (/^\*\*/ || /^#/) { exit }
   inside && /^Touches:/ { print; exit }
 ' "$clone/$plan")
