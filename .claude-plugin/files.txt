@@ -17,7 +17,6 @@ c792f28f20b39070b35b25a23eb15015310b57c2 agents/pr-opener.md
 a5f24e80dbccf0bf0809b991a22bf5e35bff4854 agents/product-reviewer.md
 c5645a0bf2ee36a34d39235dd2dfc13bc73f7405 agents/qa.md
 51e917a3e126607db1f0c922ab565219f4639fec agents/reviewer.md
-a2cbfd9c6d91502e2483c784fac00e4feb835edf agents/scout.md
 99d484c636c5f347cae5f3b4813fd27f23509cf1 agents/tester.md
 339414b8abcf0b101fb2165a01a6bd7ec4c7af87 agents/triager.md
 feb927b2800d65adc5c5e73d181e46e33f6242b9 agents/verifier.md
@@ -39,7 +38,6 @@ e0e2e324c059c2330d243afe4d57f483589e5c26 scripts/cleanup.sh
 0931b3b18882cd8a73f185a75162f67f7ef7f304 scripts/cloud-setup.sh
 d508219c1c08296e6ad22c490f3038340f293dac scripts/feedback-outbox.sh
 d07564b65d2e4ce9fbbba62aca6e338b1b5e6f5e scripts/file-feedback.sh
-376e9878632754f248f6631bba9ad4a3017a9432 scripts/filemap.sh
 1a05e0393a8800ccc9b7beb29ce876f2ed56cad9 scripts/gate-files.sh
 370cc37a9cba0231d79835144ae2d98cd956cec0 scripts/io.sh
 8a899db3a8bf3b31f312b05e0e12b58c308e40c7 scripts/land-commits.sh
