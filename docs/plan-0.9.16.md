@@ -140,7 +140,7 @@ Touches: `workflows/run-wave.js` (`evalsPrompt`, its numbered steps), `agents/ev
 
 - **Fewer calls can mean less reading.** A writer that batches its reads may still read the same text, which is fine, but a writer that reads less to meet the aim can miss a fact. Pass criterion 3 watches the refusals; a rise shows it.
 - **The self-check can grow the writer's output.** The step asks for a check, not a written report: the writer changes the list and says in `notes` only what it changed.
-- **BT trusts a file name the verifier gives.** Each use goes on the untested list, so a person merges the PR. The workflow checks that the file is an exact path of the changed list, that it matches the test pattern and that the PR does not add it. It cannot check that the eval's subject is really defined there. Statement 6 keeps the `breakWhy` in the result, so a person can see each use.
+- **BT trusts a file name the verifier gives.** Each use goes on the untested list, so a person merges the PR. The workflow checks that the file is an exact path of the changed list, that it matches the test pattern and that it is the eval's own test file. It cannot check that the eval's subject is really defined there. Statement 6 keeps the `breakWhy` in the result, so a person can see each use.
 - **RS removes a role file.** A session that has not reloaded is refused with `role files differ:`.
 
 ## Not verified
