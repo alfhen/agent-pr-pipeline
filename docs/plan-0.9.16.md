@@ -58,12 +58,15 @@ Merging this plan accepts the pick of each line. Say so before the merge to chan
 flowchart LR
   RS[RS remove the scouts] --> EW[EW cheaper evals writer]
   BT[BT break check and test files] --> EW
+  BT --> DF[DF dogfooding rules]
   EW --> V[Version PR and release 0.9.16]
+  DF --> V
+  V --> C[Canary item on 0.9.16]
 ```
 
-Summary: RS and BT in wave 1, in parallel; EW in wave 2; then the version PR.
+Summary: RS and BT in wave 1, in parallel; EW and DF in wave 2, in parallel; then the version PR and the canary run.
 
-Why two waves: RS removes a line of `evalsPrompt` and EW edits the steps of the same prompt, so they go one after the other. BT edits `verifyPrompt` and `verifyOutcome`, which RS and EW do not touch. RS and BT use different sim anchors in different parts of `test/sim-pipeline.mjs`.
+Why two waves: RS removes a line of `evalsPrompt` and EW edits the steps of the same prompt, so they go one after the other. DF edits `reviewPrompt`, `templates/plan.md` and Step 1 and Step 3 of SKILL.md, which EW does not touch; the SKILL.md sentence of EW is in the section Driving cheaply. BT edits `verifyPrompt` and `verifyOutcome`, which RS and EW do not touch. RS and BT use different sim anchors in different parts of `test/sim-pipeline.mjs`.
 
 ### Wave 1
 
@@ -96,8 +99,8 @@ Build notes: the change in `verifyOutcome` is the line that builds `why` for `no
 
 ### Wave 2
 
-**EW The evals writer reads in batched calls and checks its own list first.** Sim anchor: the last case of the file at the time of the build.
-Touches: `workflows/run-wave.js` (`evalsPrompt`, its numbered steps), `agents/evals-writer.md` (one paragraph on batched reads, one on the self-check), `test/sim-pipeline.mjs` (one new block), `skills/pr-pipeline/SKILL.md` (one sentence in "### Driving cheaply").
+**EW The evals writer reads in batched calls, checks its own list first, and tests on real input.** Sim anchor: the last case of the file at the time of the build.
+Touches: `workflows/run-wave.js` (`evalsPrompt`, its numbered steps; `evalsRules`, one new rule), `agents/evals-writer.md` (one paragraph on batched reads, one on the self-check, one rule on real input), `test/sim-pipeline.mjs` (one new block), `skills/pr-pipeline/SKILL.md` (one sentence in "### Driving cheaply").
 
 1. The writer prompt tells the writer to read in few shell calls, with about 15 calls as the aim, and gives one example command that prints several files or line ranges in one call.
 2. The writer prompt has a step before the return: check the list against the rules for the list (the text of `evalsRules`, which the evals check also gets) and against each refusal reason below, and change the list before returning it. The reasons, by name:
@@ -109,12 +112,28 @@ Touches: `workflows/run-wave.js` (`evalsPrompt`, its numbered steps), `agents/ev
 3. The self-check step adds no agent call: the writer does the check in the same agent run, and the workflow starts no agent for it. (A first list that now passes can save the second writer and check calls, so the total count of an item can be lower.)
 4. (doc) `agents/evals-writer.md` says to read in batched calls and to check the list against the refusal reasons before returning it.
 5. (doc) "### Driving cheaply" of `skills/pr-pipeline/SKILL.md` says in one sentence that the cost of the evals writer grows with its number of shell calls.
+6. `evalsRules` has one new rule, so the writer and the evals check both get it: when the code of the entry reads a kind of file that a repo already holds (a plan, a doc, a config file, a workflow file, the output of a tool), at least one eval of kind behaviour or error path runs that code on a real file of that kind, copied from the default branch of the repo or named by its path there, and not only on a fixture the eval makes up. When no real file of that kind exists, the writer says so in `notes`, and the rule does not apply.
+7. (doc) `agents/evals-writer.md` states the rule of statement 6.
+
+**DF Dogfooding: QA on real input for new scripts and steps, and a canary run after each release.** Sim anchor: the case `F659: the last verifier round decides tests only`, after the block of BT, so it does not depend on the block of EW in the same wave.
+Touches: `skills/pr-pipeline/SKILL.md` ("## Step 1: write the plan, then review the plan", one item of the plan-author checklist and one sentence in the paragraph on the rest of the plan review; "## Step 3: land and merge from the main session", the paragraph on `release.sh`, one paragraph on the canary run), `templates/plan.md` (the `QA:` line), `workflows/run-wave.js` (`reviewPrompt`, the part for a plan PR, one sentence), `test/sim-pipeline.mjs` (one new block).
+
+1. (doc) The plan-author checklist has one more item: an entry that adds or changes a script, a workflow step or a role agent has a **QA:** line, and that line runs the built thing on real input, read-only: a real file from the default branch of this repo or of a repo the pipeline runs on (for example a real plan file for a script that reads plans). The item says that made-up input alone is not enough for that QA line.
+2. (doc) The `QA:` line of `templates/plan.md` says the same in one sentence.
+3. For a plan PR, the review prompt tells the reviewer that an entry that adds or changes a script, a workflow step or a role agent and has no QA line on real input is a major finding. For a code PR the prompt does not have that sentence.
+4. (doc) Step 3 of `skills/pr-pipeline/SKILL.md` has a paragraph on the canary run: after a release and before any product repo moves to the new version, the main session runs one small real item of this repo (a quick fix or a docs entry) on the new version, with every option that the release added or changed turned on. A product repo moves only after the canary item is ready with no stop that the release caused. When it fails, a fix release comes first.
+5. A code PR whose plan entry has no QA line gets no QA agent, as today. (holds today; kind `regression`)
 
 ## Steps of the driving session
 
-1. After release 0.9.15 and the merge of this plan: run wave 1 (RS and BT), land them one at a time, then wave 2 (EW), land it.
+1. After release 0.9.15 and the merge of this plan: run wave 1 (RS and BT), land them one at a time, then wave 2 (EW and DF), land them one at a time.
 2. The version PR and release 0.9.16.
+2a. The canary run of DF statement 4, on 0.9.16: one small real item of this repo, with no `scout` argument (RS statement 2 checks the log line). The product repo moves to 0.9.16 only after it.
 3. The measure: the next build wave of the product repo runs on 0.9.16 with no `scout` argument. The driving session counts, from the transcripts, the shell calls of each evals writer and the share of first lists that the evals check sends back, and compares them with the product repo's 0.8.0 wave 1.
+
+Why DF: the same three faults were found only by the first real wave after a release. A QA agent that runs a new script on a real file, and one canary item after each release, run a new version on real work before a product repo does.
+
+Why statement 6: in 0.9.13 to 0.9.15, three faults passed every review and test and failed on the first real run: the file map script found no files in a real plan whose Touches list is on the title line; a Haiku scout broke the given write command; an eval list tested a docs change on made-up files and missed a broken line of the real doc. Each test used input that the agents made up. A test on one real file of the same kind would have found the first and the third.
 
 ## Not in this plan
 
@@ -126,15 +145,16 @@ Touches: `workflows/run-wave.js` (`evalsPrompt`, its numbered steps), `agents/ev
 
 ## Pass criteria
 
-1. The four per-PR criteria of iteration 1 hold for RS, BT and EW.
+1. The four per-PR criteria of iteration 1 hold for RS, BT, EW and DF.
 2. In the measured wave, the median number of shell calls of an evals writer agent is at most 20 (0.8.0 wave 1: about 30).
 3. In the measured wave, at most half of the first lists are sent back (0.8.0 wave 1: 6 of 8).
 4. In the measured wave, the mean weighted tokens of the evals writer per item is at least 25% lower than in 0.8.0 wave 1 (351k).
 5. No item of the measured wave stops on the break check of an eval whose subject is in a changed test file. When the measured wave has no such eval, this criterion is not measured, and the driving session says so; BT's sim block proves the outcome text, and only a real run can prove the verifier's answer (statement 1 of BT).
+6. The canary item of DF statement 4 runs on 0.9.16 before the product repo moves to it, and the driving session reports its result.
 
 ## Release
 
-- 0.9.16 is RS, BT and EW. The version PR merges without an outside review when it changes only the version, the release line of `agents/goals-preflight.md`, the release list and the file list.
+- 0.9.16 is RS, BT, EW and DF. The version PR merges without an outside review when it changes only the version, the release line of `agents/goals-preflight.md`, the release list and the file list.
 
 ## Flagged concerns
 
