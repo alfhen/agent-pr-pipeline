@@ -4,7 +4,17 @@
 # of the plan entry (on its title line after Touches:, else on the first later line that starts with Touches:) that exists at the head of a shallow clone of the default branch, one line {"file","blob","map","present"}.
 # Tokens in backticks count also inside brackets; the workflow parser of the Touches line skips bracketed notes.
 # Writes only into the cache folder and the clone folder, and never deletes the clone folder (cleanup.sh clones does).
+# usage: filemap.sh --cleanup <maps folder> <prefix>
+# Removes the regular files .scout.<prefix>.?????? directly in the folder (the temp files of the scouts of one run and item). The prefix must match [A-Za-z0-9-]+.
 # FILEMAP_REMOTE: a local path used in place of the GitHub URL, for tests.
+if [ "$1" = "--cleanup" ]; then
+  dir=$2; prefix=$3
+  [[ "$prefix" =~ ^[A-Za-z0-9-]+$ ]] || { echo "filemap: bad prefix" >&2; exit 2; }
+  case "$dir" in /*) ;; *) echo "filemap: maps folder must be absolute" >&2; exit 2 ;; esac
+  [ -d "$dir" ] || exit 0
+  find "$dir" -maxdepth 1 -type f -name ".scout.$prefix.??????" -delete
+  exit 0
+fi
 R=$1; plan=$2; id=$3; cache=$4; clone=$5
 [ -n "$clone" ] || { echo "usage: filemap.sh <owner/repo> <plan file> <entry id> <cache folder> <clone folder>" >&2; exit 2; }
 fail() { echo "filemap: $1" >&2; exit 1; }
@@ -51,7 +61,10 @@ while IFS= read -r tok; do
   case "$mode" in 100644|100755) ;; *) continue ;; esac
   [ "$(git -C "$clone" cat-file -t "HEAD:$path" 2>/dev/null)" = blob ] || continue
   blob=$(git -C "$clone" rev-parse "HEAD:$path") || continue
-  map="$cache/${path//\//%2F}@$blob.md"
+  key=${path//\//%2F}
+  # a leading dot would make a hidden map file
+  case "$path" in .*) key="%2E${key:1}" ;; esac
+  map="$cache/$key@$blob.md"
   present=false
   [ -s "$map" ] && present=true
   printf '{"file":"%s","blob":"%s","map":"%s","present":%s}\n' "$(json "$path")" "$blob" "$(json "$map")" "$present"

@@ -2075,7 +2075,8 @@ async function checkEvals(pr, list, meta, round, writerNotes, coverage, checked)
 
 const MAP_BLOB = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
 const mapFileOk = f => typeof f === 'string' && f !== '' && !f.startsWith('/') && !f.split('/').includes('..') && !/[\u0000-\u001f\u007f`\s]/.test(f)
-const mapKey = file => file.replace(/\//g, '%2F')
+// A leading dot would make a hidden map file, so the first dot of such a path is escaped.
+const mapKey = file => (file.startsWith('.') ? `%2E${file.slice(1)}` : file).replace(/\//g, '%2F')
 // The maps folder comes only from pluginRoot: <config>/plugins/cache/<marketplace>/<plugin>/<version> gives <config>/plugins/data/<plugin>-<marketplace>.
 const mapsFolder = () => {
   const m = /^(\/[^\u0000-\u001f\u007f`\s]*?)\/plugins\/cache\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)\/?$/.exec(PLUGIN_ROOT || '')
@@ -2099,14 +2100,18 @@ const readMapLines = output => {
   }
   return { lines, dropped }
 }
-const scoutPrompt = (clone, folder, file, path, blob) => `Task: write the map of one file of ${REPO}.
+// Per run (TMP) and per item, so the cleanup of one item never names the temp files of another item or run.
+const scoutPrefix = pr => `${cksum(TMP).replace(':', '-')}-${String(pr.id).replace(/[^A-Za-z0-9-]/g, '-')}`
+const scoutPrompt = (clone, folder, file, path, blob, prefix) => `Task: write the map of one file of ${REPO}.
 Clone folder: ${clone} (a clone of the default branch). Read only the file \`${file}\` there. Change no file of the clone.
 Map file: ${path}
 In the map, list each function or section of the file with its line range (first and last line) and a few words on what it holds. Keep the map short.
-Write the map to a temporary file made with \`mktemp\` in the folder of the map file, then run one \`mv\` of that temporary file to the map file. Run the whole block in the same Bash call, because a shell variable does not last to the next call. Replace the line <map text> with the map, and keep the other lines exactly as they are, because the names hold characters that a shell would change if they were not quoted:
-t=$(mktemp ${shq(folder)}/.scout.XXXXXX) && cat > "$t" <<'SCOUT_MAP_END_${blob.slice(0, 12)}' && mv "$t" ${shq(path)} || { rm -f "$t"; exit 1; }
+Write the map to a temporary file made with \`mktemp\` in the folder of the map file, then move that file to the map file with \`mv\` only when it is not empty. Run the whole block in the same Bash call, because a shell variable does not last to the next call. Replace the line <map text> with the map, and keep every other line exactly as it is, each on its own line, because the names hold characters that a shell would change if they were not quoted. Keep the end word alone on its line and never add a command to it:
+t=$(mktemp ${shq(folder)}/.scout.${prefix}.XXXXXX) || exit 1
+cat > "$t" <<'SCOUT_MAP_END_${blob.slice(0, 12)}' || { rm -f "$t"; exit 1; }
 <map text>
 SCOUT_MAP_END_${blob.slice(0, 12)}
+[ -s "$t" ] && mv "$t" ${shq(path)} || { rm -f "$t"; exit 1; }
 Write no other file.
 Return written true when the map file is in place.`
 const SCOUT = { type: 'object', properties: { written: { type: 'boolean' } } }
@@ -2137,6 +2142,7 @@ async function scoutStep(pr, raw) {
     const first = await read('filemap')
     if (first.failed) { maps.missing.push(first.failed); return }
     const waits = []
+    const prefix = scoutPrefix(pr)
     let n = 0
     for (const line of first.lines.filter(l => !l.present)) {
       n++
@@ -2145,12 +2151,16 @@ async function scoutStep(pr, raw) {
         const label = `scout:${pr.id}:${n}`
         const path = mapPath(folder, line)
         scoutState[key] = (async () => {
-          try { return !!await call('scout', pr, scoutPrompt(clone, folder, line.file, path, line.blob), label, { schema: SCOUT }) } catch (e) { return false }
+          try { return !!await call('scout', pr, scoutPrompt(clone, folder, line.file, path, line.blob, prefix), label, { schema: SCOUT }) } catch (e) { return false }
         })()
       }
       waits.push(scoutState[key])
     }
     const ended = await parallel(waits.map(w => () => w))
+    // A scout that edited the write block can leave a temp file; this runs also when every scout failed.
+    if (waits.length) {
+      try { await ioCall(pr, `io:${pr.id}#scoutclean`, 'filemap.sh', `--cleanup ${shq(folder)} ${prefix}`, { phase: 'Evals' }) } catch (e) { /* the maps stay correct without it */ }
+    }
     let last = first
     if (ended.some(Boolean)) {
       const second = await read('filemap2')

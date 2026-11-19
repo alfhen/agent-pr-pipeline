@@ -7242,7 +7242,15 @@ const scRunOut = async (prs, hook, extra = {}) => {
 }
 const scRun = async (prs, hook, extra) => Object.fromEntries((await scRunOut(prs, hook, extra)).prs.map(x => [x.id, x]))
 const scCalls = prefix => calls.filter(c => c.label.startsWith(prefix))
-const scFilemap = () => calls.filter(c => /io\.sh filemap\.sh/.test(c.prompt))
+const scFilemap = () => calls.filter(c => /io\.sh filemap\.sh (?!--cleanup)/.test(c.prompt))
+const scClean = id => calls.filter(c => c.label.startsWith(`io:${id}#`) && /io\.sh filemap\.sh --cleanup /.test(c.prompt))
+// The write block of a scout prompt: from the mktemp line to the line after the end word.
+const scBlock = prompt => {
+  const start = prompt.indexOf('t=$(mktemp')
+  const endTag = prompt.indexOf('\nSCOUT_MAP_END_', start)
+  const afterEnd = prompt.indexOf('\n', endTag + 1)
+  return prompt.slice(start, prompt.indexOf('\n', afterEnd + 1))
+}
 const scAt = label => scEvents.indexOf(label)
 const scEvalsPrompt = (id = 'C1') => calls.find(c => c.label === `evals:${id}`).prompt
 
@@ -7492,9 +7500,7 @@ await check('SC-R1-2 the scout command block, run in one bash call, makes the ma
   await scRun(only1('C1'), scHook({ first: [scL(file, SC_A, false)] }))
   const prompt = scCalls('scout:')[0].prompt
   assert.match(prompt, /one Bash call|single Bash call|same Bash call/i)
-  const start = prompt.indexOf('t=$(mktemp')
-  const endTag = prompt.indexOf('\nSCOUT_MAP_END_', start)
-  const block = prompt.slice(start, prompt.indexOf('\n', endTag + 1 + 'SCOUT_MAP_END_'.length) )
+  const block = scBlock(prompt)
   const dir = mkdtempSync(join(tmpdir(), 'scr12-'))
   try {
     const folder = join(dir, 'maps')
@@ -7514,9 +7520,7 @@ await check('SC-R3-1 the scout command moves the map into place only after cat s
   const file = 'app/routes/posts.$id.tsx'
   await scRun(only1('C1'), scHook({ first: [scL(file, SC_A, false)] }))
   const prompt = scCalls('scout:')[0].prompt
-  const start = prompt.indexOf('t=$(mktemp')
-  const endTag = prompt.indexOf('\nSCOUT_MAP_END_', start)
-  const block = prompt.slice(start, prompt.indexOf('\n', endTag + 1 + 'SCOUT_MAP_END_'.length))
+  const block = scBlock(prompt)
   assert.ok(/\bcat\b/.test(block))
   const dir = mkdtempSync(join(tmpdir(), 'scr31-'))
   try {
@@ -7537,4 +7541,92 @@ await check('SC-R3-1 the scout command moves the map into place only after cat s
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+// Q854: the scout write block fails safe, the scouts' temp files are cleaned, and map names never start with a dot.
+const q854Block = async () => {
+  await scRun(only1('C1'), scHook({ first: [scL('src/a.js', SC_A, false)] }))
+  return scBlock(scCalls('scout:')[0].prompt)
+}
+const q854Run = async (edit, { env = {}, text = 'MAP' } = {}) => {
+  const block = await q854Block()
+  const dir = mkdtempSync(join(tmpdir(), 'q854-'))
+  try {
+    const folder = join(dir, 'maps'); mkdirSync(folder)
+    const out = join(folder, `src%2Fa.js@${SC_A}.md`)
+    let cmd = block.split('/h/.claude/plugins/data/pl-mk/maps/o-r').join(folder).replace(/^<map text>\n/m, text === null ? '' : `${text}\n`)
+    cmd = edit(cmd, out)
+    const r = spawnSync('bash', ['-c', cmd], { encoding: 'utf8', env: { ...process.env, ...env } })
+    return { r, published: existsSync(out), temp: readdirSync(folder).filter(n => n.includes('.scout.')) }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+await check('Q854-a an edited heredoc end line publishes no map', async () => {
+  const x = await q854Run((cmd, out) => cmd.replace(/^(SCOUT_MAP_END_\w+)$/m, `$1 && mv "$t" '${out}' || { rm -f "$t"; exit 1; }`))
+  assert.equal(x.published, false)
+})
+await check('Q854-b a cat that fails after a partial write publishes no map and leaves no temp file', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'q854bin-'))
+  try {
+    writeFileSync(join(dir, 'cat'), '#!/bin/bash\nhead -c 2\nexit 1\n', { mode: 0o755 })
+    const x = await q854Run(c => c, { env: { PATH: `${dir}:${process.env.PATH}` } })
+    assert.equal(x.published, false)
+    assert.deepEqual(x.temp, [])
+    assert.notEqual(x.r.status, 0)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+await check('Q854-c an empty map text publishes no map, leaves no temp file and exits non-zero', async () => {
+  const x = await q854Run(c => c, { text: null })
+  assert.equal(x.published, false)
+  assert.deepEqual(x.temp, [])
+  assert.notEqual(x.r.status, 0)
+})
+await check('Q854-d the unedited block publishes the map text and leaves no temp file', async () => {
+  const x = await q854Run(c => c)
+  assert.equal(x.r.status, 0, x.r.stderr)
+  assert.equal(x.published, true)
+  assert.deepEqual(x.temp, [])
+})
+const q854Prefix = c => /filemap\.sh --cleanup '[^']*' (\S+)`/.exec(c.prompt)[1]
+const q854Slow = scout => scHook({ first: [scL('src/a.js', SC_A, false), scL('src/b.js', scHex('b'), false)], scout })
+await check('Q854-e one cleanup call after the scouts of an item end, also when every scout fails', async () => {
+  const variants = [() => ({ written: true }), () => null, () => ({ written: false }), () => { throw new Error('scout died') }]
+  for (const v of variants) {
+    const seen = []
+    await scRun(only1('C1'), q854Slow(async (p, o) => {
+      seen.push(p)
+      await scTimeout(30)
+      scEvents.push(`done:${o.label}`)
+      return v()
+    }))
+    const cl = scClean('C1')
+    assert.equal(cl.length, 1)
+    assert.equal(cl[0].agentType, 'agent-pr-pipeline:pipeline-io')
+    assert.match(cl[0].prompt, /filemap\.sh --cleanup '\/h\/\.claude\/plugins\/data\/pl-mk\/maps\/o-r' [A-Za-z0-9-]+`/)
+    const prefix = q854Prefix(cl[0])
+    assert.ok(prefix.includes('C1') && prefix !== '.scout.')
+    const start = scAt(`start:${cl[0].label}`)
+    const labels = [...new Set(scEvents.filter(e => e.startsWith('done:scout:C1:')).map(e => e.slice(5)))]
+    assert.equal(labels.length, 2)
+    for (const l of labels) assert.ok(start > scEvents.lastIndexOf(`done:${l}`))
+    assert.equal(seen.length >= 2, true)
+    for (const p of seen) assert.ok(p.includes(`/.scout.${prefix}.XXXXXX)`))
+  }
+})
+await check('Q854-f the scout temp prefix differs for each item and each TMP, and repeats for the same item and TMP', async () => {
+  const hook = () => scHook({ first: id => [scL(`src/${id}.js`, SC_A, false)] })
+  const prefixes = async (ids, tmp) => {
+    await scRun(only(...ids), hook(), { tmp })
+    return Object.fromEntries(ids.map(id => [id, q854Prefix(scClean(id)[0])]))
+  }
+  const x1 = await prefixes(['C1', 'C2'], '/x')
+  assert.notEqual(x1.C1, x1.C2)
+  assert.ok(!scCalls('scout:C2:')[0].prompt.includes(`.scout.${x1.C1}.`))
+  const x2 = await prefixes(['C1'], '/x')
+  assert.equal(x2.C1, x1.C1)
+  const y = await prefixes(['C1'], '/y')
+  assert.notEqual(y.C1, x1.C1)
 })
