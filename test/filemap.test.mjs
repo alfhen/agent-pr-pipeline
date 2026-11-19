@@ -284,3 +284,49 @@ test('FM-17 a tracked symlink on the Touches line gets no line, a normal file do
   const u = build({ extraMain: { 'plan.md': plan, 'src/a.js': 'a', 'bin/run.sh': '#!/bin/sh\n', 'app/[slug]/page.tsx': 'p', 'src/link.js': 'x' } })
   assert.deepEqual(lines(u), ['app/[slug]/page.tsx', 'bin/run.sh', 'src/a.js', 'src/link.js'])
 })
+
+const TITLE_PLAN = [
+  '**T12 Release from CI with trusted publishing (#1573).** Refs #1573 (`pre.js`). Round cap 4. Touches: new `.github/workflows/release.yml`; `scripts/release.sh` (the release script).',
+  'Touches: `nob.js`.',
+  '',
+  '**T14 Two marks.** Touches: `a.js`; see also Touches: `lib/b/c.js`.',
+  '',
+  '**T15 Bad tokens.** Touches: `a.js` (`runPRSteps`), `missing.js`, `lib`, `lib/`.',
+  '',
+  '**T16 Same title (#1).** Touches: `a.js`.',
+  '',
+  '**T17 Same title (#1).** Touches: `nob.js`.',
+  '',
+  '**NT No touches here `pre.js`.**',
+  'Some text.',
+  'Touches: `a.js`.',
+  ''
+].join('\n')
+const titleFiles = (t, id) => { const r = run(t, { id }); assert.equal(r.status, 0); noJsonOnStderr(r); return r.files.map((l) => l.file).sort() }
+
+test('FM-18 a Touches list on the title line is read, and a backticked path before it is not', () => {
+  const t = build({ extraMain: { 'plan.md': TITLE_PLAN, '.github/workflows/release.yml': 'y', 'scripts/release.sh': 's', 'pre.js': 'p' } })
+  assert.deepEqual(titleFiles(t, 'T12'), ['.github/workflows/release.yml', 'scripts/release.sh'])
+})
+
+test('FM-18 the paths start after the first Touches: of the title line', () => {
+  const t = build({ extraMain: { 'plan.md': TITLE_PLAN } })
+  assert.deepEqual(titleFiles(t, 'T14'), ['a.js', 'lib/b/c.js'])
+})
+
+test('FM-18 tokens after the title-line Touches: that are not files get no line', () => {
+  const t = build({ extraMain: { 'plan.md': TITLE_PLAN } })
+  assert.deepEqual(titleFiles(t, 'T15'), ['a.js'])
+})
+
+test('FM-18 an entry with another id and the same title gets its own list', () => {
+  const t = build({ extraMain: { 'plan.md': TITLE_PLAN } })
+  assert.deepEqual(titleFiles(t, 'T16'), ['a.js'])
+  assert.deepEqual(titleFiles(t, 'T17'), ['nob.js'])
+})
+
+test('FM-18 a title-line list wins over a later Touches: line; a title without one reads the later line', () => {
+  const t = build({ extraMain: { 'plan.md': TITLE_PLAN, '.github/workflows/release.yml': 'y', 'scripts/release.sh': 's', 'pre.js': 'p' } })
+  assert.ok(!titleFiles(t, 'T12').includes('nob.js'))
+  assert.deepEqual(titleFiles(t, 'NT'), ['a.js'])
+})
