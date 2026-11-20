@@ -728,10 +728,23 @@ test('gate: a failing read prints the text of gh from stderr in the brackets', (
   assert.match(r.out, /GATE ERROR #7: cannot list the changed files \(.*Server Error \(HTTP 500\)\)/)
 })
 
+const loggedMktemp = (dir) => {
+  const wrap = join(dir, 'wrap'); mkdirSync(wrap)
+  const log = join(dir, 'mktemp.log')
+  writeFileSync(join(wrap, 'mktemp'), '#!/bin/bash\np=$(PATH="$REAL_PATH" mktemp "$@") || exit $?\necho "$p" >> "$MKTEMP_LOG"\necho "$p"\n')
+  chmodSync(join(wrap, 'mktemp'), 0o755)
+  return { log, env: { PATH: `${wrap}:${process.env.PATH}`, REAL_PATH: process.env.PATH, MKTEMP_LOG: log } }
+}
+const assertTempRemoved = (log) => {
+  const made = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : []
+  assert.ok(made.length > 0, 'the script made no temp file')
+  for (const p of made) assert.equal(existsSync(p), false, p)
+}
+
 test('gate: the temp file for stderr is removed after a normal and an error exit', () => {
   for (const files of ['clean', null]) {
-    const s = setup({ files }); const tmp = join(s.dir, 'tmp'); mkdirSync(tmp)
-    run(s, 'gate-files.sh', ['o/r', '7'], { TMPDIR: tmp })
-    assert.deepEqual(readdirSync(tmp), [])
+    const s = setup({ files }); const m = loggedMktemp(s.dir)
+    run(s, 'gate-files.sh', ['o/r', '7'], m.env)
+    assertTempRemoved(m.log)
   }
 })

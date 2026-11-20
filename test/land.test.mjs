@@ -501,10 +501,23 @@ test('land: a hint on the read of the settings does not change a known flake tha
   assert.equal(reruns(b).length, 1)
 })
 
+const loggedMktemp = (dir) => {
+  const wrap = join(dir, 'wrap'); mkdirSync(wrap)
+  const log = join(dir, 'mktemp.log')
+  writeFileSync(join(wrap, 'mktemp'), '#!/bin/bash\np=$(PATH="$REAL_PATH" mktemp "$@") || exit $?\necho "$p" >> "$MKTEMP_LOG"\necho "$p"\n')
+  chmodSync(join(wrap, 'mktemp'), 0o755)
+  return { log, env: { PATH: `${wrap}:${process.env.PATH}`, REAL_PATH: process.env.PATH, MKTEMP_LOG: log } }
+}
+const assertTempRemoved = (log) => {
+  const made = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : []
+  assert.ok(made.length > 0, 'the script made no temp file')
+  for (const p of made) assert.equal(existsSync(p), false, p)
+}
+
 test('land: the temp file for stderr is removed after a normal and a LAND FIX exit', () => {
   for (const checks of [[[passed('e2e')]], [[failed('lint', 56)]]]) {
-    const s = landSetup({ checks }); const tmp = join(s.dir, 'tmp'); mkdirSync(tmp)
-    run(s, 'land-wave.sh', ['o/r', `7:${SHA}`], { TMPDIR: tmp })
-    assert.deepEqual(readdirSync(tmp), [])
+    const s = landSetup({ checks }); const m = loggedMktemp(s.dir)
+    run(s, 'land-wave.sh', ['o/r', `7:${SHA}`], m.env)
+    assertTempRemoved(m.log)
   }
 })

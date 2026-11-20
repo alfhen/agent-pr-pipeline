@@ -190,10 +190,23 @@ test('a failing read prints the stderr text and the stdout text of gh in the bra
   assert.match(r.lines[0], /\(HTTP 401\)\)$/)
 })
 
+const loggedMktemp = (dir) => {
+  const wrap = join(dir, 'wrap'); mkdirSync(wrap)
+  const log = join(dir, 'mktemp.log')
+  writeFileSync(join(wrap, 'mktemp'), '#!/bin/bash\np=$(PATH="$REAL_PATH" mktemp "$@") || exit $?\necho "$p" >> "$MKTEMP_LOG"\necho "$p"\n')
+  chmodSync(join(wrap, 'mktemp'), 0o755)
+  return { log, env: { PATH: `${wrap}:${process.env.PATH}`, REAL_PATH: process.env.PATH, MKTEMP_LOG: log } }
+}
+const assertTempRemoved = (log) => {
+  const made = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : []
+  assert.ok(made.length > 0, 'the script made no temp file')
+  for (const p of made) assert.equal(existsSync(p), false, p)
+}
+
 test('the temp file for stderr is removed after OK and after CHECK FAILED', () => {
   for (const latest of ['v0.5.1', null]) {
-    const s = setup({ pluginVersion: '0.5.1', latest }); const tmp = join(s.dir, 'tmp'); mkdirSync(tmp)
-    run(s, '0.5.1', { TMPDIR: tmp })
-    assert.deepEqual(readdirSync(tmp), [])
+    const s = setup({ pluginVersion: '0.5.1', latest }); const m = loggedMktemp(s.dir)
+    run(s, '0.5.1', m.env)
+    assertTempRemoved(m.log)
   }
 })
