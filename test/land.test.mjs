@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync, rmSync, cpSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, copyFileSync, chmodSync, rmSync, cpSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -482,4 +482,29 @@ test('SKILL.md: Step 3 says to run the same land command again and the table nam
   assert.ok(row.startsWith('|') && !row.startsWith('| `approved=[]`'), row)
   assert.match(row, /merged at/)
   assert.match(row, /closed, not merged/)
+})
+
+test('land: a hint with a 404 on the settings read is still no settings file', () => {
+  const s = landSetup({ checks: [[failed('e2e')]] })
+  rmSync(join(s.fx, `${CONTENTS}@ref=refs__heads__main.json`))
+  const r = run(s, 'land-wave.sh', ['o/r', `7:${SHA}`], { FAKE_GH_HINT: 'pipeline.json' })
+  assert.equal(r.code, 3, r.out)
+  assert.match(r.out, /LAND FIX #7 .*failing=\[e2e\]/)
+  assert.equal(reruns(r).length, 0)
+})
+
+test('land: a hint on the read of the settings does not change a known flake that passes after one rerun', () => {
+  const checks = [[failed('e2e')], [failed('e2e')], [passed('e2e')]]
+  const a = land(landSetup({ checks }))
+  const b = run(landSetup({ checks }), 'land-wave.sh', ['o/r', `7:${SHA}`], { FAKE_GH_HINT: 'pipeline.json' })
+  assert.equal(b.code, a.code, b.out)
+  assert.equal(reruns(b).length, 1)
+})
+
+test('land: the temp file for stderr is removed after a normal and a LAND FIX exit', () => {
+  for (const checks of [[[passed('e2e')]], [[failed('lint', 56)]]]) {
+    const s = landSetup({ checks }); const tmp = join(s.dir, 'tmp'); mkdirSync(tmp)
+    run(s, 'land-wave.sh', ['o/r', `7:${SHA}`], { TMPDIR: tmp })
+    assert.deepEqual(readdirSync(tmp), [])
+  }
 })

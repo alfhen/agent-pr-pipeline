@@ -62,14 +62,16 @@ wait_rerun_started() {
   done
   return 1
 }
+errf=$(mktemp) || { echo "STOP: cannot make a temporary file"; exit 5; }
+trap 'rm -f "$errf"' EXIT
 # Prints the run ids to rerun when every failing check is a known flake, else nothing. The list is read from
 # the default branch, never from the PR head, so a PR cannot add its own failing check to it. Any doubt means no rerun.
 flake_runs() {
   local base settings flakes
   base=$(gh api "repos/$R" --jq .default_branch 2>/dev/null) || return 0
-  settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=refs/heads/$base" 2>&1)
+  settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=refs/heads/$base" 2>"$errf")
   if [ $? -ne 0 ]; then
-    case $settings in
+    case "$settings $(cat "$errf")" in
       *"HTTP 404"*) settings=$(cat "$here/../templates/pipeline.json" 2>/dev/null) || return 0 ;;
       *) return 0 ;;
     esac

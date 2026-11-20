@@ -47,13 +47,14 @@ const setup = (over = {}) => {
   return { dir, bin, fx, log: join(dir, 'log'), settings: o.settings }
 }
 
-const run = (s, script, args) => {
-  const env = { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log, PIPELINE_TEST_FAST: '1' }
+const run = (s, script, args, extra = {}) => {
+  const env = { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log, PIPELINE_TEST_FAST: '1', ...extra }
   const r = spawnSync('bash', [join(root, 'scripts', script), ...args], { env, encoding: 'utf8' })
   const log = existsSync(s.log) ? readFileSync(s.log, 'utf8').split('\n').filter(Boolean) : []
   return { code: r.status, out: r.stdout + r.stderr, log }
 }
 const release = (s, ...flags) => run(s, 'release.sh', [...flags, 'o/r', '0.3.0'])
+const releaseWith = (s, extra, ...flags) => run(s, 'release.sh', [...flags, 'o/r', '0.3.0'], extra)
 const writes = (r) => r.log.filter((l) => /^(POST|PUT|PATCH|DELETE) /.test(l))
 
 const refused = (r, text) => {
@@ -433,4 +434,41 @@ test('release: another repo never reads releases.txt', () => {
   const r = release(setup())
   assert.equal(r.code, 0, r.out)
   assert.equal(r.log.filter((l) => /releases\.txt/.test(l)).length, 0)
+})
+
+const HINT = { FAKE_GH_HINT: ' ' }
+
+test('release: a hint on the stderr of every gh call does not change the dry run', () => {
+  const a = releaseWith(setup(), {}, '--dry-run')
+  const b = releaseWith(setup(), HINT, '--dry-run')
+  assert.equal(a.code, 0, a.out)
+  assert.equal(b.code, 0, b.out)
+  assert.equal(b.out, a.out)
+  assert.doesNotMatch(b.out, /cannot go on/)
+})
+
+test('release: a hint with a 404 on the settings read still refuses with autoRelease not true', () => {
+  const s = setup()
+  put(s.fx, `${P}__contents__.github__pipeline.json.GET.error`, 'fake-gh: no fixture (HTTP 404)')
+  refused(releaseWith(s, HINT), /MISSING: autoRelease is not true/)
+})
+
+test('release: a failing read prints the stderr text and the stdout text of gh in the brackets', () => {
+  const s = setup()
+  const bin = join(s.dir, 'bad'); mkdirSync(bin)
+  writeFileSync(join(bin, 'gh'), '#!/bin/bash\necho \'{"message":"Bad credentials"}\'\necho "gh: Bad credentials (HTTP 401)" >&2\nexit 1\n')
+  chmodSync(join(bin, 'gh'), 0o755)
+  const r = run({ ...s, bin }, 'release.sh', ['--dry-run', 'o/r', '0.3.0'])
+  assert.equal(r.code, 1, r.out)
+  assert.match(r.out, /^release\.sh: cannot go on: cannot read the default branch \(.*"Bad credentials".*\)/m)
+  assert.match(r.out, /\(.*\(HTTP 401\)\)/)
+})
+
+test('release: the temp file for stderr is removed after a normal and a refused run', () => {
+  for (const settings of [{ autoRelease: true }, null]) {
+    const s = setup(); const tmp = join(s.dir, 'tmp'); mkdirSync(tmp)
+    if (!settings) put(s.fx, `${P}__commits__main.GET.error`, 'fake-gh: server error (HTTP 500)')
+    run(s, 'release.sh', ['--dry-run', 'o/r', '0.3.0'], { TMPDIR: tmp })
+    assert.deepEqual(readdirSync(tmp), [])
+  }
 })

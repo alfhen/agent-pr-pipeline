@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, chmodSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, copyFileSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -28,8 +28,8 @@ const setup = ({ pluginVersion, latest }) => {
   return { dir, bin, fx, plugin, installs, log: join(dir, 'log') }
 }
 
-const run = (s, running) => {
-  const env = { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log }
+const run = (s, running, extra = {}) => {
+  const env = { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log, ...extra }
   const r = spawnSync('bash', [join(s.plugin, 'scripts/plugin-version.sh'), running], { env, encoding: 'utf8' })
   const log = existsSync(s.log) ? readFileSync(s.log, 'utf8').split('\n').filter(Boolean) : []
   const lines = (r.stdout + r.stderr).split('\n').filter(Boolean)
@@ -160,4 +160,40 @@ test('the proxy 403 with a failed raw read is CHECK FAILED', () => {
   const r = run(proxy('0.7.0', PROXY_403, null), '0.7.0')
   assert.equal(r.code, 3)
   assert.match(r.lines[0], /^CHECK FAILED cannot read the version on main/)
+})
+
+const HINT = { FAKE_GH_HINT: ' ' }
+
+test('a hint on the stderr of gh does not change OK or WARN', () => {
+  for (const [plugin, running, want] of [['0.5.1', '0.5.1', ['OK']], ['0.5.1', '0.5.0', null]]) {
+    const a = run(setup({ pluginVersion: plugin, latest: 'v0.5.1' }), running)
+    const b = run(setup({ pluginVersion: plugin, latest: 'v0.5.1' }), running, HINT)
+    assert.equal(b.code, 0)
+    assert.deepEqual(b.lines, a.lines)
+    if (want) assert.deepEqual(b.lines, want)
+    else assert.match(b.lines[0], /^WARN plugin 0\.5\.0 \(running\)/)
+  }
+})
+
+test('a hint with the proxy 403 is still the cloud case', () => {
+  const r = run(proxy('0.7.0', PROXY_403, '0.8.0'), '0.7.0', HINT)
+  assert.equal(r.code, 0)
+  assert.match(r.lines[0], /^WARN plugin 0\.7\.0 \(running\) is older than the latest version on main 0\.8\.0/)
+})
+
+test('a failing read prints the stderr text and the stdout text of gh in the brackets', () => {
+  const s = setup({ pluginVersion: '0.5.1', latest: 'v0.5.1' })
+  writeFileSync(join(s.bin, 'gh'), '#!/bin/bash\necho \'{"message":"Bad credentials"}\'\necho "gh: Bad credentials (HTTP 401)" >&2\nexit 1\n')
+  const r = run(s, '0.5.1')
+  assert.equal(r.code, 3)
+  assert.match(r.lines[0], /^CHECK FAILED cannot read the latest release of alfhen\/agent-pr-pipeline \(.*"Bad credentials".*\)/)
+  assert.match(r.lines[0], /\(HTTP 401\)\)$/)
+})
+
+test('the temp file for stderr is removed after OK and after CHECK FAILED', () => {
+  for (const latest of ['v0.5.1', null]) {
+    const s = setup({ pluginVersion: '0.5.1', latest }); const tmp = join(s.dir, 'tmp'); mkdirSync(tmp)
+    run(s, '0.5.1', { TMPDIR: tmp })
+    assert.deepEqual(readdirSync(tmp), [])
+  }
 })

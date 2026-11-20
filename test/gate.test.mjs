@@ -682,3 +682,56 @@ test('gate --ci-checks (E03a-9): a bad value or an unreadable file exits 3', () 
   assert.equal(b.code, 3)
   assert.match(b.out, /GATE ERROR/)
 })
+
+const HINT = { FAKE_GH_HINT: ' ' }
+const HINT_LINES = /^(hint: |    gh event|  - See)/
+const realFiles = (s) => copyFileSync(join(root, 'test/fixtures/pulls-files-real.json'), join(s.fx, `${PULL}__files.1.json`))
+
+test('gate: a hint on the stderr of gh does not change the result on the real answer of pulls/<n>/files', () => {
+  const plain = setup({ files: null }); realFiles(plain)
+  const hinted = setup({ files: null }); realFiles(hinted)
+  const a = run(plain, 'gate-files.sh', ['o/r', '7'])
+  const b = run(hinted, 'gate-files.sh', ['o/r', '7'], HINT)
+  assert.equal(b.code, a.code)
+  assert.equal(b.out.split('\n').filter((l) => !HINT_LINES.test(l)).join('\n'), a.out)
+  assert.doesNotMatch(b.out, /GATE ERROR/)
+})
+
+test('gate: a hint on the stderr of gh does not change a clean or a gated result', () => {
+  for (const [files, code, re] of [['clean', 0, /not gated/], ['gated', 1, /GATED #7: scripts\/merge-pr\.sh/]]) {
+    const r = run(setup({ files }), 'gate-files.sh', ['o/r', '7'], HINT)
+    assert.equal(r.code, code, r.out)
+    assert.match(r.out, re)
+    assert.doesNotMatch(r.out, /GATE ERROR/)
+  }
+})
+
+test('gate: a hint with a 404 on the settings read is still no settings file', () => {
+  const r = run(setup({ settings: 'missing' }), 'gate-files.sh', ['o/r', '7'], HINT)
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /not gated/)
+})
+
+test('gate: the --changed form lists the files with a hint on stderr', () => {
+  const s = setup({ files: null })
+  put(s.fx, `${P}__compare__main...feat.json`, { files: [{ filename: 'a.txt' }] })
+  const r = run(s, 'gate-files.sh', ['o/r', '--changed', 'feat'], HINT)
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /CHANGED \["a\.txt"\]/)
+})
+
+test('gate: a failing read prints the text of gh from stderr in the brackets', () => {
+  const s = setup({ files: null })
+  put(s.fx, `${PULL}__files.GET.error`, 'gh: Server Error (HTTP 500)')
+  const r = run(s, 'gate-files.sh', ['o/r', '7'])
+  assert.equal(r.code, 3, r.out)
+  assert.match(r.out, /GATE ERROR #7: cannot list the changed files \(.*Server Error \(HTTP 500\)\)/)
+})
+
+test('gate: the temp file for stderr is removed after a normal and an error exit', () => {
+  for (const files of ['clean', null]) {
+    const s = setup({ files }); const tmp = join(s.dir, 'tmp'); mkdirSync(tmp)
+    run(s, 'gate-files.sh', ['o/r', '7'], { TMPDIR: tmp })
+    assert.deepEqual(readdirSync(tmp), [])
+  }
+})
