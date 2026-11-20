@@ -7332,3 +7332,90 @@ await check('RS-7 a code item with no scout argument starts the same agents in t
     assert.ok(out.prs.every(x => x.ready === true))
   } finally { evalsPlan.writer = () => null }
 })
+
+const ew16Prompt = async (label = 'evals:C1', ...args) => {
+  await evalsRun([C1PR], () => withMeta(listOf('C1')), ...args)
+  return calls.find(c => c.label === label).prompt
+}
+const ew16Task = p => p.slice(0, p.indexOf('Rules for the list'))
+const ew16Step = p => {
+  const t = ew16Task(p)
+  const m = [...t.matchAll(/^\d+\. [^\n]*/gm)].find(x => /refusal reason/i.test(x[0]))
+  assert.ok(m, 'no self-check step')
+  const rest = t.slice(m.index + 1)
+  const n = rest.search(/\n\d+\. /)
+  return t.slice(m.index, n < 0 ? t.length : m.index + 1 + n)
+}
+
+await check('EW16-1 the evals writer prompt aims at about 15 shell calls and gives a batched example', async () => {
+  const t = ew16Task(await ew16Prompt())
+  assert.match(t, /\b15\b[^\n.]*\bcalls\b|\bcalls\b[^\n.]*\b15\b/i)
+  assert.doesNotMatch(t, /(at most|no more than|maximum of|up to) 15/i)
+  const cmds = [...t.matchAll(/`([^`]+)`/g)].map(m => m[1])
+  assert.ok(cmds.some(c => (c.match(/\b[\w./-]+\.(js|md|mjs|json)\b/g) || []).length >= 2 || (c.match(/\d+,\d+p/g) || []).length >= 2), 'no batched example command')
+})
+
+await check('EW16-2 the evals writer prompt has a numbered self-check step before the rules', async () => {
+  const p = await ew16Prompt()
+  const step = ew16Step(p)
+  assert.ok(p.indexOf(step) < p.indexOf('Rules for the list'))
+  assert.match(step, /^\d+\. /)
+  assert.match(step, /rules for the list/i)
+  assert.match(step, /refusal reason/i)
+  assert.match(step, /(change|fix) the list/i)
+  const q = calls.find(c => c.label === 'evalsarch:C1#1').prompt
+  assert.equal(rulesOf(p), rulesOf(q))
+})
+
+await check('EW16-3 the self-check step names the five refusal reasons', async () => {
+  const s = ew16Step(await ew16Prompt())
+  assert.match(s, /no eval/i); assert.match(s, /Acceptance/i); assert.match(s, /QA/i)
+  assert.match(s, /grep -F/i); assert.match(s, /backslash/i); assert.match(s, /skipped/i)
+  assert.match(s, /more than one thing/i)
+  assert.match(s, /first assert|assert[^.]*first/i)
+  assert.match(s, /contradict/i)
+})
+
+await check('EW16-4 the writer prompt and the check prompt still say a step after the build needs no eval', async () => {
+  const p = await ew16Prompt()
+  assert.match(p, /names only a step after the build[^\n]*gets no item/)
+  assert.match(calls.find(c => c.label === 'evalsarch:C1#1').prompt, /needs no eval and is not a gap/)
+})
+
+await check('EW16-5 the self-check starts no agent', async () => {
+  let n = 0
+  await evalsRun([C1PR], () => withMeta(listOf('C1')), () => (++n === 1 ? { verdict: 'needs-change', notes: 'gap' } : okCheck()))
+  assert.deepEqual(evalLabels('C1').filter(l => /^evals/.test(l)), ['evals:C1', 'evalsarch:C1#1', 'evals:C1#w2', 'evalsarch:C1#2'])
+  assert.ok(calls.find(c => c.label === 'evals:C1#w2').prompt.includes('sent back: the reviewers found gaps: architecture: gap'))
+  const x = await evalsRun([C1PR], () => withMeta(listOf('C1')), okCheck)
+  assert.deepEqual(evalLabels('C1').filter(l => /^evals/.test(l)), ['evals:C1', 'evalsarch:C1#1'])
+  const l = evalLabels('C1')
+  assert.deepEqual(l.slice(l.indexOf('evals:C1') + 1, l.indexOf('implement:C1')), ['evalsarch:C1#1'])
+  assert.ok(!evalsStop(x.C1))
+})
+
+await check('EW16-6 agents/evals-writer.md says to batch reads and to check against the refusal reasons', async () => {
+  const t = readFileSync('agents/evals-writer.md', 'utf8')
+  assert.match(t, /batch\w*[^\n.]*calls|calls[^\n.]*batch/i)
+  assert.ok(t.split(/\n\n/).some(x => /refusal reasons?/i.test(x) && /before (you )?return/i.test(x)))
+})
+
+await check('EW16-7 Driving cheaply says the evals writer cost grows with its shell calls', async () => {
+  const t = readFileSync('skills/pr-pipeline/SKILL.md', 'utf8')
+  const i = t.indexOf('### Driving cheaply')
+  const sec = t.slice(i, t.indexOf('\n### ', i + 5))
+  assert.ok(sec.split(/(?<=\.)\s/).some(x => /evals writer[^.]*shell calls|shell calls[^.]*evals writer/i.test(x) && /cost/i.test(x)))
+})
+
+await check('EW16-8 evalsRules has one real-input rule that the writer and both checks get', async () => {
+  await evalsRun([C1PR], () => withMeta(listOf('C1')), okCheck, { productReview: 'all' })
+  const lines = rulesOf(calls.find(c => c.label === 'evals:C1').prompt).split('\n').filter(l => l.startsWith('- ') && /real file/i.test(l))
+  assert.equal(lines.length, 1)
+  for (const re of [/plan/, /config/, /workflow/, /output of a tool/, /behaviour, error path or regression/, /default branch/, /fixture/, /notes/, /does not apply/]) assert.match(lines[0], re)
+  for (const label of ['evalsarch:C1#1', 'evalsproduct:C1#1']) assert.ok(calls.find(c => c.label === label).prompt.includes(lines[0]), label)
+})
+
+await check('EW16-9 agents/evals-writer.md states the real-input rule', async () => {
+  const t = readFileSync('agents/evals-writer.md', 'utf8')
+  assert.ok(t.split(/\n/).some(x => /real file/i.test(x) && /default branch/.test(x) && /behaviour/.test(x) && /error path/.test(x) && /notes/.test(x)))
+})

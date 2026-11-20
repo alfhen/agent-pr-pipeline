@@ -248,6 +248,8 @@ Start a fresh main session for each plan. Keep the state in the plan and in a lo
 
 A wake-up after the cache has run out, 5 minutes after the last call, writes the whole conversation to the cache again. Land the PRs of a wave with as few commands and wake-ups as possible.
 
+The cost of the evals writer grows with its number of shell calls, so its prompt asks for batched reads.
+
 Give a lookup in a big file to a subagent. Read big files by line ranges, never in full.
 
 Set the models of the steps with the `steps` argument. The defaults are cheap already. The one override that is not a default is the example:
