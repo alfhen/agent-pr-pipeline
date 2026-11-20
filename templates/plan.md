@@ -78,7 +78,7 @@ Evals:
 
 Regression test: <the unit and e2e tests, with fixture inputs>.
 Acceptance: <the command that passes>, and <the test> fails on the old code because <reason>.
-QA: <optional. What a person would try by hand: commands, inputs, combinations with existing options. Leave it out for refactors and internal changes.>
+QA: <optional. What a person would try by hand: commands, inputs, combinations with existing options. Leave it out for refactors and internal changes. For a script, a workflow step or a role agent, the QA line runs the built thing read-only on real input, such as a real file from the default branch, and made-up input alone is not enough.>
 
 ### Wave 2
 

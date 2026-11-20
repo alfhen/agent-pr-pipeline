@@ -108,6 +108,7 @@ Plan-author checklist. Check it before the plan goes to review; the plan review 
 6. Name the gated paths each entry touches.
 7. Give each code entry a Round cap and an Evals table, and an `Algorithm: yes` line when it adds or changes an algorithm.
 8. Put each new test block after the helpers its cases need: a test block must come after the helper definitions, and an eval check names only helpers defined before it.
+9. Give each entry that adds or changes a script, a workflow step or a role agent a QA line that runs it read-only on a real file from a default branch (of this repo or of a repo the pipeline runs on). The item says that made-up input alone is not enough.
 
 Triage before planning when the input is a pile of issues: give each read-only agent a group of issues, ask it to check each one against the code (not the title), and return still-valid, size, milestone and reasons. Some "bugs" turn out to be fixed already, and some "nits" turn out to be real bugs.
 
@@ -119,7 +120,7 @@ Run the plan itself through the pipeline with `skipImpl: true` and `kind: "plan"
 - **escalate:** the plan stops with `needs human: product` and one question. Product scope is the person's call, never an agent's. Typical catches: a second interface next to the main one (an MCP server on a CLI tool), a hosted service, a new audience, polish no goal asks for.
 After the person decides, rerun with `productDecision` set; if the decision changes the goals, update the goals document first.
 
-For the rest of the plan review, the reviewer checks that claims about the code are true, Touches lines are complete and name the part of a shared file, no two entries of one wave edit the same part, acceptance tests can fail, each Acceptance line can be met under the plan's decisions (a line that says a test or file "passes unchanged" while a decision changes a limit, name or default that it hard-codes is a blocker, and the fix is to edit the plan), each issue an entry closes is fully settled by that entry alone (an entry that closes an issue it fixes only in part is a blocker or major), and the scope matches the goal. Plans usually need several rounds.
+For the rest of the plan review, the reviewer checks that claims about the code are true, Touches lines are complete and name the part of a shared file, no two entries of one wave edit the same part, acceptance tests can fail, each Acceptance line can be met under the plan's decisions (a line that says a test or file "passes unchanged" while a decision changes a limit, name or default that it hard-codes is a blocker, and the fix is to edit the plan), each issue an entry closes is fully settled by that entry alone (an entry that closes an issue it fixes only in part is a blocker or major), and the scope matches the goal. The reviewer ranks an entry that adds or changes a script, a workflow step or a role agent and has no QA line on real input as a major. Plans usually need several rounds.
 
 ## Step 2: run one wave
 
@@ -310,6 +311,8 @@ After the last wave has landed and the default branch is green, the main session
 - in the plugin's own repo, the first line of `.claude-plugin/releases.txt` at that sha is `v<version>`. The version PR of each release adds the new tag on top of that file and drops the oldest, so the file holds at most 3 tags.
 
 When the repo has no tag yet it always refuses with "no tag yet: the first release needs the maintainer", because commits from before the merge records would ship unchecked. `--dry-run` prints each check and the release it would make, and calls no write endpoint. Otherwise it prints what is missing and stops. It also stops when it cannot read the plugin's repo name. The pipeline never runs a publish command: the repo's CI publishes when the release is made.
+
+Canary run. After a release and before any product repo moves to the new version, the main session runs one small real item of this repo (a quick fix or a docs entry) on the new version, with every option that the release added or changed turned on. A product repo moves only after that item is ready with no stop that the release caused. When it fails, a fix release comes first.
 
 ## When things go wrong
 
