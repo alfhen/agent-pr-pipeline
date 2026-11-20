@@ -781,7 +781,7 @@ const evalsRules = pr => `Rules for the list (the writer and the evals check use
 - For each rule of the entry that selects by an identity (a login, an App, a name, an owner), one eval has a fixture in which only that identity differs, and it expects that the code does not count it.
 - An eval of kind \`regression\` holds its expected result in the test. A test that compares with the default branch and is skipped when the default branch already has the change is refused.
 - A check that names a helper of a test file must be able to run at the place where the entry puts the new test: the helper is defined before that place.
-- When the code of the entry reads a kind of file that the repo already holds (a plan, a doc, a config file, a workflow file, the output of a tool), at least one eval of kind behaviour or error path runs that code on a real file of that kind, copied from the default branch or named by its path there, and not only on a fixture the eval makes up. When no real file of that kind exists, say so in notes, and this rule does not apply.`
+- When the code of the entry reads a kind of file that the repo already holds (a plan, a doc, a config file, a workflow file, the output of a tool), at least one eval of kind behaviour, error path or regression runs that code on a real file of that kind, copied from the default branch or named by its path there, and not only on a fixture the eval makes up. When no real file of that kind exists, say so in notes, and this rule does not apply.`
 
 const evalsPrompt = (pr, attempt, last) => `${ctx(pr)}
 

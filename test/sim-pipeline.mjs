@@ -7338,7 +7338,7 @@ await check('EW16-8 evalsRules has one real-input rule that the writer and both 
   await evalsRun([C1PR], () => withMeta(listOf('C1')), okCheck, { productReview: 'all' })
   const lines = rulesOf(calls.find(c => c.label === 'evals:C1').prompt).split('\n').filter(l => l.startsWith('- ') && /real file/i.test(l))
   assert.equal(lines.length, 1)
-  for (const re of [/plan/, /config/, /workflow/, /output of a tool/, /behaviour or error path/, /default branch/, /fixture/, /notes/, /does not apply/]) assert.match(lines[0], re)
+  for (const re of [/plan/, /config/, /workflow/, /output of a tool/, /behaviour, error path or regression/, /default branch/, /fixture/, /notes/, /does not apply/]) assert.match(lines[0], re)
   for (const label of ['evalsarch:C1#1', 'evalsproduct:C1#1']) assert.ok(calls.find(c => c.label === label).prompt.includes(lines[0]), label)
 })
 
