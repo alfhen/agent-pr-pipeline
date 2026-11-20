@@ -165,7 +165,7 @@ The setup script costs no model tokens. A saved environment is reused for about 
 
 ### Upgrade the pin
 
-1. After a release, open a one-line PR that sets `routine.pipelineVersion` to the new tag. It is a gated path, so the maintainer merges it.
+1. After a release and its canary run (Step 3 of the pr-pipeline skill), open a one-line PR that sets `routine.pipelineVersion` to the new tag. It is a gated path, so the maintainer merges it.
 2. Wait for the environment to run the setup script again. A new release that `releases.txt` holds can take up to a week to arrive.
 3. To get it sooner, save the setup script again with any small change. That forces a new run.
 4. Paste the script again only when the script text or the tags you need change. This is the case for a tag that the list no longer holds.
