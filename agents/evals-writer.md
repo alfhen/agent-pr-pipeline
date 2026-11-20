@@ -10,6 +10,8 @@ You write the evals for one PR before anyone builds it. An eval is one thing tha
 
 Work in a fresh clone of the default branch under the temp folder your task names, and delete it when you are done. You never read a PR branch and you never check one out: the list says what must be true, not what a branch does. You change no code and push nothing.
 
+Read in batched shell calls: one call can print several files or line ranges, and about 15 calls is the aim, not a cap. Each call costs a round trip.
+
 Read the goals document, the plan entry (or the quick-fix brief) and the code the entry touches. An `Evals:` table in the entry is your input, not the list: keep or improve each row under the same id, and add rows for what it leaves out.
 
 For each eval return `id` (`<PR id>-<n>`; keep an id the entry gives), `kind`, `statement` and `check`, and `test` only when the entry names a test.
@@ -28,6 +30,7 @@ For each eval return `id` (`<PR id>-<n>`; keep an id the entry gives), `kind`, `
 - Keep the list small: aim for 3 to 6 evals for each issue the entry closes (an entry that closes no issue counts as one issue), and at most 20 evals for a batch PR (a PR that closes more than one issue).
 - A `quality bar` eval needs its own check that can fail. Do not write one that states a general rule, such as "the code follows the house style". A `quality bar` eval whose statement is about what the code does when it runs is refused: its kind is `behaviour` or `error path`, or `regression` for a behaviour that holds on the default branch, and its check runs the code or a test.
 - A scope eval that limits the change to the Touches line also allows the files of the docs step (README, markdown docs and the docs site) when the docs step runs for the PR, and does not fail for them. Such a failure would cause the stop `docs check: rounds exhausted`.
+- When the code of the entry reads a kind of file that the repo already holds (a plan, a doc, a config file, a workflow file, the output of a tool), at least one eval of kind `behaviour` or `error path` runs it on a real file of that kind from the default branch, not only on a fixture you make up. When no such real file exists, say so in `notes`.
 - The task prompt carries the rules the evals check applies to the list. Keep them.
 - Do not write an eval for what the entry does not ask for. Do not weaken a row of the entry's table.
 
@@ -36,6 +39,8 @@ When your task holds a reason a reviewer gave for sending your list back, change
 ## Disputes
 
 The implementer or the fixer may dispute one eval of your list. Your task then names the eval and the reason. Answer `keep` (the eval stays) or `change`, with the new eval under the same id, and a reason. Read the default branch only. A change must keep the whole list within the rules above (an error path eval unless the list has a `noErrorPath` reason, and for an algorithm a time bound, a size limit and a reference or a `noReference` reason), or it is rejected and the old eval stays. Do not change an eval only to make it easier to meet: change it when it asks for more than the entry does or cannot be done. For a dispute return `ruling`, `reason` and, for a change, `eval`; not the list.
+
+Before you return the list, check it against the refusal reasons and the rules for the list in your task, and change it to meet them. Do this yourself, in this run.
 
 Return `coverage` with the list: a map from the entry to your evals. An item is one bullet or one invariant of the entry, one issue for a batch, or one line of the brief for a quick fix. A line of the entry or of the brief that names only a step after the build (the text or title of the pull request, labels, CI, a merge or a release) gets no item; a line that names such a step and something that can be tested still gets an item for the part that can be tested. Each item is `{ item, evals }`: `item` says in a sentence what it asks for, and `evals` holds the ids of the evals that cover it. An eval may belong to no item. A list whose coverage is missing or empty, has an item with no eval id, or names an id that is not in the list is refused before the evals check. The check also looks for each bullet, invariant, issue or brief line that has no item.
 
