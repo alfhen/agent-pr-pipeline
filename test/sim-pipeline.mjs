@@ -3439,6 +3439,7 @@ await check('Q871 the pin upgrade waits for the canary run and the QA line keeps
   const leave = dfSentences(qa[0]).filter(x => /\b[Ll]eave\b[^.]*\bout\b/.test(x))
   assert.equal(leave.length, 1)
   assert.ok(dfHas(leave[0], [/refactor/, /internal/, /script/, /workflow step/, /role agent/, /\bno\b/]))
+  assert.ok(dfSentences(qa[0]).some(x => dfHas(x, [/script/, /real (input|file)/, /read-only/])))
   for (const l of [step1[0], bullet[0], qa[0]]) assert.doesNotMatch(l, /\u2014/)
 })
 const btStep = async () => {
