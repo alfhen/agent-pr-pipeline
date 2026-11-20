@@ -20,19 +20,23 @@
 # AGENTS.md, CLAUDE.md and CLAUDE.local.md (at any depth, in any letter case) and docs/goals.md, and in the plugin's own repo (plugin-repo.sh) also the plugin's code folders.
 # The gates come from .github/pipeline.json on the default branch, or from templates/pipeline.json when the repo has no settings file. Both filename and previous_filename count.
 R=$1; pr=$2; scope=
+errf=$(mktemp) || { echo "GATE ERROR: cannot make a temporary file"; exit 3; }
+trap 'rm -f "$errf"' EXIT
+# gh writes hints on stderr when it succeeds, so stderr is read only to explain a failure.
+why() { local t="$1 $(cat "$errf")"; t=${t# }; echo "${t% }"; }
 if [ "$pr" = "--head" ]; then
   [ -n "$3" ] || { echo "usage: gate-files.sh <owner/repo> --head <branch>"; exit 2; }
-  sha=$(gh api "repos/$R/branches/$3" --jq .commit.sha 2>&1) || { echo "cannot read the branch head ($sha)"; exit 1; }
+  sha=$(gh api "repos/$R/branches/$3" --jq .commit.sha 2>"$errf") || { echo "cannot read the branch head ($(why "$sha"))"; exit 1; }
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "unexpected branch head: $sha"; exit 1; }
   echo "HEAD $sha"; exit 0
 fi
 if [ "$pr" = "--ci-checks" ]; then
-  branch=$(gh api "repos/$R" --jq .default_branch 2>&1) || { echo "GATE ERROR: cannot read the default branch ($branch)"; exit 3; }
-  settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=refs/heads/$branch" 2>&1)
+  branch=$(gh api "repos/$R" --jq .default_branch 2>"$errf") || { echo "GATE ERROR: cannot read the default branch ($(why "$branch"))"; exit 3; }
+  settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=refs/heads/$branch" 2>"$errf")
   if [ $? -ne 0 ]; then
-    case $settings in
+    case "$settings $(cat "$errf")" in
       *"HTTP 404"*) echo 'CICHECKS ["ci"]'; exit 0 ;;
-      *) echo "GATE ERROR: cannot read .github/pipeline.json ($settings)"; exit 3 ;;
+      *) echo "GATE ERROR: cannot read .github/pipeline.json ($(why "$settings"))"; exit 3 ;;
     esac
   fi
   names=$(jq -c 'if has("ciChecks") | not then ["ci"] elif (.ciChecks | type) == "array" and all(.ciChecks[]; type == "string") then .ciChecks else error("ciChecks") end' <<<"$settings" 2>/dev/null) \
@@ -42,9 +46,9 @@ fi
 if [ "$pr" = "--same" ]; then
   [ -n "$3" ] && [ -n "$4" ] || { echo "usage: gate-files.sh <owner/repo> --same <sha> <branch>"; exit 2; }
   [[ "$3" =~ ^[0-9a-f]{40}$ ]] || { echo "not a sha: $3"; exit 1; }
-  sha=$(gh api "repos/$R/branches/$4" --jq .commit.sha 2>&1) || { echo "cannot read the branch head ($sha)"; exit 1; }
+  sha=$(gh api "repos/$R/branches/$4" --jq .commit.sha 2>"$errf") || { echo "cannot read the branch head ($(why "$sha"))"; exit 1; }
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "unexpected branch head: $sha"; exit 1; }
-  cmp=$(gh api "repos/$R/compare/$3...$sha" --jq '[.status, (if (.files | type) == "array" then (.files | length | tostring) else "nofiles" end), (.files | length > 299)] | @tsv' 2>&1) || { echo "cannot compare ($cmp)"; exit 1; }
+  cmp=$(gh api "repos/$R/compare/$3...$sha" --jq '[.status, (if (.files | type) == "array" then (.files | length | tostring) else "nofiles" end), (.files | length > 299)] | @tsv' 2>"$errf") || { echo "cannot compare ($(why "$cmp"))"; exit 1; }
   case $cmp in
     identical$'\t'0$'\t'false|ahead$'\t'0$'\t'false) ;;
     *) echo "branch tree differs from $3 ($cmp)"; exit 1 ;;
@@ -59,14 +63,14 @@ here=$(dirname "$0")
 gated() { echo "GATED #$pr: $*"; exit 1; }
 err() { echo "GATE ERROR #$pr: $*"; exit 3; }
 
-branch=$(gh api "repos/$R" --jq .default_branch 2>&1) || err "cannot read the default branch ($branch)"
+branch=$(gh api "repos/$R" --jq .default_branch 2>"$errf") || err "cannot read the default branch ($(why "$branch"))"
 if [ -n "$scope" ]; then
-  pages=$(gh api --paginate --slurp "repos/$R/compare/$branch...$scope?per_page=100" 2>&1) || err "cannot compare the branch ($pages)"
+  pages=$(gh api --paginate --slurp "repos/$R/compare/$branch...$scope?per_page=100" 2>"$errf") || err "cannot compare the branch ($(why "$pages"))"
   list=$(jq -c 'if all(.[]; type == "object") then [.[] | .files // [] | .[]] else error("pages") end' <<<"$pages" 2>/dev/null) \
     || err "unexpected answer for the branch files"
   [ "$(jq length <<<"$list")" -lt 300 ] || err "300 changed files or more, the list may be cut"
 else
-  pages=$(gh api --paginate --slurp "repos/$R/pulls/$pr/files?per_page=100" 2>&1) || err "cannot list the changed files ($pages)"
+  pages=$(gh api --paginate --slurp "repos/$R/pulls/$pr/files?per_page=100" 2>"$errf") || err "cannot list the changed files ($(why "$pages"))"
   list=$(jq -c 'if all(.[]; type == "array") then add // [] else error("pages") end' <<<"$pages" 2>/dev/null) \
     || err "unexpected answer for the changed files"
   [ "$(jq length <<<"$list")" -lt 3000 ] || err "3000 changed files or more, the list may be cut"
@@ -91,11 +95,11 @@ if [ -n "$scope" ]; then
   free=$(matches "$scopefloor" i free) || err "cannot match the changed files"
   echo "SCOPE $free"; exit 0
 fi
-settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=refs/heads/$branch" 2>&1)
+settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=refs/heads/$branch" 2>"$errf")
 if [ $? -ne 0 ]; then
-  case $settings in
+  case "$settings $(cat "$errf")" in
     *"HTTP 404"*) settings=$(cat "$here/../templates/pipeline.json" 2>/dev/null) || err "no settings file and no template" ;;
-    *) err "cannot read .github/pipeline.json ($settings)" ;;
+    *) err "cannot read .github/pipeline.json ($(why "$settings"))" ;;
   esac
 fi
 gates=$(jq -c 'if (.gates | type) == "array" and all(.gates[]; type == "string") then .gates else error("gates") end' <<<"$settings" 2>/dev/null) \

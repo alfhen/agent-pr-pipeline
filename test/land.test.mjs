@@ -483,3 +483,41 @@ test('SKILL.md: Step 3 says to run the same land command again and the table nam
   assert.match(row, /merged at/)
   assert.match(row, /closed, not merged/)
 })
+
+test('land: a hint with a 404 on the settings read is still no settings file', () => {
+  const s = landSetup({ checks: [[failed('e2e')]] })
+  rmSync(join(s.fx, `${CONTENTS}@ref=refs__heads__main.json`))
+  const r = run(s, 'land-wave.sh', ['o/r', `7:${SHA}`], { FAKE_GH_HINT: 'pipeline.json' })
+  assert.equal(r.code, 3, r.out)
+  assert.match(r.out, /LAND FIX #7 .*failing=\[e2e\]/)
+  assert.equal(reruns(r).length, 0)
+})
+
+test('land: a hint on the read of the settings does not change a known flake that passes after one rerun', () => {
+  const checks = [[failed('e2e')], [failed('e2e')], [passed('e2e')]]
+  const a = land(landSetup({ checks }))
+  const b = run(landSetup({ checks }), 'land-wave.sh', ['o/r', `7:${SHA}`], { FAKE_GH_HINT: 'pipeline.json' })
+  assert.equal(b.code, a.code, b.out)
+  assert.equal(reruns(b).length, 1)
+})
+
+const loggedMktemp = (dir) => {
+  const wrap = join(dir, 'wrap'); mkdirSync(wrap)
+  const log = join(dir, 'mktemp.log')
+  writeFileSync(join(wrap, 'mktemp'), '#!/bin/bash\np=$(PATH="$REAL_PATH" mktemp "$@") || exit $?\necho "$p" >> "$MKTEMP_LOG"\necho "$p"\n')
+  chmodSync(join(wrap, 'mktemp'), 0o755)
+  return { log, env: { PATH: `${wrap}:${process.env.PATH}`, REAL_PATH: process.env.PATH, MKTEMP_LOG: log } }
+}
+const assertTempRemoved = (log) => {
+  const made = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : []
+  assert.ok(made.length > 0, 'the script made no temp file')
+  for (const p of made) assert.equal(existsSync(p), false, p)
+}
+
+test('land: the temp file for stderr is removed after a normal and a LAND FIX exit', () => {
+  for (const checks of [[[passed('e2e')]], [[failed('lint', 56)]]]) {
+    const s = landSetup({ checks }); const m = loggedMktemp(s.dir)
+    run(s, 'land-wave.sh', ['o/r', `7:${SHA}`], m.env)
+    assertTempRemoved(m.log)
+  }
+})

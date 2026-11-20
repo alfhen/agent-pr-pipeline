@@ -17,26 +17,30 @@ missing=()
 ok() { echo "ok: $*"; }
 miss() { echo "MISSING: $*"; missing+=("$*"); }
 stop() { echo "release.sh: cannot go on: $*"; exit 1; }
-is404() { [[ "$1" == *"HTTP 404"* ]]; }
+errf=$(mktemp) || { echo "release.sh: cannot go on: cannot make a temporary file"; exit 1; }
+trap 'rm -f "$errf"' EXIT
+# gh writes hints on stderr when it succeeds, so stderr is read only to explain a failure.
+why() { local t="$1 $(cat "$errf")"; t=${t# }; echo "${t% }"; }
+is404() { [[ "$1 $(cat "$errf")" == *"HTTP 404"* ]]; }
 
-branch=$(gh api "repos/$R" --jq .default_branch 2>&1) || stop "cannot read the default branch ($branch)"
-sha=$(gh api "repos/$R/commits/$branch" --jq .sha 2>&1) || stop "cannot read the head of $branch ($sha)"
-user=$(gh api user --jq .login 2>&1) || stop "cannot read GET /user ($user)"
+branch=$(gh api "repos/$R" --jq .default_branch 2>"$errf") || stop "cannot read the default branch ($(why "$branch"))"
+sha=$(gh api "repos/$R/commits/$branch" --jq .sha 2>"$errf") || stop "cannot read the head of $branch ($(why "$sha"))"
+user=$(gh api user --jq .login 2>"$errf") || stop "cannot read GET /user ($(why "$user"))"
 
-settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=refs/heads/$branch" 2>&1)
+settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=refs/heads/$branch" 2>"$errf")
 if [ $? -ne 0 ]; then
-  is404 "$settings" && settings='{}' || stop "cannot read .github/pipeline.json ($settings)"
+  is404 "$settings" && settings='{}' || stop "cannot read .github/pipeline.json ($(why "$settings"))"
 fi
 if [ "$(jq -r '.autoRelease == true' <<<"$settings" 2>/dev/null)" = true ]; then ok "autoRelease is true on $branch"
 else miss "autoRelease is not true in .github/pipeline.json on $branch"; fi
 
 trigger=""
-wf=$(gh api "repos/$R/contents/.github/workflows?ref=refs/heads/$branch" 2>&1)
+wf=$(gh api "repos/$R/contents/.github/workflows?ref=refs/heads/$branch" 2>"$errf")
 if [ $? -ne 0 ]; then
-  is404 "$wf" || stop "cannot list the workflows ($wf)"
+  is404 "$wf" || stop "cannot list the workflows ($(why "$wf"))"
 else
   for path in $(jq -r '.[] | select(.name | test("\\.ya?ml$")) | .path' <<<"$wf"); do
-    text=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/$path?ref=refs/heads/$branch" 2>&1) || stop "cannot read $path ($text)"
+    text=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/$path?ref=refs/heads/$branch" 2>"$errf") || stop "cannot read $path ($(why "$text"))"
     # Only a release key directly under on, or a tags key directly under push, counts: a workflow_dispatch input may share the name.
     if awk '
       /^(on|"on"|true):/ { f = 1; base = -1; top = ""; rest = $0; sub(/^[^:]*:[ \t]*/, "", rest)
@@ -53,16 +57,16 @@ else
 fi
 if [ -n "$trigger" ]; then ok "$trigger runs on a release or a tag"; else miss "no workflow has a release or tag trigger"; fi
 
-pages=$(gh api --paginate "repos/$R/commits/$sha/check-runs?per_page=100" 2>&1) || stop "cannot read the check runs of ${sha:0:7} ($pages)"
+pages=$(gh api --paginate "repos/$R/commits/$sha/check-runs?per_page=100" 2>"$errf") || stop "cannot read the check runs of ${sha:0:7} ($(why "$pages"))"
 runs=$(jq -s -c '[.[].check_runs[]]' <<<"$pages") || stop "unexpected check runs answer"
-spages=$(gh api --paginate "repos/$R/commits/$sha/status?per_page=100" 2>&1) || stop "cannot read the commit statuses of ${sha:0:7} ($spages)"
+spages=$(gh api --paginate "repos/$R/commits/$sha/status?per_page=100" 2>"$errf") || stop "cannot read the commit statuses of ${sha:0:7} ($(why "$spages"))"
 sts=$(jq -s -c '[.[].statuses[]]' <<<"$spages") || stop "unexpected commit status answer"
 red=$(jq -n -r --slurpfile r <(printf '%s' "$runs") --slurpfile s <(printf '%s' "$sts") '$r[0] as $r | $s[0] as $s | if ($r | length) == 0 then "no check runs" else
   ([$r[] | select(.status != "completed" or (.conclusion | IN("success", "skipped", "neutral") | not)) | .name] + [$s[] | select(.state != "success") | .context]) | join(", ") end') \
   || stop "cannot judge the check runs"
 if [ -z "$red" ]; then ok "$branch is green at ${sha:0:7}"; else miss "$branch is not green at ${sha:0:7}: $red"; fi
 
-tags=$(gh api "repos/$R/tags?per_page=100" 2>&1) || stop "cannot list the tags ($tags)"
+tags=$(gh api "repos/$R/tags?per_page=100" 2>"$errf") || stop "cannot list the tags ($(why "$tags"))"
 last=$(jq -r '[.[].name | select(test("^v?[0-9]+(\\.[0-9]+)*$"))] | .[]' <<<"$tags" | sort -V | tail -1)
 if [ "$(jq -r --arg t "v$version" --arg u "$version" '[.[] | select(.name == $t or .name == $u)] | length' <<<"$tags")" != 0 ]; then
   miss "the tag for $version exists already"
@@ -71,7 +75,7 @@ if [ -z "$last" ]; then
   miss "no tag yet: the first release needs the maintainer"
 else
   lastsha=$(jq -r --arg t "$last" '.[] | select(.name == $t) | .commit.sha' <<<"$tags")
-  cpages=$(gh api --paginate "repos/$R/compare/$lastsha...$sha?per_page=100" 2>&1) || stop "cannot compare $last with ${sha:0:7} ($cpages)"
+  cpages=$(gh api --paginate "repos/$R/compare/$lastsha...$sha?per_page=100" 2>"$errf") || stop "cannot compare $last with ${sha:0:7} ($(why "$cpages"))"
   commits=$(jq -s -r '[.[].commits[].sha] | .[]' <<<"$cpages") || stop "unexpected compare answer"
   total=$(jq -s -r '.[0].total_commits // 0' <<<"$cpages")
   n=$(grep -c . <<<"$commits")
@@ -80,10 +84,10 @@ else
   else
     bad=()
     for c in $commits; do
-      cp=$(gh api "repos/$R/commits/$c/pulls" 2>&1) || stop "cannot read the pull requests of ${c:0:7} ($cp)"
+      cp=$(gh api "repos/$R/commits/$c/pulls" 2>"$errf") || stop "cannot read the pull requests of ${c:0:7} ($(why "$cp"))"
       read -r num head <<<"$(jq -r --arg c "$c" '[.[] | select(.merged_at != null and .merge_commit_sha == $c)] | if length == 1 then "\(.[0].number) \(.[0].head.sha)" else "" end' <<<"$cp")"
       [ -n "$num" ] || { bad+=("${c:0:7} has no merged PR"); continue; }
-      cm=$(gh api --paginate --slurp "repos/$R/issues/$num/comments" 2>&1) || stop "cannot read the comments of #$num ($cm)"
+      cm=$(gh api --paginate --slurp "repos/$R/issues/$num/comments" 2>"$errf") || stop "cannot read the comments of #$num ($(why "$cm"))"
       body=$(jq -c 'add // []' <<<"$cm" | jq -r --arg prefix "$PREFIX" --arg user "$user" -f "$here/trusted-comment.jq" 2>/dev/null) \
         || { bad+=("#$num has two merge-cleared comments"); continue; }
       [[ "$body" =~ $cleared ]] || { bad+=("#$num has no merge-cleared comment by $user"); continue; }
@@ -96,8 +100,8 @@ fi
 
 found=0
 for file in .claude-plugin/plugin.json package.json composer.json; do
-  m=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/$file?ref=$sha" 2>&1)
-  if [ $? -ne 0 ]; then is404 "$m" && continue; stop "cannot read $file ($m)"; fi
+  m=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/$file?ref=$sha" 2>"$errf")
+  if [ $? -ne 0 ]; then is404 "$m" && continue; stop "cannot read $file ($(why "$m"))"; fi
   found=$((found + 1))
   v=$(jq -r '.version // ""' <<<"$m" 2>/dev/null)
   if [ "${v#v}" = "$version" ]; then ok "$file has version $version"; else miss "$file has version '$v', not $version"; fi
@@ -106,18 +110,18 @@ done
 
 pluginRepo=$(bash "$here/plugin-repo.sh" 2>&1) || stop "cannot read the plugin repo ($pluginRepo)"
 if [ "$(tr '[:upper:]' '[:lower:]' <<<"$R")" = "$pluginRepo" ]; then
-  ftxt=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.claude-plugin/files.txt?ref=$sha" 2>&1)
+  ftxt=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.claude-plugin/files.txt?ref=$sha" 2>"$errf")
   if [ $? -ne 0 ]; then
-    is404 "$ftxt" && stop ".claude-plugin/files.txt is missing at ${sha:0:7}" || stop "cannot read .claude-plugin/files.txt ($ftxt)"
+    is404 "$ftxt" && stop ".claude-plugin/files.txt is missing at ${sha:0:7}" || stop "cannot read .claude-plugin/files.txt ($(why "$ftxt"))"
   fi
-  tree=$(gh api "repos/$R/git/trees/$sha?recursive=1" 2>&1) || stop "cannot read the tree of ${sha:0:7} ($tree)"
+  tree=$(gh api "repos/$R/git/trees/$sha?recursive=1" 2>"$errf") || stop "cannot read the tree of ${sha:0:7} ($(why "$tree"))"
   [ "$(jq -r '.truncated // false' <<<"$tree" 2>/dev/null)" = false ] || stop "the tree of ${sha:0:7} is cut, so the manifest cannot be checked"
   diffs=$(jq -r '.tree[] | select(.type == "blob") | "\(.sha) \(.path)"' <<<"$tree" | bash "$here/manifest.sh" --compare <(printf '%s\n' "$ftxt")) \
     || stop ".claude-plugin/files.txt does not match the tree of ${sha:0:7}: $(tr '\n' ';' <<<"$diffs")"
   ok "files.txt matches the tree at ${sha:0:7}"
-  rel=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.claude-plugin/releases.txt?ref=$sha" 2>&1)
+  rel=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.claude-plugin/releases.txt?ref=$sha" 2>"$errf")
   if [ $? -ne 0 ]; then
-    is404 "$rel" && rel="" || stop "cannot read .claude-plugin/releases.txt ($rel)"
+    is404 "$rel" && rel="" || stop "cannot read .claude-plugin/releases.txt ($(why "$rel"))"
   fi
   if [ "$(head -n 1 <<<"$rel")" = "v$version" ]; then ok "releases.txt lists v$version first"
   else miss ".claude-plugin/releases.txt does not start with v$version at ${sha:0:7}"; fi
@@ -126,7 +130,7 @@ fi
 if [ ${#missing[@]} -gt 0 ]; then echo "release.sh: NOT released: ${#missing[@]} check(s) missing"; exit 1; fi
 echo "release: v$version on $R, target ${sha}"
 [ "$dry" = 1 ] && { echo "dry run: no release made"; exit 0; }
-now=$(gh api "repos/$R/commits/$branch" --jq .sha 2>&1) || stop "cannot read the head of $branch again ($now)"
+now=$(gh api "repos/$R/commits/$branch" --jq .sha 2>"$errf") || stop "cannot read the head of $branch again ($(why "$now"))"
 [ "$now" = "$sha" ] || { echo "release.sh: NOT released: $branch moved from ${sha:0:7} to ${now:0:7} after the checks"; exit 1; }
 gh api -X POST "repos/$R/releases" -f tag_name="v$version" -f target_commitish="$sha" -f name="v$version" -F generate_release_notes=true >/dev/null \
   || { echo "release.sh: the releases call failed"; exit 1; }
