@@ -3423,7 +3423,6 @@ await check('DF-6 a code item gets a QA agent only when it has a QA line', async
   assert.ok(!calls.some(c => c.label.startsWith('qa:C1')))
   assert.ok(!logs.some(l => l.startsWith('C1 round 1: QA')))
 })
-=======
 const btStep = async () => {
   await hooked(withEvals('C1'), verifyHook({}))
   const p = calls.find(c => c.label === 'verify:C1#1').prompt
@@ -3497,7 +3496,6 @@ await check('BT-10: a tests-only round keeps its own path and gives no untested 
   assert.deepEqual(x.C1.history[0].evals.passed, ['X-1', 'X-2'])
   assert.deepEqual(x.C1.history[0].blockersAndMajors, [])
 }))
->>>>>>> origin/HEAD
 const runOnFiles = async (files, extra = {}) => {
   let out
   await withChanged(files, async () => {
