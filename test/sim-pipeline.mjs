@@ -3423,6 +3423,81 @@ await check('DF-6 a code item gets a QA agent only when it has a QA line', async
   assert.ok(!calls.some(c => c.label.startsWith('qa:C1')))
   assert.ok(!logs.some(l => l.startsWith('C1 round 1: QA')))
 })
+=======
+const btStep = async () => {
+  await hooked(withEvals('C1'), verifyHook({}))
+  const p = calls.find(c => c.label === 'verify:C1#1').prompt
+  const i = p.indexOf('Break check.')
+  assert.ok(i >= 0)
+  return p.slice(i, p.indexOf('Return ', i))
+}
+await check('BT-1: the break check step gives not-applicable when the subject is in a changed test file', async () => {
+  const s = await btStep()
+  assert.match(s, /not-applicable/)
+  assert.match(s, /test file (that )?the PR changes|changed test file/)
+  assert.match(s, /`breakWhy`[^.]*subject in test file /)
+  assert.match(s, /names (that|the) (test )?file/)
+})
+await check('BT-2: a test that runs a changed source file through a helper of its own file still gets the break check', async () => {
+  const s = await btStep()
+  assert.match(s, /helper of its own file/)
+  assert.match(s, /changed source file/)
+  assert.match(s, /still gets? the break check/)
+})
+const btRow = (id, breakCheck, breakWhy) => ({ id, result: 'pass', breakCheck, ...(breakWhy === undefined ? {} : { breakWhy }) })
+const BT_NA = (w1, w2, w3) => [btRow('X-1', 'not-applicable', w1), btRow('X-2', 'not-applicable', w2), btRow('X-3', 'not-applicable', w3)]
+await check('BT-3: a not-applicable answer with a breakWhy is on the untested list with its reason, a regression eval is not', async () => {
+  const x = await hooked(withEvals('C1', EVS3), verifyHook({ 1: vres({ evals: BT_NA('subject in test file test/helpers.mjs', 'subject in test file test/b.test.mjs', 'subject in test file test/helpers.mjs') }) }))
+  assert.deepEqual(x.C1.untested, ['X-1 (break check not applicable: subject in test file test/helpers.mjs)', 'X-2 (break check not applicable: subject in test file test/b.test.mjs)'])
+})
+await check('BT-4: a not-applicable answer with no breakWhy or an empty one keeps the not-run text', async () => {
+  for (const w of [undefined, '']) {
+    const evals = BT_NA(w, 'subject in test file test/b.test.mjs', 'subject in test file test/helpers.mjs')
+    assert.equal(evals[0].breakCheck, 'not-applicable')
+    assert.ok(!evals[0].breakWhy)
+    const x = await hooked(withEvals('C1', EVS3), verifyHook({ 1: vres({ evals }) }))
+    assert.equal(x.C1.untested[0], 'X-1 (break check not run: not-applicable is not valid for kind behaviour)')
+    assert.equal(x.C1.untested.length, 2)
+    assert.ok(x.C1.untested[1].startsWith('X-2 (break check not'))
+  }
+})
+const BT_RUN1 = [btRow('X-1', 'passes-without-change', 'subject in test file test/helpers.mjs'), btRow('X-2', 'fails-without-change')]
+const BT_RUN2 = [btRow('X-1', 'fails-without-change'), btRow('X-2', 'passes-without-change', 'subject in test file test/b.test.mjs')]
+await check('BT-5: a not-applicable answer with a breakWhy is no finding and no stop and does not land in auto mode', async () => {
+  for (const [rows, id] of [[BT_RUN1, 'X-1'], [BT_RUN2, 'X-2']]) {
+    const evals = rows.map(r => r.id === id ? { ...r, breakCheck: 'not-applicable' } : r)
+    assert.equal(evals.find(r => r.id === id).breakCheck, 'not-applicable')
+    const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ evals }) }))
+    assert.equal(x.C1.history.length, 1)
+    assert.deepEqual(x.C1.history[0].blockersAndMajors, [])
+    assert.deepEqual(x.C1.history[0].evals, { passed: ['X-1', 'X-2'], failed: [], ci: [] })
+    assert.deepEqual(x.C1.breakCheck.notApplicable, [id])
+    assert.deepEqual(x.C1.breakCheck.passes, [])
+    assert.equal(fixCalls('C1').length, 0)
+    assert.notEqual(x.C1.landMode, 'auto')
+    assert.equal(x.C1.untested.length, 1)
+    assert.ok(x.C1.untested[0].startsWith(`${id} (break check not`))
+  }
+})
+await check('BT-6: passes-without-change is a major finding and a failed eval, also with a subject in test file breakWhy', async () => {
+  for (const [rows, id, why] of [[BT_RUN1, 'X-1', 'subject in test file test/helpers.mjs'], [BT_RUN2, 'X-2', 'subject in test file test/b.test.mjs']]) {
+    const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ evals: rows }) }))
+    assert.deepEqual(x.C1.history[0].blockersAndMajors, [`major [test]: eval ${id}: the test passes without the change`])
+    assert.deepEqual(x.C1.history[0].evals.failed, [id])
+    assert.deepEqual(x.C1.history[0].evals.passed, [id === 'X-1' ? 'X-2' : 'X-1'])
+    assert.deepEqual(x.C1.history[0].breakCheck.passes, [id])
+    assert.ok(fixCalls('C1')[0].prompt.includes(why))
+  }
+})
+await check('BT-10: a tests-only round keeps its own path and gives no untested item for the break check', () => withChanged(['test/a.test.mjs'], async () => {
+  const w = 'tests only: no change to take out'
+  const x = await hooked(withEvals('C1'), verifyHook({ 1: vres({ evals: [btRow('X-1', 'not-applicable', w), btRow('X-2', 'not-applicable', w)] }) }))
+  assert.deepEqual(x.C1.untested, [])
+  assert.equal(x.C1.testsOnly, true)
+  assert.deepEqual(x.C1.history[0].evals.passed, ['X-1', 'X-2'])
+  assert.deepEqual(x.C1.history[0].blockersAndMajors, [])
+}))
+>>>>>>> origin/HEAD
 const runOnFiles = async (files, extra = {}) => {
   let out
   await withChanged(files, async () => {
