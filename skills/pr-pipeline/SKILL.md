@@ -108,7 +108,7 @@ Plan-author checklist. Check it before the plan goes to review; the plan review 
 6. Name the gated paths each entry touches.
 7. Give each code entry a Round cap and an Evals table, and an `Algorithm: yes` line when it adds or changes an algorithm.
 8. Put each new test block after the helpers its cases need: a test block must come after the helper definitions, and an eval check names only helpers defined before it.
-9. Give each entry that adds or changes a script, a workflow step or a role agent a QA line that runs it read-only on a real file from a default branch (of this repo or of a repo the pipeline runs on). The item says that made-up input alone is not enough.
+9. Give each entry that adds or changes a script, a workflow step or a role agent a QA line that runs it read-only on a real file from a default branch (of this repo or of a repo the pipeline runs on). Real input is needed: made-up input alone is not enough.
 
 Triage before planning when the input is a pile of issues: give each read-only agent a group of issues, ask it to check each one against the code (not the title), and return still-valid, size, milestone and reasons. Some "bugs" turn out to be fixed already, and some "nits" turn out to be real bugs.
 
@@ -312,7 +312,7 @@ After the last wave has landed and the default branch is green, the main session
 
 When the repo has no tag yet it always refuses with "no tag yet: the first release needs the maintainer", because commits from before the merge records would ship unchecked. `--dry-run` prints each check and the release it would make, and calls no write endpoint. Otherwise it prints what is missing and stops. It also stops when it cannot read the plugin's repo name. The pipeline never runs a publish command: the repo's CI publishes when the release is made.
 
-Canary run. After a release and before any product repo moves to the new version, the main session runs one small real item of this repo (a quick fix or a docs entry) on the new version, with every option that the release added or changed turned on. A product repo moves only after that item is ready with no stop that the release caused. When it fails, a fix release comes first.
+Canary run. In the plugin's own repo, after a release and before any product repo moves to the new version, the main session runs one small real item of this repo (a quick fix or a docs entry) on the new version, with every option that the release added or changed turned on. A product repo moves only after that item is ready with no stop that the release caused. When it fails, a fix release comes first.
 
 ## When things go wrong
 
