@@ -3378,13 +3378,13 @@ await check('DF-1 the plan-author checklist asks for a QA line on real input for
   assert.equal(items.length, 9)
   const hit = items.filter(l => dfHas(l, [/script/, /workflow step/, /role agent/, /QA/, /real (input|file)/, /read-only/, /default branch/, /made-up/]))
   assert.equal(hit.length, 1)
-  assert.doesNotMatch(hit[0], /—/)
+  assert.doesNotMatch(hit[0], /\u2014/)
 })
 await check('DF-2 the QA line of the plan template names real input for scripts, steps and role agents', () => {
   const lines = dfRead('../templates/plan.md').split('\n').filter(l => l.startsWith('QA:'))
   assert.equal(lines.length, 1)
   assert.ok(dfSentences(lines[0]).some(x => dfHas(x, [/script/, /workflow step/, /role agent/, /real (input|file)/, /read-only/])))
-  assert.doesNotMatch(lines[0], /—/)
+  assert.doesNotMatch(lines[0], /\u2014/)
 })
 await check('DF-3 only the plan review prompt ranks a missing QA line on real input as a major', async () => {
   const hook = () => undefined
@@ -3401,7 +3401,7 @@ await check('DF-4 the plan review paragraph of Step 1 ranks a missing QA line on
   const line = dfRead('../skills/pr-pipeline/SKILL.md').split('\n').find(l => l.startsWith('For the rest of the plan review'))
   assert.ok(line)
   assert.ok(dfSentences(line).some(x => dfHas(x, [/script/, /workflow step/, /role agent/, /QA/, /real (input|file)/, /major/])))
-  assert.doesNotMatch(line, /—/)
+  assert.doesNotMatch(line, /\u2014/)
 })
 await check('DF-5 Step 3 has a canary paragraph run by the main session before a product repo moves', () => {
   const md = dfRead('../skills/pr-pipeline/SKILL.md')
@@ -3411,7 +3411,7 @@ await check('DF-5 Step 3 has a canary paragraph run by the main session before a
   const s = dfSentences(lines[0])
   assert.ok(s.some(x => dfHas(x, [/product repo/, /only after/, /ready/, /no stop/])))
   assert.ok(s.some(x => dfHas(x, [/fix release/, /first/])))
-  assert.doesNotMatch(lines[0], /—/)
+  assert.doesNotMatch(lines[0], /\u2014/)
 })
 await check('DF-6 a code item gets a QA agent only when it has a QA line', async () => {
   await hookedOut(only1('C1').map(p => ({ ...p, qa: 'run the script on docs/plan-0.9.16.md' })), () => undefined)
