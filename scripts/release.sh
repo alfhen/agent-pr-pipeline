@@ -29,7 +29,7 @@ user=$(gh api user --jq .login 2>"$errf") || stop "cannot read GET /user ($(why 
 
 settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=refs/heads/$branch" 2>"$errf")
 if [ $? -ne 0 ]; then
-  is404 "$settings" && settings='{}' || stop "cannot read .github/pipeline.json ($settings)"
+  is404 "$settings" && settings='{}' || stop "cannot read .github/pipeline.json ($(why "$settings"))"
 fi
 if [ "$(jq -r '.autoRelease == true' <<<"$settings" 2>/dev/null)" = true ]; then ok "autoRelease is true on $branch"
 else miss "autoRelease is not true in .github/pipeline.json on $branch"; fi
@@ -37,7 +37,7 @@ else miss "autoRelease is not true in .github/pipeline.json on $branch"; fi
 trigger=""
 wf=$(gh api "repos/$R/contents/.github/workflows?ref=refs/heads/$branch" 2>"$errf")
 if [ $? -ne 0 ]; then
-  is404 "$wf" || stop "cannot list the workflows ($wf)"
+  is404 "$wf" || stop "cannot list the workflows ($(why "$wf"))"
 else
   for path in $(jq -r '.[] | select(.name | test("\\.ya?ml$")) | .path' <<<"$wf"); do
     text=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/$path?ref=refs/heads/$branch" 2>"$errf") || stop "cannot read $path ($(why "$text"))"
@@ -101,7 +101,7 @@ fi
 found=0
 for file in .claude-plugin/plugin.json package.json composer.json; do
   m=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/$file?ref=$sha" 2>"$errf")
-  if [ $? -ne 0 ]; then is404 "$m" && continue; stop "cannot read $file ($m)"; fi
+  if [ $? -ne 0 ]; then is404 "$m" && continue; stop "cannot read $file ($(why "$m"))"; fi
   found=$((found + 1))
   v=$(jq -r '.version // ""' <<<"$m" 2>/dev/null)
   if [ "${v#v}" = "$version" ]; then ok "$file has version $version"; else miss "$file has version '$v', not $version"; fi
@@ -112,7 +112,7 @@ pluginRepo=$(bash "$here/plugin-repo.sh" 2>&1) || stop "cannot read the plugin r
 if [ "$(tr '[:upper:]' '[:lower:]' <<<"$R")" = "$pluginRepo" ]; then
   ftxt=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.claude-plugin/files.txt?ref=$sha" 2>"$errf")
   if [ $? -ne 0 ]; then
-    is404 "$ftxt" && stop ".claude-plugin/files.txt is missing at ${sha:0:7}" || stop "cannot read .claude-plugin/files.txt ($ftxt)"
+    is404 "$ftxt" && stop ".claude-plugin/files.txt is missing at ${sha:0:7}" || stop "cannot read .claude-plugin/files.txt ($(why "$ftxt"))"
   fi
   tree=$(gh api "repos/$R/git/trees/$sha?recursive=1" 2>"$errf") || stop "cannot read the tree of ${sha:0:7} ($(why "$tree"))"
   [ "$(jq -r '.truncated // false' <<<"$tree" 2>/dev/null)" = false ] || stop "the tree of ${sha:0:7} is cut, so the manifest cannot be checked"
@@ -121,7 +121,7 @@ if [ "$(tr '[:upper:]' '[:lower:]' <<<"$R")" = "$pluginRepo" ]; then
   ok "files.txt matches the tree at ${sha:0:7}"
   rel=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.claude-plugin/releases.txt?ref=$sha" 2>"$errf")
   if [ $? -ne 0 ]; then
-    is404 "$rel" && rel="" || stop "cannot read .claude-plugin/releases.txt ($rel)"
+    is404 "$rel" && rel="" || stop "cannot read .claude-plugin/releases.txt ($(why "$rel"))"
   fi
   if [ "$(head -n 1 <<<"$rel")" = "v$version" ]; then ok "releases.txt lists v$version first"
   else miss ".claude-plugin/releases.txt does not start with v$version at ${sha:0:7}"; fi

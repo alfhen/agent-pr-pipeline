@@ -464,7 +464,21 @@ test('release: a failing read prints the stderr text and the stdout text of gh i
   assert.match(r.out, /\(.*\(HTTP 401\)\)/)
 })
 
-const loggedMktemp = (dir) => {
+test('release: a failing read of the settings or the workflows prints both texts of gh in the brackets', () => {
+  for (const [part, text] of [['pipeline.json', /cannot read \.github\/pipeline\.json \(.*"Server Error".*\)/], ['.github/workflows', /cannot list the workflows \(.*"Server Error".*\)/]]) {
+    const s = setup()
+    const bin = join(s.dir, 'bad'); mkdirSync(bin)
+    writeFileSync(join(bin, 'gh'), `#!/bin/bash\ncase "$*" in *"${part}"*) echo '{"message":"Server Error"}'; echo "gh: Server Error (HTTP 500)" >&2; exit 1;; esac\nexec bash "${join(root, 'test/fake-gh')}" "$@"\n`)
+    chmodSync(join(bin, 'gh'), 0o755)
+    const r = run({ ...s, bin }, 'release.sh', ['--dry-run', 'o/r', '0.3.0'])
+    assert.equal(r.code, 1, r.out)
+    assert.match(r.out, /^release\.sh: cannot go on: /m)
+    assert.match(r.out, text)
+    assert.match(r.out, /\(HTTP 500\)\)/)
+  }
+})
+
+const loggedMktemp =(dir) => {
   const wrap = join(dir, 'wrap'); mkdirSync(wrap)
   const log = join(dir, 'mktemp.log')
   writeFileSync(join(wrap, 'mktemp'), '#!/bin/bash\np=$(PATH="$REAL_PATH" mktemp "$@") || exit $?\necho "$p" >> "$MKTEMP_LOG"\necho "$p"\n')
