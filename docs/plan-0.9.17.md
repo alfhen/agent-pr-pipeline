@@ -54,7 +54,11 @@ Summary: one entry in one wave, then the version PR and the canary run.
 
 **GH The scripts parse only the stdout of `gh api` and keep stderr for their messages.** Closes #869.
 Touches: `scripts/gate-files.sh` (every capture of `gh api` with `2>&1`: the reads that set `sha`, `branch`, `settings`, `cmp`, `pages`), `scripts/release.sh` (every capture of `gh api` with `2>&1`, and the `is404` checks that read them), `scripts/land-wave.sh` (the read that sets `settings`), `scripts/plugin-version.sh` (the read that sets `tag` and the `is not enabled for this session` check), `test/gate.test.mjs`, `test/release.test.mjs`, `test/land.test.mjs`, `test/plugin-version.test.mjs` (new cases), one new test file `test/gh-stderr.test.mjs`.
-QA: on this machine (gh 2.105 or newer), run the built `scripts/gate-files.sh alfhen/agent-pr-pipeline <n>` for a real open or merged PR of this repo and `scripts/release.sh --dry-run alfhen/agent-pr-pipeline <the current version>`. Both print their normal result and no `GATE ERROR` or `cannot read`. Read-only: no merge, no release.
+QA: on this machine (gh 2.105 or newer), read-only, no merge, no release. Run these on real input:
+- `scripts/gate-files.sh alfhen/agent-pr-pipeline <n>` for a real open or merged PR of this repo. It prints the file list and the gate result, with no `GATE ERROR` and no `cannot read`. This is the one run that fails on the old code, so it proves the fix.
+- `scripts/plugin-version.sh <running version>` prints `OK` or the expected `WARN` line, with no `CHECK FAILED`.
+- `scripts/release.sh --dry-run alfhen/agent-pr-pipeline <version not yet released>`, run after at least one commit exists since the last tag, so the compare and `pulls` reads run. It prints the `ok:` lines and the `MISSING` lines for that version, exits 1, and prints no `cannot go on` and no `cannot read`. This run shows only that nothing broke; it also passes on the old code.
+- `scripts/land-wave.sh` cannot run read-only, so the fake-`gh` case of statement 2 and the land of the canary item cover it.
 
 1. With a fake `gh` first on `PATH` that prints a valid JSON answer on stdout and a hint of several lines on stderr and exits 0, `scripts/gate-files.sh <repo> <pr>` prints the same result as with no hint, and not `GATE ERROR`.
 2. The same holds for `scripts/release.sh --dry-run`, `scripts/land-wave.sh` (its read of `.github/pipeline.json`) and `scripts/plugin-version.sh`: a hint on stderr with exit 0 does not change what the script prints or its exit code.
@@ -82,7 +86,7 @@ Build notes: the pattern is in `scripts/wait-ci.sh` (`errf=$(mktemp)`, `trap 'rm
 ## Pass criteria
 
 1. The four per-PR criteria of iteration 1 hold for GH.
-2. The QA line of GH ran on this machine with gh 2.105 or newer, and its report shows the normal output of both scripts.
+2. The QA line of GH ran on this machine with gh 2.105 or newer, and its report shows the expected output of the three scripts that run read-only, and names how `land-wave.sh` is covered.
 3. After the release, the gate of the canary item prints no `GATE ERROR`.
 
 ## Release
