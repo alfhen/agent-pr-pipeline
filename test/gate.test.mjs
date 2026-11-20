@@ -684,7 +684,6 @@ test('gate --ci-checks (E03a-9): a bad value or an unreadable file exits 3', () 
 })
 
 const HINT = { FAKE_GH_HINT: ' ' }
-const HINT_LINES = /^(hint: |    gh event|  - See)/
 const realFiles = (s) => copyFileSync(join(root, 'test/fixtures/pulls-files-real.json'), join(s.fx, `${PULL}__files.1.json`))
 
 test('gate: a hint on the stderr of gh does not change the result on the real answer of pulls/<n>/files', () => {
@@ -693,7 +692,7 @@ test('gate: a hint on the stderr of gh does not change the result on the real an
   const a = run(plain, 'gate-files.sh', ['o/r', '7'])
   const b = run(hinted, 'gate-files.sh', ['o/r', '7'], HINT)
   assert.equal(b.code, a.code)
-  assert.equal(b.out.split('\n').filter((l) => !HINT_LINES.test(l)).join('\n'), a.out)
+  assert.equal(b.out, a.out)
   assert.doesNotMatch(b.out, /GATE ERROR/)
 })
 

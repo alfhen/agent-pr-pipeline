@@ -8,6 +8,7 @@ source "$here/semver.sh"
 running=$1
 [ -n "$running" ] || { echo "usage: plugin-version.sh <running version>"; exit 2; }
 failed() { echo "CHECK FAILED $*"; exit 3; }
+why() { local t="$1 $(cat "$errf")"; t=${t# }; echo "${t% }"; }
 errf=$(mktemp) || failed "cannot make a temporary file"
 trap 'rm -f "$errf"' EXIT
 
@@ -19,8 +20,8 @@ repo=$(bash "$here/plugin-repo.sh" 2>/dev/null) || repo=""
 what="the latest release"
 if ! tag=$(gh api "repos/$repo/releases/latest" --jq .tag_name 2>"$errf"); then
   # The cloud proxy refuses this read for a repo that is not attached; main is the latest release or one ahead.
-  why="$tag $(cat "$errf")"; why=${why# }
-  [[ "$why" == *"is not enabled for this session"* ]] || failed "cannot read the latest release of $repo (${why% })"
+  why=$(why "$tag")
+  [[ "$why" == *"is not enabled for this session"* ]] || failed "cannot read the latest release of $repo ($why)"
   tag=$(curl -fsSL "https://raw.githubusercontent.com/$repo/main/.claude-plugin/plugin.json" 2>/dev/null | jq -r '.version // ""' 2>/dev/null)
   [ -n "$tag" ] || failed "cannot read the version on main of $repo"
   what="the latest version on main"

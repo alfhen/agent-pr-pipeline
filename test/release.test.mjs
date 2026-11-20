@@ -436,7 +436,7 @@ test('release: another repo never reads releases.txt', () => {
   assert.equal(r.log.filter((l) => /releases\.txt/.test(l)).length, 0)
 })
 
-const HINT = { FAKE_GH_HINT: ' ' }
+const HINT = { FAKE_GH_HINT: '/' }
 
 test('release: a hint on the stderr of every gh call does not change the dry run', () => {
   const a = releaseWith(setup(), {}, '--dry-run')
@@ -478,7 +478,7 @@ test('release: a failing read of the settings or the workflows prints both texts
   }
 })
 
-const loggedMktemp =(dir) => {
+const loggedMktemp = (dir) => {
   const wrap = join(dir, 'wrap'); mkdirSync(wrap)
   const log = join(dir, 'mktemp.log')
   writeFileSync(join(wrap, 'mktemp'), '#!/bin/bash\np=$(PATH="$REAL_PATH" mktemp "$@") || exit $?\necho "$p" >> "$MKTEMP_LOG"\necho "$p"\n')
