@@ -10,10 +10,12 @@
 # A query with a "/" also tries the name with each "/" as "__" (?ref=refs/heads/main reads <name>@ref=refs__heads__main.json), after the literal name (a folder path).
 # Call sequences: when <name>.call1.json exists, the nth GET of that path reads <name>.call<n>.json (the last one repeats);
 # the count is kept in <name>.count in the fixture folder.
+# FAKE_GH_HINT: a text; every gh call whose arguments hold it also writes the hint of gh 2.105 on stderr at its end, whatever the exit code.
 # A path with no fixture exits 1, like a 404. Any other subcommand exits 1.
 log() { [ -n "$FAKE_GH_LOG" ] && echo "$*" >> "$FAKE_GH_LOG"; return 0; }
 if [ "$1" != "api" ]; then log "UNSUPPORTED gh $*"; echo "fake-gh: unsupported: gh $*" >&2; exit 1; fi
 shift
+case "$*" in *"${FAKE_GH_HINT:-@@none@@}"*) trap 'printf "%s\n" "hint: if you need to wait for this pull request to be reviewed, merged, or closed before continuing, use this instead of polling:" "    gh event listen --resource https://github.com/o/r/pull/7" "  - See gh event listen --help for other event types." >&2' EXIT ;; esac
 method=GET; path=""; paginate=0; slurp=0; fields=""; jqx=""
 while [ $# -gt 0 ]; do
   case "$1" in
