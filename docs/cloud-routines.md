@@ -174,7 +174,7 @@ A pin raised before the environment has the release makes `apl-start` stop. If t
 
 A repo whose pin is not installed makes `apl-start` stop. The routine sends one notice only when another complete release is installed.
 
-A pin of 0.9.16 or older breaks the gate on a machine or cloud environment with gh 2.105.0 or newer. Those releases read the stderr hint of gh as part of the answer. `scripts/gate-files.sh` then prints `GATE ERROR #<pr>: unexpected answer for the changed files` for every PR. The gate fails safe: no agent merge happens, and every PR lands as a person merge. To fix it, move the pin to 0.9.17 or later, after its canary run.
+A pin of `v0.9.16` or older breaks the gate when an agent, such as a routine or a Claude Code session, runs it with gh 2.105.0 or newer. gh prints a hint on stderr when it detects an agent, and those releases read that hint as part of the answer. `scripts/gate-files.sh` then prints `GATE ERROR #<pr>: unexpected answer for the changed files` for every PR. The gate fails safe: no agent merge happens, and every PR lands as a person merge. To fix it, move the pin to `v0.9.17` or later, after its canary run.
 
 ## Approval and its limit
 
