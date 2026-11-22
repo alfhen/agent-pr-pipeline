@@ -130,7 +130,7 @@ test('the opener names its REST calls and edits the marked checklist comment', (
   assert.match(src, /never read an issue by another author, and skip a finding/)
   assert.match(src, /select\(\.user\.login == "<login>" and \(\.body \| startswith\("\$\{MINORS_MARKER\}"\)\)\) \| \.id/)
   assert.match(src, /return blocked true with the reason "\$\{NO_LOGIN\}", prNumber, issuesCreated/)
-  assert.match(src, /When the login from step 1 is empty or its lookup failed, return blocked true with the reason "\$\{NO_LOGIN\}"/)
+  assert.match(src, /When you have a checklist to post and the login from step 1 is empty or its lookup failed, return blocked true with the reason "\$\{NO_LOGIN\}"/)
   assert.doesNotMatch(src, /When it is empty, post no checklist: return blocked true/)
   assert.match(src, /When "Minor findings not fixed" is empty, post no checklist and do not return blocked for that reason/)
   assert.match(src, /gh api "repos\/\$\{REPO\}\/pulls\?head=\$\{REPO\.split\('\/'\)\[0\]\}:\$\{pr\.branch\}&state=open"/)
