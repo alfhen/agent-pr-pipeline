@@ -2339,7 +2339,8 @@ async function runPRSteps(input) {
   let opened = await call('open', pr, openPrompt(pr, history, ...openArgs), `open:${pr.id}`, { schema: OPEN })
   // A block with no login and no prepared commands is the #880 answer: the PR may be open already. A dead-agent retry in call() counts as the second run.
   if (opened && opened.blocked && blockedReasonOf(opened) === 'needs human: no login' && !(opened.commands && opened.commands.length) && !diedOnce.has(`open:${pr.id}`)) {
-    const retried = await call('open', pr, openPrompt(pr, history, ...openArgs, true), `open:${pr.id}#retry`, { schema: OPEN }, false)
+    let retried = null
+    try { retried = await call('open', pr, openPrompt(pr, history, ...openArgs, true), `open:${pr.id}#retry`, { schema: OPEN }, false) } catch (e) { log(`open:${pr.id}#retry: agent died (${e && e.message}), not retried`) }
     const both = [...new Set([...(opened.issuesCreated || []), ...((retried && retried.issuesCreated) || [])])]
     opened = retried ? { ...retried, issuesCreated: both, prNumber: retried.prNumber || opened.prNumber, prUrl: retried.prUrl || opened.prUrl } : { ...opened, issuesCreated: both }
   }
