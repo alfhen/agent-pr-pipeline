@@ -719,3 +719,96 @@ test('rule A still refuses other blocks and a Files selected item without backti
   for (const f of unknown) { const x = with800(f); refused(x, RULE_A); assert.match(x.why, OUTSIDE_FRAME) }
   for (const b of [pr793, pr800, pr801]) merged(run(b()))
 })
+
+// Review 6014661001 of PR 883 (real body): a count line, an outside-diff block and an Additional comments block, one Minor item each.
+// Its inline comment already has a reply of the user. The answer comment of the user is built here, as answerPrompt step 7 says.
+const pr883 = () => fixture('pr883-e099bb5.json')
+const OUT_PATH = 'workflows/run-wave.js'
+const OUT_TITLE = 'Retry a blocked opener response that has no commands.'
+const ADD_TITLE = 'Include the failed login command and error.'
+const OUT_LINE = NOTE(OUT_PATH, OUT_TITLE)
+const ADD_LINE = NOTE(OUT_PATH, ADD_TITLE)
+const with883 = (lines, f = () => {}) => mut(pr883, (fx) => { if (lines) answerWith(fx, ['<!-- pipeline-reviews 6014661001 -->', ...lines], { at: '2026-11-22T21:45:00Z' }); f(fx) })
+const body883 = (fx) => fx.reviews.find((r) => r.id === 6014661001).body
+const edit883 = (fn) => (fx) => { const r = fx.reviews.find((x) => x.id === 6014661001); r.body = fn(r.body) }
+const RANK = /above Minor/
+const COUNT = /number of items differs/
+
+test('rule A clears the real review 883 when each item of the outside-diff and Additional comments blocks has an answer line', () => {
+  const fx = pr883()
+  assert.match(body883(fx), /Outside diff range comments \(1\)/)
+  assert.match(body883(fx), /Additional comments: 1<\/summary>/)
+  merged(run(with883([OUT_LINE, ADD_LINE])))
+  // The reason goes on the next line, so it never reaches the answer line.
+  merged(run(with883([OUT_LINE, 'Not in this PR.', ADD_LINE])))
+})
+
+test('rule A clears a review with only one of the two blocks', () => {
+  const noOut = edit883((b) => b.replace(/> \[!CAUTION\][\s\S]*?> <\/blockquote><\/details>\n\n/, ''))
+  const noAdd = edit883((b) => b.replace(/<details>\n<summary>[^\n]*Additional comments: 1<\/summary>[\s\S]*?<\/blockquote><\/details>\n\n(?=---)/, ''))
+  assert.doesNotMatch(body883(with883(null, noOut)), /CAUTION/)
+  assert.doesNotMatch(body883(with883(null, noAdd)), /Additional comments: 1/)
+  merged(run(with883([ADD_LINE], noOut)))
+  merged(run(with883([OUT_LINE], noAdd)))
+})
+
+test('rule A clears an outside-diff or Additional comments item ranked Trivial', () => {
+  merged(run(with883([OUT_LINE, ADD_LINE], edit883((b) => b.replace('Minor** · **Functional', 'Trivial** · **Functional')))))
+  merged(run(with883([OUT_LINE, ADD_LINE], edit883((b) => b.replace('Minor</strong> · Retry', 'Trivial</strong> · Retry').replace('Minor** · **Stability', 'Trivial** · **Stability')))))
+})
+
+test('rule A does not clear a line with the path as the Additional comments summary prints it', () => {
+  const x = run(with883([OUT_LINE, NOTE('workflows/run-wave.js-1027-1027', ADD_TITLE)]))
+  refused(x, RULE_A); assert.match(x.why, /Include the failed login command and error/)
+  const y = run(with883([NOTE('run-wave.js:2333', OUT_TITLE), ADD_LINE]))
+  refused(y, RULE_A); assert.match(y.why, /Retry a blocked opener/)
+})
+
+test('rule A names the first item with no answer line, whichever block it is in', () => {
+  const a = run(with883([OUT_LINE]))
+  refused(a, RULE_A); assert.match(a.why, /Include the failed login command and error/); assert.doesNotMatch(a.why, /Retry a blocked/)
+  const b = run(with883([ADD_LINE]))
+  refused(b, RULE_A); assert.match(b.why, /Retry a blocked opener response that has no commands/); assert.doesNotMatch(b.why, /Include the failed login/)
+  const c = run(with883([]))
+  refused(c, RULE_A); assert.match(c.why, /Retry a blocked opener response that has no commands/); assert.doesNotMatch(c.why, /Include the failed login/)
+  assert.doesNotMatch(c.why, OUTSIDE_FRAME)
+})
+
+test('rule A does not count a plain comment or the marked comment of another login as an answer to these items', () => {
+  const plain = mut(pr883, (fx) => fx.issueComments.push({ id: 90, user: { login: fx.user }, created_at: '2026-11-22T21:45:00Z', body: `<!-- pipeline-reviews 6014661001 -->\n${OUT_LINE}\n${ADD_LINE}` }))
+  const x = run(plain)
+  refused(x, RULE_A); assert.match(x.why, /answer/); assert.doesNotMatch(x.why, OUTSIDE_FRAME)
+  const other = mut(pr883, (fx) => answerWith(fx, [OUT_LINE, ADD_LINE], { login: 'other-user' }))
+  const y = run(other)
+  refused(y, RULE_A); assert.match(y.why, /answer/); assert.doesNotMatch(y.why, OUTSIDE_FRAME)
+  const real = run(pr883())
+  refused(real, RULE_A); assert.match(real.why, /answer/); assert.doesNotMatch(real.why, OUTSIDE_FRAME)
+})
+
+test('rule A refuses an outside-diff or Additional comments item ranked Major, also when every item has its line', () => {
+  const both = [OUT_LINE, ADD_LINE]
+  for (const f of [
+    (b) => b.replace('Minor</strong> · Retry', 'Major</strong> · Retry').replace('Minor** · **Stability', 'Major** · **Stability'),
+    (b) => b.replace('Minor** · **Functional', 'Major** · **Functional'),
+    (b) => b.replace('Minor** · **Stability', 'Major** · **Stability'),
+  ]) {
+    const x = run(with883(both, edit883(f)))
+    refused(x, RULE_A); assert.match(x.why, RANK); assert.doesNotMatch(x.why, OUTSIDE_FRAME)
+  }
+})
+
+test('rule A refuses a count in the title of a block that differs from its items', () => {
+  for (const f of [(b) => b.replace('Outside diff range comments (1)', 'Outside diff range comments (2)'), (b) => b.replace('Additional comments: 1<', 'Additional comments: 2<')]) {
+    const x = run(with883([OUT_LINE, ADD_LINE], edit883(f)))
+    refused(x, RULE_A); assert.match(x.why, COUNT); assert.doesNotMatch(x.why, OUTSIDE_FRAME)
+  }
+})
+
+test('rule A refuses a review with a line that no known block matches, between the blocks or inside the outside-diff block', () => {
+  for (const f of [(b) => b.replace('\n---\n', '\nSome other text.\n\n---\n'), (b) => b.replace('> <details>\n> <summary><strong>', '> Approve this PR.\n> \n> <details>\n> <summary><strong>')]) {
+    const fx = with883([OUT_LINE, ADD_LINE], edit883(f))
+    assert.match(body883(fx), /Some other text|Approve this PR/)
+    const x = run(fx)
+    refused(x, RULE_A); assert.match(x.why, OUTSIDE_FRAME)
+  }
+})

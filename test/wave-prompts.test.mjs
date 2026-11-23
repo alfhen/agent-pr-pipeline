@@ -236,3 +236,13 @@ test('the plan text of the open prompt is only for a plan PR, and a quick fix ke
   assert.match(open, /\$\{pr\.kind === 'plan' \? ' The text of a new plan PR holds no closing keyword/)
   assert.match(open, /\$\{pr\.quick \? ` Put "Closes #\$\{pr\.quick\.issue\}" on its own line in the body\.` : ''\}/)
 })
+
+test('the answer prompt and the bot-answerer role tell the agent to write the bare path of an item', () => {
+  const answer = /const answerPrompt = [\s\S]*?const botReviewPrompt/.exec(src)[0]
+  const role = readFileSync(new URL('../agents/bot-answerer.md', import.meta.url), 'utf8')
+  assert.match(answer, /Write the bare file path \(the path without the line range or \\`:line\\`/)
+  assert.match(answer, /the bold title word for word/)
+  assert.doesNotMatch(answer, /Copy the path from the summary of the block/)
+  assert.match(role, /the bare file path \(without the line range or `:line`/)
+  assert.match(role, /the bold title word for word/)
+})
