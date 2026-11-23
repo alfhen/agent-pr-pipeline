@@ -163,7 +163,7 @@ Invariants:
 - A failed read of the changed files gives no clearance through the fourth way.
 - A list of 3000 files or more, which GitHub cuts, gives no clearance through the fourth way.
 - The changed files are listed in one place only: `pr-files.sh`.
-QA: read-only, on real input. Run `gate-files.sh alfhen/agent-pr-pipeline <n>` on a merged PR and on PR 879, and compare each output with the output of the default branch script: they are the same. Run `bot-status.sh` on the same two PRs. Report `approvedBy` and the new input field.
+QA: read-only, on real input. Baseline: run `gate-files.sh alfhen/agent-pr-pipeline <n>` on PR 879 and on one other merged PR, and compare each output with the output of the default branch script: they are the same. Refusal: PR 781 changed only `.coderabbit.yaml`. Run `gate-files.sh` and `bot-status.sh` on PR 781, and run `bot-approval.jq` with `--arg why 1` on the input that `bot-status.sh` builds for it. Expected: the files list holds `.coderabbit.yaml`, `approvedBy` holds no `(clean review)` entry, and the why line names `.coderabbit.yaml`. The default branch script does not print that line. A rename, a failed files read and a list of 3000 files cannot be found on real input: run them on a fake `gh`, each with its own expected line. Report every output.
 
 1. `gate-files.sh`, `merge-pr.sh` and `bot-status.sh` read the changed files only through `pr-files.sh`. `merge-pr.sh` and `bot-status.sh` pass `files` to `bot-approval.jq`, and `bot-status.sh` reads the list once per call and only when a review could clear through the fourth way.
 2. `fourthWhy` refuses with `clean review: the PR changes CodeRabbit's settings file <file>` for a PR that changes one of the three files, also by a rename.
