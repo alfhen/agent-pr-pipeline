@@ -499,3 +499,42 @@ test('release: the temp file for stderr is removed after a normal and a refused 
     assertTempRemoved(m.log)
   }
 })
+
+// M06: the CI result of the default branch head comes from scripts/ci-state.jq.
+const CHECKS_FX = `${P}__commits__${HEAD}__check-runs.json`
+const STATUS_FX = `${P}__commits__${HEAD}__status.json`
+const dry = (s, scripts) => {
+  const env = { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log, PIPELINE_TEST_FAST: '1' }
+  const r = spawnSync('bash', [join(scripts || join(root, 'scripts'), 'release.sh'), '--dry-run', 'o/r', '0.3.0'], { env, encoding: 'utf8' })
+  return r.stdout + r.stderr
+}
+
+for (const [name, runs, status, want] of [
+  ['a cancelled run', [{ name: 'ci', status: 'completed', conclusion: 'cancelled' }], [], /MISSING: main is not green at aaaaaaa: ci/],
+  ['a failed commit status', [{ name: 'ci', status: 'completed', conclusion: 'success' }], [{ context: 'ext/ci', state: 'failure' }], /MISSING: main is not green at aaaaaaa: ext\/ci/],
+  ['no check run and a green status', [], [{ context: 'ext/ci', state: 'success' }], /MISSING: main is not green at aaaaaaa: no check runs/],
+  ['a run in progress', [{ name: 'ci', status: 'in_progress', conclusion: null }], [], /MISSING: main is not green at aaaaaaa: ci/],
+]) {
+  test(`release: ${name} on the default branch refuses`, () => {
+    const s = setup()
+    put(s.fx, CHECKS_FX, { check_runs: runs })
+    put(s.fx, STATUS_FX, { state: 'x', statuses: status })
+    assert.match(dry(s), want)
+  })
+}
+
+test('release: the saved real check runs of PR 805 are green', () => {
+  const s = setup()
+  const runs = JSON.parse(readFileSync(join(root, 'test/fixtures/clean-review/pr805-f36bb8e.json'), 'utf8')).checks
+  put(s.fx, CHECKS_FX, { check_runs: runs })
+  assert.match(dry(s), /ok: main is green at aaaaaaa/)
+})
+
+test('release: a different rule in ci-state.jq changes what release.sh reports', () => {
+  const copy = join(mkdtempSync(join(tmpdir(), 'release-stub-')), 'scripts')
+  cpSync(join(root, 'scripts'), copy, { recursive: true })
+  writeFileSync(join(copy, 'ci-state.jq'), '{state: "failure", failed: ["stub-check"], failedRuns: [{name: "stub-check", details_url: ""}], pending: [], noRuns: false}')
+  const s = setup()
+  assert.match(dry(s, copy), /MISSING: main is not green at aaaaaaa: stub-check/)
+  assert.match(dry(setup()), /ok: main is green at aaaaaaa/)
+})

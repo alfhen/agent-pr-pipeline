@@ -1071,7 +1071,7 @@ async function endFacts(pr, n, expected) {
   if (!status || !Array.isArray(status.approvedBy) || !status.head) return { ok: false, reason: `final facts: cannot read the head and the bots: ${st ? st.output.trim() : 'pipeline-io failed'}` }
   const ci = await ioCall(pr, `io:${pr.id}#endci`, 'wait-ci.sh', `${REPO} ${n} 1`, { phase: 'Bots' })
   const state = ci && ci.exitCode === 0 ? jsonLine(ci.output) : null
-  if (!state || !['pending', 'success', 'failure'].includes(state.state)) return { ok: false, reason: `final facts: cannot read the CI state: ${ci ? ci.output.trim() : 'pipeline-io failed'}` }
+  if (!state || !['pending', 'success', 'failure', 'noRuns'].includes(state.state)) return { ok: false, reason: `final facts: cannot read the CI state: ${ci ? ci.output.trim() : 'pipeline-io failed'}` }
   if (state.head !== status.head) return { ok: false, reason: `final facts: head moved while reading (${state.head} is not ${status.head})` }
   if (!expected || !status.head.startsWith(expected)) return { ok: false, reason: `final facts: head moved (${status.head} does not extend the checked ${expected})`, head: status.head }
   const failed = Array.isArray(state.failed) ? state.failed : []
@@ -1133,7 +1133,7 @@ Task: bring PR #${pr.prNumber} (${pr.branch}) to a mergeable state with green CI
 1. You are in a fresh git worktree. ${freshBranch('land', pr, 0)}
 2. Conflict: \`git merge origin/HEAD\`, then ${fastText}, and ${ownE2e}.
 3. CI: find the failed run ids with \`gh api "repos/${REPO}/actions/runs?head_sha=<head>" --jq '.workflow_runs[] | select(.conclusion == "failure") | .id'\` (<head> is the output of \`git rev-parse HEAD\` after your push), then list the failed jobs of a run with \`gh api repos/${REPO}/actions/runs/<run>/jobs\`, then read a job's log with \`gh api repos/${REPO}/actions/jobs/<job>/logs\`; rerun a flaky network failure with \`gh api -X POST repos/${REPO}/actions/runs/<run>/rerun-failed-jobs\`.
-4. Wait: \`bash ${PLUGIN_ROOT}/scripts/wait-ci.sh ${REPO} ${pr.prNumber} 9\`, with the Bash tool's timeout set to 600000 ms. It prints one JSON line with head, state (pending, success or failure), failed and timedOut. While timedOut is true, run it again, at most 3 calls in all. If it is still timedOut, return readyToMerge false and say so in notes.${noDisputesText(pr)}
+4. Wait: \`bash ${PLUGIN_ROOT}/scripts/wait-ci.sh ${REPO} ${pr.prNumber} 9\`, with the Bash tool's timeout set to 600000 ms. It prints one JSON line with head, state (pending, success, failure or noRuns), failed and timedOut. State noRuns means no check run and only successful commit statuses: it is not ready, so return readyToMerge false and say so in notes. While timedOut is true, run it again, at most 3 calls in all. If it is still timedOut, return readyToMerge false and say so in notes.${noDisputesText(pr)}
 Return readyToMerge, headSha, notes and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}${designRulesText(pr)}`

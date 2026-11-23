@@ -34,22 +34,39 @@ fetch_checks() {
   runs=$(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100" | jq -s -c '[.[].check_runs[] | {name, status, conclusion, details_url}]')
   sts=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100" | jq -s -c '[.[].statuses[] | {context, state}]')
 }
+# The CI state of the runs and statuses just fetched: scripts/ci-state.jq.
+ci_state() {
+  ci=$(jq -n -c --argjson r "$runs" --argjson s "${sts:-[]}" '{runs: $r, statuses: $s}' | jq -c -f "$(dirname "$0")/ci-state.jq") || { echo "STOP #$pr: cannot judge the check runs"; exit 5; }
+}
+# Ends when nothing is pending (a failed run does not end it while another check is pending, so a known flake is rerun only
+# after everything has finished), when the head moved, or when the head has only successful commit statuses on the second poll.
+# Sets pending (how many are still unfinished) and norun (1 when it stopped for a head with no check run).
 wait_ci() {
+  local nr=0
+  norun=0
   for _ in $(seq 1 "$tries"); do
     pull=$(gh api "repos/$R/pulls/$pr") || { echo "cannot read #$pr"; exit 5; }
     head=$(jq -r .head.sha <<<"$pull")
     [ "$head" != "$sha" ] && break
     fetch_checks
-    pending=$(jq -n --argjson r "$runs" --argjson s "${sts:-[]}" '[$r[] | select(.status != "completed")] + [$s[] | select(.state == "pending")] | length')
-    [ "$(jq length <<<"$runs")" = 0 ] && pending=$((pending + 1))
+    ci_state
+    pending=$(jq '.pending | length' <<<"$ci")
+    if [ "$(jq -r '.state == "noRuns"' <<<"$ci")" = true ]; then
+      if [ "$(jq length <<<"${sts:-[]}")" = 0 ]; then pending=1
+      else nr=$((nr + 1)); if [ "$nr" -ge 2 ]; then norun=1; else pending=1; fi
+      fi
+    else nr=0
+    fi
     [ "$pending" = "0" ] && break
-    [ "$(jq '[.[] | select(.state | IN("failure", "error"))] | length' <<<"${sts:-[]}")" != 0 ] && break
+    # A failed commit status ends the wait at once. A failed run does not: see above.
+    [ "$(jq '.failedRuns as $fr | [.failed[] | select(. as $n | $fr | map(.name) | index($n) | not)] | length' <<<"$ci")" != 0 ] && break
     sleep "$pause"
   done
 }
 read_failing() {
   fetch_checks
-  failing=$(jq -n -r --argjson r "$runs" --argjson s "${sts:-[]}" '[$r[] | select(.conclusion | IN("failure", "timed_out", "action_required")) | .name] + [$s[] | select(.state | IN("failure", "error")) | .context] | join(",")')
+  ci_state
+  failing=$(jq -r '.failed | join(",")' <<<"$ci")
 }
 # Waits until a rerun of run $1 shows: GitHub lists the new attempt a moment after the POST, and until then
 # wait_ci would see the old failure.
@@ -77,10 +94,11 @@ flake_runs() {
     esac
   fi
   flakes=$(jq -c 'if (.knownFlakes // []) | (type == "array" and all(.[]; type == "string")) then (.knownFlakes // []) else error("flakes") end' <<<"$settings" 2>/dev/null) || return 0
-  jq -n -r --argjson r "$runs" --argjson s "${sts:-[]}" --argjson f "$flakes" '
-    [$r[] | select(.conclusion | IN("failure", "timed_out", "action_required"))] as $bad
-    | if ([$s[] | select(.state | IN("failure", "error"))] | length) > 0 or ($bad | length) == 0 or any($bad[]; . as $c | $f | index($c.name) | not) then empty
-      else [$bad[] | (.details_url // "") | capture("/actions/runs/(?<id>[0-9]+)") | .id] | unique | .[] end' 2>/dev/null
+  # A failed commit status is not a run, so it is never rerun: any failed name outside failedRuns means no rerun.
+  jq -r --argjson f "$flakes" '
+    .failedRuns as $bad
+    | if ([.failed[] | select(. as $n | $bad | map(.name) | index($n) | not)] | length) > 0 or ($bad | length) == 0 or any($bad[]; . as $c | $f | index($c.name) | not) then empty
+      else [$bad[] | .details_url | capture("/actions/runs/(?<id>[0-9]+)") | .id] | unique | .[] end' <<<"$ci" 2>/dev/null
 }
 here=$(dirname "$0")
 parse_arg() {
@@ -172,6 +190,7 @@ for arg in "$@"; do
   if [ "$state" = "CONFLICTING" ] || [ -n "$failing" ]; then
     echo "LAND FIX #$pr state=$state failing=[$failing]"; exit 3
   fi
+  if [ "$norun" = 1 ]; then echo "STOP #$pr: no check runs"; exit 5; fi
   if [ "$pending" != "0" ]; then echo "WAITING #$pr: CI still running after 45 min"; exit 4; fi
   [ "$review" = 1 ] && [ "$state" = MERGEABLE ] && ask_review
   bash "$M" $auto $person "$R" "$pr" "$sha" "$branch" || { echo "STOP #$pr not merged (see the merge-pr.sh output above)"; exit 5; }

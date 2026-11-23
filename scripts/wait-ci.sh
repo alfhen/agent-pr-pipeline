@@ -3,7 +3,8 @@
 # Polls the PR head's check runs and commit statuses once a minute and prints one JSON line:
 # A head with no check runs counts as pending on the first poll of that head: GitHub creates them a few seconds after a push, and an early
 # green status must not end the wait. A head with only statuses is accepted from the second poll of that head on.
-# head, state (pending, success, failure), failed (names), timedOut. Stops when nothing is pending or the time is up.
+# head, state (pending, success, failure, noRuns), failed (names), timedOut. The state noRuns (with noRuns: true) means no check run and only
+# successful commit statuses: not ready. The rule is scripts/ci-state.jq. Stops when nothing is pending or the time is up.
 # One call waits at most 9 minutes, so it fits in one shell command. WAIT_CI_INTERVAL: seconds between polls (default 60).
 # A GitHub reply that fails or is not JSON is tried again (3 tries in all, 2 s apart).
 # Exits 0 with the line, 2 on bad usage, 3 when a GitHub call still fails after the last try.
@@ -21,7 +22,7 @@ errf=$(mktemp) || { echo "wait-ci: cannot make a temporary file" >&2; exit 3; }
 trap 'rm -f "$errf"' EXIT
 read_ci() {
   head=$(gh api "repos/$R/pulls/$pr" --jq .head.sha 2>"$errf") && [ -n "$head" ] || { why="cannot read #$pr"; return 1; }
-  runs=$(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100" 2>"$errf" | jq -s -c '[.[].check_runs[] | {name, status, conclusion}]' 2>/dev/null; exit "${PIPESTATUS[0]}") && [ -n "$runs" ] || { why="cannot read check runs"; return 1; }
+  runs=$(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100" 2>"$errf" | jq -s -c '[.[].check_runs[] | {name, status, conclusion, details_url}]' 2>/dev/null; exit "${PIPESTATUS[0]}") && [ -n "$runs" ] || { why="cannot read check runs"; return 1; }
   sts=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100" 2>"$errf" | jq -s -c '[.[].statuses[] | {context, state}]' 2>/dev/null; exit "${PIPESTATUS[0]}") && [ -n "$sts" ] || { why="cannot read statuses"; return 1; }
   return 0
 }
@@ -36,13 +37,14 @@ while :; do
     echo "wait-ci: $why, try $tries of $MAX_TRIES failed, trying again in ${RETRY_WAIT}s" >&2; sleep "$RETRY_WAIT"
   done
   first=false; [ "$head" != "$prev" ] && first=true; prev=$head
-  # Only failure, timed_out and action_required fail a check run: the same set as land-wave.sh. A cancelled or stale run does not.
-  line=$(jq -n -c --arg head "$head" --argjson r "$runs" --argjson s "$sts" --argjson first "$first" '
-    ([$r[] | select(.status != "completed")] + [$s[] | select(.state == "pending")] | length) as $inflight
-    | (if ($r | length) == 0 and ($s | length) == 0 then 1 elif ($r | length) == 0 and $first then 1 else $inflight end) as $pending
-    | ([$r[] | select(.conclusion | IN("failure", "timed_out", "action_required")) | .name]
-       + [$s[] | select(.state | IN("failure", "error")) | .context]) as $failed
-    | {head: $head, state: (if ($failed | length) > 0 then "failure" elif $pending > 0 then "pending" else "success" end), failed: $failed}') || { echo "wait-ci: unreadable answer from GitHub" >&2; exit 3; }
+  # The rule is scripts/ci-state.jq. A head with no check run waits on its first poll (GitHub creates the runs a few seconds
+  # after a push, and an early green status must not end the wait) and, with no status either, for the whole time.
+  line=$(jq -n -c --argjson r "$runs" --argjson s "$sts" '{runs: $r, statuses: $s}' | jq -c -f "$(dirname "$0")/ci-state.jq" \
+    | jq -c --arg head "$head" --argjson first "$first" --argjson nostatus "$(jq 'length == 0' <<<"$sts")" '
+        (.state == "noRuns") as $nr
+        | (($nostatus or $first) | not) as $ready
+        | {head: $head, state: (if $nr and ($ready | not) then "pending" else .state end), failed: .failed}
+        + (if $nr and $ready then {noRuns: true} else {} end)') || { echo "wait-ci: unreadable answer from GitHub" >&2; exit 3; }
   if [ "$(jq -r .state <<<"$line")" != pending ]; then jq -c '. + {timedOut: false}' <<<"$line"; exit 0; fi
   [ "$i" -ge "$polls" ] && { [ "$first" = false ] || [ "$(jq length <<<"$runs")" != 0 ] || [ "$i" -gt "$polls" ]; } && break
   i=$((i+1)); sleep "$interval"

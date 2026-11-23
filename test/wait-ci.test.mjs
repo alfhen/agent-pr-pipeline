@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, chmodSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, chmodSync, cpSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -107,9 +107,10 @@ test('a bad minutes value exits 2', () => {
   assert.equal(r.status, 2)
 })
 
-test("commit statuses alone, all green: success", () => {
+test("commit statuses alone, all green: noRuns, not success", () => {
   const out = JSON.parse(run(setup({ runs: [], statuses: [{ context: "legacy/ci", state: "success" }] })).stdout)
-  assert.equal(out.state, "success")
+  assert.equal(out.state, "noRuns")
+  assert.equal(out.noRuns, true)
   assert.equal(out.timedOut, false)
 })
 
@@ -135,13 +136,71 @@ test('a head that moves to one with no check runs and a green status is not succ
   put(s.fx, `${P}__commits__${B}__status.json`, { statuses: [{ context: 'ext/ci', state: 'success' }] })
   const out = JSON.parse(run(s, '2').stdout)
   assert.equal(out.head, B)
-  assert.equal(out.state, 'success')
+  assert.equal(out.state, 'noRuns')
   assert.equal(out.timedOut, false)
   assert.equal(readFileSync(join(s.fx, `${P}__pulls__7.count`), 'utf8').trim(), '3')
 })
 
 test('a statuses-only head is accepted on a later poll even with one minute', () => {
   const out = JSON.parse(run(setup({ runs: [], statuses: [{ context: 'ext/ci', state: 'success' }] }), '1').stdout)
-  assert.equal(out.state, 'success')
+  assert.equal(out.state, 'noRuns')
   assert.equal(out.timedOut, false)
+})
+
+test('no check runs and one green status: exit 0, state noRuns and noRuns true', () => {
+  const s = setup({ runs: [], statuses: [{ context: 'ext/ci', state: 'success' }] })
+  assert.deepEqual(JSON.parse(readFileSync(join(s.fx, `${P}__commits__${HEAD}__check-runs.json`), 'utf8')).check_runs, [])
+  const r = run(s, '2')
+  assert.equal(r.status, 0, r.stderr)
+  const out = JSON.parse(r.stdout)
+  assert.equal(out.state, 'noRuns')
+  assert.equal(out.noRuns, true)
+})
+
+test('no check runs and a failed status: failure at once', () => {
+  const out = JSON.parse(run(setup({ runs: [], statuses: [{ context: 'ext/ci', state: 'failure' }] }), '2').stdout)
+  assert.equal(out.state, 'failure')
+  assert.deepEqual(out.failed, ['ext/ci'])
+  assert.equal(out.timedOut, false)
+})
+
+for (const c of ['cancelled', 'stale', 'startup_failure']) {
+  test(`a ${c} check run is a failure`, () => {
+    const runs = [done('ci', c)]
+    assert.equal(runs[0].conclusion, c)
+    const out = JSON.parse(run(setup({ runs }), '2').stdout)
+    assert.equal(out.state, 'failure')
+    assert.deepEqual(out.failed, ['ci'])
+    assert.equal(out.timedOut, false)
+  })
+}
+
+test('a failed run ends the wait at once while another run is in progress', () => {
+  const out = JSON.parse(run(setup({ runs: [done('e2e', 'failure'), { name: 'ci', status: 'in_progress', conclusion: null }] }), '2').stdout)
+  assert.equal(out.state, 'failure')
+  assert.deepEqual(out.failed, ['e2e'])
+  assert.equal(out.timedOut, false)
+})
+
+test('the saved real check runs of PR 805 give success without noRuns', () => {
+  const runs = JSON.parse(readFileSync(join(root, 'test/fixtures/clean-review/pr805-f36bb8e.json'), 'utf8')).checks
+  const out = JSON.parse(run(setup({ runs }), '2').stdout)
+  assert.equal(out.state, 'success')
+  assert.deepEqual(out.failed, [])
+  assert.equal(out.timedOut, false)
+  assert.notEqual(out.noRuns, true)
+})
+
+test('a different rule in ci-state.jq changes what wait-ci.sh reports', () => {
+  const copy = join(mkdtempSync(join(tmpdir(), 'wait-ci-copy-')), 'scripts')
+  cpSync(join(root, 'scripts'), copy, { recursive: true })
+  writeFileSync(join(copy, 'ci-state.jq'), '{state: "failure", failed: ["stub-check"], failedRuns: [{name: "stub-check", details_url: ""}], pending: [], noRuns: false}')
+  const s = setup({ runs: [done('ci')] })
+  const r = spawnSync('bash', [join(copy, 'wait-ci.sh'), 'o/r', '7', '2'], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${join(s.dir, 'bin')}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, WAIT_CI_INTERVAL: '0' },
+  })
+  const out = JSON.parse(r.stdout)
+  assert.equal(out.state, 'failure')
+  assert.deepEqual(out.failed, ['stub-check'])
 })
