@@ -134,7 +134,7 @@ QA: read-only. Run `bot-approval.jq` on the real reviews and comments of #883 (h
 3. With a marked answer line for each outside-diff item and each Additional comments item, `ruleA` clears the review. Without it, `ruleA` names the first item that has no answer, whichever block it is in.
 4. A plain issue comment of the maintainer, with no marker, does not answer an item (choice 4).
 5. Each invariant above has its own refusal case, built from the #883 fixture with one change. One case has an answer line for the outside-diff item and none for the Additional comments item: it refuses and names that item's path and title.
-6. A review with no outside-diff block parses and clears exactly as on the default branch. (holds today; kind `regression`)
+6. A review with neither an outside-diff block nor an "Additional comments" block parses and clears exactly as on the default branch. (holds today; kind `regression`) A review with only one of the two blocks is a case of statements 1 and 3, not of this one.
 7. A test in `test/clean-review.test.mjs` builds the answer lines from the #883 fixture the way `answerPrompt` step 7 says (bare path, title) for the outside-diff item and the Additional comments item, and `ruleA` clears the fourth way with `coderabbitai[bot] (clean review)`. A line with the path as the summary prints it (`workflows/run-wave.js-1027-1027`) does not clear. `test/wave-prompts.test.mjs` pins the bare-path sentence in `answerPrompt` and in `agents/bot-answerer.md`.
 
 **M06 One rule for the CI state of a head.** Closes #467, #542, #309.
