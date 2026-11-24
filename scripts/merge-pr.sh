@@ -55,13 +55,14 @@ runs=$(jq -s -c '[.[].check_runs[] | {name, status, conclusion, started_at, head
 stat=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100") || { echo "PR $pr NOT merged: cannot read the commit statuses"; exit 1; }
 sts=$(jq -s -c '[.[].statuses[] | {context, state}]' <<<"$stat") || { echo "PR $pr NOT merged: unexpected commit status answer"; exit 1; }
 # Files and --slurpfile, not --argjson: a busy PR passes the 128 KiB limit of one argument on Linux.
-echo "$runs" >"$tmp/runs"
+# A write that fails must stop here: a missing status list would read as no failed status.
+echo "$runs" >"$tmp/runs" || { echo "PR $pr NOT merged: cannot write the check runs"; exit 1; }
 input=$(jq -n -c --arg head "$head" --argjson bots "$(jq -n -c --arg b "$bots" '$b | split(",")')" --arg user "$user" --slurpfile reviews "$tmp/reviews" --slurpfile comments "$tmp/comments" --slurpfile checks "$tmp/runs" --slurpfile issue "$tmp/issue-comments" --slurpfile suites "$tmp/suites" \
   '{reviews: ($reviews | add // []), comments: ($comments | add // []), issueComments: ($issue | add // []), suites: [$suites[].check_suites[]], checks: $checks[0], head: $head, bots: $bots, user: $user}') || { echo "PR $pr NOT merged: cannot build the bot input"; exit 1; }
 approved=$(jq -c -f "$here/bot-approval.jq" <<<"$input") || { echo "PR $pr NOT merged: cannot judge the reviews"; exit 1; }
 appr=$(jq -r 'join(",")' <<<"$approved")
 # The rule is ci-state.jq. The suffix of each name (the conclusion or state) is only for the message.
-echo "$sts" >"$tmp/sts"
+echo "$sts" >"$tmp/sts" || { echo "PR $pr NOT merged: cannot write the commit statuses"; exit 1; }
 ci=$(jq -n -c --slurpfile r "$tmp/runs" --slurpfile s "$tmp/sts" '{runs: $r[0], statuses: $s[0]}' | jq -c -f "$here/ci-state.jq") || { echo "PR $pr NOT merged: cannot judge the check runs"; exit 1; }
 fail=$(jq -r --slurpfile r "$tmp/runs" --slurpfile s "$tmp/sts" '
   [.failed[], .pending[]] as $bad

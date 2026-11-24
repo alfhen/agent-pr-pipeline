@@ -13,13 +13,13 @@ const jq = (runs, statuses = []) => {
   const r = spawnSync('jq', ['-c', '-f', join(root, 'scripts/ci-state.jq')], { input: JSON.stringify({ runs, statuses }), encoding: 'utf8' })
   assert.equal(r.status, 0, r.stderr)
   const out = JSON.parse(r.stdout)
-  assert.deepEqual(Object.keys(out).sort(), ['failed', 'failedRuns', 'noRuns', 'pending', 'state'])
+  assert.deepEqual(Object.keys(out).sort(), ['failed', 'failedRuns', 'failedStatuses', 'noRuns', 'pending', 'state'])
   return out
 }
 
 test('success, skipped and neutral are green', () => {
   const o = jq([done('a'), done('b', 'skipped'), done('c', 'neutral')])
-  assert.deepEqual(o, { state: 'success', failed: [], failedRuns: [], pending: [], noRuns: false })
+  assert.deepEqual(o, { state: 'success', failed: [], failedRuns: [], failedStatuses: [], pending: [], noRuns: false })
 })
 
 test('every other conclusion fails, with the details url', () => {
@@ -75,4 +75,10 @@ test('the four scripts name ci-state.jq, hold no conclusion set and use no gh pr
     assert.doesNotMatch(src, /timed_out|"neutral"|"action_required"/, f)
     assert.doesNotMatch(src, /gh (pr|issue)/, f)
   }
+})
+
+test('a failed status is listed in failedStatuses even when a failed run has its name', () => {
+  const o = jq([done('e2e', 'failure')], [{ context: 'e2e', state: 'failure' }, { context: 'ext/ok', state: 'success' }])
+  assert.deepEqual(o.failedStatuses, ['e2e'])
+  assert.deepEqual(o.failedRuns.map((r) => r.name), ['e2e'])
 })

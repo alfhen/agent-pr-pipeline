@@ -204,3 +204,19 @@ test('a different rule in ci-state.jq changes what wait-ci.sh reports', () => {
   assert.equal(out.state, 'failure')
   assert.deepEqual(out.failed, ['stub-check'])
 })
+
+for (const [name, jq] of [['fails', 'error("boom")'], ['prints nothing', 'empty']]) {
+  test(`wait-ci: a classifier that ${name} exits 3 with no JSON record`, () => {
+    const copy = join(mkdtempSync(join(tmpdir(), 'wait-ci-copy-')), 'scripts')
+    cpSync(join(root, 'scripts'), copy, { recursive: true })
+    writeFileSync(join(copy, 'ci-state.jq'), jq)
+    const s = setup({ runs: [done('ci')] })
+    const r = spawnSync('bash', [join(copy, 'wait-ci.sh'), 'o/r', '7', '2'], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${join(s.dir, 'bin')}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, WAIT_CI_INTERVAL: '0' },
+    })
+    assert.equal(r.status, 3, r.stderr)
+    assert.equal(r.stdout, '')
+    assert.match(r.stderr, /unreadable answer/)
+  })
+}

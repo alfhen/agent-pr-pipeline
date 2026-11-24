@@ -64,7 +64,7 @@ wait_ci() {
     fi
     [ "$pending" = "0" ] && break
     # A failed commit status ends the wait at once. A failed run does not: see above.
-    [ "$(jq '.failedRuns as $fr | [.failed[] | select(. as $n | $fr | map(.name) | index($n) | not)] | length' <<<"$ci")" != 0 ] && break
+    [ "$(jq '(.failedStatuses // []) | length' <<<"$ci")" != 0 ] && break
     sleep "$pause"
   done
 }
@@ -72,6 +72,8 @@ read_failing() {
   fetch_checks || { echo "STOP #$pr: cannot read the check runs"; exit 5; }
   ci_state
   failing=$(jq -r '.failed | join(",")' <<<"$ci")
+  # wait_ci set norun from an earlier poll; a head that has gained check runs since is no longer a head with none.
+  [ "$(jq -r '.noRuns' <<<"$ci")" = true ] || norun=0
 }
 # Waits until a rerun of run $1 shows: GitHub lists the new attempt a moment after the POST, and until then
 # wait_ci would see the old failure.
@@ -99,10 +101,10 @@ flake_runs() {
     esac
   fi
   flakes=$(jq -c 'if (.knownFlakes // []) | (type == "array" and all(.[]; type == "string")) then (.knownFlakes // []) else error("flakes") end' <<<"$settings" 2>/dev/null) || return 0
-  # A failed commit status is not a run, so it is never rerun: any failed name outside failedRuns means no rerun.
+  # A failed commit status is not a run, so it is never rerun, even when it is named like a failed run.
   jq -r --argjson f "$flakes" '
     .failedRuns as $bad
-    | if ([.failed[] | select(. as $n | $bad | map(.name) | index($n) | not)] | length) > 0 or ($bad | length) == 0 or any($bad[]; . as $c | $f | index($c.name) | not) then empty
+    | if ((.failedStatuses // []) | length) > 0 or ($bad | length) == 0 or any($bad[]; . as $c | $f | index($c.name) | not) then empty
       else [$bad[] | .details_url | capture("/actions/runs/(?<id>[0-9]+)") | .id] | unique | .[] end' <<<"$ci" 2>/dev/null
 }
 here=$(dirname "$0")

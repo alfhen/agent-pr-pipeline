@@ -39,12 +39,13 @@ while :; do
   first=false; [ "$head" != "$prev" ] && first=true; prev=$head
   # The rule is scripts/ci-state.jq. A head with no check run waits on its first poll (GitHub creates the runs a few seconds
   # after a push, and an early green status must not end the wait) and, with no status either, for the whole time.
-  line=$(jq -n -c --argjson r "$runs" --argjson s "$sts" '{runs: $r, statuses: $s}' | jq -c -f "$(dirname "$0")/ci-state.jq" \
-    | jq -c --arg head "$head" --argjson first "$first" --argjson nostatus "$(jq 'length == 0' <<<"$sts")" '
+  # Two steps, not one pipe: a failed classifier must not leave an empty line that exits 0 with no record.
+  ci=$(jq -n -c --argjson r "$runs" --argjson s "$sts" '{runs: $r, statuses: $s}' | jq -c -f "$(dirname "$0")/ci-state.jq") && [ -n "$ci" ] || { echo "wait-ci: unreadable answer from GitHub" >&2; exit 3; }
+  line=$(jq -c --arg head "$head" --argjson first "$first" --argjson nostatus "$(jq 'length == 0' <<<"$sts")" '
         (.state == "noRuns") as $nr
         | (($nostatus or $first) | not) as $ready
         | {head: $head, state: (if $nr and ($ready | not) then "pending" else .state end), failed: .failed}
-        + (if $nr and $ready then {noRuns: true} else {} end)') || { echo "wait-ci: unreadable answer from GitHub" >&2; exit 3; }
+        + (if $nr and $ready then {noRuns: true} else {} end)' <<<"$ci") && [ -n "$line" ] || { echo "wait-ci: unreadable answer from GitHub" >&2; exit 3; }
   if [ "$(jq -r .state <<<"$line")" != pending ]; then jq -c '. + {timedOut: false}' <<<"$line"; exit 0; fi
   [ "$i" -ge "$polls" ] && { [ "$first" = false ] || [ "$(jq length <<<"$runs")" != 0 ] || [ "$i" -gt "$polls" ]; } && break
   i=$((i+1)); sleep "$interval"

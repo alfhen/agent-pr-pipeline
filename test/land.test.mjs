@@ -675,3 +675,46 @@ test('merge-pr: a green run with a green status merges', () => {
   assert.equal(r.code, 0, r.out)
   assert.equal(putCalls(r).length, 1)
 })
+
+test('land: a failed status named like a failed known-flake run is not rerun', () => {
+  const s = landSetup({ checks: [[failed('e2e')]] })
+  put(s.fx, STATUS, { state: 'failure', statuses: [{ context: 'e2e', state: 'failure' }] })
+  const r = land(s)
+  assert.equal(r.code, 3, r.out)
+  assert.match(r.out, /LAND FIX #7/)
+  assert.equal(reruns(r).length, 0)
+  assert.equal(putCalls(r).length, 0)
+})
+
+test('land: a failed status named like a run that is still in progress ends the wait at once', () => {
+  const s = landSetup({ checks: [[{ ...inProgress, name: 'e2e' }]] })
+  put(s.fx, STATUS, { state: 'failure', statuses: [{ context: 'e2e', state: 'failure' }] })
+  const r = land(s)
+  assert.equal(r.code, 3, r.out)
+  assert.ok(checkReads(r) <= 2, r.log.join('\n'))
+})
+
+test('land: a head that gains check runs after two empty polls is not a STOP for no check runs', () => {
+  const s = landSetup({ checks: [[], [], [passed('ci')]] })
+  put(s.fx, STATUS, okStatus)
+  const r = land(s)
+  assert.doesNotMatch(r.out, /no check runs/)
+  assert.equal(r.code, 0, r.out)
+  assert.equal(putCalls(r).length, 1)
+})
+
+// A stand-in mktemp whose -d folder holds a read-only empty file as <name>, so the write of that file fails and the file reads as empty.
+for (const file of ['sts', 'runs']) {
+  test(`merge-pr: a failed write of the ${file} file stops the merge`, () => {
+    const s = landSetup({ checks: [[passed('ci')]] })
+    put(s.fx, STATUS, { state: 'failure', statuses: [{ context: 'ext/ci', state: 'failure' }] })
+    const ro = join(s.dir, 'ro-empty'); writeFileSync(ro, ''); chmodSync(ro, 0o444)
+    const real = spawnSync('which', ['mktemp'], { encoding: 'utf8' }).stdout.trim()
+    writeFileSync(join(s.bin, 'mktemp'), `#!/bin/bash\nd=$(${real} "$@") || exit 1\ncase " $* " in *" -d "*) ln -s ${ro} "$d/${file}" ;; esac\necho "$d"\n`)
+    chmodSync(join(s.bin, 'mktemp'), 0o755)
+    const r = mergeRun(s)
+    assert.equal(r.code, 1, r.out)
+    assert.match(r.out, /PR 7 NOT merged: cannot write the /)
+    assert.equal(putCalls(r).length, 0)
+  })
+}
