@@ -2551,7 +2551,7 @@ await check('the wait schema has seenHead, which the waiter prompt asks for', as
   const probe = async (p, o) => { if (o.label.startsWith('botwait')) seen.push({ ...o, prompt: p }); return agent(p, o) }
   await run({ ...base, prs: only('C1') }, probe, parallel, log)
   assert.ok(seen[0].schema.properties.seenHead)
-  assert.match(seen[0].prompt, /Return approvedBy, seenHead, openComments/)
+  assert.match(seen[0].prompt, /Return approvedBy, seenHead, finishedOnHead, openComments/)
 })
 await check('quick: a stored high-risk brief on a first run lands as person without asking the safety agent', async () => {
   briefs.QHI = 'Touches: src/h.js\nAcceptance: h test\nTriage: size M, risk high, new concepts: none'
