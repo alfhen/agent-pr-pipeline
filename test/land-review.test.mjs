@@ -509,6 +509,10 @@ test('reviewOnRequest is read from the default branch, not from the PR head', ()
   assert.equal('reviewOnRequest' in JSON.parse(readFileSync(join(s.fx, MAIN), 'utf8')), false)
   const r = run(s, ['o/r', `7:${S}`])
   noRequestPlain(r)
+  // Without the read the test would pass for any reason: the log must show the settings read from the default branch only.
+  const reads = r.log.filter((l) => l.includes('.github/pipeline.json'))
+  assert.ok(reads.some((l) => l.includes('ref=refs/heads/main')), r.log.join('\n'))
+  assert.equal(reads.some((l) => l.includes(`ref=${S}`)), false, r.log.join('\n'))
 })
 
 for (const [label, value] of [['missing', undefined], ['false', false]]) {
