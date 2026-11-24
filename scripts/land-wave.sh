@@ -8,6 +8,8 @@
 # that PR (landFix: true, or skipImpl to check the new head), then run this again.
 # When every failing check is in knownFlakes (.github/pipeline.json on the default branch), the failed jobs
 # are rerun once and CI is awaited again; only a check that still fails stops the wave.
+# The key reviewOnRequest (true) in .github/pipeline.json on the default branch acts as --review, for a repo whose bot reviews only on request.
+# A settings file that cannot be read, or a value that is not a boolean, acts as false and prints one WARN line.
 # With --review, a PR that no bot has cleared (and has no open bot comment) first gets request-review.sh, which asks CodeRabbit for a
 # review (two requests at most, 64 minutes apart), so a PR can wait hours: run it in the background, one --review land at a time for a
 # repo (there is no lock). A review that did not come stops the wave with "REVIEW #<pr>: <cause>" (exit 9). Open bot comments or an
@@ -83,6 +85,26 @@ flake_runs() {
       else [$bad[] | (.details_url // "") | capture("/actions/runs/(?<id>[0-9]+)") | .id] | unique | .[] end' 2>/dev/null
 }
 here=$(dirname "$0")
+# Read once, when the first PR needs it, from the default branch only: a PR must not turn the request on for itself.
+roq=""
+read_review_on_request() {
+  local base settings v
+  roq=0
+  base=$(gh api "repos/$R" --jq .default_branch 2>/dev/null) || { echo "WARN: cannot read the default branch of $R, reviewOnRequest is taken as false"; return 0; }
+  settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=refs/heads/$base" 2>"$errf")
+  if [ $? -ne 0 ]; then
+    case "$settings $(cat "$errf")" in
+      *"HTTP 404"*) return 0 ;;
+      *) echo "WARN: cannot read .github/pipeline.json, reviewOnRequest is taken as false"; return 0 ;;
+    esac
+  fi
+  v=$(jq -r 'if .reviewOnRequest == null or .reviewOnRequest == false then "0" elif .reviewOnRequest == true then "1" else "bad" end' <<<"$settings" 2>/dev/null)
+  case "$v" in
+    0) ;;
+    1) roq=1 ;;
+    *) echo "WARN: reviewOnRequest in .github/pipeline.json is not true or false, taken as false" ;;
+  esac
+}
 parse_arg() {
   pr=${arg%%:*}; rest=${arg#*:}; sha=${rest%%:*}; suffix=auto_none
   [ "$rest" != "$sha" ] && suffix=${rest#*:}
@@ -173,7 +195,10 @@ for arg in "$@"; do
     echo "LAND FIX #$pr state=$state failing=[$failing]"; exit 3
   fi
   if [ "$pending" != "0" ]; then echo "WAITING #$pr: CI still running after 45 min"; exit 4; fi
-  [ "$review" = 1 ] && [ "$state" = MERGEABLE ] && ask_review
+  if [ "$state" = MERGEABLE ]; then
+    [ "$review" = 0 ] && [ -z "$roq" ] && read_review_on_request
+    { [ "$review" = 1 ] || [ "$roq" = 1 ]; } && ask_review
+  fi
   bash "$M" $auto $person "$R" "$pr" "$sha" "$branch" || { echo "STOP #$pr not merged (see the merge-pr.sh output above)"; exit 5; }
   sleep "$((pause / 6))"
 done
