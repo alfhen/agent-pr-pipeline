@@ -66,19 +66,25 @@ wait_rerun_started() {
 }
 errf=$(mktemp) || { echo "STOP: cannot make a temporary file"; exit 5; }
 trap 'rm -f "$errf"' EXIT
-# Prints the run ids to rerun when every failing check is a known flake, else nothing. The list is read from
-# the default branch, never from the PR head, so a PR cannot add its own failing check to it. Any doubt means no rerun.
-flake_runs() {
-  local base settings flakes
-  base=$(gh api "repos/$R" --jq .default_branch 2>/dev/null) || return 0
-  settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=refs/heads/$base" 2>"$errf")
+# Sets $sj to the settings file of the default branch, never of a PR head, so a PR cannot change its own rules.
+# A missing file (404) means the template defaults. Any other failure returns 1.
+sj=""
+read_default_settings() {
+  local base
+  base=$(gh api "repos/$R" --jq .default_branch 2>/dev/null) || return 1
+  sj=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=refs/heads/$base" 2>"$errf")
   if [ $? -ne 0 ]; then
-    case "$settings $(cat "$errf")" in
-      *"HTTP 404"*) settings=$(cat "$here/../templates/pipeline.json" 2>/dev/null) || return 0 ;;
-      *) return 0 ;;
+    case "$sj $(cat "$errf")" in
+      *"HTTP 404"*) sj=$(cat "$here/../templates/pipeline.json" 2>/dev/null) || return 1 ;;
+      *) return 1 ;;
     esac
   fi
-  flakes=$(jq -c 'if (.knownFlakes // []) | (type == "array" and all(.[]; type == "string")) then (.knownFlakes // []) else error("flakes") end' <<<"$settings" 2>/dev/null) || return 0
+}
+# Prints the run ids to rerun when every failing check is a known flake, else nothing. Any doubt means no rerun.
+flake_runs() {
+  local flakes
+  read_default_settings || return 0
+  flakes=$(jq -c 'if (.knownFlakes // []) | (type == "array" and all(.[]; type == "string")) then (.knownFlakes // []) else error("flakes") end' <<<"$sj" 2>/dev/null) || return 0
   jq -n -r --argjson r "$runs" --argjson s "${sts:-[]}" --argjson f "$flakes" '
     [$r[] | select(.conclusion | IN("failure", "timed_out", "action_required"))] as $bad
     | if ([$s[] | select(.state | IN("failure", "error"))] | length) > 0 or ($bad | length) == 0 or any($bad[]; . as $c | $f | index($c.name) | not) then empty
@@ -88,17 +94,10 @@ here=$(dirname "$0")
 # Read once, when the first PR needs it, from the default branch only: a PR must not turn the request on for itself.
 roq=""
 read_review_on_request() {
-  local base settings v
+  local v
   roq=0
-  base=$(gh api "repos/$R" --jq .default_branch 2>/dev/null) || { echo "WARN: cannot read the default branch of $R, reviewOnRequest is taken as false"; return 0; }
-  settings=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/.github/pipeline.json?ref=refs/heads/$base" 2>"$errf")
-  if [ $? -ne 0 ]; then
-    case "$settings $(cat "$errf")" in
-      *"HTTP 404"*) return 0 ;;
-      *) echo "WARN: cannot read .github/pipeline.json, reviewOnRequest is taken as false"; return 0 ;;
-    esac
-  fi
-  v=$(jq -r 'if .reviewOnRequest == null or .reviewOnRequest == false then "0" elif .reviewOnRequest == true then "1" else "bad" end' <<<"$settings" 2>/dev/null)
+  read_default_settings || { echo "WARN: cannot read .github/pipeline.json of $R, reviewOnRequest is taken as false"; return 0; }
+  v=$(jq -r 'if has("reviewOnRequest") | not then "0" elif .reviewOnRequest == false then "0" elif .reviewOnRequest == true then "1" else "bad" end' <<<"$sj" 2>/dev/null)
   case "$v" in
     0) ;;
     1) roq=1 ;;
