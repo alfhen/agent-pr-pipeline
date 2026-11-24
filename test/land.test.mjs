@@ -59,6 +59,16 @@ const landSetup = ({ checks, settings = 'flake', onHead = null, attempt = 1 }) =
 }
 const land = (s) => run(s, 'land-wave.sh', ['o/r', `7:${SHA}`])
 
+test('land: one check-runs read that returns an error body does not end the wait', () => {
+  const s = landSetup({ checks: [[{ name: 'ci', status: 'in_progress', conclusion: null }], [passed('ci')]] })
+  put(s.fx, `${P}__commits__${SHA}__check-runs.call2.json`, { message: 'Server Error' })
+  put(s.fx, `${P}__commits__${SHA}__check-runs.call3.json`, { check_runs: [passed('ci')] })
+  const r = land(s)
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /all merged/)
+  assert.equal(r.log.filter((l) => /^PUT .*pulls\/7\/merge/.test(l)).length, 1)
+})
+
 test('land: a known flake that passes after one rerun merges', () => {
   const r = land(landSetup({ checks: [[failed('e2e')], [failed('e2e')], [passed('e2e')]] }))
   assert.equal(r.code, 0, r.out)

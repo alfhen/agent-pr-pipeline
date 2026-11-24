@@ -133,6 +133,18 @@ test('release: a red default branch refuses', () => {
   refused(release(s), /MISSING: main is not green at aaaaaaa: ci/)
 })
 
+test('release: a ci-state.jq that fails never reports a green default branch', () => {
+  const s = setup({ conclusion: 'failure' })
+  const copy = mkdtempSync(join(tmpdir(), 'rel-copy-'))
+  cpSync(join(root, 'scripts'), copy, { recursive: true })
+  writeFileSync(join(copy, 'ci-state.jq'), 'error("x")')
+  const env = { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log, PIPELINE_TEST_FAST: '1' }
+  const r = spawnSync('bash', [join(copy, 'release.sh'), '--dry-run', 'o/r', '0.3.0'], { env, encoding: 'utf8' })
+  const out = r.stdout + r.stderr
+  assert.doesNotMatch(out, /ok: main is green/)
+  assert.match(out, /cannot judge the check runs|not green/)
+})
+
 test('release: a manifest version that differs from the release version refuses', () => {
   const s = setup({ manifest: { version: '0.2.9' } })
   refused(release(s), /MISSING: \.claude-plugin\/plugin\.json has version '0\.2\.9', not 0\.3\.0/)

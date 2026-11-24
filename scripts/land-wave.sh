@@ -31,12 +31,16 @@ tries=90; pause=30; mtries=6; mpause=10; rtries=6
 [ "$PIPELINE_TEST_FAST" = 1 ] && { tries=3; pause=0; mtries=1; mpause=0; rtries=3; }
 # Trimmed to the fields read below: one jq argument is limited to 128 KiB on Linux, and a full check run is several KB.
 fetch_checks() {
-  runs=$(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100" | jq -s -c '[.[].check_runs[] | {name, status, conclusion, details_url}]')
-  sts=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100" | jq -s -c '[.[].statuses[] | {context, state}]')
+  local raw
+  # gh writes an HTTP error body to stdout, so a failed read must not count as an answer.
+  raw=$(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100") || return 1
+  runs=$(jq -s -c '[.[].check_runs[] | {name, status, conclusion, details_url}]' <<<"$raw") || return 1
+  raw=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100") || return 1
+  sts=$(jq -s -c '[.[].statuses[] | {context, state}]' <<<"$raw") || return 1
 }
 # The CI state of the runs and statuses just fetched: scripts/ci-state.jq.
 ci_state() {
-  ci=$(jq -n -c --argjson r "$runs" --argjson s "${sts:-[]}" '{runs: $r, statuses: $s}' | jq -c -f "$(dirname "$0")/ci-state.jq") || { echo "STOP #$pr: cannot judge the check runs"; exit 5; }
+  ci=$(jq -n -c --argjson r "$runs" --argjson s "${sts:-[]}" '{runs: $r, statuses: $s}' | jq -c -f "$(dirname "$0")/ci-state.jq") && [ -n "$ci" ] || { echo "STOP #$pr: cannot judge the check runs"; exit 5; }
 }
 # Ends when nothing is pending (a failed run does not end it while another check is pending, so a known flake is rerun only
 # after everything has finished), when the head moved, or when the head has only successful commit statuses on the second poll.
@@ -48,7 +52,8 @@ wait_ci() {
     pull=$(gh api "repos/$R/pulls/$pr") || { echo "cannot read #$pr"; exit 5; }
     head=$(jq -r .head.sha <<<"$pull")
     [ "$head" != "$sha" ] && break
-    fetch_checks
+    # One unreadable answer is one lost poll, not the end of the wait.
+    fetch_checks || { sleep "$pause"; continue; }
     ci_state
     pending=$(jq '.pending | length' <<<"$ci")
     if [ "$(jq -r '.state == "noRuns"' <<<"$ci")" = true ]; then
@@ -64,7 +69,7 @@ wait_ci() {
   done
 }
 read_failing() {
-  fetch_checks
+  fetch_checks || { echo "STOP #$pr: cannot read the check runs"; exit 5; }
   ci_state
   failing=$(jq -r '.failed | join(",")' <<<"$ci")
 }
