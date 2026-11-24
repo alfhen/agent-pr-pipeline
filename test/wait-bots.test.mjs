@@ -258,9 +258,11 @@ test('the bot is matched by its exact login and its App slug plus [bot]', () => 
 })
 
 test('every configured bot must finish: one finished bot is not enough', () => {
-  const s = setup([crRev(HEAD)])
+  // CodeRabbit approved the head, so the old rule (any bot seen on the head) would stop at once.
+  const s = setup([[{ user: { login: CR }, state: 'APPROVED', commit_id: HEAD, submitted_at: '2026-01-01T00:00:00Z' }]])
   const both = waitCR(s, '3', { BOT_LOGINS: `${CR},gitar-bot[bot]` })
   assert.equal(both.timedOut, true)
+  assert.deepEqual(both.finishedOnHead, [CR])
   assert.equal(reads(s), 3)
   const t = setup([[...crRev(HEAD), ...approved]])
   assert.equal(waitCR(t, '3', { BOT_LOGINS: `${CR},gitar-bot[bot]` }).timedOut, false)
