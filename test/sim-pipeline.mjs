@@ -4449,6 +4449,141 @@ await check('A1-9 a blocked opener result gives its id as a quoted keep word to 
     assert.equal(words(cleanupOf(cleanupCalls, 'wave', 'all')[0]), "'/x' --all 'C1'")
   }
 })
+// M01: the opener is retried once after the #880 answer.
+const M01_BLOCK = { blocked: true, blockedReason: 'no login', commands: [] }
+const M01_RE = /^open:C1(#(?!body)|$)/
+const m01Open = () => calls.filter(c => M01_RE.test(c.label))
+const m01Hook = (...answers) => {
+  let n = 0
+  return (p, o) => M01_RE.test(o.label) && n < answers.length ? answers[n++] : undefined
+}
+await check('M01-1: a no-login block with no commands is retried once and the PR goes on', async () => {
+  for (const extra of [{}, { milestone: 'v1' }]) {
+    const out = await hookedOut(only1('C1'), m01Hook(M01_BLOCK), extra)
+    assert.equal(m01Open().length, 2)
+    assert.equal(out.prs[0].ready, true)
+    assert.ok(out.prs[0].prNumber)
+  }
+})
+await check('M01-2: a second block stops the PR after two opener calls with stopText and the folder kept', async () => {
+  const words = c => /`[^`]*cleanup\.sh clones ([^`]*)`/.exec(c.prompt)[1]
+  const blocked = { ...M01_BLOCK, failedCommand: 'gh api user --jq .login' }
+  const out = await hookedOut(only('C1', 'C2'), (p, o) => /^open:C1/.test(o.label) ? blocked : undefined)
+  const x = out.prs[0]
+  assert.equal(m01Open().length, 2)
+  assert.equal(x.ready, false)
+  assert.equal(x.reason, 'needs human: no login')
+  assert.equal(x.stopText, 'open: no login [gh api user --jq .login]')
+  assert.equal(words(cleanupOf(cleanupCalls, 'C1', 'clones')[0]), "'/x' 'C1' 'C1'")
+})
+await check('M01-3: the opener runs at most twice, with a null retry or a null first call', async () => {
+  let n = 0
+  const a = await hookedOut(only1('C1'), (p, o) => { if (!M01_RE.test(o.label)) return undefined; n++; return n === 1 ? M01_BLOCK : null })
+  assert.equal(n, 2)
+  assert.equal(m01Open().length, 2)
+  assert.equal(a.prs[0].ready, false)
+  assert.ok(['needs human: no login', 'PR not opened'].includes(a.prs[0].reason))
+  assert.ok(!logs.some(l => /open:C1[^ ]*: agent died .*retrying once/.test(l)))
+  n = 0
+  const b = await hookedOut(only1('C1'), (p, o) => { if (!M01_RE.test(o.label)) return undefined; n++; return n === 1 ? null : n === 2 ? M01_BLOCK : undefined })
+  assert.equal(n, 2)
+  assert.equal(b.prs[0].ready, false)
+  assert.equal(b.prs[0].reason, 'needs human: no login')
+  assert.equal(b.prs[0].stopText, 'open: no login [(none returned)]')
+  assert.ok(logs.includes('open:C1: agent died (no result), retrying once'))
+})
+await check('M01-T: a throw on the opener retry keeps the first blocked answer', async () => {
+  const i9 = 'https://github.com/o/r/issues/9'
+  let n = 0
+  const out = await hookedOut(only1('C1'), (p, o) => {
+    if (!M01_RE.test(o.label)) return undefined
+    n++
+    if (n === 1) return { ...M01_BLOCK, prNumber: 5, issuesCreated: [i9] }
+    throw new Error('transport')
+  })
+  const x = out.prs[0]
+  assert.equal(n, 2)
+  assert.equal(x.reason, 'needs human: no login')
+  assert.equal(x.prNumber, 5)
+  assert.deepEqual(x.issues, [i9])
+  assert.equal(x.stopText, 'open: no login [(none returned)]')
+})
+await check('M01-T2: an incomplete retry answer keeps the first blocked answer', async () => {
+  for (const second of [{}, { blocked: false }]) {
+    let n = 0
+    const out = await hookedOut(only1('C1'), (p, o) => {
+      if (!M01_RE.test(o.label)) return undefined
+      n++
+      return n === 1 ? { ...M01_BLOCK, failedCommand: 'gh api user --jq .login' } : second
+    })
+    const x = out.prs[0]
+    assert.equal(n, 2)
+    assert.equal(x.ready, false)
+    assert.equal(x.reason, 'needs human: no login')
+    assert.equal(x.stopText, 'open: no login [gh api user --jq .login]')
+  }
+})
+await check('M01-4: the retry prompt tells the opener to read what exists before it creates anything', async () => {
+  await hookedOut(only1('C1'), m01Hook(M01_BLOCK))
+  const [first, second] = m01Open().map(c => c.prompt)
+  assert.ok(second)
+  const added = second.split('\n').filter(l => !first.split('\n').includes(l)).join('\n')
+  assert.ok(added.length > 0)
+  for (const re of [/earlier attempt/i, /pull request|\bPR\b/, /checklist/i, /issue/i, /review-minor/, /creator=<login>/, /before/i]) assert.match(added, re)
+  assert.ok(second.split('\n').find(l => l.startsWith('3. Checklist:')).includes('No open minor findings.'))
+})
+await check('M01-5: a retried opener result holds the issues of both answers once', async () => {
+  const i9 = 'https://github.com/o/r/issues/9', i10 = 'https://github.com/o/r/issues/10'
+  const out = await hookedOut(only1('C1'), m01Hook({ ...M01_BLOCK, prNumber: 5, issuesCreated: [i9] }, { prNumber: 5, prUrl: 'u5', issuesCreated: [i9, i10] }))
+  assert.deepEqual([...out.prs[0].issues].sort(), [i10, i9].sort())
+})
+await check('M01-6: every blocked stop of the open step has stopText and the schema has failedCommand', async () => {
+  let schema
+  const run1 = async (answer, extra = {}) => {
+    const out = await hookedOut(only1('C1'), (p, o) => { if (o.label === 'open:C1') schema = o.schema; return /^open:C1/.test(o.label) ? answer : undefined }, extra)
+    return out.prs[0]
+  }
+  let x = await run1(M01_BLOCK)
+  assert.equal(schema.properties.failedCommand.type, 'string')
+  assert.equal(m01Open().length, 2)
+  assert.equal(x.stopText, 'open: no login [(none returned)]')
+  assert.equal(x.reason, 'needs human: no login')
+  x = await run1({ blocked: true, blockedReason: 'no login', commands: ['gh api -X POST repos/o/r/issues/5/comments -F body=@/x/c.md'], failedCommand: 'gh api user --jq .login' })
+  assert.equal(m01Open().length, 1)
+  assert.equal(x.stopText, 'open: no login [gh api user --jq .login]')
+  x = await run1({ blocked: true, blockedReason: 'permission denied: gh api', commands: ['c'], failedCommand: 'gh api -X POST repos/o/r/pulls' })
+  assert.equal(x.reason, 'needs human: permission')
+  assert.ok(x.stopText.startsWith('open: ') && x.stopText.endsWith(' [gh api -X POST repos/o/r/pulls]'))
+  x = await run1({ blocked: true, milestoneMissing: true, blockedReason: 'milestone v1 not found', commands: [] }, { milestone: 'v1' })
+  assert.equal(x.reason, 'milestone not found')
+  assert.ok(x.stopText.startsWith('open: ') && x.stopText.endsWith(' [(none returned)]'))
+})
+await check('M01-7: milestone, permission and non-empty commands blocks are not retried', async () => {
+  const cmds = ['gh api -X POST repos/o/r/issues/5/comments -F body=@/x/c.md']
+  const cases = [
+    [{ ...M01_BLOCK, commands: cmds }, {}, 'needs human: no login'],
+    [{ ...M01_BLOCK, blockedReason: 'permission denied: gh api -X POST repos/o/r/pulls' }, {}, 'needs human: permission'],
+    [{ ...M01_BLOCK, milestoneMissing: true }, { milestone: 'v1' }, 'milestone not found'],
+  ]
+  for (const [answer, extra, reason] of cases) {
+    const out = await hookedOut(only1('C1'), m01Hook(answer, answer), extra)
+    assert.equal(m01Open().length, 1, reason)
+    assert.equal(out.prs[0].reason, reason)
+  }
+})
+await check('M01-8: the checklist lookup of step 3 selects only the comment of the opener login', async () => {
+  await hookedOut(only1('C1'), () => undefined)
+  const line = calls.find(c => c.label === 'open:C1').prompt.split('\n').find(l => l.startsWith('3. Checklist:'))
+  const filters = [...line.matchAll(/--jq '([^']*pipeline:minors[^']*)'/g)].map(m => m[1].replace('<login>', 'alfhen'))
+  assert.ok(filters.length > 0)
+  const fixture = [{ id: 1, user: { login: 'alfhen' }, body: '<!-- pipeline:minors -->\nNo open minor findings.' }, { id: 2, user: { login: 'coderabbitai[bot]' }, body: '<!-- pipeline:minors -->\nNo open minor findings.' }]
+  assert.equal(fixture[1].user.login, 'coderabbitai[bot]')
+  assert.ok(fixture[1].body.startsWith('<!-- pipeline:minors -->'))
+  for (const f of filters) {
+    const r = spawnSync('jq', [f], { input: JSON.stringify(fixture), encoding: 'utf8' })
+    assert.equal(r.stdout.trim(), '1')
+  }
+})
 await check('A1-10 a major finding outside the minor pass stops with a reason that names no kind', async () => {
   const hook = (p, o) => {
     if (o.label === 'review:C1#1') return reviewOf([f('minor', 'pass nit', { file: 'src/a.js' })])
