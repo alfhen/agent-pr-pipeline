@@ -72,22 +72,34 @@ def frameComment: "<!-- (?:coderabbit-ai-generated:v[0-9]+|autofix_checkbox_star
   + "|This is an auto-generated comment by CodeRabbit for review status|coderabbit-review-publication v[0-9]+ publication=[0-9a-f-]+ attempt=[0-9a-f-]+ batch=[0-9]+/[0-9]+) -->";
 # A nitpick block of the body: one group per file, one item per finding. Only the text of an item between its title and its
 # markers is free; the frame of everything else is read as strictly as the rest of the body.
-def itemHead($named): "`[0-9]+(?:-[0-9]+)?`: \\*\\*" + pic + "\\s*" + (if $named then "(?<w>[A-Za-z]+)" else "[A-Za-z]+" end) + "\\*\\*(?: · \\*\\*[^*\\n]+\\*\\*)*[ \\t]*\\n\\s*\\*\\*"
+# CodeRabbit puts a paragraph "Unverified finding" and one sentence between the rank line and the title of a finding it could not verify.
+def rankTitle($named; $rank): "\\*\\*" + pic + "\\s*" + (if $named then "(?<" + $rank + ">[A-Za-z]+)" else "[A-Za-z]+" end) + "\\*\\*(?: · \\*\\*[^*\\n]+\\*\\*)*[ \\t]*\\n\\s*"
+  + "(?:" + pic + "\\*\\*Unverified finding\\*\\*[ \\t]*\\n[^\\n]+\\n\\s*)?\\*\\*"
   + (if $named then "(?<t>[^\\n]+?)" else "[^\\n]+?" end) + "\\*\\*";
+def itemHead($named): "`[0-9]+(?:-[0-9]+)?`: " + rankTitle($named; "w");
+# A finding outside the diff, as the block prints it once the "> " of every line is cut: the summary holds the rank, and the body holds
+# the path with a line, the rank line and the title.
+def outHead($named): "<details>\\s*<summary><strong>" + pic + "\\s*" + (if $named then "(?<sw>[A-Za-z]+)" else "[A-Za-z]+" end) + "</strong>[^\\n]*</summary><blockquote>\\s*<dl>\\s*<dd>\\s*<br>\\s*`"
+  + (if $named then "(?<p>[^`\\n]+?)" else "[^`\\n]+?" end) + "(?::[0-9]+(?:-[0-9]+)?)?`\\s*" + rankTitle($named; "w");
+def outItem: outHead(false) + "\\s*(?:(?!<!-- ai-agent-prompt:start -->|<!-- cr-comment:)[\\s\\S])*"
+  + "(?:<!-- ai-agent-prompt:start -->\\s*" + blk("Prompt to fix issue"; oneFence) + "\\s*<!-- ai-agent-prompt:end -->\\s*)?"
+  + "<!-- cr-comment:v1:[0-9a-f]+ -->\\s*</dd>\\s*</dl>\\s*</blockquote></details>\\s*";
+def outBlk: "\\[!CAUTION\\]\\s*Some comments are outside the diff and can.t be posted inline due to GitHub limitations\\.\\s*\\*\\*[^*\\n]*Outside diff range comments \\((?<oc>[0-9]+)\\)\\*\\*\\s*(?:" + outItem + ")+";
 def nitItem: itemHead(false) + "\\s*(?:(?!<!-- ai-agent-prompt:start -->|<!-- cr-comment:)[\\s\\S])*"
   + "(?:<!-- ai-agent-prompt:start -->\\s*" + blk("Prompt for AI Agents"; oneFence) + "\\s*<!-- ai-agent-prompt:end -->\\s*)?"
   + "<!-- cr-comment:v1:[0-9a-f]+ -->\\s*(?:_Source: [^_\\n]+_\\s*)?";
 def nitFile: "<details>\\s*<summary>[^<\\n]+?: [0-9]+</summary><blockquote>\\s*<dl>\\s*<dd>\\s*<br>\\s*(?:" + nitItem + ")+</dd>\\s*</dl>\\s*</blockquote></details>\\s*";
-def nitBlk: "<details>\\s*<summary>\\s*" + pic + "Nitpick comments: (?<nn>[0-9]+)</summary><blockquote>\\s*<dl>\\s*<dd>\\s*<br>\\s*(?:" + nitFile + ")+</dd>\\s*</dl>\\s*</blockquote></details>\\s*";
-def topRe: "\\A\\s*(?:\\*\\*Actionable comments posted: (?<n>[0-9]+)\\*\\*\\s*)?(?<nit>" + nitBlk + ")?"
+def nitBlk($title): "<details>\\s*<summary>\\s*" + pic + $title + "</summary><blockquote>\\s*<dl>\\s*<dd>\\s*<br>\\s*(?:" + nitFile + ")+</dd>\\s*</dl>\\s*</blockquote></details>\\s*";
+def topRe: "\\A\\s*(?:\\*\\*Actionable comments posted: (?<n>[0-9]+)\\*\\*\\s*)?(?<out>" + outBlk + ")?(?<nit>" + nitBlk("Nitpick comments: (?<nn>[0-9]+)") + ")?(?<add>" + nitBlk("Additional comments: (?<an>[0-9]+)") + ")?"
   + "(?:---\\s*)?(?:- \\[[ x]\\]\\s*Fix comments: Fix CodeRabbit comments on this PR\\s*)?(?:" + blk("Prompt to fix all issues"; oneFence) + "\\s*)?"
   + "(?:<h6>\\s*<details>\\s*<summary>\\s*" + pic + "Review info</summary>\\s*<dl>\\s*<dd>\\s*<br>\\s*" + runCfg + "\\s*" + commitsBlk + "\\s*" + filesBlk + "\\s*(?:" + noRevBlk + "\\s*)?(?:" + availLine + ")?</dd>\\s*</dl>\\s*</details>\\s*</h6>\\s*)?\\z";
 # The items of a nitpick block that topRe matched: the path of the file group, the rank word and the title of each, and whether the
 # count of every file group and of the block fits.
-def nitParse($nit; $total):
+# An Additional comments group prints its path with the line range of the finding (run-wave.js-1027-1027); $strip cuts it.
+def nitParse($nit; $total; $strip):
   [$nit | match("<details>\\s*<summary>(?<path>[^<\\n]+?): (?<k>[0-9]+)</summary><blockquote>"; "g")
-    | {s: .offset, path: (.captures[0].string), k: (.captures[1].string | tonumber)}
-    | select(.path | startswith("Nitpick comments") | not)] as $files
+    | {s: .offset, path: (.captures[0].string | if $strip then sub("-[0-9]+-[0-9]+\\z"; "") else . end), k: (.captures[1].string | tonumber)}
+    | select(.path | startswith("Nitpick comments") or startswith("Additional comments") | not)] as $files
   | [range(0; $files | length) as $i
       | ($nit[$files[$i].s : (if $i + 1 < ($files | length) then $files[$i + 1].s else ($nit | length) end)]) as $chunk
       | ($chunk | gsub("<!-- ai-agent-prompt:start -->[\\s\\S]*?<!-- ai-agent-prompt:end -->"; "") | gsub("```[\\s\\S]*?```"; "")) as $heads
@@ -95,13 +107,25 @@ def nitParse($nit; $total):
       | {k: $files[$i].k, its: $its}] as $groups
   | ($groups | map(.its) | add // []) as $items
   | {items: $items, countsFit: (($items | length) == $total and all($groups[]; .k == (.its | length)))};
+# The items of an outside-diff block (without its "> "). The rank of the summary and the rank of the body must both be Minor or Trivial,
+# so a summary rank that is not Minor or Trivial wins.
+def outParse($out; $total):
+  [$out | gsub("<!-- ai-agent-prompt:start -->[\\s\\S]*?<!-- ai-agent-prompt:end -->"; "") | gsub("```[\\s\\S]*?```"; "")
+    | capture(outHead(true); "g") | {path: .p, w: (if .sw | isRankMinor then .w else .sw end), t}] as $items
+  | {items: $items, countsFit: (($items | length) == $total)};
+# The "> " of every line of the quoted block "[!CAUTION]" is cut, so its frame is read as the frame of the rest of the body. Only that block is cut. The block can start the body, since a body with no count line has nothing before it.
+def unquote:
+  (capture("\\A(?<pre>[\\s\\S]*?)(?<q>(?:\\A|\\n)> \\[!CAUTION\\](?:\\n>[^\\n]*)*)(?<post>[\\s\\S]*)\\z") // null) as $c
+  | if $c == null then . else $c.pre + ($c.q | gsub("(?<nl>\\A|\\n)> ?"; .nl)) + $c.post end;
 # The count of a body that is the frame and nothing else, or null. Each part of the frame can be absent. The text inside the fence
 # of the prompt block is not read. A body with a nitpick block and no count line has the nitpick block read as well.
 def parseBody:
-  ([capture(topRe)] | first) as $m
+  ([unquote | capture(topRe)] | first) as $m
   | if ($m == null or (test("\\S") | not)) or ($m.items != null and ([$m.items | scan("\\* `")] | length) != ($m.fc | tonumber))
       or ($m.nitems != null and ([$m.nitems | scan("\\* ")] | length) != ($m.nc | tonumber)) then null
-    else {n: (if $m.n == null then null else $m.n | tonumber end), nit: (if $m.nn == null then null else nitParse($m.nit; $m.nn | tonumber) end)} end;
+    else {n: (if $m.n == null then null else $m.n | tonumber end), nit: (if $m.nn == null then null else nitParse($m.nit; $m.nn | tonumber; false) end),
+      out: (if $m.oc == null then null else outParse($m.out; $m.oc | tonumber) end),
+      add: (if $m.an == null then null else nitParse($m.add; $m.an | tonumber; true) end)} end;
 # The lines of the answer comment of the user for the head that are an answer line of a nitpick item: they start with #N or with
 # "Note, not filed:". The marker is the one bot-status.sh reads.
 def answerBodies: [$issue[] | objects | select($user != null and (.user | objects | .login) == $user and ((.body | strings) // "" | startswith("<!-- pipeline-bot-answer head=" + $in.head + " -->"))) | .body];
@@ -109,22 +133,28 @@ def nitAnswerLines: [answerBodies[] | split("\n")[1:][] | gsub("^\\s+|\\s+$"; ""
 def nitName: sub("[\\s.]+\\z"; "");
 # The line names the item when, after its #N or "Note, not filed:" start, it holds the whole path and the whole title (a reason may
 # follow). A substring match would let the path of one file clear an item of a file whose path it ends with, and the title of one
-# item clear an item whose title it starts.
+# item clear an item whose title it starts. The title may be wrapped in `**`: the prompt tells the agent to write it as the review prints it, in bold.
 def reEsc: gsub("(?<c>[\\\\.^$*+?()\\[\\]{}|/-])"; "\\" + .c);
 def nitNames($l; $it):
   ($l | gsub("`"; "") | sub("\\A#[0-9]+"; "") | ltrimstr("Note, not filed:") | gsub("^\\s+|\\s+$"; "")) as $r
   | ($it.path | gsub("`"; "")) as $p | ($it.t | gsub("`"; "") | nitName) as $t
   | ($r | test("(\\A|[\\s,:;(])" + ($p | reEsc) + "(\\z|[\\s,:;)])"))
-    and ($r | test("(\\A|[\\s,:;(])" + ($t | reEsc) + "(\\z|[.:;,)])"));
-def nitProblems($id; $nit):
+    and ($r | test("(\\A|[\\s,:;(])(\\*\\*)?" + ($t | reEsc) + "(\\*\\*)?(\\z|[.:;,)])"));
+# The blocks with items, in the order of the body: findings outside the diff, nitpicks, Additional comments.
+def itemBlocks($p): [$p.out, $p.nit, $p.add] | map(select(. != null));
+def nitProblems($id; $p):
   nitAnswerLines as $lines
-  | $nit.items as $items
-  | ((if $nit.countsFit | not then "review " + $id + " has a nitpick block whose number of items differs from its summary" else empty end),
-     (if any($items[]; .w | isRankMinor | not) then "review " + $id + " has a nitpick item above Minor or with no rank" else empty end),
-     (if answerBodies == [] then "review " + $id + " has a nitpick block and no pipeline-bot-answer comment of the user for the head, so its items have no answer"
-       elif $lines == [] then "review " + $id + " has a nitpick block and the answer comment of the head has no answer line (#N or Note, not filed:)"
+  | itemBlocks($p) as $blocks
+  | ($blocks | map(.items) | add) as $items
+  | (if $p.nit != null and ($blocks | length) == 1 then "a nitpick block"
+     else [(if $p.out != null then "an outside-diff block" else empty end), (if $p.nit != null then "a nitpick block" else empty end),
+           (if $p.add != null then "an Additional comments block" else empty end)] | join(" and ") end) as $kind
+  | ((if all($blocks[]; .countsFit) | not then "review " + $id + " has " + $kind + " whose number of items differs from its summary" else empty end),
+     (if any($items[]; .w | isRankMinor | not) then "review " + $id + " has " + (if $p.nit != null and ($blocks | length) == 1 then "a nitpick" else "an" end) + " item above Minor or with no rank" else empty end),
+     (if answerBodies == [] then "review " + $id + " has " + $kind + " and no pipeline-bot-answer comment of the user for the head, so its items have no answer"
+       elif $lines == [] and $p.nit != null then "review " + $id + " has " + $kind + " and the answer comment of the head has no answer line (#N or Note, not filed:)"
        else ($items[] | . as $it | select(any($lines[]; . as $l | nitNames($l; $it) and ([$items[] | select(nitNames($l; .))] | length) == 1) | not)
-         | "review " + $id + " has a nitpick item (" + $it.path + ": " + $it.t + ") with no answer line of its own that names its path and its title") end));
+         | "review " + $id + " has " + (if $p.nit != null and ($blocks | length) == 1 then "a nitpick item" else "an item" end) + " (" + $it.path + ": " + $it.t + ") with no answer line of its own that names its path and its title") end));
 # Problems of rule A for one review of the bot on the head: a list of texts, empty when the review passes. A review with an empty
 # body and only replies is the container GitHub makes for a reply of the bot, and it has no problem.
 def ruleA($rv):
@@ -146,7 +176,7 @@ def ruleA($rv):
       (if any($inline[]; (.body // "" | rankOf) as $w | ($w == null or ($w | isRankMinor | not))) then "review " + $id + " has an inline comment above Minor or with no rank" else empty end),
       (if any($inline[] | . as $t | select(any($comments[]; .in_reply_to_id == $t.id and $user != null and .user.login == $user and (.body // "" | answerLine)) | not); true)
         then "review " + $id + " has an inline finding with no answer of the user" else empty end),
-      (if $p != null and $p.n == null and $p.nit != null then nitProblems($id; $p.nit) else empty end)
+      (if $p != null and (($p.n == null and $p.nit != null) or $p.out != null or $p.add != null) then nitProblems($id; $p) else empty end)
     ];
 def fourthWhy:
   ([$allChecks[] | select(.head_sha == null or .head_sha == $in.head)]) as $onHead
