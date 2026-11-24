@@ -133,13 +133,13 @@ def nitAnswerLines: [answerBodies[] | split("\n")[1:][] | gsub("^\\s+|\\s+$"; ""
 def nitName: sub("[\\s.]+\\z"; "");
 # The line names the item when, after its #N or "Note, not filed:" start, it holds the whole path and the whole title (a reason may
 # follow). A substring match would let the path of one file clear an item of a file whose path it ends with, and the title of one
-# item clear an item whose title it starts.
+# item clear an item whose title it starts. The title may be wrapped in `**`: the prompt tells the agent to write it as the review prints it, in bold.
 def reEsc: gsub("(?<c>[\\\\.^$*+?()\\[\\]{}|/-])"; "\\" + .c);
 def nitNames($l; $it):
   ($l | gsub("`"; "") | sub("\\A#[0-9]+"; "") | ltrimstr("Note, not filed:") | gsub("^\\s+|\\s+$"; "")) as $r
   | ($it.path | gsub("`"; "")) as $p | ($it.t | gsub("`"; "") | nitName) as $t
   | ($r | test("(\\A|[\\s,:;(])" + ($p | reEsc) + "(\\z|[\\s,:;)])"))
-    and ($r | test("(\\A|[\\s,:;(])" + ($t | reEsc) + "(\\z|[.:;,)])"));
+    and ($r | test("(\\A|[\\s,:;(])(\\*\\*)?" + ($t | reEsc) + "(\\*\\*)?(\\z|[.:;,)])"));
 # The blocks with items, in the order of the body: findings outside the diff, nitpicks, Additional comments.
 def itemBlocks($p): [$p.out, $p.nit, $p.add] | map(select(. != null));
 def nitProblems($id; $p):

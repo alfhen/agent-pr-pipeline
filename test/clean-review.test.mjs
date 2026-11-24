@@ -418,6 +418,17 @@ test('rule A clears a review whose only findings are a nitpick block, when the a
   refused(x, RULE_A); assert.match(x.why, /nitpick block and an inline comment/)
 })
 
+test('rule A clears the answer line as the prompt tells the agent to write it, with the title in bold', () => {
+  const bold = (t) => `**${t}**`
+  merged(run(mut(nit823, (f) => answerWith(f, [NOTE(NIT_PATH, bold(NIT_TITLE))]))))
+  merged(run(mut(nit823, (f) => answerWith(f, [NOTE(NIT_PATH, bold(NIT_TITLE.replace(/\.$/, '')))]))))
+  merged(run(mut(nit823, (f) => answerWith(f, ['#12 ' + NIT_PATH + ', ' + bold(NIT_TITLE)]))))
+  // A bold title that only starts the real one, or has a reason glued after it, still does not name the item.
+  for (const l of [NOTE(NIT_PATH, bold(NIT_TITLE.slice(0, 20))), NOTE(NIT_PATH, bold(NIT_TITLE.replace(/\.$/, '')) + ' because it is fine')]) {
+    refused(run(mut(nit823, (f) => answerWith(f, [l]))), RULE_A)
+  }
+})
+
 test('rule A refuses a nitpick item whose path has an answer line but whose title has none', () => {
   const two = (f) => { twoInOneFile()(f); return f }
   const lines = [NOTE(NIT_PATH, NIT_TITLE), NOTE(NIT_PATH, SECOND)]
