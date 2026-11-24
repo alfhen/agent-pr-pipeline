@@ -674,6 +674,7 @@ const WAIT = {
   properties: {
     approvedBy: { type: 'array', items: { type: 'string' } },
     seenHead: { type: 'array', items: { type: 'string' } },
+    finishedOnHead: { type: 'array', items: { type: 'string' } },
     openComments: { type: 'number' },
     timedOut: { type: 'boolean' },
     notes: { type: 'string' },

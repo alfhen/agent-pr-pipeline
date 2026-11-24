@@ -236,3 +236,9 @@ test('the plan text of the open prompt is only for a plan PR, and a quick fix ke
   assert.match(open, /\$\{pr\.kind === 'plan' \? ' The text of a new plan PR holds no closing keyword/)
   assert.match(open, /\$\{pr\.quick \? ` Put "Closes #\$\{pr\.quick\.issue\}" on its own line in the body\.` : ''\}/)
 })
+
+test('the WAIT schema declares finishedOnHead, which the waiter prompt asks for', () => {
+  const m = /const WAIT = \{[\s\S]*?\n\}/.exec(src)
+  assert.match(m[0], /finishedOnHead: \{ type: 'array', items: \{ type: 'string' \} \}/)
+  assert.doesNotMatch(m[0], /required: \[[^\]]*finishedOnHead/)
+})
