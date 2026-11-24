@@ -2342,7 +2342,9 @@ async function runPRSteps(input) {
     let retried = null
     try { retried = await call('open', pr, openPrompt(pr, history, ...openArgs, true), `open:${pr.id}#retry`, { schema: OPEN }, false) } catch (e) { log(`open:${pr.id}#retry: agent died (${e && e.message}), not retried`) }
     const both = [...new Set([...(opened.issuesCreated || []), ...((retried && retried.issuesCreated) || [])])]
-    opened = retried ? { ...retried, issuesCreated: both, prNumber: retried.prNumber || opened.prNumber, prUrl: retried.prUrl || opened.prUrl } : { ...opened, issuesCreated: both }
+    // An incomplete retry answer (no prNumber and not blocked) must not erase the first block.
+    const usable = retried && (retried.blocked || retried.prNumber)
+    opened = usable ? { ...retried, issuesCreated: both, prNumber: retried.prNumber || opened.prNumber, prUrl: retried.prUrl || opened.prUrl } : { ...opened, issuesCreated: both, prNumber: opened.prNumber || (retried && retried.prNumber), prUrl: opened.prUrl || (retried && retried.prUrl) }
   }
   const report = { ...(opened && opened.prUrl ? { prUrl: opened.prUrl } : {}), issues: (opened && opened.issuesCreated) || [], docs }
   if (opened && opened.blocked) {

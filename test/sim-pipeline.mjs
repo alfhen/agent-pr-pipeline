@@ -4500,6 +4500,21 @@ await check('M01-T: a throw on the opener retry keeps the first blocked answer',
   assert.deepEqual(x.issues, [i9])
   assert.equal(x.stopText, 'open: no login [(none returned)]')
 })
+await check('M01-T2: an incomplete retry answer keeps the first blocked answer', async () => {
+  for (const second of [{}, { blocked: false }]) {
+    let n = 0
+    const out = await hookedOut(only1('C1'), (p, o) => {
+      if (!M01_RE.test(o.label)) return undefined
+      n++
+      return n === 1 ? { ...M01_BLOCK, failedCommand: 'gh api user --jq .login' } : second
+    })
+    const x = out.prs[0]
+    assert.equal(n, 2)
+    assert.equal(x.ready, false)
+    assert.equal(x.reason, 'needs human: no login')
+    assert.equal(x.stopText, 'open: no login [gh api user --jq .login]')
+  }
+})
 await check('M01-4: the retry prompt tells the opener to read what exists before it creates anything', async () => {
   await hookedOut(only1('C1'), m01Hook(M01_BLOCK))
   const [first, second] = m01Open().map(c => c.prompt)
