@@ -113,10 +113,10 @@ def outParse($out; $total):
   [$out | gsub("<!-- ai-agent-prompt:start -->[\\s\\S]*?<!-- ai-agent-prompt:end -->"; "") | gsub("```[\\s\\S]*?```"; "")
     | capture(outHead(true); "g") | {path: .p, w: (if .sw | isRankMinor then .w else .sw end), t}] as $items
   | {items: $items, countsFit: (($items | length) == $total)};
-# The "> " of every line of the quoted block "[!CAUTION]" is cut, so its frame is read as the frame of the rest of the body. Only that block is cut.
+# The "> " of every line of the quoted block "[!CAUTION]" is cut, so its frame is read as the frame of the rest of the body. Only that block is cut. The block can start the body, since a body with no count line has nothing before it.
 def unquote:
-  (capture("\\A(?<pre>[\\s\\S]*?)(?<q>\\n> \\[!CAUTION\\](?:\\n>[^\\n]*)*)(?<post>[\\s\\S]*)\\z") // null) as $c
-  | if $c == null then . else $c.pre + ($c.q | gsub("\\n> ?"; "\n")) + $c.post end;
+  (capture("\\A(?<pre>[\\s\\S]*?)(?<q>(?:\\A|\\n)> \\[!CAUTION\\](?:\\n>[^\\n]*)*)(?<post>[\\s\\S]*)\\z") // null) as $c
+  | if $c == null then . else $c.pre + ($c.q | gsub("(?<nl>\\A|\\n)> ?"; .nl)) + $c.post end;
 # The count of a body that is the frame and nothing else, or null. Each part of the frame can be absent. The text inside the fence
 # of the prompt block is not read. A body with a nitpick block and no count line has the nitpick block read as well.
 def parseBody:

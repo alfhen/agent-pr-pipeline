@@ -743,6 +743,17 @@ test('rule A clears the real review 883 when each item of the outside-diff and A
   merged(run(with883([OUT_LINE, 'Not in this PR.', ADD_LINE])))
 })
 
+test('rule A clears a count-free body that starts with the quoted outside-diff block and goes on to a nitpick block', () => {
+  const noCount = (b) => b.replace(/^[\s\S]*?\*\*Actionable comments posted: 1\*\*\s*/, '').replace('Additional comments: 1', 'Nitpick comments: 1')
+  // Rule A reads a count-free nitpick block only when the review has no inline comment.
+  const f = (lines) => with883(lines, (fx) => { edit883(noCount)(fx); fx.comments = fx.comments.filter((c) => c.pull_request_review_id !== 6014661001) })
+  const full = f([OUT_LINE, NOTE('workflows/run-wave.js-1027-1027', ADD_TITLE)])
+  assert.match(body883(full), /^> \[!CAUTION\]/)
+  assert.match(body883(full), /Nitpick comments: 1<\/summary>/)
+  merged(run(full))
+  refused(run(f([OUT_LINE])), RULE_A)
+})
+
 test('rule A clears a review with only one of the two blocks', () => {
   const noOut = edit883((b) => b.replace(/> \[!CAUTION\][\s\S]*?> <\/blockquote><\/details>\n\n/, ''))
   const noAdd = edit883((b) => b.replace(/<details>\n<summary>[^\n]*Additional comments: 1<\/summary>[\s\S]*?<\/blockquote><\/details>\n\n(?=---)/, ''))
