@@ -282,3 +282,14 @@ test('a failed check suites read stops bot-status.sh with exit 1', () => {
   assert.equal(r.stdout, '')
   assert.equal(status(setup()).code, 0)
 })
+
+test('why: the settings file and the changed-files list come before the run of the bot', () => {
+  const why = (files) => {
+    const input = { reviews: [], comments: [], checks: [], head: HEAD, bots: DEFAULT_BOTS.split(','), user: 'alfhen', ...(files === undefined ? {} : { files }) }
+    return spawnSync('jq', ['-r', '--arg', 'why', '1', '-f', JQ], { input: JSON.stringify(input), encoding: 'utf8' }).stdout.trim()
+  }
+  assert.equal(why([{ filename: 'a.js' }, { filename: 'b.js', previous_filename: '.coderabbit.config.ts' }]), "clean review: the PR changes CodeRabbit's settings file .coderabbit.config.ts")
+  assert.match(why([{ filename: '.coderabbit.yaml.bak' }]), /the bot's run on the head/)
+  assert.equal(why(null), 'clean review: cannot read the changed files')
+  assert.equal(why(undefined), 'clean review: cannot read the changed files')
+})

@@ -5,6 +5,7 @@
 # Output: the bots that clear the gate, as "login" (approved on the head), "login (approved earlier)", "login (answered)" or
 # "coderabbitai[bot] (clean review)". bot-status.sh strips every suffix printed here. With --arg why 1 the output is one string instead:
 # empty when a bot cleared, else a line that starts "clean review:" and names the first condition of the fourth way that did not hold.
+# Input files: the changed files of the PR ({filename, previous_filename}, from pr-files.sh), or null when they could not be read.
 # The fourth way: a completed, clean review that was asked for after the push (rules in review-request.jq), green CI, a reply of the
 # user on every top-level inline comment, no unanswered change request, and rule A for the findings of the reviews on the head.
 # A bot clears it when its latest review is APPROVED on the head, or APPROVED on an older commit, or when
@@ -185,7 +186,11 @@ def fourthWhy:
   | [$in.reviews[] | select(.user.login == $cr)] as $mine
   | [$mine[] | select(.commit_id == $in.head)] as $onHeadReviews
   | ([$onHeadReviews[] | ruleA(.)] | add // []) as $problems
+  # A PR that changes the bot's settings file could have changed how the bot judges it. A missing or null list is a failed read.
+  | (if ($in.files | type) != "array" then null else [$in.files[] | (.filename, .previous_filename) | strings | select(IN(".coderabbit.yaml", ".coderabbit.yml", ".coderabbit.config.ts"))] | first end) as $settings
   | if ($cr | IN($bots[]) | not) then "clean review: " + $cr + " is not in BOT_LOGINS"
+    elif ($in.files | type) != "array" then "clean review: cannot read the changed files"
+    elif $settings != null then "clean review: the PR changes CodeRabbit's settings file " + $settings
     elif $run == null or ($run | completedReview | not) then "clean review: the bot's run on the head is not a completed, clean review (newest run: "
       + (if $run == null then "none" else ($run.status // "") + " " + ($run.conclusion // "") + " " + ($run.output.title // "") end) + ")"
     elif any($onHead[]; .status == "completed" and .conclusion == "success" and (.app.slug // "") != "" and ((.app.slug + "[bot]") | IN($bots[]) | not)) | not

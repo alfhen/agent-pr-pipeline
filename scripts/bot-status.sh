@@ -30,9 +30,12 @@ gh api --paginate "repos/$R/pulls/$pr/reviews?per_page=100" >"$tmp/reviews" || f
 gh api --paginate "repos/$R/pulls/$pr/comments?per_page=100" >"$tmp/comments" || fail "cannot read the review comments"
 gh api --paginate "repos/$R/issues/$pr/comments?per_page=100" >"$tmp/issue-comments" || fail "cannot read the PR comments"
 
+# The changed files are read only for the clean review, which is CodeRabbit's. null means they could not be read.
+echo null >"$tmp/files"
+case ",$bots," in *",coderabbitai[bot],"*) bash "$here/pr-files.sh" "$R" "$pr" >"$tmp/files" 2>/dev/null || echo null >"$tmp/files" ;; esac
 # Files and --slurpfile, not --argjson: a busy PR passes the 128 KiB limit of one argument on Linux.
-input=$(jq -n -c --arg head "$head" --argjson bots "$(jq -n -c --arg b "$bots" '$b | split(",")')" --arg user "$user" --slurpfile reviews "$tmp/reviews" --slurpfile comments "$tmp/comments" --slurpfile issue "$tmp/issue-comments" --slurpfile checks "$tmp/checks" --slurpfile suites "$tmp/suites" \
-  '{reviews: ($reviews | add // []), comments: ($comments | add // []), issueComments: ($issue | add // []), suites: [$suites[].check_suites[]], checks: [$checks[].check_runs[]], head: $head, bots: $bots, user: $user}') || fail "cannot build the input"
+input=$(jq -n -c --arg head "$head" --argjson bots "$(jq -n -c --arg b "$bots" '$b | split(",")')" --arg user "$user" --slurpfile reviews "$tmp/reviews" --slurpfile comments "$tmp/comments" --slurpfile issue "$tmp/issue-comments" --slurpfile checks "$tmp/checks" --slurpfile suites "$tmp/suites" --slurpfile files "$tmp/files" \
+  '{reviews: ($reviews | add // []), comments: ($comments | add // []), issueComments: ($issue | add // []), suites: [$suites[].check_suites[]], checks: [$checks[].check_runs[]], files: $files[0], head: $head, bots: $bots, user: $user}') || fail "cannot build the input"
 approved=$(jq -c -f "$here/bot-approval.jq" <<<"$input") || fail "cannot judge the reviews"
 seen=$(jq -c --argjson approved "$approved" '. as $in
   | [$approved[] | sub(" \\((answered|approved earlier|clean review)\\)$"; "") | . as $login
