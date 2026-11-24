@@ -679,6 +679,7 @@ const WAIT = {
   properties: {
     approvedBy: { type: 'array', items: { type: 'string' } },
     seenHead: { type: 'array', items: { type: 'string' } },
+    finishedOnHead: { type: 'array', items: { type: 'string' } },
     openComments: { type: 'number' },
     timedOut: { type: 'boolean' },
     notes: { type: 'string' },
@@ -1094,8 +1095,8 @@ const statusCommand = n => `bash ${PLUGIN_ROOT}/scripts/bot-status.sh ${REPO} ${
 const waitCommand = (n, minutes) => `bash ${PLUGIN_ROOT}/scripts/wait-bots.sh ${REPO} ${n} ${minutes}`
 const waitPrompt = (pr, n) => `Task: wait for the review bots on pull request #${n} in ${REPO}, for at most ${BOT_WAIT_MIN} minutes.
 Bots: ${BOTS}.
-Wait command, from the plugin folder ${PLUGIN_ROOT} (never from a clone of ${REPO}): \`${waitCommand(n, Math.min(BOT_WAIT_MIN, 9))}\`. Run it with the Bash tool's timeout set to 600000 ms: the default of 120000 ms kills the call after 2 minutes. One call polls \`${statusCommand(n)}\` every minute for at most 9 minutes and prints one JSON line with head, approvedBy, seenHead, pending, openThreads and timedOut. While timedOut is true and ${BOT_WAIT_MIN} minutes have not passed since you started, run it again with the minutes still left (at most 9); do not sleep between calls. approvedBy is the only list of approvals: report it as it is, and never judge approvals yourself. Stop when seenHead is not empty and pending is empty; otherwise stop when every bot has finished with the current head or the time limit passes. Inline threads: \`gh api --paginate "repos/${REPO}/pulls/${n}/comments?per_page=100"\`.
-Return approvedBy, seenHead, openComments, timedOut, and one line of notes.`
+Wait command, from the plugin folder ${PLUGIN_ROOT} (never from a clone of ${REPO}): \`${waitCommand(n, Math.min(BOT_WAIT_MIN, 9))}\`. Run it with the Bash tool's timeout set to 600000 ms: the default of 120000 ms kills the call after 2 minutes. One call polls \`${statusCommand(n)}\` every minute for at most 9 minutes and prints one JSON line with head, approvedBy, seenHead, finishedOnHead, pending, openThreads and timedOut. While timedOut is true and ${BOT_WAIT_MIN} minutes have not passed since you started, run it again with the minutes still left (at most 9); do not sleep between calls. approvedBy is the only list of approvals: report it as it is, and never judge approvals yourself. Stop when the script returns timedOut false, or when the time limit passes; judge nothing else yourself. Inline threads: \`gh api --paginate "repos/${REPO}/pulls/${n}/comments?per_page=100"\`.
+Return approvedBy, seenHead, finishedOnHead, openComments, timedOut, and one line of notes.`
 
 const answerPrompt = (pr, n, issues, headSha) => `${ctx(pr)}
 

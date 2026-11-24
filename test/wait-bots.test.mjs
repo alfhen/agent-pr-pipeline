@@ -30,7 +30,7 @@ const setup = (reviews) => {
 const approved = [{ user: { login: 'gitar-bot[bot]' }, state: 'APPROVED', commit_id: HEAD, submitted_at: '2026-01-01T00:00:00Z' }]
 const run = (s, args, extra = {}) => spawnSync('bash', [join(root, 'scripts/wait-bots.sh'), ...args], {
   encoding: 'utf8',
-  env: { ...process.env, PATH: `${join(s.dir, 'bin')}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log, WAIT_BOTS_INTERVAL: '0', ...extra },
+  env: { ...process.env, PATH: `${join(s.dir, 'bin')}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log, WAIT_BOTS_INTERVAL: '0', BOT_LOGINS: 'gitar-bot[bot]', ...extra },
 })
 const reads = (s) => readFileSync(s.log, 'utf8').split('\n').filter((l) => l === `GET /repos/o/r/pulls/7/reviews?per_page=100`).length
 
@@ -207,11 +207,91 @@ test('wait-bots keeps polling while a bot check run is still running, and the bo
   put(s.fx, `${P}__commits__${HEAD}__check-runs.call1.json`, checks('in_progress'))
   put(s.fx, `${P}__commits__${HEAD}__check-runs.call2.json`, checks('in_progress'))
   put(s.fx, `${P}__commits__${HEAD}__check-runs.call3.json`, checks('completed'))
-  const r = run(s, ['o/r', '7', '5'])
+  const r = run(s, ['o/r', '7', '5'], { BOT_LOGINS: 'gitar-bot[bot],coderabbitai[bot]' })
   assert.equal(r.status, 0, r.stderr)
   const out = JSON.parse(r.stdout)
   assert.equal(out.timedOut, false)
   assert.deepEqual(out.pending, [])
   assert.equal(out.reviewBodies, 1)
   assert.equal(reads(s), 3)
+})
+
+const CR = 'coderabbitai[bot]'
+const crRev = (commit, login = CR) => [{ user: { login }, state: 'COMMENTED', commit_id: commit, submitted_at: '2026-01-01T00:00:00Z', body: '' }]
+const crRun = (status, conclusion, slug = 'coderabbitai') => ({ check_runs: [{ name: 'CodeRabbit', status, conclusion, app: { slug } }] })
+const withRuns = (s, runs) => put(s.fx, `${P}__commits__${HEAD}__check-runs.json`, runs)
+const waitCR = (s, n = '2', extra = {}) => { const r = run(s, ['o/r', '7', n], { BOT_LOGINS: CR, ...extra }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout) }
+
+test('finishedOnHead: a skipped run is not finished, a completed one is', () => {
+  const s = setup([[]])
+  withRuns(s, crRun('completed', 'skipped'))
+  const out = waitCR(s)
+  assert.deepEqual(out.finishedOnHead, [])
+  assert.equal(out.timedOut, true)
+  withRuns(s, crRun('completed', 'success'))
+  const ok = waitCR(s)
+  assert.deepEqual(ok.finishedOnHead, [CR])
+  assert.equal(ok.timedOut, false)
+})
+
+test('finishedOnHead: a review of an older commit is not finished, one on the head is', () => {
+  const old = setup([crRev('b'.repeat(40))])
+  const a = waitCR(old)
+  assert.deepEqual(a.finishedOnHead, [])
+  assert.equal(a.timedOut, true)
+  const cur = setup([crRev(HEAD)])
+  const b = waitCR(cur)
+  assert.deepEqual(b.finishedOnHead, [CR])
+  assert.equal(b.timedOut, false)
+})
+
+test('the bot is matched by its exact login and its App slug plus [bot]', () => {
+  const login = setup([crRev(HEAD, 'coderabbitai')])
+  const a = waitCR(login)
+  assert.deepEqual(a.finishedOnHead, [])
+  assert.equal(a.timedOut, true)
+  const slug = setup([[]])
+  withRuns(slug, crRun('completed', 'success', 'coderabbitai-other'))
+  const b = waitCR(slug)
+  assert.deepEqual(b.finishedOnHead, [])
+  assert.equal(b.timedOut, true)
+})
+
+test('every configured bot must finish: one finished bot is not enough', () => {
+  // CodeRabbit approved the head, so the old rule (any bot seen on the head) would stop at once.
+  const s = setup([[{ user: { login: CR }, state: 'APPROVED', commit_id: HEAD, submitted_at: '2026-01-01T00:00:00Z' }]])
+  const both = waitCR(s, '3', { BOT_LOGINS: `${CR},gitar-bot[bot]` })
+  assert.equal(both.timedOut, true)
+  assert.deepEqual(both.finishedOnHead, [CR])
+  assert.equal(reads(s), 3)
+  const t = setup([[...crRev(HEAD), ...approved]])
+  assert.equal(waitCR(t, '3', { BOT_LOGINS: `${CR},gitar-bot[bot]` }).timedOut, false)
+})
+
+test('a bot that commented without approving stops the wait at the first poll', () => {
+  const s = setup([crRev(HEAD)])
+  withRuns(s, crRun('completed', 'success'))
+  const out = waitCR(s, '3')
+  assert.equal(out.timedOut, false)
+  assert.deepEqual(out.approvedBy, [])
+  assert.equal(reads(s), 1)
+})
+
+test('a running bot check run holds the wait to its limit', () => {
+  const s = setup([[{ user: { login: CR }, state: 'APPROVED', commit_id: HEAD, submitted_at: '2026-01-01T00:00:00Z' }]])
+  withRuns(s, crRun('in_progress', null))
+  const out = waitCR(s, '3')
+  assert.equal(out.timedOut, true)
+  assert.deepEqual(out.pending, ['CodeRabbit'])
+  assert.equal(reads(s), 3)
+})
+
+test('a finished bot with an open thread stops the wait and the thread is counted', () => {
+  const s = setup([crRev(HEAD)])
+  withRuns(s, crRun('completed', 'success'))
+  put(s.fx, `${P}__pulls__7__comments.json`, [{ id: 5, in_reply_to_id: null, user: { login: CR }, body: 'fix' }])
+  const out = waitCR(s, '3')
+  assert.equal(out.timedOut, false)
+  assert.equal(out.openThreads, 1)
+  assert.equal(reads(s), 1)
 })

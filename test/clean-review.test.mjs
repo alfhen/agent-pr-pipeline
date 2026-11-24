@@ -261,10 +261,10 @@ test('a bot that approved the head clears by the old way and prints no clean rev
   assert.doesNotMatch(x.out, /^clean review:/m)
 })
 
-test('bot-status.sh prints the bare login in seenHead and keeps its six keys', () => {
+test('bot-status.sh prints the bare login in seenHead and keeps its keys', () => {
   const x = run(pr794(), { script: 'bot-status.sh' })
   const j = JSON.parse(x.out.trim().split('\n').at(-1))
-  assert.deepEqual(Object.keys(j), ['head', 'approvedBy', 'seenHead', 'pending', 'openThreads', 'reviewBodies'])
+  assert.deepEqual(Object.keys(j), ['head', 'approvedBy', 'seenHead', 'finishedOnHead', 'pending', 'openThreads', 'reviewBodies'])
   assert.deepEqual(j.approvedBy, [`${BOT} (clean review)`])
   assert.deepEqual(j.seenHead, [BOT])
 })
