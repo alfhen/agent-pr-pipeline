@@ -419,7 +419,7 @@ All paths are under `${CLAUDE_PLUGIN_ROOT}`.
 - `scripts/role-files.sh`: compares the `agents/*.md` files of two plugin folders byte for byte, leaves out the release line of `goals-preflight.md`, prints `ROLES SAME`, `ROLES DIFFER <names>` or `ROLES MISSING <folder>`, and only reads. The version PR writes the line `Role files of release <version>.` in `agents/goals-preflight.md`.
 - `scripts/semver.sh`: the one place that orders versions.
 - `scripts/release.sh`: make a release when every check passes, or print what is missing (`--dry-run` calls no write endpoint).
-- `scripts/bot-status.sh`: the bot wait's one-shot status (`approvedBy`, `seenHead`, `pending`, `openThreads`, `reviewBodies`), using `bot-approval.jq`.
+- `scripts/bot-status.sh`: the bot wait's one-shot status (`approvedBy`, `seenHead`, `finishedOnHead`, `pending`, `openThreads`, `reviewBodies`), using `bot-approval.jq`.
 - `scripts/wait-bots.sh`: polls `bot-status.sh` once a minute for up to 9 minutes in one command, and prints the last status with `timedOut`.
 - `scripts/land-commits.sh`: prints the code a land fix added (its own commits and the combined diff of each merge), from a fresh clone. It also prints a diff when a merge took one parent's side of a file that either parent changed. Its last line holds the `cksum` and byte length of the text before it, without the line end that comes before the last line, or says there is no code.
 - `scripts/routine-state.sh`: the state of the triage routine: `init` opens the tracking issue, `next` names the work (`next --mode full` names the steps of a later full mode), `put triaged` stores a record, `put build-started` and `put blocked` store the build records. See `docs/routine.md`.
