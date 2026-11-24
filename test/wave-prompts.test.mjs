@@ -133,6 +133,8 @@ test('the opener names its REST calls and edits the marked checklist comment', (
   assert.match(src, /When you have a checklist to post and the login from step 1 is empty or its lookup failed, return blocked true with the reason "\$\{NO_LOGIN\}"/)
   assert.doesNotMatch(src, /When it is empty, post no checklist: return blocked true/)
   assert.match(src, /When "Minor findings not fixed" is empty, post no checklist and do not return blocked for that reason/)
+  assert.match(src, /the file holds the marker line and \\`No open minor findings\.\\` and nothing else/)
+  assert.match(src, /when it prints no id and the list is empty, post nothing/)
   assert.match(src, /gh api "repos\/\$\{REPO\}\/pulls\?head=\$\{REPO\.split\('\/'\)\[0\]\}:\$\{pr\.branch\}&state=open"/)
 })
 
@@ -152,7 +154,7 @@ test('the QA schema takes file and fileIssue', () => {
 })
 
 test('a missing milestone has its own reason', () => {
-  assert.match(src, /A\.milestone && opened\.milestoneMissing \? 'milestone not found'/)
+  assert.match(src, /A\.milestone && o\.milestoneMissing \? 'milestone not found'/)
   assert.match(src, /return blocked true and milestoneMissing true, with blockedReason/)
 })
 
@@ -241,4 +243,14 @@ test('the WAIT schema declares finishedOnHead, which the waiter prompt asks for'
   const m = /const WAIT = \{[\s\S]*?\n\}/.exec(src)
   assert.match(m[0], /finishedOnHead: \{ type: 'array', items: \{ type: 'string' \} \}/)
   assert.doesNotMatch(m[0], /required: \[[^\]]*finishedOnHead/)
+})
+
+test('the answer prompt and the bot-answerer role tell the agent to write the bare path of an item', () => {
+  const answer = /const answerPrompt = [\s\S]*?const botReviewPrompt/.exec(src)[0]
+  const role = readFileSync(new URL('../agents/bot-answerer.md', import.meta.url), 'utf8')
+  assert.match(answer, /Write the bare file path \(the path without the line range or \\`:line\\`/)
+  assert.match(answer, /the bold title word for word/)
+  assert.doesNotMatch(answer, /Copy the path from the summary of the block/)
+  assert.match(role, /the bare file path \(without the line range or `:line`/)
+  assert.match(role, /the bold title word for word/)
 })
