@@ -63,7 +63,7 @@ test('bot-status.sh strips every suffix that bot-approval.jq can print', () => {
 
 const P = 'repos__o__r'
 const PULL = `${P}__pulls__7`
-const KEYS = ['head', 'approvedBy', 'seenHead', 'pending', 'openThreads', 'reviewBodies']
+const KEYS = ['head', 'approvedBy', 'seenHead', 'finishedOnHead', 'pending', 'openThreads', 'reviewBodies']
 const rv = (state, commit, login = BOT, id = 1) => ({ ...review(state, commit, login), id })
 const thread = (id, login = BOT) => ({ id, in_reply_to_id: null, user: { login }, pull_request_review_id: 1 })
 const reply = (to, login = 'alfhen', id = 900 + to) => ({ id, in_reply_to_id: to, user: { login } })
@@ -266,7 +266,7 @@ test('the three ways of today still clear and block as before', () => {
   refused(merge(setup({ reviews: [rv('APPROVED', HEAD, 'alfhen')] })))
 })
 
-test('bot-status.sh reads the check suites on all pages as one call and keeps six keys', () => {
+test('bot-status.sh reads the check suites on all pages as one call and keeps its keys', () => {
   const page = { total_count: 1, check_suites: [{ id: 1 }] }
   const r = status(setup({ suites: [page, page] }))
   assert.equal(r.code, 0, r.out)
