@@ -468,3 +468,111 @@ test('SKILL.md has a row for ANSWER with exit 10 and the REVIEW row keeps only a
   assert.match(review, /none came|did not come/)
   assert.doesNotMatch(review, /open comments|review body/)
 })
+
+// reviewOnRequest: the real settings file of the repo, with the key set per case.
+const realSettings = () => JSON.parse(readFileSync(join(root, '.github/pipeline.json'), 'utf8'))
+const withKey = (value) => { const o = realSettings(); delete o.reviewOnRequest; if (value !== undefined) o.reviewOnRequest = value; return o }
+const MAIN = `${P}__contents__.github__pipeline.json@ref=refs__heads__main.json`
+const roqSetup = (value, prOpts = {}) => {
+  const s = setup([[7, S, prOpts]])
+  put(s.fx, MAIN, withKey(value))
+  return s
+}
+const warns = (r) => r.out.split('\n').filter((l) => l.startsWith('WARN'))
+const stopLine = (r) => r.out.split('\n').some((l) => l.startsWith('STOP #7 not merged'))
+const noRequestPlain = (r) => { assert.equal(requested(r), false, r.out); assert.equal(r.code, 5, r.out); assert.ok(stopLine(r), r.out) }
+
+test('reviewOnRequest true on the default branch asks for the review without --review', () => {
+  const s = roqSetup(true)
+  assert.equal(JSON.parse(readFileSync(join(s.fx, MAIN), 'utf8')).reviewOnRequest, true)
+  const r = run(s, ['o/r', `7:${S}`])
+  const withFlag = land(setup())
+  assert.equal(requested(r), true, r.out)
+  assert.equal(r.code, 9, r.out)
+  assert.equal(r.code, withFlag.code)
+  assert.ok(r.out.split('\n').some((l) => l.startsWith('REVIEW #7: ')), r.out)
+})
+
+test('reviewOnRequest true merges the PR once the review came', () => {
+  const s = roqSetup(true, { swapRuns: [ci, bot({ id: 5151 })] })
+  const r = run(s, ['o/r', `7:${S}`])
+  assert.ok(r.out.split('\n').includes('REVIEWED #7 run 5151'), r.out)
+  assert.equal(merged(r), true, r.out)
+  assert.equal(r.code, 0, r.out)
+  assert.equal(r.out.trim().split('\n').pop(), 'all merged')
+})
+
+test('reviewOnRequest is read from the default branch, not from the PR head', () => {
+  const s = roqSetup(undefined)
+  const headFile = `${P}__contents__.github__pipeline.json@ref=${S}.json`
+  put(s.fx, headFile, withKey(true))
+  assert.equal(JSON.parse(readFileSync(join(s.fx, headFile), 'utf8')).reviewOnRequest, true)
+  assert.equal('reviewOnRequest' in JSON.parse(readFileSync(join(s.fx, MAIN), 'utf8')), false)
+  const r = run(s, ['o/r', `7:${S}`])
+  noRequestPlain(r)
+  // Without the read the test would pass for any reason: the log must show the settings read from the default branch only.
+  const reads = r.log.filter((l) => l.includes('.github/pipeline.json'))
+  assert.ok(reads.some((l) => l.includes('ref=refs/heads/main')), r.log.join('\n'))
+  assert.equal(reads.some((l) => l.includes(`ref=${S}`)), false, r.log.join('\n'))
+})
+
+for (const [label, value] of [['missing', undefined], ['null', null], ['false', false]]) {
+  test(`reviewOnRequest ${label}: no request and no WARN`, () => {
+    const s = roqSetup(value)
+    assert.equal(JSON.parse(readFileSync(join(s.fx, MAIN), 'utf8')).reviewOnRequest, value)
+    const r = run(s, ['o/r', `7:${S}`])
+    noRequestPlain(r)
+    assert.deepEqual(warns(r), [])
+  })
+}
+
+test('reviewOnRequest missing: an approved PR merges with no request', () => {
+  const s = roqSetup(undefined, { reviews: [approval(S)] })
+  const r = run(s, ['o/r', `7:${S}`])
+  assert.equal(r.code, 0, r.out)
+  assert.equal(merged(r), true)
+  assert.equal(r.out.trim().split('\n').pop(), 'all merged')
+  assert.equal(requested(r), false)
+})
+
+test('an unreadable settings file acts as false with one WARN', () => {
+  const s = roqSetup(true)
+  const errFile = join(s.fx, `${P}__contents__.github__pipeline.json.GET.error`)
+  writeFileSync(errFile, 'HTTP 500')
+  assert.equal(readFileSync(errFile, 'utf8'), 'HTTP 500')
+  const r = run(s, ['o/r', `7:${S}`])
+  noRequestPlain(r)
+  assert.equal(warns(r).length, 1, r.out)
+})
+
+for (const value of ['true', 1]) {
+  test(`reviewOnRequest ${JSON.stringify(value)} is not a boolean: false with one WARN`, () => {
+    const s = roqSetup(value)
+    assert.equal(typeof JSON.parse(readFileSync(join(s.fx, MAIN), 'utf8')).reviewOnRequest, typeof value)
+    const r = run(s, ['o/r', `7:${S}`])
+    noRequestPlain(r)
+    assert.equal(warns(r).length, 1, r.out)
+  })
+}
+
+test('merge-pr.sh prints one hint when no bot cleared, and none when one did', () => {
+  const hint = /land-wave\.sh --review|reviewOnRequest/
+  const direct = (s) => {
+    const e = { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log, PIPELINE_TEST_FAST: '1' }
+    delete e.CLAUDECODE
+    const r = spawnSync('bash', [join(root, 'scripts/merge-pr.sh'), 'o/r', '7', S, 'feat/7'], { env: e, encoding: 'utf8' })
+    return { code: r.status, lines: (r.stdout + r.stderr).split('\n') }
+  }
+  const a = direct(setup())
+  assert.equal(a.code, 1, a.lines.join('\n'))
+  assert.ok(a.lines.includes('PR 7 NOT merged'))
+  assert.ok(a.lines.some((l) => l.includes('approved=[]')))
+  assert.equal(a.lines.filter((l) => hint.test(l)).length, 1, a.lines.join('\n'))
+  const s = setup([[7, S, { reviews: [approval(S)] }]])
+  const rv = JSON.parse(readFileSync(join(s.fx, `${P}__pulls__7__reviews.json`), 'utf8'))
+  assert.ok(rv.some((x) => x.user.login === 'gitar-bot[bot]' && x.state === 'APPROVED' && x.commit_id === S))
+  const b = direct(s)
+  assert.equal(b.code, 0, b.lines.join('\n'))
+  assert.ok(b.lines.includes('PR 7 merged=true'))
+  assert.equal(b.lines.filter((l) => hint.test(l)).length, 0)
+})

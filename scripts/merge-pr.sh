@@ -76,6 +76,7 @@ echo "PR $pr mergeable=$m head=${head:0:7} approved=[$appr] failing=[$fail] mode
 if [ -z "$appr" ]; then
   why=$(jq -r --arg why 1 -f "$here/bot-approval.jq" <<<"$input") || { echo "PR $pr NOT merged: cannot judge the clean review"; exit 1; }
   [ -n "$why" ] && echo "$why"
+  echo "hint: no bot cleared this PR. For a bot that reviews only on request, land with land-wave.sh --review or set reviewOnRequest to true in .github/pipeline.json"
 fi
 if [ "$m" != "MERGEABLE" ] || [ "$head" != "$sha" ] || [ -z "$appr" ] || [ -n "$fail" ]; then
   echo "PR $pr NOT merged"; exit 1
