@@ -22,5 +22,6 @@
   ],
   "knownFlakes": [],
   "ciChecks": ["ci"],
+  "reviewOnRequest": false,
   "autoRelease": false
 }

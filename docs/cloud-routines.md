@@ -107,6 +107,8 @@ The settings are the `routine` block of `.github/pipeline.json` on the default b
 | `waveArgs` | Fixed `run-wave` choices for unattended runs. `goals` and `checks` are required. `repo`, `tmp`, `pluginRoot`, `agentPrefix`, `prs`, `plan`, `feedback`, `feedbackRepo`, `resumeFromRunId` and `cleanup` are refused. |
 | `limits` | Daily and per-run limits, below. |
 
+The top-level key `reviewOnRequest` (default `false`) is not part of the `routine` block. When it is `true`, `land-wave.sh` acts as if `--review` was passed, for a repo whose review bot reviews only on request. The land step reads it from the default branch.
+
 The split is: the top level of `.github/pipeline.json` holds policy that one run must not override, and the `routine` block holds the policy of unattended runs and the wave choices that are fixed for them. Choices for a single run in a session stay as workflow arguments.
 
 ## Cost limits
