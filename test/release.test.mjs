@@ -133,6 +133,18 @@ test('release: a red default branch refuses', () => {
   refused(release(s), /MISSING: main is not green at aaaaaaa: ci/)
 })
 
+test('release: a ci-state.jq that fails never reports a green default branch', () => {
+  const s = setup({ conclusion: 'failure' })
+  const copy = mkdtempSync(join(tmpdir(), 'rel-copy-'))
+  cpSync(join(root, 'scripts'), copy, { recursive: true })
+  writeFileSync(join(copy, 'ci-state.jq'), 'error("x")')
+  const env = { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log, PIPELINE_TEST_FAST: '1' }
+  const r = spawnSync('bash', [join(copy, 'release.sh'), '--dry-run', 'o/r', '0.3.0'], { env, encoding: 'utf8' })
+  const out = r.stdout + r.stderr
+  assert.doesNotMatch(out, /ok: main is green/)
+  assert.match(out, /cannot judge the check runs|not green/)
+})
+
 test('release: a manifest version that differs from the release version refuses', () => {
   const s = setup({ manifest: { version: '0.2.9' } })
   refused(release(s), /MISSING: \.claude-plugin\/plugin\.json has version '0\.2\.9', not 0\.3\.0/)
@@ -218,12 +230,12 @@ const status = (s) => JSON.parse(run(s, 'bot-status.sh', ['o/r', '7']).out)
 
 test('bot-status: approvedBy is the land gate rule, so an approval of an older commit counts', () => {
   const r = status(statusSetup([rv('APPROVED', 'old'.padEnd(40, '0'), '1')], []))
-  assert.deepEqual(r, { head: HEAD, approvedBy: [`${BOT} (approved earlier)`], seenHead: [BOT], pending: [], openThreads: 0, reviewBodies: 0 })
+  assert.deepEqual(r, { head: HEAD, approvedBy: [`${BOT} (approved earlier)`], seenHead: [BOT], finishedOnHead: [BOT], pending: [], openThreads: 0, reviewBodies: 0 })
 })
 
 test('bot-status: an approval of an older commit with the bot check still running has not seen the head', () => {
   const r = status(statusSetup([rv('APPROVED', 'old'.padEnd(40, '0'), '1')], [], [{ name: 'Gitar', status: 'in_progress', conclusion: null, app: GITAR }]))
-  assert.deepEqual(r, { head: HEAD, approvedBy: [], seenHead: [], pending: ['Gitar'], openThreads: 0, reviewBodies: 0 })
+  assert.deepEqual(r, { head: HEAD, approvedBy: [], seenHead: [], finishedOnHead: [], pending: ['Gitar'], openThreads: 0, reviewBodies: 0 })
 })
 
 test('bot-status: an approval on the head has seen it', () => {
@@ -239,17 +251,17 @@ test('bot-status: a reply-only review after an approval does not take the approv
 test('bot-status: an unanswered bot thread is counted and nothing clears', () => {
   const thread = (id) => ({ id, pull_request_review_id: 1, in_reply_to_id: null, user: { login: BOT } })
   const s = statusSetup([rv('COMMENTED', 'old'.padEnd(40, '0'), '1')], [thread(4), thread(5), { id: 9, in_reply_to_id: 4, user: { login: 'alfhen' } }])
-  assert.deepEqual(status(s), { head: HEAD, approvedBy: [], seenHead: [], pending: [], openThreads: 1, reviewBodies: 0 })
+  assert.deepEqual(status(s), { head: HEAD, approvedBy: [], seenHead: [], finishedOnHead: [BOT], pending: [], openThreads: 1, reviewBodies: 0 })
 })
 
-const KEYS = ['head', 'approvedBy', 'seenHead', 'pending', 'openThreads', 'reviewBodies']
+const KEYS = ['head', 'approvedBy', 'seenHead', 'finishedOnHead', 'pending', 'openThreads', 'reviewBodies']
 const SUITES = `${P}__commits__${HEAD}__check-suites`
 const thread4 = { id: 4, pull_request_review_id: 1, in_reply_to_id: null, user: { login: BOT } }
 const OLD = 'old'.padEnd(40, '0')
 
 test('bot-status: a check run with no App counts for nothing, with the App it counts', () => {
   const bare = { name: 'Gitar', status: 'completed', conclusion: 'success' }
-  assert.deepEqual(status(statusSetup([rv('APPROVED', OLD, '1')], [], [bare])), { head: HEAD, approvedBy: [], seenHead: [], pending: [], openThreads: 0, reviewBodies: 0 })
+  assert.deepEqual(status(statusSetup([rv('APPROVED', OLD, '1')], [], [bare])), { head: HEAD, approvedBy: [], seenHead: [], finishedOnHead: [], pending: [], openThreads: 0, reviewBodies: 0 })
   assert.deepEqual(status(statusSetup([rv('APPROVED', OLD, '1')], [], [{ ...bare, app: GITAR }])).approvedBy, [`${BOT} (approved earlier)`])
   const running = { name: 'CodeRabbit', status: 'in_progress', conclusion: null }
   assert.deepEqual(status(statusSetup([], [], [running])).pending, [])
@@ -286,7 +298,7 @@ test('bot-status: a BOT_LOGINS item that is not a login stops the script with th
   }
 })
 
-test('bot-status: the check suites are read on all pages as one call, and the line keeps its six keys', () => {
+test('bot-status: the check suites are read on all pages as one call, and the line keeps its keys', () => {
   const s = statusSetup([], [])
   rmSync(join(s.fx, `${SUITES}.json`))
   put(s.fx, `${SUITES}.1.json`, { total_count: 1, check_suites: [{ id: 1 }] })
@@ -326,7 +338,7 @@ test('release: a red branch with check runs over 128 KiB still refuses', () => {
 test('bot-status: reviews and comments over 128 KiB still work', () => {
   const thread = (id) => ({ id, pull_request_review_id: 1, in_reply_to_id: null, user: { login: BOT }, body: 'x'.repeat(40000) })
   const s = statusSetup([rv('COMMENTED', 'old'.padEnd(40, '0'), '1')], Array.from({ length: 30 }, (_, i) => thread(i + 1)))
-  assert.deepEqual(status(s), { head: HEAD, approvedBy: [], seenHead: [], pending: [], openThreads: 30, reviewBodies: 0 })
+  assert.deepEqual(status(s), { head: HEAD, approvedBy: [], seenHead: [], finishedOnHead: [BOT], pending: [], openThreads: 30, reviewBodies: 0 })
 })
 
 // The plugin's own repo: the fixtures of setup() moved to its name, plus a files.txt and a tree.
@@ -498,4 +510,43 @@ test('release: the temp file for stderr is removed after a normal and a refused 
     run(s, 'release.sh', ['--dry-run', 'o/r', '0.3.0'], m.env)
     assertTempRemoved(m.log)
   }
+})
+
+// M06: the CI result of the default branch head comes from scripts/ci-state.jq.
+const CHECKS_FX = `${P}__commits__${HEAD}__check-runs.json`
+const STATUS_FX = `${P}__commits__${HEAD}__status.json`
+const dry = (s, scripts) => {
+  const env = { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, FAKE_GH_LOG: s.log, PIPELINE_TEST_FAST: '1' }
+  const r = spawnSync('bash', [join(scripts || join(root, 'scripts'), 'release.sh'), '--dry-run', 'o/r', '0.3.0'], { env, encoding: 'utf8' })
+  return r.stdout + r.stderr
+}
+
+for (const [name, runs, status, want] of [
+  ['a cancelled run', [{ name: 'ci', status: 'completed', conclusion: 'cancelled' }], [], /MISSING: main is not green at aaaaaaa: ci/],
+  ['a failed commit status', [{ name: 'ci', status: 'completed', conclusion: 'success' }], [{ context: 'ext/ci', state: 'failure' }], /MISSING: main is not green at aaaaaaa: ext\/ci/],
+  ['no check run and a green status', [], [{ context: 'ext/ci', state: 'success' }], /MISSING: main is not green at aaaaaaa: no check runs/],
+  ['a run in progress', [{ name: 'ci', status: 'in_progress', conclusion: null }], [], /MISSING: main is not green at aaaaaaa: ci/],
+]) {
+  test(`release: ${name} on the default branch refuses`, () => {
+    const s = setup()
+    put(s.fx, CHECKS_FX, { check_runs: runs })
+    put(s.fx, STATUS_FX, { state: 'x', statuses: status })
+    assert.match(dry(s), want)
+  })
+}
+
+test('release: the saved real check runs of PR 805 are green', () => {
+  const s = setup()
+  const runs = JSON.parse(readFileSync(join(root, 'test/fixtures/clean-review/pr805-f36bb8e.json'), 'utf8')).checks
+  put(s.fx, CHECKS_FX, { check_runs: runs })
+  assert.match(dry(s), /ok: main is green at aaaaaaa/)
+})
+
+test('release: a different rule in ci-state.jq changes what release.sh reports', () => {
+  const copy = join(mkdtempSync(join(tmpdir(), 'release-stub-')), 'scripts')
+  cpSync(join(root, 'scripts'), copy, { recursive: true })
+  writeFileSync(join(copy, 'ci-state.jq'), '{state: "failure", failed: ["stub-check"], failedRuns: [{name: "stub-check", details_url: ""}], pending: [], noRuns: false}')
+  const s = setup()
+  assert.match(dry(s, copy), /MISSING: main is not green at aaaaaaa: stub-check/)
+  assert.match(dry(setup()), /ok: main is green at aaaaaaa/)
 })

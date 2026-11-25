@@ -55,14 +55,23 @@ runs=$(jq -s -c '[.[].check_runs[] | {name, status, conclusion, started_at, head
 stat=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100") || { echo "PR $pr NOT merged: cannot read the commit statuses"; exit 1; }
 sts=$(jq -s -c '[.[].statuses[] | {context, state}]' <<<"$stat") || { echo "PR $pr NOT merged: unexpected commit status answer"; exit 1; }
 # Files and --slurpfile, not --argjson: a busy PR passes the 128 KiB limit of one argument on Linux.
-echo "$runs" >"$tmp/runs"
-input=$(jq -n -c --arg head "$head" --argjson bots "$(jq -n -c --arg b "$bots" '$b | split(",")')" --arg user "$user" --slurpfile reviews "$tmp/reviews" --slurpfile comments "$tmp/comments" --slurpfile checks "$tmp/runs" --slurpfile issue "$tmp/issue-comments" --slurpfile suites "$tmp/suites" \
-  '{reviews: ($reviews | add // []), comments: ($comments | add // []), issueComments: ($issue | add // []), suites: [$suites[].check_suites[]], checks: $checks[0], head: $head, bots: $bots, user: $user}') || { echo "PR $pr NOT merged: cannot build the bot input"; exit 1; }
+# A write that fails must stop here: a missing status list would read as no failed status.
+echo "$runs" >"$tmp/runs" || { echo "PR $pr NOT merged: cannot write the check runs"; exit 1; }
+# The changed files are read only for the clean review, which is CodeRabbit's. null means they could not be read.
+echo null >"$tmp/files"
+case ",$bots," in *",coderabbitai[bot],"*) bash "$here/pr-files.sh" "$R" "$pr" >"$tmp/files" 2>/dev/null || echo null >"$tmp/files" ;; esac
+input=$(jq -n -c --arg head "$head" --argjson bots "$(jq -n -c --arg b "$bots" '$b | split(",")')" --arg user "$user" --slurpfile reviews "$tmp/reviews" --slurpfile comments "$tmp/comments" --slurpfile checks "$tmp/runs" --slurpfile issue "$tmp/issue-comments" --slurpfile suites "$tmp/suites" --slurpfile files "$tmp/files" \
+  '{reviews: ($reviews | add // []), comments: ($comments | add // []), issueComments: ($issue | add // []), suites: [$suites[].check_suites[]], checks: $checks[0], files: $files[0], head: $head, bots: $bots, user: $user}') || { echo "PR $pr NOT merged: cannot build the bot input"; exit 1; }
 approved=$(jq -c -f "$here/bot-approval.jq" <<<"$input") || { echo "PR $pr NOT merged: cannot judge the reviews"; exit 1; }
 appr=$(jq -r 'join(",")' <<<"$approved")
-fail=$(jq -r 'if length == 0 then "no-checks" else [.[] | select(.status != "completed" or (.conclusion | IN("success", "skipped", "neutral") | not)) | .name + ":" + (if .status != "completed" then "pending" else .conclusion end)] | join(",") end' <<<"$runs")
-sfail=$(jq -r '[.[] | select(.state != "success") | .context + ":" + .state] | join(",")' <<<"$sts")
-[ -n "$sfail" ] && fail="${fail:+$fail,}$sfail"
+# The rule is ci-state.jq. The suffix of each name (the conclusion or state) is only for the message.
+echo "$sts" >"$tmp/sts" || { echo "PR $pr NOT merged: cannot write the commit statuses"; exit 1; }
+ci=$(jq -n -c --slurpfile r "$tmp/runs" --slurpfile s "$tmp/sts" '{runs: $r[0], statuses: $s[0]}' | jq -c -f "$here/ci-state.jq") && [ -n "$ci" ] || { echo "PR $pr NOT merged: cannot judge the check runs"; exit 1; }
+fail=$(jq -r --slurpfile r "$tmp/runs" --slurpfile s "$tmp/sts" '
+  [.failed[], .pending[]] as $bad
+  | ($bad | map(. as $n | first(($r[0][] | select(.name == $n) | .name + ":" + (if .status != "completed" then "pending" else .conclusion end)),
+                                ($s[0][] | select(.context == $n) | .context + ":" + .state)) // $n)) as $named
+  | (if .noRuns then ["no-checks"] else [] end) + $named | join(",")' <<<"$ci") || { echo "PR $pr NOT merged: cannot judge the check runs"; exit 1; }
 echo "PR $pr mergeable=$m head=${head:0:7} approved=[$appr] failing=[$fail] mode=$mode"
 if [ -z "$appr" ]; then
   why=$(jq -r --arg why 1 -f "$here/bot-approval.jq" <<<"$input") || { echo "PR $pr NOT merged: cannot judge the clean review"; exit 1; }

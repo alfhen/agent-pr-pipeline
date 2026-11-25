@@ -59,11 +59,11 @@ const calls = (s, path) => (existsSync(join(s.dir, 'wrap.log')) ? readFileSync(j
 const parse = r => JSON.parse(r.stdout.trim().split('\n').pop())
 const SUCCESS = { head: HEAD, state: 'success', failed: [], timedOut: false }
 
-for (const c of ['cancelled', 'stale']) {
-  test(`a ${c} check run does not make the state failure`, () => {
+for (const c of ['cancelled', 'stale', 'startup_failure']) {
+  test(`a ${c} check run makes the state failure and is named`, () => {
     const r = run(setup({ runs: [done('ci'), done('e2e', c)] }))
     assert.equal(r.status, 0, r.stderr)
-    assert.deepEqual(parse(r), SUCCESS)
+    assert.deepEqual(parse(r), { head: HEAD, state: 'failure', failed: ['e2e'], timedOut: false })
   })
 }
 
@@ -82,12 +82,12 @@ for (const st of ['failure', 'error']) {
   })
 }
 
-test('the failed list holds only failure, timed_out, action_required and failing statuses', () => {
+test('the failed list holds every run that is not success, skipped or neutral, and failing statuses', () => {
   const r = run(setup({ runs: [done('unit', 'failure'), done('e2e', 'cancelled'), done('old', 'stale'), done('ci')], statuses: [{ context: 'ext/x', state: 'error' }] }))
   assert.equal(r.status, 0, r.stderr)
   const out = parse(r)
   assert.equal(out.state, 'failure')
-  assert.deepEqual([...out.failed].sort(), ['ext/x', 'unit'])
+  assert.deepEqual([...out.failed].sort(), ['e2e', 'ext/x', 'old', 'unit'])
 })
 
 const retryCases = {
@@ -152,7 +152,7 @@ test('good replies with CI still running are not tried again', () => {
   assert.equal(calls(s, 'check-runs'), 1)
 })
 
-test('for seeded random fixtures the failed set is the land-wave.sh set', () => {
+test('for seeded random fixtures the failed set is every run that is not success, skipped or neutral', () => {
   let seed = 7
   const rnd = n => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n }
   const concl = ['success', 'neutral', 'skipped', 'cancelled', 'stale', 'startup_failure', 'failure', 'timed_out', 'action_required']
@@ -160,7 +160,7 @@ test('for seeded random fixtures the failed set is the land-wave.sh set', () => 
   for (let k = 0; k < 25; k++) {
     const runs = Array.from({ length: 1 + rnd(6) }, (_, i) => rnd(5) === 0 ? { name: `r${i}`, status: 'in_progress', conclusion: null } : done(`r${i}`, concl[rnd(concl.length)]))
     const statuses = Array.from({ length: rnd(4) }, (_, i) => ({ context: `s${i}`, state: stateOf[rnd(4)] }))
-    const want = [...runs.filter(x => ['failure', 'timed_out', 'action_required'].includes(x.conclusion)).map(x => x.name), ...statuses.filter(x => ['failure', 'error'].includes(x.state)).map(x => x.context)].sort()
+    const want = [...runs.filter(x => x.status === 'completed' && !['success', 'skipped', 'neutral'].includes(x.conclusion)).map(x => x.name), ...statuses.filter(x => ['failure', 'error'].includes(x.state)).map(x => x.context)].sort()
     const pending = runs.some(x => x.status !== 'completed') || statuses.some(x => x.state === 'pending')
     const out = parse(run(setup({ runs, statuses })))
     assert.deepEqual([...out.failed].sort(), want, JSON.stringify({ runs, statuses }))

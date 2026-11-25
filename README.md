@@ -76,7 +76,7 @@ The local routine is replaced by the cloud routines once it is retired (docs/clo
 ## Needs
 
 - Claude Code with the Workflow tool and `gh` signed in.
-- A review bot on the repo, such as CodeRabbit or Gitar. Its approval is the merge gate. For CodeRabbit only, a clean review that was asked for with `@coderabbitai full review` also clears the gate. That is a completed review run of CodeRabbit whose findings, when it has any, are inline comments ranked Minor or Trivial that the maintainer's account answered. A review text that counts 0 comments, or that holds more than CodeRabbit's standard frame, does not clear the gate and goes to a person. Another review bot clears it by approval or by answered comments, and needs its exact login in `BOT_LOGINS`.
+- A review bot on the repo, such as CodeRabbit or Gitar. Its approval is the merge gate. For CodeRabbit only, a clean review that was asked for with `@coderabbitai full review` also clears the gate. That is a completed review run of CodeRabbit whose findings, when it has any, are inline comments ranked Minor or Trivial that the maintainer's account answered. A review text that counts 0 comments, or that holds more than CodeRabbit's standard frame, does not clear the gate and goes to a person. Another review bot clears it by approval or by answered comments, and needs its exact login in `BOT_LOGINS`. Set `BOT_LOGINS` to the bots that are installed: the bot wait stops only when every listed bot has finished on the head, so a listed bot that is absent makes every wait run to its limit.
 - CI that runs the same checks the agents run, and the full e2e suite.
 
 ## Develop

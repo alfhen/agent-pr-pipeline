@@ -44,6 +44,7 @@ const addPr = (fx, n, sha, { mergeable = true, runs = [ci], reviews = [], inline
   put(fx, `${P}__pulls__${n}__reviews.json`, reviews)
   put(fx, `${P}__pulls__${n}__comments.json`, inline)
   put(fx, `${P}__issues__${n}__comments.json`, requests)
+  put(fx, `${P}__pulls__${n}__files.json`, [{ filename: 'src/a.js', status: 'modified' }])
   const posted = { id: 9000 + n, user: { login: 'alfhen' }, body: REQ, created_at: isoSec(30) }
   put(fx, `${P}__issues__${n}__comments.POST.json`, posted)
   if (swapRuns) {

@@ -33,25 +33,59 @@ tries=90; pause=30; mtries=6; mpause=10; rtries=6
 [ "$PIPELINE_TEST_FAST" = 1 ] && { tries=3; pause=0; mtries=1; mpause=0; rtries=3; }
 # Trimmed to the fields read below: one jq argument is limited to 128 KiB on Linux, and a full check run is several KB.
 fetch_checks() {
-  runs=$(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100" | jq -s -c '[.[].check_runs[] | {name, status, conclusion, details_url}]')
-  sts=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100" | jq -s -c '[.[].statuses[] | {context, state}]')
+  local raw
+  # gh writes an HTTP error body to stdout, so a failed read must not count as an answer.
+  raw=$(gh api --paginate "repos/$R/commits/$head/check-runs?per_page=100") || return 1
+  runs=$(jq -s -c '[.[].check_runs[] | {name, status, conclusion, details_url}]' <<<"$raw") || return 1
+  raw=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100") || return 1
+  sts=$(jq -s -c '[.[].statuses[] | {context, state}]' <<<"$raw") || return 1
 }
+# The CI state of the runs and statuses just fetched: scripts/ci-state.jq.
+ci_state() {
+  ci=$(jq -n -c --argjson r "$runs" --argjson s "${sts:-[]}" '{runs: $r, statuses: $s}' | jq -c -f "$(dirname "$0")/ci-state.jq") && [ -n "$ci" ] || { echo "STOP #$pr: cannot judge the check runs"; exit 5; }
+}
+# Ends when nothing is pending (a failed run does not end it while another check is pending, so a known flake is rerun only
+# after everything has finished), when the head moved, or when the head has only successful commit statuses on the second poll.
+# Sets pending (how many are still unfinished) and norun (1 when it stopped for a head with no check run).
 wait_ci() {
+  local nr=0
+  norun=0
   for _ in $(seq 1 "$tries"); do
     pull=$(gh api "repos/$R/pulls/$pr") || { echo "cannot read #$pr"; exit 5; }
     head=$(jq -r .head.sha <<<"$pull")
     [ "$head" != "$sha" ] && break
-    fetch_checks
-    pending=$(jq -n --argjson r "$runs" --argjson s "${sts:-[]}" '[$r[] | select(.status != "completed")] + [$s[] | select(.state == "pending")] | length')
-    [ "$(jq length <<<"$runs")" = 0 ] && pending=$((pending + 1))
+    # One unreadable answer is one lost poll, not the end of the wait.
+    fetch_checks || { sleep "$pause"; continue; }
+    ci_state
+    pending=$(jq '.pending | length' <<<"$ci")
+    if [ "$(jq -r '.state == "noRuns"' <<<"$ci")" = true ]; then
+      if [ "$(jq length <<<"${sts:-[]}")" = 0 ]; then pending=1
+      else nr=$((nr + 1)); if [ "$nr" -ge 2 ]; then norun=1; else pending=1; fi
+      fi
+    else nr=0
+    fi
     [ "$pending" = "0" ] && break
-    [ "$(jq '[.[] | select(.state | IN("failure", "error"))] | length' <<<"${sts:-[]}")" != 0 ] && break
+    # A failed commit status ends the wait at once. A failed run does not: see above.
+    [ "$(jq '(.failedStatuses // []) | length' <<<"$ci")" != 0 ] && break
     sleep "$pause"
   done
 }
 read_failing() {
-  fetch_checks
-  failing=$(jq -n -r --argjson r "$runs" --argjson s "${sts:-[]}" '[$r[] | select(.conclusion | IN("failure", "timed_out", "action_required")) | .name] + [$s[] | select(.state | IN("failure", "error")) | .context] | join(",")')
+  fetch_checks || { echo "STOP #$pr: cannot read the check runs"; exit 5; }
+  ci_state
+  failing=$(jq -r '.failed | join(",")' <<<"$ci")
+  # wait_ci set norun from an earlier poll; a head that has gained check runs since is no longer a head with none.
+  if [ "$norun" = 1 ] && [ "$(jq -r '.noRuns' <<<"$ci")" != true ]; then
+    # Runs that appeared after the statuses-only polls may still be in progress: wait for them, or ask_review and the merge would run before CI is green.
+    norun=0
+    if [ "$(jq '.pending | length' <<<"$ci")" != 0 ]; then
+      wait_ci
+      if [ "$head" != "$sha" ]; then echo "HEAD MOVED #$pr: checked ${sha:0:7}, now ${head:0:7}. Check the new head before merging."; exit 6; fi
+      read_failing
+      return
+    fi
+    pending=0
+  fi
 }
 # Waits until a rerun of run $1 shows: GitHub lists the new attempt a moment after the POST, and until then
 # wait_ci would see the old failure.
@@ -85,10 +119,11 @@ flake_runs() {
   local flakes
   read_default_settings || return 0
   flakes=$(jq -c 'if (.knownFlakes // []) | (type == "array" and all(.[]; type == "string")) then (.knownFlakes // []) else error("flakes") end' <<<"$sj" 2>/dev/null) || return 0
-  jq -n -r --argjson r "$runs" --argjson s "${sts:-[]}" --argjson f "$flakes" '
-    [$r[] | select(.conclusion | IN("failure", "timed_out", "action_required"))] as $bad
-    | if ([$s[] | select(.state | IN("failure", "error"))] | length) > 0 or ($bad | length) == 0 or any($bad[]; . as $c | $f | index($c.name) | not) then empty
-      else [$bad[] | (.details_url // "") | capture("/actions/runs/(?<id>[0-9]+)") | .id] | unique | .[] end' 2>/dev/null
+  # A failed commit status is not a run, so it is never rerun, even when it is named like a failed run.
+  jq -r --argjson f "$flakes" '
+    .failedRuns as $bad
+    | if ((.failedStatuses // []) | length) > 0 or ($bad | length) == 0 or any($bad[]; . as $c | $f | index($c.name) | not) then empty
+      else [$bad[] | .details_url | capture("/actions/runs/(?<id>[0-9]+)") | .id] | unique | .[] end' <<<"$ci" 2>/dev/null
 }
 here=$(dirname "$0")
 # Read once, when the first PR needs it, from the default branch only: a PR must not turn the request on for itself.
@@ -193,6 +228,7 @@ for arg in "$@"; do
   if [ "$state" = "CONFLICTING" ] || [ -n "$failing" ]; then
     echo "LAND FIX #$pr state=$state failing=[$failing]"; exit 3
   fi
+  if [ "$norun" = 1 ]; then echo "STOP #$pr: no check runs"; exit 5; fi
   if [ "$pending" != "0" ]; then echo "WAITING #$pr: CI still running after 45 min"; exit 4; fi
   if [ "$state" = MERGEABLE ]; then
     [ "$review" = 0 ] && [ -z "$roq" ] && read_review_on_request

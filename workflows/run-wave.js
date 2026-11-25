@@ -679,6 +679,7 @@ const WAIT = {
   properties: {
     approvedBy: { type: 'array', items: { type: 'string' } },
     seenHead: { type: 'array', items: { type: 'string' } },
+    finishedOnHead: { type: 'array', items: { type: 'string' } },
     openComments: { type: 'number' },
     timedOut: { type: 'boolean' },
     notes: { type: 'string' },
@@ -1077,7 +1078,7 @@ async function endFacts(pr, n, expected) {
   if (!status || !Array.isArray(status.approvedBy) || !status.head) return { ok: false, reason: `final facts: cannot read the head and the bots: ${st ? st.output.trim() : 'pipeline-io failed'}` }
   const ci = await ioCall(pr, `io:${pr.id}#endci`, 'wait-ci.sh', `${REPO} ${n} 1`, { phase: 'Bots' })
   const state = ci && ci.exitCode === 0 ? jsonLine(ci.output) : null
-  if (!state || !['pending', 'success', 'failure'].includes(state.state)) return { ok: false, reason: `final facts: cannot read the CI state: ${ci ? ci.output.trim() : 'pipeline-io failed'}` }
+  if (!state || !['pending', 'success', 'failure', 'noRuns'].includes(state.state)) return { ok: false, reason: `final facts: cannot read the CI state: ${ci ? ci.output.trim() : 'pipeline-io failed'}` }
   if (state.head !== status.head) return { ok: false, reason: `final facts: head moved while reading (${state.head} is not ${status.head})` }
   if (!expected || !status.head.startsWith(expected)) return { ok: false, reason: `final facts: head moved (${status.head} does not extend the checked ${expected})`, head: status.head }
   const failed = Array.isArray(state.failed) ? state.failed : []
@@ -1094,8 +1095,8 @@ const statusCommand = n => `bash ${PLUGIN_ROOT}/scripts/bot-status.sh ${REPO} ${
 const waitCommand = (n, minutes) => `bash ${PLUGIN_ROOT}/scripts/wait-bots.sh ${REPO} ${n} ${minutes}`
 const waitPrompt = (pr, n) => `Task: wait for the review bots on pull request #${n} in ${REPO}, for at most ${BOT_WAIT_MIN} minutes.
 Bots: ${BOTS}.
-Wait command, from the plugin folder ${PLUGIN_ROOT} (never from a clone of ${REPO}): \`${waitCommand(n, Math.min(BOT_WAIT_MIN, 9))}\`. Run it with the Bash tool's timeout set to 600000 ms: the default of 120000 ms kills the call after 2 minutes. One call polls \`${statusCommand(n)}\` every minute for at most 9 minutes and prints one JSON line with head, approvedBy, seenHead, pending, openThreads and timedOut. While timedOut is true and ${BOT_WAIT_MIN} minutes have not passed since you started, run it again with the minutes still left (at most 9); do not sleep between calls. approvedBy is the only list of approvals: report it as it is, and never judge approvals yourself. Stop when seenHead is not empty and pending is empty; otherwise stop when every bot has finished with the current head or the time limit passes. Inline threads: \`gh api --paginate "repos/${REPO}/pulls/${n}/comments?per_page=100"\`.
-Return approvedBy, seenHead, openComments, timedOut, and one line of notes.`
+Wait command, from the plugin folder ${PLUGIN_ROOT} (never from a clone of ${REPO}): \`${waitCommand(n, Math.min(BOT_WAIT_MIN, 9))}\`. Run it with the Bash tool's timeout set to 600000 ms: the default of 120000 ms kills the call after 2 minutes. One call polls \`${statusCommand(n)}\` every minute for at most 9 minutes and prints one JSON line with head, approvedBy, seenHead, finishedOnHead, pending, openThreads and timedOut. While timedOut is true and ${BOT_WAIT_MIN} minutes have not passed since you started, run it again with the minutes still left (at most 9); do not sleep between calls. approvedBy is the only list of approvals: report it as it is, and never judge approvals yourself. Stop when the script returns timedOut false, or when the time limit passes; judge nothing else yourself. Inline threads: \`gh api --paginate "repos/${REPO}/pulls/${n}/comments?per_page=100"\`.
+Return approvedBy, seenHead, finishedOnHead, openComments, timedOut, and one line of notes.`
 
 const answerPrompt = (pr, n, issues, headSha) => `${ctx(pr)}
 
@@ -1139,7 +1140,7 @@ Task: bring PR #${pr.prNumber} (${pr.branch}) to a mergeable state with green CI
 1. You are in a fresh git worktree. ${freshBranch('land', pr, 0)}
 2. Conflict: \`git merge origin/HEAD\`, then ${fastText}, and ${ownE2e}.
 3. CI: find the failed run ids with \`gh api "repos/${REPO}/actions/runs?head_sha=<head>" --jq '.workflow_runs[] | select(.conclusion == "failure") | .id'\` (<head> is the output of \`git rev-parse HEAD\` after your push), then list the failed jobs of a run with \`gh api repos/${REPO}/actions/runs/<run>/jobs\`, then read a job's log with \`gh api repos/${REPO}/actions/jobs/<job>/logs\`; rerun a flaky network failure with \`gh api -X POST repos/${REPO}/actions/runs/<run>/rerun-failed-jobs\`.
-4. Wait: \`bash ${PLUGIN_ROOT}/scripts/wait-ci.sh ${REPO} ${pr.prNumber} 9\`, with the Bash tool's timeout set to 600000 ms. It prints one JSON line with head, state (pending, success or failure), failed and timedOut. While timedOut is true, run it again, at most 3 calls in all. If it is still timedOut, return readyToMerge false and say so in notes.${noDisputesText(pr)}
+4. Wait: \`bash ${PLUGIN_ROOT}/scripts/wait-ci.sh ${REPO} ${pr.prNumber} 9\`, with the Bash tool's timeout set to 600000 ms. It prints one JSON line with head, state (pending, success, failure or noRuns), failed and timedOut. State noRuns means no check run and only successful commit statuses: it is not ready, so return readyToMerge false and say so in notes. While timedOut is true, run it again, at most 3 calls in all. If it is still timedOut, return readyToMerge false and say so in notes.${noDisputesText(pr)}
 Return readyToMerge, headSha, notes and worktree (\`git rev-parse --show-toplevel\`, run at the end of your task).
 
 ${prBlock(pr)}${designRulesText(pr)}`

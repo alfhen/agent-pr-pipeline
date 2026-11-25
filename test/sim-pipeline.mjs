@@ -1977,6 +1977,14 @@ await check('end facts: retry notes before the JSON line of the CI read still gi
   assert.equal(x.ready, true)
   assert.deepEqual(x.ci, { state: 'success', failed: [] })
 })
+await check('end facts: the CI state noRuns from wait-ci.sh is passed on as noRuns', async () => {
+  const line = JSON.stringify({ head: endHead('C2'), state: 'noRuns', failed: [], noRuns: true, timedOut: false })
+  const odd = (p, o) => o.label === 'io:C2#endci' ? ioWrap(o.label, { exitCode: 0, output: line }) : agent(p, o)
+  calls = []
+  const x = (await run({ ...base, prs: only('C2') }, odd, parallel, log)).prs[0]
+  assert.equal(x.ci.state, 'noRuns')
+  assert.doesNotMatch(String(x.reason || ''), /cannot read the CI state/)
+})
 await check('end facts: a CI read that failed after its last try is not ready and the reason holds the try count', async () => {
   const out = 'wait-ci: cannot read check runs, try 1 of 3 failed, trying again in 2s\nwait-ci: cannot read check runs, gave up after 3 tries'
   const odd = (p, o) => o.label === 'io:C2#endci' ? ioWrap(o.label, { exitCode: 3, output: out }) : agent(p, o)
@@ -2249,7 +2257,7 @@ await check('bot status: approvedBy comes from the script through pipeline-io, n
   const wait = calls.find(c => c.label === 'botwait:C1')
   assert.ok(wait.prompt.includes('bash /plug/scripts/bot-status.sh o/r '))
   assert.doesNotMatch(wait.prompt, /latest review is APPROVED/)
-  assert.match(wait.prompt, /Stop when seenHead is not empty and pending is empty/)
+  assert.match(wait.prompt, /Stop when the script returns timedOut false/)
   assert.doesNotMatch(wait.prompt, /check-runs/)
   assert.ok(calls.findIndex(c => c.label === 'io:C1#botstatus') > calls.findIndex(c => c.label === 'botwait:C1'))
 })
@@ -2551,7 +2559,7 @@ await check('the wait schema has seenHead, which the waiter prompt asks for', as
   const probe = async (p, o) => { if (o.label.startsWith('botwait')) seen.push({ ...o, prompt: p }); return agent(p, o) }
   await run({ ...base, prs: only('C1') }, probe, parallel, log)
   assert.ok(seen[0].schema.properties.seenHead)
-  assert.match(seen[0].prompt, /Return approvedBy, seenHead, openComments/)
+  assert.match(seen[0].prompt, /Return approvedBy, seenHead, finishedOnHead, openComments/)
 })
 await check('quick: a stored high-risk brief on a first run lands as person without asking the safety agent', async () => {
   briefs.QHI = 'Touches: src/h.js\nAcceptance: h test\nTriage: size M, risk high, new concepts: none'
