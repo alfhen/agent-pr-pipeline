@@ -97,7 +97,7 @@ read_review_on_request() {
   local v
   roq=0
   read_default_settings || { echo "WARN: cannot read .github/pipeline.json of $R, reviewOnRequest is taken as false"; return 0; }
-  v=$(jq -r 'if has("reviewOnRequest") | not then "0" elif .reviewOnRequest == false then "0" elif .reviewOnRequest == true then "1" else "bad" end' <<<"$sj" 2>/dev/null)
+  v=$(jq -r 'if .reviewOnRequest == null or .reviewOnRequest == false then "0" elif .reviewOnRequest == true then "1" else "bad" end' <<<"$sj" 2>/dev/null)
   case "$v" in
     0) ;;
     1) roq=1 ;;

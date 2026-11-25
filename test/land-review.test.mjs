@@ -515,7 +515,7 @@ test('reviewOnRequest is read from the default branch, not from the PR head', ()
   assert.equal(reads.some((l) => l.includes(`ref=${S}`)), false, r.log.join('\n'))
 })
 
-for (const [label, value] of [['missing', undefined], ['false', false]]) {
+for (const [label, value] of [['missing', undefined], ['null', null], ['false', false]]) {
   test(`reviewOnRequest ${label}: no request and no WARN`, () => {
     const s = roqSetup(value)
     assert.equal(JSON.parse(readFileSync(join(s.fx, MAIN), 'utf8')).reviewOnRequest, value)
