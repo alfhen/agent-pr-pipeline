@@ -27,5 +27,6 @@
     ".coderabbit.config.ts"
   ],
   "knownFlakes": [],
-  "autoRelease": true
+  "autoRelease": true,
+  "reviewOnRequest": true
 }
