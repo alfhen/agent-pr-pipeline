@@ -687,11 +687,33 @@ test('land: a failed status named like a failed known-flake run is not rerun', (
 })
 
 test('land: a failed status named like a run that is still in progress ends the wait at once', () => {
-  const s = landSetup({ checks: [[{ ...inProgress, name: 'e2e' }]] })
+  const s = landSetup({ checks: [[failed('e2e'), inProgress]] })
   put(s.fx, STATUS, { state: 'failure', statuses: [{ context: 'e2e', state: 'failure' }] })
   const r = land(s)
   assert.equal(r.code, 3, r.out)
+  assert.equal(reruns(r).length, 0)
   assert.ok(checkReads(r) <= 2, r.log.join('\n'))
+})
+
+test('land: runs in progress that appear after statuses-only polls are waited for', () => {
+  const s = landSetup({ checks: [[], [], [inProgress], [inProgress], [passed('ci')]] })
+  put(s.fx, STATUS, okStatus)
+  const r = land(s, { review: true })
+  assert.equal(r.code, 0, r.out)
+  assert.doesNotMatch(r.out, /not merged|WAITING/)
+  assert.equal(putCalls(r).length, 1)
+  const put1 = r.log.findIndex((l) => /^PUT .*\/pulls\/7\/merge/.test(l))
+  assert.ok(checkReads({ log: r.log.slice(0, put1) }) >= 5, r.log.join('\n'))
+})
+
+test('merge-pr: a ci-state.jq that prints nothing stops the merge', () => {
+  const s = landSetup({ checks: [[passed('ci')]] })
+  const copy = stubCopy()
+  writeFileSync(join(copy, 'ci-state.jq'), 'empty')
+  const r = mergeRun(s, copy)
+  assert.equal(r.code, 1, r.out)
+  assert.match(r.out, /PR 7 NOT merged: cannot judge the check runs/)
+  assert.equal(putCalls(r).length, 0)
 })
 
 test('land: a head that gains check runs after two empty polls is not a STOP for no check runs', () => {

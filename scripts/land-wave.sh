@@ -73,7 +73,17 @@ read_failing() {
   ci_state
   failing=$(jq -r '.failed | join(",")' <<<"$ci")
   # wait_ci set norun from an earlier poll; a head that has gained check runs since is no longer a head with none.
-  [ "$(jq -r '.noRuns' <<<"$ci")" = true ] || norun=0
+  if [ "$norun" = 1 ] && [ "$(jq -r '.noRuns' <<<"$ci")" != true ]; then
+    # Runs that appeared after the statuses-only polls may still be in progress: wait for them, or ask_review and the merge would run before CI is green.
+    norun=0
+    if [ "$(jq '.pending | length' <<<"$ci")" != 0 ]; then
+      wait_ci
+      if [ "$head" != "$sha" ]; then echo "HEAD MOVED #$pr: checked ${sha:0:7}, now ${head:0:7}. Check the new head before merging."; exit 6; fi
+      read_failing
+      return
+    fi
+    pending=0
+  fi
 }
 # Waits until a rerun of run $1 shows: GitHub lists the new attempt a moment after the POST, and until then
 # wait_ci would see the old failure.

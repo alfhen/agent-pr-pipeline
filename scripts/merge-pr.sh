@@ -63,12 +63,12 @@ approved=$(jq -c -f "$here/bot-approval.jq" <<<"$input") || { echo "PR $pr NOT m
 appr=$(jq -r 'join(",")' <<<"$approved")
 # The rule is ci-state.jq. The suffix of each name (the conclusion or state) is only for the message.
 echo "$sts" >"$tmp/sts" || { echo "PR $pr NOT merged: cannot write the commit statuses"; exit 1; }
-ci=$(jq -n -c --slurpfile r "$tmp/runs" --slurpfile s "$tmp/sts" '{runs: $r[0], statuses: $s[0]}' | jq -c -f "$here/ci-state.jq") || { echo "PR $pr NOT merged: cannot judge the check runs"; exit 1; }
+ci=$(jq -n -c --slurpfile r "$tmp/runs" --slurpfile s "$tmp/sts" '{runs: $r[0], statuses: $s[0]}' | jq -c -f "$here/ci-state.jq") && [ -n "$ci" ] || { echo "PR $pr NOT merged: cannot judge the check runs"; exit 1; }
 fail=$(jq -r --slurpfile r "$tmp/runs" --slurpfile s "$tmp/sts" '
   [.failed[], .pending[]] as $bad
   | ($bad | map(. as $n | first(($r[0][] | select(.name == $n) | .name + ":" + (if .status != "completed" then "pending" else .conclusion end)),
                                 ($s[0][] | select(.context == $n) | .context + ":" + .state)) // $n)) as $named
-  | (if .noRuns then ["no-checks"] else [] end) + $named | join(",")' <<<"$ci")
+  | (if .noRuns then ["no-checks"] else [] end) + $named | join(",")' <<<"$ci") || { echo "PR $pr NOT merged: cannot judge the check runs"; exit 1; }
 echo "PR $pr mergeable=$m head=${head:0:7} approved=[$appr] failing=[$fail] mode=$mode"
 if [ -z "$appr" ]; then
   why=$(jq -r --arg why 1 -f "$here/bot-approval.jq" <<<"$input") || { echo "PR $pr NOT merged: cannot judge the clean review"; exit 1; }
