@@ -82,10 +82,16 @@ test('docs name release 2 as 0.11.0 and do not promise stage 2 or the runner del
     assert.ok(lines.some((l) => /0\.11\.0|release 2/i.test(l)), f)
     for (const l of lines) {
       if (l.includes('0.9.0')) assert.doesNotMatch(l, /stage 2|2 to 4|local runner|deletes/i, `${f}: ${l}`)
+      assert.doesNotMatch(l, /release 2 \(0\.10\.0\)/i, `${f}: ${l}`)
     }
+    const pinned = lines.filter((l) => /local runner code|deletes it\./.test(l) && /release 2/i.test(l))
+    assert.ok(pinned.length > 0 && pinned.every((l) => /[Rr]elease 2 \(0\.11\.0\)/.test(l)), `${f}: release 2 (0.11.0) line`)
   }
   const text = readFileSync(new URL('../docs/cloud-routines.md', import.meta.url), 'utf8')
   assert.match(text.split('\n').find((l) => l.startsWith('| 2 to 4 |')), /Release 2 \(0\.11\.0\)/)
+  const needs = readFileSync(new URL('../README.md', import.meta.url), 'utf8').split('\n').find((l) => l.startsWith('- A review bot on the repo'))
+  assert.match(needs, /changed files cannot be read/)
+  assert.match(needs, /3000 files or more/)
 })
 
 test('skill says BOT_LOGINS is a list of exact logins, a bot check is found by its App, and the bots example is exact', () => {
