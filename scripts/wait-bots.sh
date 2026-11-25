@@ -1,7 +1,7 @@
 #!/bin/bash
 # usage: wait-bots.sh <owner/repo> <pr> <minutes>
 # Polls bot-status.sh once a minute inside one command and prints the last status line with "timedOut" added.
-# Stops when seenHead is not empty and pending (bot check runs still running) is empty, or the time is up, and exits 0 either way. One call waits at most 9 minutes, so it fits
+# Stops when pending (bot check runs still running) is empty and every bot of BOT_LOGINS (default coderabbitai[bot],gitar-bot[bot]) is in seenHead or finishedOnHead, or the time is up, and exits 0 either way. One call waits at most 9 minutes, so it fits
 # in one shell command (the Bash tool kills a call at 10 minutes). WAIT_BOTS_INTERVAL: seconds between polls (default 60).
 # Exits 1 when bot-status.sh fails.
 R=$1; pr=$2; minutes=$3
@@ -9,12 +9,13 @@ R=$1; pr=$2; minutes=$3
 case "$minutes" in *[!0-9]*) echo "wait-bots: minutes must be a whole number"; exit 2 ;; esac
 here=$(dirname "$0")
 interval=${WAIT_BOTS_INTERVAL:-60}
+bots="${BOT_LOGINS:-coderabbitai[bot],gitar-bot[bot]}"
 polls=$((10#$minutes)); [ "$polls" -gt 9 ] && polls=9; [ "$polls" -lt 1 ] && polls=1
 
 i=1
 while :; do
   status=$(bash "$here/bot-status.sh" "$R" "$pr") || { echo "wait-bots: bot-status failed" >&2; exit 1; }
-  if [ "$(jq '(.seenHead | length) > 0 and (.pending | length) == 0' <<<"$status")" = true ]; then
+  if [ "$(jq --arg bots "$bots" '((.seenHead // []) + (.finishedOnHead // [])) as $done | (.pending | length) == 0 and all($bots | split(",")[] | select(. != ""); . as $b | $done | index($b) != null)' <<<"$status")" = true ]; then
     jq -c '. + {timedOut: false}' <<<"$status"; exit 0
   fi
   [ "$i" -ge "$polls" ] && break

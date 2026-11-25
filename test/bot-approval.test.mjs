@@ -63,7 +63,7 @@ test('bot-status.sh strips every suffix that bot-approval.jq can print', () => {
 
 const P = 'repos__o__r'
 const PULL = `${P}__pulls__7`
-const KEYS = ['head', 'approvedBy', 'seenHead', 'pending', 'openThreads', 'reviewBodies']
+const KEYS = ['head', 'approvedBy', 'seenHead', 'finishedOnHead', 'pending', 'openThreads', 'reviewBodies']
 const rv = (state, commit, login = BOT, id = 1) => ({ ...review(state, commit, login), id })
 const thread = (id, login = BOT) => ({ id, in_reply_to_id: null, user: { login }, pull_request_review_id: 1 })
 const reply = (to, login = 'alfhen', id = 900 + to) => ({ id, in_reply_to_id: to, user: { login } })
@@ -266,7 +266,7 @@ test('the three ways of today still clear and block as before', () => {
   refused(merge(setup({ reviews: [rv('APPROVED', HEAD, 'alfhen')] })))
 })
 
-test('bot-status.sh reads the check suites on all pages as one call and keeps six keys', () => {
+test('bot-status.sh reads the check suites on all pages as one call and keeps its keys', () => {
   const page = { total_count: 1, check_suites: [{ id: 1 }] }
   const r = status(setup({ suites: [page, page] }))
   assert.equal(r.code, 0, r.out)
@@ -281,4 +281,15 @@ test('a failed check suites read stops bot-status.sh with exit 1', () => {
   assert.match(r.stderr, /^bot-status: cannot read/m)
   assert.equal(r.stdout, '')
   assert.equal(status(setup()).code, 0)
+})
+
+test('why: the settings file and the changed-files list come before the run of the bot', () => {
+  const why = (files) => {
+    const input = { reviews: [], comments: [], checks: [], head: HEAD, bots: DEFAULT_BOTS.split(','), user: 'alfhen', ...(files === undefined ? {} : { files }) }
+    return spawnSync('jq', ['-r', '--arg', 'why', '1', '-f', JQ], { input: JSON.stringify(input), encoding: 'utf8' }).stdout.trim()
+  }
+  assert.equal(why([{ filename: 'a.js' }, { filename: 'b.js', previous_filename: '.coderabbit.config.ts' }]), "clean review: the PR changes CodeRabbit's settings file .coderabbit.config.ts")
+  assert.match(why([{ filename: '.coderabbit.yaml.bak' }]), /the bot's run on the head/)
+  assert.equal(why(null), 'clean review: cannot read the changed files')
+  assert.equal(why(undefined), 'clean review: cannot read the changed files')
 })

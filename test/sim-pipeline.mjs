@@ -2257,7 +2257,7 @@ await check('bot status: approvedBy comes from the script through pipeline-io, n
   const wait = calls.find(c => c.label === 'botwait:C1')
   assert.ok(wait.prompt.includes('bash /plug/scripts/bot-status.sh o/r '))
   assert.doesNotMatch(wait.prompt, /latest review is APPROVED/)
-  assert.match(wait.prompt, /Stop when seenHead is not empty and pending is empty/)
+  assert.match(wait.prompt, /Stop when the script returns timedOut false/)
   assert.doesNotMatch(wait.prompt, /check-runs/)
   assert.ok(calls.findIndex(c => c.label === 'io:C1#botstatus') > calls.findIndex(c => c.label === 'botwait:C1'))
 })
@@ -2559,7 +2559,7 @@ await check('the wait schema has seenHead, which the waiter prompt asks for', as
   const probe = async (p, o) => { if (o.label.startsWith('botwait')) seen.push({ ...o, prompt: p }); return agent(p, o) }
   await run({ ...base, prs: only('C1') }, probe, parallel, log)
   assert.ok(seen[0].schema.properties.seenHead)
-  assert.match(seen[0].prompt, /Return approvedBy, seenHead, openComments/)
+  assert.match(seen[0].prompt, /Return approvedBy, seenHead, finishedOnHead, openComments/)
 })
 await check('quick: a stored high-risk brief on a first run lands as person without asking the safety agent', async () => {
   briefs.QHI = 'Touches: src/h.js\nAcceptance: h test\nTriage: size M, risk high, new concepts: none'

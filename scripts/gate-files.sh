@@ -70,10 +70,7 @@ if [ -n "$scope" ]; then
     || err "unexpected answer for the branch files"
   [ "$(jq length <<<"$list")" -lt 300 ] || err "300 changed files or more, the list may be cut"
 else
-  pages=$(gh api --paginate --slurp "repos/$R/pulls/$pr/files?per_page=100" 2>"$errf") || err "cannot list the changed files ($(why "$pages"))"
-  list=$(jq -c 'if all(.[]; type == "array") then add // [] else error("pages") end' <<<"$pages" 2>/dev/null) \
-    || err "unexpected answer for the changed files"
-  [ "$(jq length <<<"$list")" -lt 3000 ] || err "3000 changed files or more, the list may be cut"
+  list=$(bash "$here/pr-files.sh" "$R" "$pr" 2>"$errf") || err "$(cat "$errf")"
 fi
 
 floor='[".github",".github/**","**/.claude","**/.claude/**","**/AGENTS.md","**/CLAUDE.md","**/CLAUDE.local.md","docs/goals.md"]'

@@ -239,6 +239,12 @@ test('the plan text of the open prompt is only for a plan PR, and a quick fix ke
   assert.match(open, /\$\{pr\.quick \? ` Put "Closes #\$\{pr\.quick\.issue\}" on its own line in the body\.` : ''\}/)
 })
 
+test('the WAIT schema declares finishedOnHead, which the waiter prompt asks for', () => {
+  const m = /const WAIT = \{[\s\S]*?\n\}/.exec(src)
+  assert.match(m[0], /finishedOnHead: \{ type: 'array', items: \{ type: 'string' \} \}/)
+  assert.doesNotMatch(m[0], /required: \[[^\]]*finishedOnHead/)
+})
+
 test('the answer prompt and the bot-answerer role tell the agent to write the bare path of an item', () => {
   const answer = /const answerPrompt = [\s\S]*?const botReviewPrompt/.exec(src)[0]
   const role = readFileSync(new URL('../agents/bot-answerer.md', import.meta.url), 'utf8')

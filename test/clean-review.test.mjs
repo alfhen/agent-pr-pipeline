@@ -32,7 +32,7 @@ const nitSection = (body) => body.slice(body.indexOf('<details>'), body.indexOf(
 const madeClean = () => mut(made, (fx) => { botReview(fx).body = botReview(fx).body.replace(nitSection(botReview(fx).body), '') })
 
 // A scripts folder other than the repo's can be run, to test a changed rule.
-const run = (fx, { scripts = join(root, 'scripts'), script = 'merge-pr.sh', args = ['--person'], pr = 7 } = {}) => {
+const run = (fx, { scripts = join(root, 'scripts'), script = 'merge-pr.sh', args = ['--person'], pr = 7, files = [{ filename: 'src/a.js', status: 'modified' }], gates = null } = {}) => {
   const dir = mkdtempSync(join(tmpdir(), 'clean-review-'))
   const bin = join(dir, 'bin'); const fxd = join(dir, 'fx'); const home = join(dir, 'home')
   mkdirSync(bin); mkdirSync(fxd); mkdirSync(home)
@@ -50,6 +50,10 @@ const run = (fx, { scripts = join(root, 'scripts'), script = 'merge-pr.sh', args
   fx.suites.forEach((page, i) => put(`${P}__commits__${head}__check-suites.${i + 1}.json`, { check_suites: page }))
   if (fx.suites.length === 0) put(`${P}__commits__${head}__check-suites.json`, { check_suites: [] })
   put('user.json', { login: fx.user })
+  if (gates) put(`${P}__contents__.github__pipeline.json.json`, { gates })
+  // files: null makes the changed-files read fail.
+  if (files === null) writeFileSync(join(fxd, `${P}__pulls__${pr}__files.GET.error`), 'fake-gh: server error (HTTP 500)')
+  else put(`${P}__pulls__${pr}__files.json`, files)
   put(`${P}__pulls__${pr}__reviews.json`, fx.reviews)
   put(`${P}__pulls__${pr}__comments.json`, fx.comments)
   put(`${P}__issues__${pr}__comments.json`, fx.issueComments)
@@ -261,10 +265,10 @@ test('a bot that approved the head clears by the old way and prints no clean rev
   assert.doesNotMatch(x.out, /^clean review:/m)
 })
 
-test('bot-status.sh prints the bare login in seenHead and keeps its six keys', () => {
+test('bot-status.sh prints the bare login in seenHead and keeps its keys', () => {
   const x = run(pr794(), { script: 'bot-status.sh' })
   const j = JSON.parse(x.out.trim().split('\n').at(-1))
-  assert.deepEqual(Object.keys(j), ['head', 'approvedBy', 'seenHead', 'pending', 'openThreads', 'reviewBodies'])
+  assert.deepEqual(Object.keys(j), ['head', 'approvedBy', 'seenHead', 'finishedOnHead', 'pending', 'openThreads', 'reviewBodies'])
   assert.deepEqual(j.approvedBy, [`${BOT} (clean review)`])
   assert.deepEqual(j.seenHead, [BOT])
 })
@@ -833,4 +837,47 @@ test('rule A refuses a review with a line that no known block matches, between t
     const x = run(fx)
     refused(x, RULE_A); assert.match(x.why, OUTSIDE_FRAME)
   }
+})
+
+const SETTINGS = ['.coderabbit.yaml', '.coderabbit.yml', '.coderabbit.config.ts']
+const lastJson = (x) => JSON.parse(x.out.trim().split('\n').pop())
+
+test('a PR that changes a CodeRabbit settings file gets no clean review, and a name that only looks like one does', () => {
+  merged(run(pr794(), { files: [{ filename: '.coderabbit.yaml.bak', status: 'added' }] }))
+  for (const name of SETTINGS) {
+    const x = run(pr794(), { files: [{ filename: name, status: 'modified' }] })
+    refused(x, /the PR changes CodeRabbit's settings file /)
+    assert.equal(x.why, `clean review: the PR changes CodeRabbit's settings file ${name}`)
+  }
+})
+
+test('a rename away from a settings file gets no clean review', () => {
+  merged(run(pr794(), { files: [{ filename: 'config/review.yaml', previous_filename: 'config/old.yaml', status: 'renamed' }] }))
+  const x = run(pr794(), { files: [{ filename: 'config/review.yaml', previous_filename: '.coderabbit.yml', status: 'renamed' }] })
+  assert.equal(x.why, "clean review: the PR changes CodeRabbit's settings file .coderabbit.yml")
+  refused(x, /settings file/)
+})
+
+test('changed files that cannot be read give no clean review', () => {
+  refused(run(pr794(), { files: null }), /cannot read the changed files/)
+})
+
+test('3000 changed files give no clean review, 2999 do', () => {
+  const list = (n) => Array.from({ length: n }, (_, i) => ({ filename: `src/f${i}.js` }))
+  merged(run(pr794(), { files: list(2999) }))
+  refused(run(pr794(), { files: list(3000) }), /cannot read the changed files/)
+})
+
+test('with --auto and gates that do not name the settings files, a changed settings file still gets no clean review', () => {
+  const x = run(pr794(), { args: ['--auto'], files: [{ filename: '.coderabbit.yaml', status: 'modified' }], gates: ['secret/**'] })
+  assert.ok(x.out.includes('not gated #7'), x.out)
+  refused(x, /settings file \.coderabbit\.yaml/)
+})
+
+test('bot-status lists no clean review for a settings file or an unreadable list, and reads the files once', () => {
+  const ok = run(pr794(), { script: 'bot-status.sh' })
+  assert.deepEqual(lastJson(ok).approvedBy, [`${BOT} (clean review)`], ok.out)
+  assert.equal(ok.log.split('\n').filter((l) => l.startsWith('GET /repos/o/r/pulls/7/files')).length, 1, ok.log)
+  assert.deepEqual(lastJson(run(pr794(), { script: 'bot-status.sh', files: [{ filename: '.coderabbit.yaml' }] })).approvedBy, [])
+  assert.deepEqual(lastJson(run(pr794(), { script: 'bot-status.sh', files: null })).approvedBy, [])
 })

@@ -57,8 +57,11 @@ sts=$(jq -s -c '[.[].statuses[] | {context, state}]' <<<"$stat") || { echo "PR $
 # Files and --slurpfile, not --argjson: a busy PR passes the 128 KiB limit of one argument on Linux.
 # A write that fails must stop here: a missing status list would read as no failed status.
 echo "$runs" >"$tmp/runs" || { echo "PR $pr NOT merged: cannot write the check runs"; exit 1; }
-input=$(jq -n -c --arg head "$head" --argjson bots "$(jq -n -c --arg b "$bots" '$b | split(",")')" --arg user "$user" --slurpfile reviews "$tmp/reviews" --slurpfile comments "$tmp/comments" --slurpfile checks "$tmp/runs" --slurpfile issue "$tmp/issue-comments" --slurpfile suites "$tmp/suites" \
-  '{reviews: ($reviews | add // []), comments: ($comments | add // []), issueComments: ($issue | add // []), suites: [$suites[].check_suites[]], checks: $checks[0], head: $head, bots: $bots, user: $user}') || { echo "PR $pr NOT merged: cannot build the bot input"; exit 1; }
+# The changed files are read only for the clean review, which is CodeRabbit's. null means they could not be read.
+echo null >"$tmp/files"
+case ",$bots," in *",coderabbitai[bot],"*) bash "$here/pr-files.sh" "$R" "$pr" >"$tmp/files" 2>/dev/null || echo null >"$tmp/files" ;; esac
+input=$(jq -n -c --arg head "$head" --argjson bots "$(jq -n -c --arg b "$bots" '$b | split(",")')" --arg user "$user" --slurpfile reviews "$tmp/reviews" --slurpfile comments "$tmp/comments" --slurpfile checks "$tmp/runs" --slurpfile issue "$tmp/issue-comments" --slurpfile suites "$tmp/suites" --slurpfile files "$tmp/files" \
+  '{reviews: ($reviews | add // []), comments: ($comments | add // []), issueComments: ($issue | add // []), suites: [$suites[].check_suites[]], checks: $checks[0], files: $files[0], head: $head, bots: $bots, user: $user}') || { echo "PR $pr NOT merged: cannot build the bot input"; exit 1; }
 approved=$(jq -c -f "$here/bot-approval.jq" <<<"$input") || { echo "PR $pr NOT merged: cannot judge the reviews"; exit 1; }
 appr=$(jq -r 'join(",")' <<<"$approved")
 # The rule is ci-state.jq. The suffix of each name (the conclusion or state) is only for the message.
