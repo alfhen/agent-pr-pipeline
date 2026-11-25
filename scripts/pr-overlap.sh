@@ -24,14 +24,16 @@ if [ "$(jq length <<<"$posted")" -gt 0 ]; then
   exit 0
 fi
 
-gh api --paginate "repos/$R/pulls/$pr/files?per_page=100" --jq '.[].filename' >"$tmp/mine" || fail "cannot read the files of #$pr"
+bash "$here/pr-files.sh" "$R" "$pr" >"$tmp/mine.json" 2>/dev/null || fail "cannot read the files of #$pr"
+jq -r '.[].filename' "$tmp/mine.json" >"$tmp/mine" || fail "cannot read the files of #$pr"
 gh api "repos/$R/pulls?state=open&per_page=$((LIMIT + 2))" >"$tmp/open" || fail "cannot list the open pull requests"
 jq --argjson pr "$pr" '[.[] | select(.number != $pr)]' "$tmp/open" >"$tmp/others" || fail "cannot list the open pull requests"
 if [ "$(jq length "$tmp/others")" -gt "$LIMIT" ]; then echo "stopped at the first $LIMIT open pull requests"; fi
 
 : >"$tmp/shared"
 for o in $(jq -r --argjson limit "$LIMIT" '.[:$limit][].number' "$tmp/others"); do
-  gh api --paginate "repos/$R/pulls/$o/files?per_page=100" --jq '.[].filename' >"$tmp/o$o" || fail "cannot read the files of #$o"
+  bash "$here/pr-files.sh" "$R" "$o" >"$tmp/o$o.json" 2>/dev/null || fail "cannot read the files of #$o"
+  jq -r '.[].filename' "$tmp/o$o.json" >"$tmp/o$o" || fail "cannot read the files of #$o"
   grep -Fxf "$tmp/mine" "$tmp/o$o" | sort -u | jq -R -c --argjson o "$o" '{pr: $o, file: .}' >>"$tmp/shared"
 done
 

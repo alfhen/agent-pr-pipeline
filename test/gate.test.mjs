@@ -64,7 +64,8 @@ const run = (s, script, args, env = {}) => {
 }
 const calls = (r, re) => r.log.filter((l) => re.test(l))
 const merges = (r) => calls(r, /^PUT .*\/pulls\/7\/merge/)
-const gateRan = (r) => calls(r, /\/pulls\/7\/files/).length > 0
+// merge-pr.sh also reads the files for the clean review, so the settings read is the sign that the gate ran.
+const gateRan = (r) => calls(r, /\/contents\/\.github\/pipeline\.json/).length > 0
 
 test('gate: a gated file holds the PR', () => {
   const r = run(setup({ files: 'gated' }), 'gate-files.sh', ['o/r', '7'])

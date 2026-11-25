@@ -56,8 +56,11 @@ stat=$(gh api --paginate "repos/$R/commits/$head/status?per_page=100") || { echo
 sts=$(jq -s -c '[.[].statuses[] | {context, state}]' <<<"$stat") || { echo "PR $pr NOT merged: unexpected commit status answer"; exit 1; }
 # Files and --slurpfile, not --argjson: a busy PR passes the 128 KiB limit of one argument on Linux.
 echo "$runs" >"$tmp/runs"
-input=$(jq -n -c --arg head "$head" --argjson bots "$(jq -n -c --arg b "$bots" '$b | split(",")')" --arg user "$user" --slurpfile reviews "$tmp/reviews" --slurpfile comments "$tmp/comments" --slurpfile checks "$tmp/runs" --slurpfile issue "$tmp/issue-comments" --slurpfile suites "$tmp/suites" \
-  '{reviews: ($reviews | add // []), comments: ($comments | add // []), issueComments: ($issue | add // []), suites: [$suites[].check_suites[]], checks: $checks[0], head: $head, bots: $bots, user: $user}') || { echo "PR $pr NOT merged: cannot build the bot input"; exit 1; }
+# The changed files are read only for the clean review, which is CodeRabbit's. null means they could not be read.
+echo null >"$tmp/files"
+case ",$bots," in *",coderabbitai[bot],"*) bash "$here/pr-files.sh" "$R" "$pr" >"$tmp/files" 2>/dev/null || echo null >"$tmp/files" ;; esac
+input=$(jq -n -c --arg head "$head" --argjson bots "$(jq -n -c --arg b "$bots" '$b | split(",")')" --arg user "$user" --slurpfile reviews "$tmp/reviews" --slurpfile comments "$tmp/comments" --slurpfile checks "$tmp/runs" --slurpfile issue "$tmp/issue-comments" --slurpfile suites "$tmp/suites" --slurpfile files "$tmp/files" \
+  '{reviews: ($reviews | add // []), comments: ($comments | add // []), issueComments: ($issue | add // []), suites: [$suites[].check_suites[]], checks: $checks[0], files: $files[0], head: $head, bots: $bots, user: $user}') || { echo "PR $pr NOT merged: cannot build the bot input"; exit 1; }
 approved=$(jq -c -f "$here/bot-approval.jq" <<<"$input") || { echo "PR $pr NOT merged: cannot judge the reviews"; exit 1; }
 appr=$(jq -r 'join(",")' <<<"$approved")
 fail=$(jq -r 'if length == 0 then "no-checks" else [.[] | select(.status != "completed" or (.conclusion | IN("success", "skipped", "neutral") | not)) | .name + ":" + (if .status != "completed" then "pending" else .conclusion end)] | join(",") end' <<<"$runs")
