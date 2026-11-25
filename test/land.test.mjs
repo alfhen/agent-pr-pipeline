@@ -59,6 +59,16 @@ const landSetup = ({ checks, settings = 'flake', onHead = null, attempt = 1 }) =
 }
 const land = (s) => run(s, 'land-wave.sh', ['o/r', `7:${SHA}`])
 
+test('land: one check-runs read that returns an error body does not end the wait', () => {
+  const s = landSetup({ checks: [[{ name: 'ci', status: 'in_progress', conclusion: null }], [passed('ci')]] })
+  put(s.fx, `${P}__commits__${SHA}__check-runs.call2.json`, { message: 'Server Error' })
+  put(s.fx, `${P}__commits__${SHA}__check-runs.call3.json`, { check_runs: [passed('ci')] })
+  const r = land(s)
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /all merged/)
+  assert.equal(r.log.filter((l) => /^PUT .*pulls\/7\/merge/.test(l)).length, 1)
+})
+
 test('land: a known flake that passes after one rerun merges', () => {
   const r = land(landSetup({ checks: [[failed('e2e')], [failed('e2e')], [passed('e2e')]] }))
   assert.equal(r.code, 0, r.out)
@@ -521,3 +531,212 @@ test('land: the temp file for stderr is removed after a normal and a LAND FIX ex
     assertTempRemoved(m.log)
   }
 })
+
+// M06: the CI state of a head comes from scripts/ci-state.jq in land-wave.sh and merge-pr.sh.
+const STATUS = `${P}__commits__${SHA}__status.json`
+const CHECKS = `${P}__commits__${SHA}__check-runs`
+const okStatus = { state: 'success', statuses: [{ context: 'ext/ci', state: 'success' }] }
+const putCalls = (r) => r.log.filter((l) => /^PUT .*\/pulls\/7\/merge/.test(l))
+const mergeRun = (s, scripts) => run(s, 'merge-pr.sh', ['--person', 'o/r', '7', SHA, 'feat/x'], {}, scripts)
+const cancelled = (n) => ({ ...failed(n), conclusion: 'cancelled' })
+const inProgress = { name: 'ci', status: 'in_progress', conclusion: null }
+const stubCopy = () => {
+  const copy = join(mkdtempSync(join(tmpdir(), 'land-stub-')), 'scripts')
+  cpSync(join(root, 'scripts'), copy, { recursive: true })
+  writeFileSync(join(copy, 'ci-state.jq'), '{state: "failure", failed: ["stub-check"], failedRuns: [{name: "stub-check", details_url: ""}], pending: [], noRuns: false}')
+  return copy
+}
+
+test('land: zero check runs and only successful statuses stops after 2 polls with no check runs', () => {
+  const s = landSetup({ checks: [[]] })
+  put(s.fx, STATUS, okStatus)
+  assert.deepEqual(JSON.parse(readFileSync(join(s.fx, `${CHECKS}.call1.json`), 'utf8')).check_runs, [])
+  const r = land(s)
+  assert.match(r.out, /STOP #7: no check runs/)
+  assert.notEqual(r.code, 0)
+  assert.notEqual(r.code, 4)
+  assert.equal(putCalls(r).length, 0)
+  assert.ok(checkReads(r) <= 3, r.log.join('\n'))
+})
+
+test('land: check runs that appear on the second poll of a statuses-only head merge', () => {
+  const s = landSetup({ checks: [[], [passed('ci')]] })
+  put(s.fx, STATUS, okStatus)
+  const r = land(s)
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /all merged/)
+})
+
+test('land and wait-ci: one head with no check runs and green statuses is not ready in both', () => {
+  const s = landSetup({ checks: [[]] })
+  put(s.fx, STATUS, okStatus)
+  const w = spawnSync('bash', [join(root, 'scripts/wait-ci.sh'), 'o/r', '7', '2'], { encoding: 'utf8', env: { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, FAKE_GH_FIXTURES: s.fx, WAIT_CI_INTERVAL: '0' } })
+  const out = JSON.parse(w.stdout)
+  assert.equal(out.state, 'noRuns')
+  assert.notEqual(out.state, 'success')
+  const r = land(s)
+  assert.match(r.out, /STOP #7: no check runs/)
+  assert.equal(putCalls(r).length, 0)
+})
+
+test('land: a cancelled run that is not a known flake is a LAND FIX', () => {
+  const s = landSetup({ checks: [[cancelled('ci')]] })
+  assert.equal(JSON.parse(readFileSync(join(s.fx, `${CHECKS}.call1.json`), 'utf8')).check_runs[0].conclusion, 'cancelled')
+  const r = land(s)
+  assert.equal(r.code, 3, r.out)
+  assert.match(r.out, /LAND FIX #7 state=MERGEABLE failing=\[ci\]/)
+  assert.equal(reruns(r).length, 0)
+  assert.equal(putCalls(r).length, 0)
+})
+
+test('land: a cancelled known flake gets one rerun and merges', () => {
+  const r = land(landSetup({ checks: [[cancelled('e2e')], [cancelled('e2e')], [passed('e2e')]] }))
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /RERUN #7: known flake\(s\) \[e2e\]/)
+  assert.equal(reruns(r).length, 1)
+  assert.equal(putCalls(r).length, 1)
+})
+
+test('land: a failed run does not end the wait while another run is in progress', () => {
+  const ip = inProgress
+  const s = landSetup({ checks: [[failed('e2e'), ip], [failed('e2e'), ip], [failed('e2e'), passed('ci')], [failed('e2e'), passed('ci')], [passed('e2e'), passed('ci')]] })
+  assert.equal(JSON.parse(readFileSync(join(s.fx, `${CHECKS}.call1.json`), 'utf8')).check_runs[1].status, 'in_progress')
+  const r = land(s)
+  assert.equal(r.code, 0, r.out)
+  assert.equal(reruns(r).length, 1)
+  const post = r.log.findIndex((l) => /^POST .*rerun-failed-jobs/.test(l))
+  assert.ok(checkReads({ log: r.log.slice(0, post) }) >= 4, r.log.join('\n'))
+  assert.doesNotMatch(r.out, /LAND FIX/)
+})
+
+test('land: a failed run does not end the wait while a commit status is pending', () => {
+  const s = landSetup({ checks: [[failed('e2e')], [failed('e2e')], [failed('e2e')], [failed('e2e')], [passed('e2e')]] })
+  rmSync(join(s.fx, `${P}__commits__${SHA}__status.json`))
+  const pend = { state: 'pending', statuses: [{ context: 'ext/ci', state: 'pending' }] }
+  put(s.fx, `${P}__commits__${SHA}__status.call1.json`, pend)
+  put(s.fx, `${P}__commits__${SHA}__status.call2.json`, pend)
+  put(s.fx, `${P}__commits__${SHA}__status.call3.json`, okStatus)
+  const r = land(s)
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /all merged/)
+  assert.equal(reruns(r).length, 1)
+  const post = r.log.findIndex((l) => /^POST .*rerun-failed-jobs/.test(l))
+  assert.ok(r.log.slice(0, post).filter((l) => /^GET .*commits\/.*\/status/.test(l)).length >= 3, r.log.join('\n'))
+  assert.doesNotMatch(r.out, /LAND FIX/)
+})
+
+test('land: the saved real check runs of PR 805 merge', () => {
+  const checks = JSON.parse(readFileSync(join(root, 'test/fixtures/clean-review/pr805-f36bb8e.json'), 'utf8')).checks
+  const r = land(landSetup({ checks: [checks] }))
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /all merged/)
+})
+
+test('land: a different rule in ci-state.jq changes what land-wave.sh does', () => {
+  const s = landSetup({ checks: [[passed('ci')]] })
+  const r = run(s, 'land-wave.sh', ['o/r', `7:${SHA}`], {}, stubCopy())
+  assert.equal(r.code, 3, r.out)
+  assert.match(r.out, /LAND FIX #7 state=MERGEABLE failing=\[stub-check\]/)
+  assert.equal(reruns(r).length, 0)
+  assert.equal(putCalls(r).length, 0)
+})
+
+test('merge-pr: a different rule in ci-state.jq changes what merge-pr.sh does', () => {
+  const s = landSetup({ checks: [[passed('ci')]] })
+  const r = mergeRun(s, stubCopy())
+  assert.equal(r.code, 1, r.out)
+  assert.match(r.out, /PR 7 NOT merged/)
+  assert.match(r.out, /failing=\[.*stub-check/)
+  assert.equal(putCalls(r).length, 0)
+})
+
+for (const [name, checks, status, want] of [
+  ['no check run and a green status', [[]], okStatus, /failing=\[no-checks\]/],
+  ['a cancelled run', [[cancelled('ci')]], null, /failing=\[ci:cancelled\]/],
+  ['a run in progress', [[inProgress]], null, /failing=\[ci:pending\]/],
+  ['a pending status', [[passed('ci')]], { state: 'pending', statuses: [{ context: 'ext/ci', state: 'pending' }] }, /failing=\[ext\/ci:pending\]/],
+  ['a failed status', [[passed('ci')]], { state: 'failure', statuses: [{ context: 'ext/ci', state: 'failure' }] }, /failing=\[ext\/ci:failure\]/],
+]) {
+  test(`merge-pr: ${name} is refused`, () => {
+    const s = landSetup({ checks })
+    if (status) put(s.fx, STATUS, status)
+    const r = mergeRun(s)
+    assert.equal(r.code, 1, r.out)
+    assert.match(r.out, want)
+    assert.match(r.out, /PR 7 NOT merged/)
+    assert.equal(putCalls(r).length, 0)
+  })
+}
+
+test('merge-pr: a green run with a green status merges', () => {
+  const s = landSetup({ checks: [[passed('ci')]] })
+  put(s.fx, STATUS, okStatus)
+  const r = mergeRun(s)
+  assert.equal(r.code, 0, r.out)
+  assert.equal(putCalls(r).length, 1)
+})
+
+test('land: a failed status named like a failed known-flake run is not rerun', () => {
+  const s = landSetup({ checks: [[failed('e2e')]] })
+  put(s.fx, STATUS, { state: 'failure', statuses: [{ context: 'e2e', state: 'failure' }] })
+  const r = land(s)
+  assert.equal(r.code, 3, r.out)
+  assert.match(r.out, /LAND FIX #7/)
+  assert.equal(reruns(r).length, 0)
+  assert.equal(putCalls(r).length, 0)
+})
+
+test('land: a failed status named like a run that is still in progress ends the wait at once', () => {
+  const s = landSetup({ checks: [[failed('e2e'), inProgress]] })
+  put(s.fx, STATUS, { state: 'failure', statuses: [{ context: 'e2e', state: 'failure' }] })
+  const r = land(s)
+  assert.equal(r.code, 3, r.out)
+  assert.equal(reruns(r).length, 0)
+  assert.ok(checkReads(r) <= 2, r.log.join('\n'))
+})
+
+test('land: runs in progress that appear after statuses-only polls are waited for', () => {
+  const s = landSetup({ checks: [[], [], [inProgress], [inProgress], [passed('ci')]] })
+  put(s.fx, STATUS, okStatus)
+  const r = land(s, { review: true })
+  assert.equal(r.code, 0, r.out)
+  assert.doesNotMatch(r.out, /not merged|WAITING/)
+  assert.equal(putCalls(r).length, 1)
+  const put1 = r.log.findIndex((l) => /^PUT .*\/pulls\/7\/merge/.test(l))
+  assert.ok(checkReads({ log: r.log.slice(0, put1) }) >= 5, r.log.join('\n'))
+})
+
+test('merge-pr: a ci-state.jq that prints nothing stops the merge', () => {
+  const s = landSetup({ checks: [[passed('ci')]] })
+  const copy = stubCopy()
+  writeFileSync(join(copy, 'ci-state.jq'), 'empty')
+  const r = mergeRun(s, copy)
+  assert.equal(r.code, 1, r.out)
+  assert.match(r.out, /PR 7 NOT merged: cannot judge the check runs/)
+  assert.equal(putCalls(r).length, 0)
+})
+
+test('land: a head that gains check runs after two empty polls is not a STOP for no check runs', () => {
+  const s = landSetup({ checks: [[], [], [passed('ci')]] })
+  put(s.fx, STATUS, okStatus)
+  const r = land(s)
+  assert.doesNotMatch(r.out, /no check runs/)
+  assert.equal(r.code, 0, r.out)
+  assert.equal(putCalls(r).length, 1)
+})
+
+// A stand-in mktemp whose -d folder holds a read-only empty file as <name>, so the write of that file fails and the file reads as empty.
+for (const file of ['sts', 'runs']) {
+  test(`merge-pr: a failed write of the ${file} file stops the merge`, () => {
+    const s = landSetup({ checks: [[passed('ci')]] })
+    put(s.fx, STATUS, { state: 'failure', statuses: [{ context: 'ext/ci', state: 'failure' }] })
+    const ro = join(s.dir, 'ro-empty'); writeFileSync(ro, ''); chmodSync(ro, 0o444)
+    const real = spawnSync('which', ['mktemp'], { encoding: 'utf8' }).stdout.trim()
+    writeFileSync(join(s.bin, 'mktemp'), `#!/bin/bash\nd=$(${real} "$@") || exit 1\ncase " $* " in *" -d "*) ln -s ${ro} "$d/${file}" ;; esac\necho "$d"\n`)
+    chmodSync(join(s.bin, 'mktemp'), 0o755)
+    const r = mergeRun(s)
+    assert.equal(r.code, 1, r.out)
+    assert.match(r.out, /PR 7 NOT merged: cannot write the /)
+    assert.equal(putCalls(r).length, 0)
+  })
+}

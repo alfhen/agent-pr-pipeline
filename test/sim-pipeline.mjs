@@ -1977,6 +1977,14 @@ await check('end facts: retry notes before the JSON line of the CI read still gi
   assert.equal(x.ready, true)
   assert.deepEqual(x.ci, { state: 'success', failed: [] })
 })
+await check('end facts: the CI state noRuns from wait-ci.sh is passed on as noRuns', async () => {
+  const line = JSON.stringify({ head: endHead('C2'), state: 'noRuns', failed: [], noRuns: true, timedOut: false })
+  const odd = (p, o) => o.label === 'io:C2#endci' ? ioWrap(o.label, { exitCode: 0, output: line }) : agent(p, o)
+  calls = []
+  const x = (await run({ ...base, prs: only('C2') }, odd, parallel, log)).prs[0]
+  assert.equal(x.ci.state, 'noRuns')
+  assert.doesNotMatch(String(x.reason || ''), /cannot read the CI state/)
+})
 await check('end facts: a CI read that failed after its last try is not ready and the reason holds the try count', async () => {
   const out = 'wait-ci: cannot read check runs, try 1 of 3 failed, trying again in 2s\nwait-ci: cannot read check runs, gave up after 3 tries'
   const odd = (p, o) => o.label === 'io:C2#endci' ? ioWrap(o.label, { exitCode: 3, output: out }) : agent(p, o)
