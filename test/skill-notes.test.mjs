@@ -82,10 +82,23 @@ test('docs name release 2 as 0.11.0 and do not promise stage 2 or the runner del
     assert.ok(lines.some((l) => /0\.11\.0|release 2/i.test(l)), f)
     for (const l of lines) {
       if (l.includes('0.9.0')) assert.doesNotMatch(l, /stage 2|2 to 4|local runner|deletes/i, `${f}: ${l}`)
+      assert.doesNotMatch(l, /release 2 \(0\.10\.0\)/i, `${f}: ${l}`)
     }
   }
   const text = readFileSync(new URL('../docs/cloud-routines.md', import.meta.url), 'utf8')
   assert.match(text.split('\n').find((l) => l.startsWith('| 2 to 4 |')), /Release 2 \(0\.11\.0\)/)
+  const needs = readFileSync(new URL('../README.md', import.meta.url), 'utf8').split('\n').find((l) => l.startsWith('- A review bot on the repo'))
+  assert.match(needs, /whose changed files cannot be read, or whose changed-file list holds 3000 files or more, does not clear the gate this way/)
+  const targets = [
+    ['../docs/routine.md', (l) => l.startsWith('Cloud routines replace the local routine'), /until release 2 \(0\.11\.0\) deletes the local runner code\./],
+    ['../skills/pr-pipeline/SKILL.md', (l) => l.startsWith('- `routine/`:'), /release 2 \(0\.11\.0\) deletes it\./],
+    ['../docs/cloud-routines.md', (l) => /deletes the local runner code/.test(l), /Release 2 \(0\.11\.0\) deletes the local runner code\./],
+  ]
+  for (const [f, pick, want] of targets) {
+    const found = readFileSync(new URL(f, import.meta.url), 'utf8').split('\n').filter(pick)
+    assert.equal(found.length, 1, `${f}: one runner line`)
+    assert.match(found[0], want, f)
+  }
 })
 
 test('skill says BOT_LOGINS is a list of exact logins, a bot check is found by its App, and the bots example is exact', () => {
