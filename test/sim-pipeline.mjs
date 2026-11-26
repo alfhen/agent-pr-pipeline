@@ -4571,6 +4571,18 @@ await check('M01-7: milestone, permission and non-empty commands blocks are not 
     assert.equal(out.prs[0].reason, reason)
   }
 })
+await check("M01-x: the opener retry gets the first answer's issues and files nothing without a login", async () => {
+  const i901 = 'https://github.com/o/r/issues/901'
+  await hookedOut(only1('C1'), m01Hook({ ...M01_BLOCK, issuesCreated: [i901] }))
+  const [first, second] = m01Open().map(c => c.prompt)
+  assert.ok(second)
+  assert.ok(!first.includes(i901))
+  assert.ok(!first.split('\n').some(l => l.startsWith('RETRY:')))
+  const retry = second.split('\n').find(l => l.startsWith('RETRY:'))
+  assert.ok(retry.includes(i901))
+  assert.match(retry, /Do not file them again/)
+  assert.match(retry, /login lookup of step 1 fails[^.]*, file no issue and return the no-login block/)
+})
 await check('M01-8: the checklist lookup of step 3 selects only the comment of the opener login', async () => {
   await hookedOut(only1('C1'), () => undefined)
   const line = calls.find(c => c.label === 'open:C1').prompt.split('\n').find(l => l.startsWith('3. Checklist:'))

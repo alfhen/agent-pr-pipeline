@@ -276,3 +276,10 @@ test('the answer prompt and the bot-answerer role tell the agent to write the ba
   assert.match(role, /the bare file path \(without the line range or `:line`/)
   assert.match(role, /the bold title word for word/)
 })
+
+test('the opener retry names the issues of the first answer and files nothing without a login', () => {
+  assert.match(src, /fixed = \[\], retry = null\) =>/)
+  assert.match(src, /already filed \$\{retry\.join\(', '\)\}\. Do not file them again/)
+  assert.match(src, /login lookup of step 1 fails or prints nothing, file no issue and return the no-login block again/)
+  assert.match(src, /openPrompt\(pr, history, \.\.\.openArgs, opened\.issuesCreated \|\| \[\]\)/)
+})
