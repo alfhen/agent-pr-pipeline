@@ -13,7 +13,7 @@ When a PR conflicts, the land fix merges the default branch into it. The merge h
 
 The fix adds one more rerun path. When the PR head is a merge of the current default branch head into the PR's previous head, and CI on both parents is green, the land step reruns the failed jobs once before it stops. A check that fails again stops with `LAND FIX` as today.
 
-CodeRabbit review bodies now hold a new checkbox line, "Ask CodeRabbit to fix comments on this review". Rule A in `scripts/bot-approval.jq` knows only the old line, so it refuses every such review as text outside the frame, and every PR becomes a person merge. A rerun of the land step then reads the same review and stops again. The fix adds the new line to the frame. A review that was requested after the push already clears once rule A passes it, so no change to the request step is needed.
+CodeRabbit review bodies now hold a new checkbox line, "Ask CodeRabbit to fix comments on this review". Rule A in `scripts/bot-approval.jq` knows only the old line, so it refuses every such review as text outside the frame, and every PR becomes a person merge. A rerun of the land step then reads the same review and stops again. The fix adds the new line to the frame. A review that was requested after the push clears once rule A passes it and the other clean-review conditions hold: green CI from an App other than a review bot on the head, a completed clean run of the bot on the head, a request of the user after the push and before that run, and a user reply to every top-level inline comment of the bot. Until they hold, the land step can stop with `ANSWER`. An answer comment only removes the review from the status count: an approval is still needed before merge. The request step needs no change.
 
 What you do: merge this plan.
 
@@ -68,12 +68,13 @@ Extra cases, each case 1 with one change, each with its cause line:
 - a failed run with `run_attempt` 2: `run_attempt is not 1`.
 - the merged-in parent differs from the default branch head by one sha: `no parent is the default branch head`. Its pair is case 1, where the merged-in parent equals the default branch head.
 - a pending parent: `parent <sha7> is pending`.
+- a green-parents case where one parent also has a failed run of another name (for example `lint`), while its run of the failing check is success: it is still rerun, with the `RERUN` line. This is the one case that is not a no-rerun case.
 - a read of a parent's check-runs that fails: `read failed`.
 - a parent whose check runs hold only `CodeRabbit` with success, and no run with the name of the failing check: `parent <sha7> has no run of <name>`.
 All existing land tests still pass.
 Invariants:
 - A green-parents rerun happens only when the PR head commit has exactly two parents, one of them equals the default branch head sha read in the same call, and each failed check name of the head has a completed run with that exact name and conclusion success on each parent. A matrix name such as `e2e (1/4)` matches by its full name.
-- A parent that is pending, has noRuns or failed, or a read of the commit, the branch or the checks that fails, means no rerun.
+- A parent whose run of a failed check name of the head is pending, missing or failed means no rerun. A pending or failed run of another check name on a parent does not block it. A read of the commit, the branch or the checks that fails, means no rerun.
 - A head with any failed commit status is never rerun. A head where any failed run has `run_attempt` other than 1 is never rerun.
 - One land call reruns a head at most once, through the known-flake path or the green-parents path.
 - A check that still fails after the rerun stops with `LAND FIX` and exit 3.
