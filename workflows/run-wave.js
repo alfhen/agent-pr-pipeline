@@ -37,6 +37,8 @@ const FAST_CHECKS = A.checks || ['pnpm install --frozen-lockfile', 'pnpm lint', 
 const E2E_PATTERN = A.e2ePattern || '\\.e2e\\.test\\.ts$'
 const RELATED_TESTS = A.relatedTests !== false
 const RELATED_MAX = 10
+// Longest notes part of the answer-run stop reason; sim RW-13b asserts this length.
+const ANSWER_NOTES_CUT = 300
 const E2E_COMMAND = A.e2eCommand || 'pnpm exec vitest run {files}'
 const BOTS = A.bots || 'CodeRabbit (login "coderabbitai[bot]") and Gitar (login "gitar-bot[bot]")'
 const BOT_WAIT_MIN = A.botWaitMinutes === 0 ? 0 : (A.botWaitMinutes || 20)
@@ -2235,7 +2237,7 @@ async function runPRSteps(input) {
       if (endTip !== prNow.head) return stopped(wrongBranch(endTip, prNow.head), facts())
       const end = await endFacts(pr, n, a.headSha)
       if (!end.ok && !end.red) return stopped(end.reason, { ...facts(), headSha: end.head || a.headSha, ci: end.ci, approvedBy: end.approvedBy })
-      if (end.openThreads > 0 || end.reviewBodies > 0) return stopped(`nothing was answered: ${end.openThreads} open threads and ${end.reviewBodies} review bodies remain after the answer agent`, { ...facts(), headSha: end.head })
+      if (end.openThreads > 0 || end.reviewBodies > 0) return stopped(`nothing was answered: ${end.openThreads} open threads and ${end.reviewBodies} review bodies remain after the answer agent${typeof a.answer.notes === 'string' && a.answer.notes.trim() ? `. Notes: ${a.answer.notes.replace(/\s+/g, ' ').trim()}`.slice(0, ANSWER_NOTES_CUT) : ''}`, { ...facts(), headSha: end.head })
       const landing = await landFor(pr, n, end.head)
       if (landing.landRefused) return stopped(landing.landWhy, { ...facts(), headSha: end.head })
       if (end.red) return stopped(end.reason, { ...facts(), headSha: end.head, ci: end.ci, approvedBy: end.approvedBy, ...landing })

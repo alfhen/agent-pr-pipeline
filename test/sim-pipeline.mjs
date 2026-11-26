@@ -7420,6 +7420,29 @@ await check('RW-13 an answer run is not ready when nothing was answered or a cou
   assert.equal(b2.ready, false)
   assert.match(b2.reason, nothing)
 })
+await check("RW-13b an answer run that stops with counts above 0 holds the answer agent's notes", async () => {
+  const base = 'nothing was answered: 0 open threads and 1 review bodies remain after the answer agent'
+  const withNotes = notes => rwRun(rwItem(), { codeChanged: false, end: [0, 1], hook: (p, o) => {
+    if (o.label === 'botanswer:AN') return (given = { codeChanged: false, headSha: RW_H, closesIssues: [], notes, worktree: '/wt/AN' })
+  } })
+  let given
+  const msg = 'Not pushed: the SSH agent refused to sign'
+  const a = await withNotes(msg)
+  assert.equal(a.ready, false)
+  assert.match(a.reason, /nothing (was )?answered/)
+  assert.ok(a.reason.includes(msg), a.reason)
+  const b = await withNotes('x'.repeat(5000))
+  assert.equal(b.ready, false)
+  assert.match(b.reason, /nothing (was )?answered/)
+  // 300 is ANSWER_NOTES_CUT in workflows/run-wave.js
+  assert.ok(b.reason.length <= 300 + base.length, String(b.reason.length))
+  assert.ok(b.reason.includes('xxxx'))
+  const c = await withNotes(undefined)
+  assert.equal(given.notes, undefined)
+  assert.equal(c.ready, false)
+  assert.doesNotMatch(c.reason, /undefined/)
+  assert.equal(c.reason, base)
+})
 await check('RW-14 an answer item without prNumber, or with landFix, resume, skipImpl or quick, throws before any agent', async () => {
   const bad = [[rwItem({ prNumber: undefined }), 'prNumber'], [rwItem({ landFix: true }), 'landFix'], [rwItem({ resume: { history: [] } }), 'resume'], [rwItem({ skipImpl: true }), 'skipImpl'], [rwItem({ quick: { issue: 5 } }), 'quick']]
   for (const [item, field] of bad) {
