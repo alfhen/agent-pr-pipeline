@@ -2235,7 +2235,7 @@ async function runPRSteps(input) {
       if (endTip !== prNow.head) return stopped(wrongBranch(endTip, prNow.head), facts())
       const end = await endFacts(pr, n, a.headSha)
       if (!end.ok && !end.red) return stopped(end.reason, { ...facts(), headSha: end.head || a.headSha, ci: end.ci, approvedBy: end.approvedBy })
-      if (end.openThreads > 0 || end.reviewBodies > 0) return stopped(`nothing was answered: ${end.openThreads} open threads and ${end.reviewBodies} review bodies remain after the answer agent`, { ...facts(), headSha: end.head })
+      if (end.openThreads > 0 || end.reviewBodies > 0) return stopped(`nothing was answered: ${end.openThreads} open threads and ${end.reviewBodies} review bodies remain after the answer agent${typeof a.answer.notes === 'string' && a.answer.notes.trim() ? `. Notes: ${a.answer.notes.trim()}`.slice(0, 300) : ''}`, { ...facts(), headSha: end.head })
       const landing = await landFor(pr, n, end.head)
       if (landing.landRefused) return stopped(landing.landWhy, { ...facts(), headSha: end.head })
       if (end.red) return stopped(end.reason, { ...facts(), headSha: end.head, ci: end.ci, approvedBy: end.approvedBy, ...landing })
