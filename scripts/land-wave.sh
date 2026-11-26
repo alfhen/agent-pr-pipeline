@@ -9,7 +9,7 @@
 # When every failing check is in knownFlakes (.github/pipeline.json on the default branch), the failed jobs
 # are rerun once and CI is awaited again; only a check that still fails stops the wave.
 # Any other failed check is rerun once too, when the head is a merge of the default branch head (second parent) into the previous
-# head (first parent) and both parents have a successful run of each failed check name (green parents). A refusal prints
+# head (first parent) and each parent has at least one run of each failed check name and every such run succeeded (green parents). A refusal prints
 # "NO RERUN #<pr>: <cause>" before LAND FIX. One land call reruns a head at most once.
 # The key reviewOnRequest (true) in .github/pipeline.json on the default branch acts as --review, for a repo whose bot reviews only on request.
 # A settings file that cannot be read, or a value that is not a boolean, acts as false and prints one WARN line.

@@ -17,9 +17,9 @@ a94d289ffa18caffa2e5e78b505a103cf13947b3 agents/goals-preflight.md
 a5f24e80dbccf0bf0809b991a22bf5e35bff4854 agents/product-reviewer.md
 c5645a0bf2ee36a34d39235dd2dfc13bc73f7405 agents/qa.md
 51e917a3e126607db1f0c922ab565219f4639fec agents/reviewer.md
-99d484c636c5f347cae5f3b4813fd27f23509cf1 agents/tester.md
+d50be2caff17ff5fd7c267e98d9400babda2124c agents/tester.md
 339414b8abcf0b101fb2165a01a6bd7ec4c7af87 agents/triager.md
-feb927b2800d65adc5c5e73d181e46e33f6242b9 agents/verifier.md
+5e185100e3c681713625fcee4593930d922455cd agents/verifier.md
 81f978d673b39065ddb319ce73e04ed651002ff1 routine/branch-prefix
 9736e898e0eb5627adb7e6ba3a1f86dc9b2a2042 routine/cloud/build.md
 339fcb16b536a88c457bc24cf599fb1e688d32a3 routine/cloud/collect.md
@@ -29,7 +29,7 @@ cc758e9fe238376534a1bdb3ada6b175b25f511a routine/cloud/k2.json
 2e43452b35e8a633744043d67ae113596d0db4c5 routine/config.jq
 ba21575f247960ce788b426481aee8a064435636 scripts/after-run.sh
 ebaca50dc65fe1abda5f0a2846b2764a8e6d1b47 scripts/approval.jq
-5aa6d24be105432a078772ede19bface7d1b6a0b scripts/bot-approval.jq
+1535c6a7a5e6cc88143509cebb807ad0a5e5f5bf scripts/bot-approval.jq
 cd5f185c0f43167bda456982e12cd20b6ebe0893 scripts/bot-status.sh
 b8d13fb69f148b7b23d8f7faa2e625e602c8115a scripts/check-goals.sh
 26b08e6bac7810b7592f89d21ec297a665b59e11 scripts/check-syntax.sh
@@ -42,7 +42,7 @@ d07564b65d2e4ce9fbbba62aca6e338b1b5e6f5e scripts/file-feedback.sh
 d0eea53c53476d092e91395987402f4fbd09f6f9 scripts/gate-files.sh
 370cc37a9cba0231d79835144ae2d98cd956cec0 scripts/io.sh
 8a899db3a8bf3b31f312b05e0e12b58c308e40c7 scripts/land-commits.sh
-c52e6851a4fcda8439617dc5705256b41c65844e scripts/land-wave.sh
+2f7aa9693f551ad9c1bb55af8b012fcb6f2c8b27 scripts/land-wave.sh
 be4ef05b6c4ce22ce8481acae77d7f71cc6c2014 scripts/ledger.sh
 4d9a992cb22d854388f9edb41acb1a828860e960 scripts/manifest.sh
 b4b3f273d251c70f04f82ffa07baa0d0dee840a7 scripts/merge-pr.sh
@@ -67,10 +67,10 @@ b6d6d90a4b5a6fd64e8a792c3d4ab8032cf44fc6 scripts/wait-bots.sh
 0ae11e67e81547eae46708a7c5cfeeec97dae893 scripts/wait-ci.sh
 20c363af639d93e222dcdbdcf5e652017b7442ca scripts/wave-result.sh
 5f5949cdc8e2551c8f81f701dacfed8b43b78c0b skills/cloud-routines/SKILL.md
-392ea3808b3119abbfc8092a47ba46f17d2bd553 skills/pr-pipeline/SKILL.md
+8637381927fafa7214b4e5ad040e52fee877b9f4 skills/pr-pipeline/SKILL.md
 c6964fe8bf306c23d738bc2cfd58a55a18056ea3 skills/write-goals/SKILL.md
 c88d84c0c8bec56464f43b659905df19ea7d3c3e templates/AGENTS-section.md
 da1165c50617506cd97855bf1c610e267359baf3 templates/goals.md
 df4dc745b16db5b2413669adfb16c54c595fc8df templates/pipeline.json
 fbc7ce81a7e96b09ee0645f71bffcc8fe8dc9aa7 templates/plan.md
-1eae7bb890bf8ce3c13a1b941d46ec1244d2ad33 workflows/run-wave.js
+201269702c14061fe063649ee2b2e92dd83d5e24 workflows/run-wave.js
