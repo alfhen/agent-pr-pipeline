@@ -47,7 +47,7 @@ const landSetup = ({ checks, settings = 'flake', onHead = null, attempt = 1 }) =
   put(fx, `${PULL}__merge.PUT.json`, { merged: true })
   checks.forEach((c, i) => put(fx, `${P}__commits__${SHA}__check-runs.call${i + 1}.json`, { check_runs: c }))
   put(fx, `${P}__commits__${SHA}__status.json`, { state: 'success', statuses: [] })
-  put(fx, `${P}__actions__runs__55.json`, { run_attempt: attempt })
+  put(fx, `${P}__actions__runs__55.json`, { run_attempt: attempt, head_sha: SHA })
   put(fx, `${CONTENTS}@ref=refs__heads__main.json`, fixture(`pipeline-${settings}.json`))
   if (onHead) put(fx, `${CONTENTS}@ref=${SHA}.json`, fixture(`pipeline-${onHead}.json`))
   put(fx, `${PULL}__reviews.json`, [{ id: 1, user: { login: 'gitar-bot[bot]' }, state: 'APPROVED', body: '', commit_id: SHA, submitted_at: '2026-01-01T10:00:00Z' }])
@@ -279,9 +279,9 @@ test('land: after a rerun the script waits until GitHub lists the new attempt', 
   const s = landSetup({ checks: [[failed('e2e')], [failed('e2e')], [passed('e2e')]] })
   const runPath = `${P}__actions__runs__55`
   rmSync(join(s.fx, `${runPath}.json`))
-  put(s.fx, `${runPath}.call1.json`, { run_attempt: 1, status: 'completed' })
-  put(s.fx, `${runPath}.call2.json`, { run_attempt: 1, status: 'completed' })
-  put(s.fx, `${runPath}.call3.json`, { run_attempt: 2, status: 'in_progress' })
+  put(s.fx, `${runPath}.call1.json`, { run_attempt: 1, status: 'completed', head_sha: SHA })
+  put(s.fx, `${runPath}.call2.json`, { run_attempt: 1, status: 'completed', head_sha: SHA })
+  put(s.fx, `${runPath}.call3.json`, { run_attempt: 2, status: 'in_progress', head_sha: SHA })
   const r = land(s)
   assert.equal(r.code, 0, r.out)
   assert.equal(r.log.filter((l) => l === 'GET /repos/o/r/actions/runs/55').length, 3)
@@ -291,7 +291,7 @@ test('land: a rerun that never shows a new attempt stops the wave, not LAND FIX'
   const s = landSetup({ checks: [[failed('e2e')], [failed('e2e')]] })
   const runPath = `${P}__actions__runs__55`
   rmSync(join(s.fx, `${runPath}.json`))
-  put(s.fx, `${runPath}.json`, { run_attempt: 1, status: 'completed' })
+  put(s.fx, `${runPath}.json`, { run_attempt: 1, status: 'completed', head_sha: SHA })
   const r = land(s)
   assert.equal(r.code, 5, r.out)
   assert.match(r.out, /did not show a new attempt/)
@@ -740,3 +740,255 @@ for (const file of ['sts', 'runs']) {
     assert.equal(putCalls(r).length, 0)
   })
 }
+
+// Green-parents rerun: the head is a merge of the default branch head (second parent) into the previous head (first parent).
+const P0 = '1'.repeat(40)
+const P1 = '2'.repeat(40)
+const COMMITS = `${P}__commits__`
+const parentRuns = (sha) => `${COMMITS}${sha}__check-runs.json`
+const headRuns = `${COMMITS}${SHA}__check-runs.call1.json`
+const readJson = (s, name) => JSON.parse(readFileSync(join(s.fx, name), 'utf8'))
+const headChecks = (name = 'ci') => [[failed(name), passed('CodeRabbit')], [failed(name), passed('CodeRabbit')], [passed(name), passed('CodeRabbit')]]
+const gpSetup = ({ name = 'ci', checks = headChecks(name), parentChecks = [passed(name), passed('CodeRabbit')], parents = [P0, P1], base = P1 } = {}) => {
+  const s = landSetup({ checks })
+  put(s.fx, `${COMMITS}${SHA}.json`, { parents: parents.map((sha) => ({ sha })) })
+  put(s.fx, `${P}__branches__main.json`, { commit: { sha: base } })
+  for (const sha of [P0, P1]) put(s.fx, parentRuns(sha), { check_runs: parentChecks })
+  return s
+}
+const idx = (r, re) => r.out.split('\n').findIndex((l) => re.test(l))
+const posts = (r) => r.log.filter((l) => /^POST /.test(l))
+// A refused rerun: the cause line, then LAND FIX, exit 3 and no POST.
+const refused = (r, cause) => {
+  assert.equal(r.code, 3, r.out)
+  const c = idx(r, cause)
+  assert.ok(c >= 0, r.out)
+  assert.ok(idx(r, /^LAND FIX #7/) > c, r.out)
+  assert.equal(posts(r).length, 0, r.log.join('\n'))
+}
+const ciOf = (s, sha) => readJson(s, parentRuns(sha)).check_runs.filter((c) => c.name === 'ci')
+
+test('land: a failing check on a merge head with green parents is rerun once and merges', () => {
+  const s = gpSetup()
+  assert.equal(readJson(s, `${COMMITS}${SHA}.json`).parents.length, 2)
+  assert.equal(readJson(s, `${P}__branches__main.json`).commit.sha, P1)
+  const r = land(s)
+  assert.equal(r.code, 0, r.out)
+  assert.equal(r.log.filter((l) => /^POST .*\/actions\/runs\/55\/rerun-failed-jobs/.test(l)).length, 1)
+  assert.match(r.out, /RERUN #7: green parents 1111111 2222222/)
+  assert.doesNotMatch(r.out, /known flake\(s\)/)
+  assert.doesNotMatch(r.out, /NO RERUN/)
+  assert.equal(r.log.filter((l) => /^PUT .*\/pulls\/7\/merge/.test(l)).length, 1)
+  for (const l of [`GET /repos/o/r/commits/${SHA}`, 'GET /repos/o/r/branches/main', `GET /repos/o/r/commits/${P0}/check-runs?filter=all`]) assert.ok(r.log.some((x) => x.startsWith(l)), l)
+})
+
+test('land: a check that fails again after the green-parents rerun stops with LAND FIX', () => {
+  const r = land(gpSetup({ checks: [[failed('ci'), passed('CodeRabbit')]] }))
+  assert.equal(r.code, 3, r.out)
+  assert.equal(reruns(r).length, 1)
+  assert.match(r.out, /RERUN #7: green parents/)
+  assert.match(r.out, /LAND FIX #7 .*failing=\[ci\]/)
+  assert.equal(r.log.filter((l) => /^PUT .*\/pulls\/7\/merge/.test(l)).length, 0)
+})
+
+test('land: a merge head with a red parent is not rerun', () => {
+  const s = gpSetup()
+  put(s.fx, parentRuns(P0), { check_runs: [{ ...passed('ci'), conclusion: 'failure' }, passed('CodeRabbit')] })
+  assert.equal(ciOf(s, P0)[0].conclusion, 'failure')
+  refused(land(s), /^NO RERUN #7: parent 1111111 is failure$/)
+})
+
+test('land: a merge head with a parent that has a success and a failure run of the same check is not rerun', () => {
+  const s = gpSetup()
+  put(s.fx, parentRuns(P0), { check_runs: [passed('ci'), { ...passed('ci'), conclusion: 'failure' }, passed('CodeRabbit')] })
+  assert.deepEqual(ciOf(s, P0).map((c) => c.conclusion), ['success', 'failure'])
+  refused(land(s), /^NO RERUN #7: parent 1111111 is failure$/)
+})
+
+test('land: a head with a failed commit status is not rerun', () => {
+  const s = gpSetup()
+  put(s.fx, `${COMMITS}${SHA}__status.json`, { state: 'failure', statuses: [{ context: 'ext/ci', state: 'failure' }] })
+  assert.equal(readJson(s, `${COMMITS}${SHA}__status.json`).statuses[0].state, 'failure')
+  refused(land(s), /^NO RERUN #7: commit status failed$/)
+})
+
+test('land: a failed run with run_attempt 2 is not rerun by the green-parents path', () => {
+  const s = gpSetup()
+  put(s.fx, `${P}__actions__runs__55.json`, { run_attempt: 2 })
+  assert.equal(readJson(s, `${P}__actions__runs__55.json`).run_attempt, 2)
+  refused(land(s), /^NO RERUN #7: run_attempt is not 1$/)
+})
+
+test('land: a failed check with no Actions run id is not rerun', () => {
+  const s = gpSetup({ checks: [[{ ...failed('ci'), details_url: 'https://example.com/check/1' }, passed('CodeRabbit')]] })
+  assert.doesNotMatch(readJson(s, headRuns).check_runs[0].details_url, /actions\/runs/)
+  refused(land(s), /^NO RERUN #7: no run id for ci$/)
+})
+
+test('land: a failed run with no run_attempt is not an Actions run', () => {
+  const s = gpSetup()
+  put(s.fx, `${P}__actions__runs__55.json`, { status: 'completed' })
+  assert.equal(readJson(s, `${P}__actions__runs__55.json`).run_attempt, undefined)
+  refused(land(s), /^NO RERUN #7: failed check is not an Actions run$/)
+})
+
+test('land: a failed App check with no run id next to a failed ci is not rerun', () => {
+  const app = { name: 'CodeRabbit', status: 'completed', conclusion: 'failure', details_url: 'https://coderabbit.ai/x' }
+  const s = gpSetup({ checks: [[failed('ci'), app]] })
+  assert.equal(readJson(s, headRuns).check_runs[1].conclusion, 'failure')
+  refused(land(s), /^NO RERUN #7: no run id for CodeRabbit$/)
+})
+
+test('land: a merged-in parent that differs from the default branch head by one character is not rerun', () => {
+  const base = P1.slice(0, -1) + '3'
+  const s = gpSetup({ base })
+  assert.notEqual(readJson(s, `${P}__branches__main.json`).commit.sha, P1)
+  assert.equal(base.length, P1.length)
+  refused(land(s), /^NO RERUN #7: no parent is the default branch head$/)
+})
+
+test('land: a head whose first parent is the default branch head is not rerun', () => {
+  const s = gpSetup({ parents: [P1, P0] })
+  assert.equal(readJson(s, `${COMMITS}${SHA}.json`).parents[0].sha, readJson(s, `${P}__branches__main.json`).commit.sha)
+  refused(land(s), /^NO RERUN #7: first parent is the default branch head$/)
+})
+
+test('land: a head with one parent is not rerun', () => {
+  const s = gpSetup({ parents: [P0] })
+  assert.equal(readJson(s, `${COMMITS}${SHA}.json`).parents.length, 1)
+  refused(land(s), /^NO RERUN #7: head does not have two parents$/)
+})
+
+test('land: a merge head with a pending parent is not rerun', () => {
+  const s = gpSetup()
+  put(s.fx, parentRuns(P1), { check_runs: [{ name: 'ci', status: 'in_progress', conclusion: null }, passed('CodeRabbit')] })
+  assert.equal(ciOf(s, P1)[0].status, 'in_progress')
+  refused(land(s), /^NO RERUN #7: parent 2222222 is pending$/)
+})
+
+test('land: a merge head with a parent that has no check runs is not rerun', () => {
+  const s = gpSetup()
+  put(s.fx, parentRuns(P0), { check_runs: [] })
+  assert.deepEqual(readJson(s, parentRuns(P0)).check_runs, [])
+  refused(land(s), /^NO RERUN #7: parent 1111111 has no runs$/)
+})
+
+test('land: a merge head with a parent that has only a bot run is not rerun', () => {
+  const s = gpSetup()
+  put(s.fx, parentRuns(P0), { check_runs: [passed('CodeRabbit')] })
+  assert.equal(ciOf(s, P0).length, 0)
+  refused(land(s), /^NO RERUN #7: parent 1111111 has no run of ci$/)
+})
+
+for (const conclusion of ['skipped', 'cancelled', 'timed_out']) {
+  test(`land: a parent run of ci with conclusion ${conclusion} is not rerun and is not called failure`, () => {
+    const s = gpSetup()
+    put(s.fx, parentRuns(P0), { check_runs: [{ ...passed('ci'), conclusion }, passed('CodeRabbit')] })
+    assert.equal(ciOf(s, P0)[0].conclusion, conclusion)
+    const r = land(s)
+    refused(r, /^NO RERUN #7: parent 1111111 run of ci did not succeed$/)
+    assert.doesNotMatch(r.out, /is failure/)
+  })
+}
+
+test('land: a matrix check name with no run of the same full name on a parent is not rerun', () => {
+  const s = gpSetup({ name: 'ci (1/2)' })
+  put(s.fx, parentRuns(P1), { check_runs: [passed('ci (2/2)'), passed('CodeRabbit')] })
+  assert.equal(readJson(s, parentRuns(P1)).check_runs.some((c) => c.name === 'ci (1/2)'), false)
+  refused(land(s), /^NO RERUN #7: parent 2222222 has no run of ci \(1\/2\)$/)
+})
+
+test('land: a matrix check with green parents of the same full name is rerun once', () => {
+  const r = land(gpSetup({ name: 'ci (1/2)' }))
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /RERUN #7: green parents/)
+  assert.equal(reruns(r).length, 1)
+})
+
+test('land: a failed read of a parent, the head commit or the default branch head means no rerun', () => {
+  for (const path of [`${COMMITS}${P0}__check-runs`, `${COMMITS}${SHA}`, `${P}__branches__main`]) {
+    const s = gpSetup()
+    put(s.fx, `${path}.GET.error`, 'HTTP 500')
+    assert.ok(existsSync(join(s.fx, `${path}.GET.error`)))
+    refused(land(s), /^NO RERUN #7: read failed$/)
+  }
+})
+
+test('land: a failed or pending lint run of a parent does not block the rerun of ci', () => {
+  for (const lint of [{ ...passed('lint'), conclusion: 'failure' }, { name: 'lint', status: 'in_progress', conclusion: null }]) {
+    const s = gpSetup()
+    put(s.fx, parentRuns(P0), { check_runs: [passed('ci'), passed('CodeRabbit'), lint] })
+    assert.ok(readJson(s, parentRuns(P0)).check_runs.some((c) => c.name === 'lint' && c.conclusion !== 'success'))
+    const r = land(s)
+    assert.equal(r.code, 0, r.out)
+    assert.match(r.out, /RERUN #7: green parents/)
+    assert.equal(reruns(r).length, 1)
+  }
+})
+
+test('land: a known flake that fails again after its rerun is rerun once and has no green-parents line', () => {
+  const r = land(gpSetup({ name: 'e2e', checks: [[failed('e2e')]] }))
+  assert.equal(r.code, 3, r.out)
+  assert.equal(reruns(r).length, 1)
+  assert.match(r.out, /^RERUN #7: known flake\(s\) \[e2e\]/m)
+  assert.doesNotMatch(r.out, /green parents/)
+  assert.doesNotMatch(r.out, /NO RERUN/)
+  assert.match(r.out, /LAND FIX #7 .*failing=\[e2e\]/)
+})
+
+test('land: the default branch head is read from the branch the repo names as default', () => {
+  const s = gpSetup()
+  put(s.fx, `${P}.json`, { default_branch: 'trunk' })
+  put(s.fx, `${P}__branches__trunk.json`, { commit: { sha: '3'.repeat(40) } })
+  const r = land(s)
+  refused(r, /^NO RERUN #7: no parent is the default branch head$/)
+  assert.ok(r.log.some((l) => /^GET \/repos\/o\/r\/branches\/trunk/.test(l)), r.log.join('\n'))
+  const s2 = gpSetup()
+  put(s2.fx, `${P}.json`, { default_branch: 'trunk' })
+  put(s2.fx, `${P}__branches__trunk.json`, { commit: { sha: P1 } })
+  const r2 = land(s2)
+  assert.match(r2.out, /RERUN #7: green parents/)
+  assert.equal(reruns(r2).length, 1)
+})
+
+const real805 = () => JSON.parse(readFileSync(join(root, 'test/fixtures/clean-review/pr805-f36bb8e.json'), 'utf8')).checks
+
+test('land: the saved real check runs of PR 805 as the runs of both parents are rerun once', () => {
+  const r = land(gpSetup({ parentChecks: real805() }))
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /RERUN #7: green parents 1111111 2222222/)
+  assert.equal(reruns(r).length, 1)
+})
+
+test('land: the saved real check runs of PR 805 with a failed ci run on one of the parents are refused', () => {
+  const checks = real805()
+  assert.equal(checks.find((c) => c.name === 'ci').conclusion, 'success')
+  const copy = structuredClone(checks)
+  copy.find((c) => c.name === 'ci').conclusion = 'failure'
+  assert.equal(copy.find((c) => c.name === 'ci').conclusion, 'failure')
+  const s = gpSetup({ parentChecks: checks })
+  put(s.fx, parentRuns(P0), { check_runs: copy })
+  refused(land(s), /^NO RERUN #7: parent 1111111 is failure$/)
+})
+
+test('land: a failed check whose Actions run belongs to another head is not rerun', () => {
+  const s = gpSetup({ checks: [[{ ...failed('ci'), details_url: 'https://github.com/o/r/actions/runs/55/job/9' }, passed('CodeRabbit')]] })
+  put(s.fx, `${P}__actions__runs__55.json`, { run_attempt: 1, head_sha: 'f'.repeat(40) })
+  assert.notEqual(readJson(s, `${P}__actions__runs__55.json`).head_sha, SHA)
+  refused(land(s), /^NO RERUN #7: /)
+})
+
+test('land: a failed check with a details_url on another host is not rerun', () => {
+  const s = gpSetup({ checks: [[{ ...failed('ci'), details_url: 'https://evil.example/o/r/actions/runs/55' }, passed('CodeRabbit')]] })
+  put(s.fx, `${P}__actions__runs__55.json`, { run_attempt: 1, head_sha: SHA })
+  refused(land(s), /^NO RERUN #7: /)
+})
+
+test('land: a known flake whose Actions run belongs to another head is not rerun', () => {
+  const s = landSetup({ checks: [[failed('e2e')]] })
+  put(s.fx, `${P}__actions__runs__55.json`, { run_attempt: 1, head_sha: 'f'.repeat(40) })
+  const r = land(s)
+  assert.equal(r.log.filter((l) => /^POST .*rerun-failed-jobs/.test(l)).length, 0)
+  assert.equal(r.code, 3, r.out)
+  assert.match(r.out, /LAND FIX #7/)
+})

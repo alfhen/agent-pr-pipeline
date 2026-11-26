@@ -8,6 +8,9 @@
 # that PR (landFix: true, or skipImpl to check the new head), then run this again.
 # When every failing check is in knownFlakes (.github/pipeline.json on the default branch), the failed jobs
 # are rerun once and CI is awaited again; only a check that still fails stops the wave.
+# Any other failed check is rerun once too, when the head is a merge of the default branch head (second parent) into the previous
+# head (first parent) and both parents have a successful run of each failed check name (green parents). A refusal prints
+# "NO RERUN #<pr>: <cause>" before LAND FIX. One land call reruns a head at most once.
 # The key reviewOnRequest (true) in .github/pipeline.json on the default branch acts as --review, for a repo whose bot reviews only on request.
 # A settings file that cannot be read, or a value that is not a boolean, acts as false and prints one WARN line.
 # With --review, a PR that no bot has cleared (and has no open bot comment) first gets request-review.sh, which asks CodeRabbit for a
@@ -114,16 +117,65 @@ read_default_settings() {
     esac
   fi
 }
+# The details_url of a check run is text the writing App chooses, so a run id counts only from a github.com URL of this repo.
+runid_def='def runid($r): ("https://github.com/" + ($r | ascii_downcase) + "/actions/runs/") as $p | (.details_url // "" | ascii_downcase) | select(startswith($p)) | ltrimstr($p) | capture("^(?<id>[0-9]+)(/|$)").id;'
+# Prints "<run_attempt|none> <head_sha>" of Actions run $1; fails when the read fails.
+run_info() { gh api "repos/$R/actions/runs/$1" --jq '"\(.run_attempt // "none") \(.head_sha // "none")"' 2>/dev/null; }
 # Prints the run ids to rerun when every failing check is a known flake, else nothing. Any doubt means no rerun.
 flake_runs() {
   local flakes
   read_default_settings || return 0
   flakes=$(jq -c 'if (.knownFlakes // []) | (type == "array" and all(.[]; type == "string")) then (.knownFlakes // []) else error("flakes") end' <<<"$sj" 2>/dev/null) || return 0
   # A failed commit status is not a run, so it is never rerun, even when it is named like a failed run.
-  jq -r --argjson f "$flakes" '
+  jq -r --argjson f "$flakes" --arg r "$R" "$runid_def"'
     .failedRuns as $bad
-    | if ((.failedStatuses // []) | length) > 0 or ($bad | length) == 0 or any($bad[]; . as $c | $f | index($c.name) | not) then empty
-      else [$bad[] | .details_url | capture("/actions/runs/(?<id>[0-9]+)") | .id] | unique | .[] end' <<<"$ci" 2>/dev/null
+    | if ((.failedStatuses // []) | length) > 0 or ($bad | length) == 0 or any($bad[]; . as $c | $f | index($c.name) | not)
+         or any($bad[]; ([runid($r)] | length) == 0) then empty
+      else [$bad[] | runid($r)] | unique | .[] end' <<<"$ci" 2>/dev/null
+}
+# Returns 0 and sets gp_ids and gp_p0 gp_p1 when the head may be rerun because both parents are green; else sets gp_cause and returns 1.
+# Green: the head is a merge of the default branch head (second parent) into the previous head (first parent), and each parent
+# has runs of each failed check name, all completed with the conclusion success. Any doubt, or a failed read, means no rerun.
+green_parents() {
+  local base bsha ps pa n p pruns v id att rsha nm names info
+  gp_ids=""; gp_cause=""
+  if [ "$(jq '(.failedStatuses // []) | length' <<<"$ci")" != 0 ]; then gp_cause="commit status failed"; return 1; fi
+  nm=$(jq -r --arg r "$R" "$runid_def"'[.failedRuns[] | select(([runid($r)] | length) == 0) | .name] | first // empty' <<<"$ci" 2>/dev/null) || { gp_cause="read failed"; return 1; }
+  if [ -n "$nm" ]; then gp_cause="no run id for $nm"; return 1; fi
+  gp_ids=$(jq -r --arg r "$R" "$runid_def"'[.failedRuns[] | runid($r)] | unique | .[]' <<<"$ci" 2>/dev/null) || { gp_cause="read failed"; return 1; }
+  names=$(jq -r '[.failedRuns[].name] | unique | .[]' <<<"$ci" 2>/dev/null) || { gp_cause="read failed"; return 1; }
+  [ -n "$gp_ids" ] && [ -n "$names" ] || { gp_cause="read failed"; return 1; }
+  ps=$(gh api "repos/$R/commits/$sha" --jq '[.parents[].sha] | join(" ")' 2>/dev/null) || { gp_cause="read failed"; return 1; }
+  read -ra pa <<<"$ps"
+  [ "${#pa[@]}" = 2 ] || { gp_cause="head does not have two parents"; return 1; }
+  base=$(gh api "repos/$R" --jq .default_branch 2>/dev/null) && [ -n "$base" ] || { gp_cause="read failed"; return 1; }
+  bsha=$(gh api "repos/$R/branches/$base" --jq .commit.sha 2>/dev/null) && [ -n "$bsha" ] || { gp_cause="read failed"; return 1; }
+  if [ "${pa[1]}" != "$bsha" ]; then
+    if [ "${pa[0]}" = "$bsha" ]; then gp_cause="first parent is the default branch head"; else gp_cause="no parent is the default branch head"; fi
+    return 1
+  fi
+  for p in "${pa[@]}"; do
+    pruns=$(gh api --paginate "repos/$R/commits/$p/check-runs?filter=all&per_page=100" 2>/dev/null) || { gp_cause="read failed"; return 1; }
+    pruns=$(jq -s -c '[.[].check_runs[] | {name, status, conclusion}]' <<<"$pruns" 2>/dev/null) || { gp_cause="read failed"; return 1; }
+    while IFS= read -r n; do
+      v=$(jq -r --arg n "$n" '[.[] | select(.name == $n)] as $m
+        | if length == 0 then "has no runs"
+          elif ($m | length) == 0 then "has no run of " + $n
+          elif any($m[]; .status == "completed" and .conclusion == "failure") then "is failure"
+          elif any($m[]; .status != "completed") then "is pending"
+          elif all($m[]; .conclusion == "success") then ""
+          else "run of " + $n + " did not succeed" end' <<<"$pruns" 2>/dev/null) || { gp_cause="read failed"; return 1; }
+      [ -z "$v" ] || { gp_cause="parent ${p:0:7} $v"; return 1; }
+    done <<<"$names"
+  done
+  for id in $gp_ids; do
+    info=$(run_info "$id") || { gp_cause="read failed"; return 1; }
+    read -r att rsha <<<"$info"
+    [ "$att" != none ] || { gp_cause="failed check is not an Actions run"; return 1; }
+    [ "$att" = 1 ] || { gp_cause="run_attempt is not 1"; return 1; }
+    [ "$rsha" = "$sha" ] || { gp_cause="failed check is not an Actions run"; return 1; }
+  done
+  gp_p0=${pa[0]}; gp_p1=${pa[1]}
 }
 here=$(dirname "$0")
 # Read once, when the first PR needs it, from the default branch only: a PR must not turn the request on for itself.
@@ -206,18 +258,25 @@ for arg in "$@"; do
   read_failing
   if [ "$state" != "CONFLICTING" ] && [ -n "$failing" ]; then
     ids=$(flake_runs)
-    rerun_ok=1
-    for id in $ids; do
-      # run_attempt above 1 means a rerun already happened for this head, in this or an earlier call
-      att=$(gh api "repos/$R/actions/runs/$id" --jq .run_attempt 2>/dev/null) || { rerun_ok=0; break; }
-      [ "$att" = 1 ] || { rerun_ok=0; break; }
-    done
+    rerun_ok=1; how="known flake(s) [$failing]"
+    if [ -z "$ids" ]; then
+      # Only when the known-flake path did not apply: a head is rerun at most once per call.
+      if green_parents; then ids=$gp_ids; how="green parents ${gp_p0:0:7} ${gp_p1:0:7}"
+      else echo "NO RERUN #$pr: $gp_cause"
+      fi
+    else
+      for id in $ids; do
+        # run_attempt above 1 means a rerun already happened for this head, in this or an earlier call
+        read -r att rsha <<<"$(run_info "$id")" || { rerun_ok=0; break; }
+        { [ "$att" = 1 ] && [ "$rsha" = "$sha" ]; } || { rerun_ok=0; break; }
+      done
+    fi
     if [ -n "$ids" ] && [ "$rerun_ok" = 1 ]; then
       for id in $ids; do
         gh api -X POST "repos/$R/actions/runs/$id/rerun-failed-jobs" >/dev/null || rerun_ok=0
       done
       if [ "$rerun_ok" = 1 ]; then
-        echo "RERUN #$pr: known flake(s) [$failing], failed jobs rerun once"
+        echo "RERUN #$pr: $how, failed jobs rerun once"
         for id in $ids; do wait_rerun_started "$id" || { echo "STOP #$pr: the rerun of run $id did not show a new attempt"; exit 5; }; done
         wait_ci
         if [ "$head" != "$sha" ]; then echo "HEAD MOVED #$pr: checked ${sha:0:7}, now ${head:0:7}. Check the new head before merging."; exit 6; fi
