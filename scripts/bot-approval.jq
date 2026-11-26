@@ -92,7 +92,7 @@ def nitItem: itemHead(false) + "\\s*(?:(?!<!-- ai-agent-prompt:start -->|<!-- cr
 def nitFile: "<details>\\s*<summary>[^<\\n]+?: [0-9]+</summary><blockquote>\\s*<dl>\\s*<dd>\\s*<br>\\s*(?:" + nitItem + ")+</dd>\\s*</dl>\\s*</blockquote></details>\\s*";
 def nitBlk($title): "<details>\\s*<summary>\\s*" + pic + $title + "</summary><blockquote>\\s*<dl>\\s*<dd>\\s*<br>\\s*(?:" + nitFile + ")+</dd>\\s*</dl>\\s*</blockquote></details>\\s*";
 def topRe: "\\A\\s*(?:\\*\\*Actionable comments posted: (?<n>[0-9]+)\\*\\*\\s*)?(?<out>" + outBlk + ")?(?<nit>" + nitBlk("Nitpick comments: (?<nn>[0-9]+)") + ")?(?<add>" + nitBlk("Additional comments: (?<an>[0-9]+)") + ")?"
-  + "(?:---\\s*)?(?:- \\[[ x]\\]\\s*Fix comments: Fix CodeRabbit comments on this PR\\s*)?(?:" + blk("Prompt to fix all issues"; oneFence) + "\\s*)?"
+  + "(?:---\\s*)?(?:- \\[[ x]\\]\\s*(?:Fix comments: Fix CodeRabbit comments on this PR|Ask CodeRabbit to fix comments on this review)\\s*)?(?:" + blk("Prompt to fix all issues"; oneFence) + "\\s*)?"
   + "(?:<h6>\\s*<details>\\s*<summary>\\s*" + pic + "Review info</summary>\\s*<dl>\\s*<dd>\\s*<br>\\s*" + runCfg + "\\s*" + commitsBlk + "\\s*" + filesBlk + "\\s*(?:" + noRevBlk + "\\s*)?(?:" + availLine + ")?</dd>\\s*</dl>\\s*</details>\\s*</h6>\\s*)?\\z";
 # The items of a nitpick block that topRe matched: the path of the file group, the rank word and the title of each, and whether the
 # count of every file group and of the block fits.
