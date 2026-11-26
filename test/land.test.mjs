@@ -47,7 +47,7 @@ const landSetup = ({ checks, settings = 'flake', onHead = null, attempt = 1 }) =
   put(fx, `${PULL}__merge.PUT.json`, { merged: true })
   checks.forEach((c, i) => put(fx, `${P}__commits__${SHA}__check-runs.call${i + 1}.json`, { check_runs: c }))
   put(fx, `${P}__commits__${SHA}__status.json`, { state: 'success', statuses: [] })
-  put(fx, `${P}__actions__runs__55.json`, { run_attempt: attempt })
+  put(fx, `${P}__actions__runs__55.json`, { run_attempt: attempt, head_sha: SHA })
   put(fx, `${CONTENTS}@ref=refs__heads__main.json`, fixture(`pipeline-${settings}.json`))
   if (onHead) put(fx, `${CONTENTS}@ref=${SHA}.json`, fixture(`pipeline-${onHead}.json`))
   put(fx, `${PULL}__reviews.json`, [{ id: 1, user: { login: 'gitar-bot[bot]' }, state: 'APPROVED', body: '', commit_id: SHA, submitted_at: '2026-01-01T10:00:00Z' }])
@@ -279,9 +279,9 @@ test('land: after a rerun the script waits until GitHub lists the new attempt', 
   const s = landSetup({ checks: [[failed('e2e')], [failed('e2e')], [passed('e2e')]] })
   const runPath = `${P}__actions__runs__55`
   rmSync(join(s.fx, `${runPath}.json`))
-  put(s.fx, `${runPath}.call1.json`, { run_attempt: 1, status: 'completed' })
-  put(s.fx, `${runPath}.call2.json`, { run_attempt: 1, status: 'completed' })
-  put(s.fx, `${runPath}.call3.json`, { run_attempt: 2, status: 'in_progress' })
+  put(s.fx, `${runPath}.call1.json`, { run_attempt: 1, status: 'completed', head_sha: SHA })
+  put(s.fx, `${runPath}.call2.json`, { run_attempt: 1, status: 'completed', head_sha: SHA })
+  put(s.fx, `${runPath}.call3.json`, { run_attempt: 2, status: 'in_progress', head_sha: SHA })
   const r = land(s)
   assert.equal(r.code, 0, r.out)
   assert.equal(r.log.filter((l) => l === 'GET /repos/o/r/actions/runs/55').length, 3)
@@ -291,7 +291,7 @@ test('land: a rerun that never shows a new attempt stops the wave, not LAND FIX'
   const s = landSetup({ checks: [[failed('e2e')], [failed('e2e')]] })
   const runPath = `${P}__actions__runs__55`
   rmSync(join(s.fx, `${runPath}.json`))
-  put(s.fx, `${runPath}.json`, { run_attempt: 1, status: 'completed' })
+  put(s.fx, `${runPath}.json`, { run_attempt: 1, status: 'completed', head_sha: SHA })
   const r = land(s)
   assert.equal(r.code, 5, r.out)
   assert.match(r.out, /did not show a new attempt/)
@@ -968,4 +968,26 @@ test('land: the saved real check runs of PR 805 with a failed ci run on one of t
   const s = gpSetup({ parentChecks: checks })
   put(s.fx, parentRuns(P0), { check_runs: copy })
   refused(land(s), /^NO RERUN #7: parent 1111111 is failure$/)
+})
+
+test('land: a failed check whose Actions run belongs to another head is not rerun', () => {
+  const s = gpSetup({ checks: [[{ ...failed('ci'), details_url: 'https://github.com/o/r/actions/runs/55/job/9' }, passed('CodeRabbit')]] })
+  put(s.fx, `${P}__actions__runs__55.json`, { run_attempt: 1, head_sha: 'f'.repeat(40) })
+  assert.notEqual(readJson(s, `${P}__actions__runs__55.json`).head_sha, SHA)
+  refused(land(s), /^NO RERUN #7: /)
+})
+
+test('land: a failed check with a details_url on another host is not rerun', () => {
+  const s = gpSetup({ checks: [[{ ...failed('ci'), details_url: 'https://evil.example/o/r/actions/runs/55' }, passed('CodeRabbit')]] })
+  put(s.fx, `${P}__actions__runs__55.json`, { run_attempt: 1, head_sha: SHA })
+  refused(land(s), /^NO RERUN #7: /)
+})
+
+test('land: a known flake whose Actions run belongs to another head is not rerun', () => {
+  const s = landSetup({ checks: [[failed('e2e')]] })
+  put(s.fx, `${P}__actions__runs__55.json`, { run_attempt: 1, head_sha: 'f'.repeat(40) })
+  const r = land(s)
+  assert.equal(r.log.filter((l) => /^POST .*rerun-failed-jobs/.test(l)).length, 0)
+  assert.equal(r.code, 3, r.out)
+  assert.match(r.out, /LAND FIX #7/)
 })
