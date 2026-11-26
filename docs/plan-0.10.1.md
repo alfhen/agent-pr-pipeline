@@ -27,7 +27,7 @@ Merging this plan accepts the pick of each line. Say so before the merge to chan
 | 2 | How many reruns. | One per land call, shared with the known-flake path. | A real failure then still stops quickly, and the `run_attempt` guard stays. |
 | 3 | Commit statuses. | A head with any failed commit status is never rerun. | A status cannot be rerun with the jobs API. |
 | 4 | What "green" means for a parent. | Each failed check name of the head has a completed run with that exact name and conclusion success on each parent. | `ci-state.jq` gives success for a commit with only a bot check run, for example a PR head that conflicted so CI never ran. That is no proof. |
-| 5 | Let "answered" count for a review on the head (suggestion 2 of #903). | No. A review on the head clears the gate only when rule A passes it. | It keeps the gate as strict as today. Suggestion 3 of #903 (one fresh review after an answer) is not needed: a review that follows a request made after the push already clears once rule A passes it. |
+| 5 | Let "answered" count for a review on the head (suggestion 2 of #903). | No. A review on the head clears the gate only when rule A passes it. | It keeps the gate as strict as today. Suggestion 3 of #903 (one fresh review after an answer) is not needed: a review that follows a request made after the push already clears when rule A and the other clean-review conditions (see the summary) pass. |
 
 ## Decisions
 
@@ -58,7 +58,7 @@ Summary: two entries in one wave, then the version PR and the canary run. Only G
 **GP The land step reruns the failed jobs of a merge head once when both parents are green.** Closes #900.
 Touches: `scripts/land-wave.sh` (the rerun block before the `LAND FIX` stop in the main loop, a new function next to `flake_runs` that returns the failed run ids when both parents are green, and the header comment about reruns), `test/land.test.mjs` (new land cases), `test/fake-gh` (fixtures for the head commit with its parents, the default branch head, and the check-runs and status of each parent, only if the existing fixtures cannot give them), `skills/pr-pipeline/SKILL.md` (the land paragraph that says a known flake is rerun: one sentence).
 Acceptance: `test/land.test.mjs` has these cases. Each fails without the change, because each asserts a printed line that the old script does not print.
-Two lines are new. A rerun prints `RERUN #<pr>: green parents <sha7> <sha7>`. A refused green-parents rerun prints `NO RERUN #<pr>: <cause>`, where the cause is one of: `parent <sha7> is failure`, `parent <sha7> is pending`, `parent <sha7> has no runs`, `parent <sha7> has no run of <name>`, `commit status failed`, `run_attempt is not 1`, `no parent is the default branch head`, `head does not have two parents`, `read failed`. The `NO RERUN` line is printed only when the head has a failed check that is not in `knownFlakes`, before `LAND FIX`.
+Two lines are new. A rerun prints `RERUN #<pr>: green parents <sha7> <sha7>`. A refused green-parents rerun prints `NO RERUN #<pr>: <cause>`, where the cause is one of: `parent <sha7> is failure`, `parent <sha7> is pending`, `parent <sha7> has no runs`, `parent <sha7> has no run of <name>`, `parent <sha7> run of <name> did not succeed`, `commit status failed`, `run_attempt is not 1`, `failed check is not an Actions run`, `no parent is the default branch head`, `head does not have two parents`, `read failed`. The `NO RERUN` line is printed only when the head has a failed check that is not in `knownFlakes`, before `LAND FIX`.
 Every case below uses a check name that is not in `knownFlakes` (the default `landSetup` lists `e2e`, so the cases use another name). Case 1 is the positive case. Every no-rerun case is case 1 with exactly one input changed, is in the same file, asserts its `NO RERUN` cause line and exit 3, and asserts zero POSTs in the fake-gh log. A fixture that is missing gives `read failed`, so a case cannot pass because a fixture is missing.
 1. 'land: a failing check on a merge head with green parents is rerun once and merges'. The head has two parents, one is the default branch head, and each parent has a completed run with the name of the failing check and conclusion success. Expect exactly one POST to rerun-failed-jobs, the `RERUN` line (not the known-flake line), one PUT merge and exit 0.
 2. 'land: a check that fails again after the green-parents rerun stops with LAND FIX'. Expect one rerun, exit 3 and `LAND FIX` with the failing checks.
@@ -69,13 +69,15 @@ Extra cases, each case 1 with one change, each with its cause line:
 - the merged-in parent differs from the default branch head by one sha: `no parent is the default branch head`. Its pair is case 1, where the merged-in parent equals the default branch head.
 - a pending parent: `parent <sha7> is pending`.
 - a green-parents case where one parent also has a failed run of another name (for example `lint`), while its run of the failing check is success: it is still rerun, with the `RERUN` line. This is the one case that is not a no-rerun case.
+- a parent whose run of the failing check is completed with conclusion `skipped` (`ci-state.jq` counts it as green, the exact-success rule does not): `parent <sha7> run of <name> did not succeed`.
+- a failed check of the head that has no Actions run id or no `run_attempt`, for example a third-party App check, while both parents are green for its name: `failed check is not an Actions run`. The land step does not ask an App for a rerun.
 - a read of a parent's check-runs that fails: `read failed`.
 - a parent whose check runs hold only `CodeRabbit` with success, and no run with the name of the failing check: `parent <sha7> has no run of <name>`.
 All existing land tests still pass.
 Invariants:
 - A green-parents rerun happens only when the PR head commit has exactly two parents, one of them equals the default branch head sha read in the same call, and each failed check name of the head has a completed run with that exact name and conclusion success on each parent. A matrix name such as `e2e (1/4)` matches by its full name.
-- A parent whose run of a failed check name of the head is pending, missing or failed means no rerun. A pending or failed run of another check name on a parent does not block it. A read of the commit, the branch or the checks that fails, means no rerun.
-- A head with any failed commit status is never rerun. A head where any failed run has `run_attempt` other than 1 is never rerun.
+- A parent whose run of a failed check name of the head is pending, missing, failed or any other conclusion than success means no rerun. A pending or failed run of another check name on a parent does not block it. A read of the commit, the branch or the checks that fails, means no rerun.
+- A head with any failed commit status is never rerun. A head where any failed run has `run_attempt` other than 1, or is not an Actions run, is never rerun.
 - One land call reruns a head at most once, through the known-flake path or the green-parents path.
 - A check that still fails after the rerun stops with `LAND FIX` and exit 3.
 - The rerun never merges by itself.
