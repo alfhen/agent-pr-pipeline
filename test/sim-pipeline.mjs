@@ -7434,6 +7434,7 @@ await check("RW-13b an answer run that stops with counts above 0 holds the answe
   const b = await withNotes('x'.repeat(5000))
   assert.equal(b.ready, false)
   assert.match(b.reason, /nothing (was )?answered/)
+  // 300 is ANSWER_NOTES_CUT in workflows/run-wave.js
   assert.ok(b.reason.length <= 300 + base.length, String(b.reason.length))
   assert.ok(b.reason.includes('xxxx'))
   const c = await withNotes(undefined)
