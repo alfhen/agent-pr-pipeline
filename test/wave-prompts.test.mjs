@@ -226,6 +226,27 @@ test('the test prompt runs the related e2e and docs files and names the projects
   assert.match(src, /say which test projects you ran/)
 })
 
+test('the related step, the tester and the verifier state the docs-reading rule', () => {
+  const step = /const relatedStep = RELATED_TESTS \? `[\s\S]*?` : ''/.exec(src)[0]
+  const rules = [
+    /that read that file, its folder or a glob that matches it/,
+    /folder path/,
+    /glob patterns over docs/,
+    /Run those docs test files first/,
+    /Do not count the docs test files in the limit of \$\{RELATED_MAX\}/,
+    /never put them in `?\\?`leftOut\\?`? because of the limit/,
+    /Name the docs test files in `?\\?`related\.files\\?`?/,
+  ]
+  for (const re of rules) assert.match(step, re)
+  for (const f of ['tester', 'verifier']) {
+    const md = readFileSync(new URL(`../agents/${f}.md`, import.meta.url), 'utf8')
+    const line = md.split('\n').find((l) => l.startsWith('- Also run the e2e and docs test files'))
+    assert.ok(line, f)
+    assert.match(line, /Run at most 10 files, never the whole suite/)
+    for (const re of [/that read that file, its folder or a glob that matches it/, /folder path/, /glob patterns over docs/, /Run those docs test files first/, /Do not count the docs test files in the limit of 10/, /leftOut/, /related\.files/]) assert.match(line, re, f)
+  }
+})
+
 test('the default text of bots names the two exact logins and no sentence says login contains', () => {
   const line = src.split('\n').find((l) => l.startsWith('const BOTS = A.bots || '))
   assert.ok(line.includes('coderabbitai[bot]') && line.includes('gitar-bot[bot]'), line)
