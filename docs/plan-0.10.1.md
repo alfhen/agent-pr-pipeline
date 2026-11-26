@@ -13,7 +13,7 @@ When a PR conflicts, the land fix merges the default branch into it. The merge h
 
 The fix adds one more rerun path. When the PR head is a merge of the current default branch head into the PR's previous head, and CI on both parents is green, the land step reruns the failed jobs once before it stops. A check that fails again stops with `LAND FIX` as today.
 
-CodeRabbit review bodies now hold a new checkbox line, "Ask CodeRabbit to fix comments on this review". Rule A in `scripts/bot-approval.jq` knows only the old line, so it refuses every such review as text outside the frame, and every PR becomes a person merge. A rerun of the land step then reads the same review and stops again. The fix adds the new line to the frame, and a land after an answer that pushed nothing asks for one fresh review of the head.
+CodeRabbit review bodies now hold a new checkbox line, "Ask CodeRabbit to fix comments on this review". Rule A in `scripts/bot-approval.jq` knows only the old line, so it refuses every such review as text outside the frame, and every PR becomes a person merge. A rerun of the land step then reads the same review and stops again. The fix adds the new line to the frame. A review that was requested after the push already clears once rule A passes it, so no change to the request step is needed.
 
 What you do: merge this plan.
 
@@ -27,7 +27,7 @@ Merging this plan accepts the pick of each line. Say so before the merge to chan
 | 2 | How many reruns. | One per land call, shared with the known-flake path. | A real failure then still stops quickly, and the `run_attempt` guard stays. |
 | 3 | Commit statuses. | A head with any failed commit status is never rerun. | A status cannot be rerun with the jobs API. |
 | 4 | What "green" means for a parent. | Each failed check name of the head has a completed run with that exact name and conclusion success on each parent. | `ci-state.jq` gives success for a commit with only a bot check run, for example a PR head that conflicted so CI never ran. That is no proof. |
-| 5 | Let "answered" count for a review on the head (suggestion 2 of #903). | No. A review on the head clears the gate only when rule A passes it. A land after an answer that pushed nothing asks for one fresh review instead. | It keeps the gate as strict as today. The fresh review gives the same result without a new way to clear it. |
+| 5 | Let "answered" count for a review on the head (suggestion 2 of #903). | No. A review on the head clears the gate only when rule A passes it. | It keeps the gate as strict as today. Suggestion 3 of #903 (one fresh review after an answer) is not needed: a review that follows a request made after the push already clears once rule A passes it. |
 
 ## Decisions
 
@@ -47,11 +47,11 @@ Merging this plan accepts the pick of each line. Say so before the merge to chan
 ```mermaid
 flowchart LR
   GP[GP green-parents rerun in land-wave.sh] --> V[Version PR and release 0.10.1]
-  RB[RB rule A checkbox line and fresh review] --> V
+  RB[RB rule A checkbox line] --> V
   V --> C[Canary item on 0.10.1]
 ```
 
-Summary: two entries in one wave, then the version PR and the canary run. GP and RB both touch `scripts/land-wave.sh`, in different parts: GP the rerun block, RB the `--review` block.
+Summary: two entries in one wave, then the version PR and the canary run. Only GP touches `scripts/land-wave.sh`.
 
 ### Wave 1
 
@@ -81,15 +81,15 @@ Invariants:
 - The default branch name and the settings come from the default branch, never from the PR head.
 QA: read-only, no merge, no rerun on GitHub. Read the real answers of `gh api repos/alfhen/agent-pr-pipeline/commits/<head>` and of the check-runs of both parents for two real merged PRs of this repo whose head was a merge of main: the land-fix head of #890 or #891 (both parents have a `ci` run with success) and the land-fix head of #887 (its previous head has only a CodeRabbit run). Feed them to `scripts/land-wave.sh` through `test/fake-gh`, with the head's own `ci` check set to failure. The #890 or #891 head prints the green-parents rerun line. The #887 head prints `NO RERUN` with `has no run of ci` and `LAND FIX`, with no rerun. The #890 or #891 head with one parent's `ci` run edited to failure prints `NO RERUN` with `is failure`.
 
-**RB Rule A reads the new checkbox line of a CodeRabbit review, and a land after an answer that pushed nothing asks for one fresh review.** Closes #903.
-Touches: `scripts/bot-approval.jq` (`topRe`: the optional checkbox line after `---`), `scripts/land-wave.sh` (the `--review` block that decides whether to ask for a review of the head), `test/bot-approval.test.mjs` and `test/land-review.test.mjs` (new cases and fixtures), `skills/pr-pipeline/SKILL.md` (the land paragraph about `--review`: one sentence).
+**RB Rule A reads the new checkbox line of a CodeRabbit review.** Closes #903.
+Touches: `scripts/bot-approval.jq` (`topRe`: the optional checkbox line after `---`), `test/bot-approval.test.mjs` and `test/land-review.test.mjs` (new cases and fixtures), `skills/pr-pipeline/SKILL.md` (the land paragraph about rule A: one sentence).
 Acceptance:
-1. `test/bot-approval.test.mjs` has a case built from the real body of CodeRabbit review 6071386294 on #902 (the autofix checkbox block, "Actionable comments posted: 1", the "Prompt to fix all issues" details and the Review info block). With its one inline Minor finding answered by the pipeline user, rule A passes it. Without the change, the same case prints "has text outside the frame of a review". A copy of the body with one more line of text after the checkbox line is still refused with that message.
+1. `test/bot-approval.test.mjs` has a case built from the real body of CodeRabbit review 6071386294 on #902 (the autofix checkbox block, "Actionable comments posted: 1", the "Prompt to fix all issues" details and the Review info block). Its one inline Minor finding is answered by the pipeline user with a line that has the answer form: `#N` or `Note, not filed:`. Rule A passes it and prints the bot as a clean review. Without the change, the same case prints "has text outside the frame of a review". A copy of the body with one more line of text after the checkbox line is still refused with that message.
 2. The old checkbox line ("Fix comments: Fix CodeRabbit comments on this PR") still passes, and every existing bot-approval case still passes.
-3. `test/land-review.test.mjs` has a case where the head is REVIEWED, rule A refuses only because the review is on the head and its findings were answered with no new push, and `land-wave.sh --person --review` asks for one fresh review of that head through `scripts/request-review.sh` before it stops. A second land call on the same head with the same review asks for none (the limit of two requests per head of `request-review.sh` is unchanged). A head with an unanswered finding asks for none.
+3. `test/land-review.test.mjs` has the case of #902 with the count of requests after the push at 1: one request comment after the push, a bot run that started after the request, and a review of the head with the new checkbox line and a `Note, not filed:` answer. `land-wave.sh --review` merges, with exactly one request POST in the whole fixture (the request that was already there; the script posts none). The same case with the old rule A fails with the "outside the frame" message. A head with an unanswered finding in the same fixture does not merge.
 Invariants:
 - Rule A still refuses any text outside the frame. The frame gets exactly one more form of the checkbox line, and nothing else.
 - "Answered" still counts only on an older commit. A review on the head clears the gate only when rule A passes it.
-- A fresh review request goes only through `scripts/request-review.sh`, with its limits of one request per 64 minutes for the repo and two per head.
-- The land step never merges because of a request. It merges only when a later review clears the gate.
-QA: read-only, no merge. Run `scripts/bot-approval.jq` through `scripts/merge-pr.sh`'s check path (or the test helper that runs it) on the real answers of `gh api repos/alfhen/agent-pr-pipeline/pulls/902/reviews` and `.../comments` for head a7eb981. It passes rule A with the change and prints the "outside the frame" message without it.
+- `scripts/request-review.sh` and `scripts/land-wave.sh` are not changed, and the limits of one request per 64 minutes for the repo and two per head stay.
+- The land step never merges because of a request. It merges only when a review clears the gate.
+QA: read-only, no merge. Fetch `gh api repos/alfhen/agent-pr-pipeline/pulls/902/reviews`, `.../pulls/902/comments`, `.../issues/902/comments`, and the check runs and suites of commit a7eb981 (the head of that review; the head of #902 is now another commit, so use head a7eb981 in the helper input). Run `scripts/bot-approval.jq` on them with `--arg why 1`. Without the change it prints "review 6071386294 has text outside the frame of a review". With the change it prints "review 6071386294 has an inline finding with no answer of the user", because the real reply ("Valid. ... Fixed in c4b11b1.") has no `#N` and no `Note, not filed:`. With that one reply replaced by `Note, not filed: <reason>`, it prints `coderabbitai[bot] (clean review)`. Then feed the same data through `test/fake-gh` to `scripts/land-wave.sh --review` with no merge and no POST, and expect the same two results as the land output.
