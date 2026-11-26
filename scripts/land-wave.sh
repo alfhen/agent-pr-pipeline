@@ -155,7 +155,7 @@ green_parents() {
     return 1
   fi
   for p in "${pa[@]}"; do
-    pruns=$(gh api --paginate "repos/$R/commits/$p/check-runs?per_page=100" 2>/dev/null) || { gp_cause="read failed"; return 1; }
+    pruns=$(gh api --paginate "repos/$R/commits/$p/check-runs?filter=all&per_page=100" 2>/dev/null) || { gp_cause="read failed"; return 1; }
     pruns=$(jq -s -c '[.[].check_runs[] | {name, status, conclusion}]' <<<"$pruns" 2>/dev/null) || { gp_cause="read failed"; return 1; }
     while IFS= read -r n; do
       v=$(jq -r --arg n "$n" '[.[] | select(.name == $n)] as $m

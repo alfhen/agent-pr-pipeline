@@ -779,7 +779,7 @@ test('land: a failing check on a merge head with green parents is rerun once and
   assert.doesNotMatch(r.out, /known flake\(s\)/)
   assert.doesNotMatch(r.out, /NO RERUN/)
   assert.equal(r.log.filter((l) => /^PUT .*\/pulls\/7\/merge/.test(l)).length, 1)
-  for (const l of [`GET /repos/o/r/commits/${SHA}`, 'GET /repos/o/r/branches/main', `GET /repos/o/r/commits/${P0}/check-runs`]) assert.ok(r.log.some((x) => x.startsWith(l)), l)
+  for (const l of [`GET /repos/o/r/commits/${SHA}`, 'GET /repos/o/r/branches/main', `GET /repos/o/r/commits/${P0}/check-runs?filter=all`]) assert.ok(r.log.some((x) => x.startsWith(l)), l)
 })
 
 test('land: a check that fails again after the green-parents rerun stops with LAND FIX', () => {
