@@ -916,7 +916,8 @@ test('land: a failed read of a parent, the head commit or the default branch hea
 
 test('land: a failed or pending lint run of a parent does not block the rerun of ci', () => {
   for (const lint of [{ ...passed('lint'), conclusion: 'failure' }, { name: 'lint', status: 'in_progress', conclusion: null }]) {
-    const s = gpSetup({ parentChecks: [passed('ci'), passed('CodeRabbit'), lint] })
+    const s = gpSetup()
+    put(s.fx, parentRuns(P0), { check_runs: [passed('ci'), passed('CodeRabbit'), lint] })
     assert.ok(readJson(s, parentRuns(P0)).check_runs.some((c) => c.name === 'lint' && c.conclusion !== 'success'))
     const r = land(s)
     assert.equal(r.code, 0, r.out)
@@ -955,7 +956,7 @@ const real805 = () => JSON.parse(readFileSync(join(root, 'test/fixtures/clean-re
 test('land: the saved real check runs of PR 805 as the runs of both parents are rerun once', () => {
   const r = land(gpSetup({ parentChecks: real805() }))
   assert.equal(r.code, 0, r.out)
-  assert.match(r.out, /RERUN #7: green parents [0-9a-f]{7} [0-9a-f]{7}/)
+  assert.match(r.out, /RERUN #7: green parents 1111111 2222222/)
   assert.equal(reruns(r).length, 1)
 })
 

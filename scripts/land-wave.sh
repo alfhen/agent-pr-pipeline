@@ -118,7 +118,7 @@ read_default_settings() {
   fi
 }
 # The details_url of a check run is text the writing App chooses, so a run id counts only from a github.com URL of this repo.
-runid_def='def runid($r): (.details_url // "") | select(startswith("https://github.com/" + $r + "/actions/runs/")) | ltrimstr("https://github.com/" + $r + "/actions/runs/") | capture("^(?<id>[0-9]+)(/|$)").id;'
+runid_def='def runid($r): ("https://github.com/" + ($r | ascii_downcase) + "/actions/runs/") as $p | (.details_url // "" | ascii_downcase) | select(startswith($p)) | ltrimstr($p) | capture("^(?<id>[0-9]+)(/|$)").id;'
 # Prints "<run_attempt|none> <head_sha>" of Actions run $1; fails when the read fails.
 run_info() { gh api "repos/$R/actions/runs/$1" --jq '"\(.run_attempt // "none") \(.head_sha // "none")"' 2>/dev/null; }
 # Prints the run ids to rerun when every failing check is a known flake, else nothing. Any doubt means no rerun.
@@ -137,7 +137,7 @@ flake_runs() {
 # Green: the head is a merge of the default branch head (second parent) into the previous head (first parent), and each parent
 # has runs of each failed check name, all completed with the conclusion success. Any doubt, or a failed read, means no rerun.
 green_parents() {
-  local base bsha ps pa n p pruns v id att rsha nm names
+  local base bsha ps pa n p pruns v id att rsha nm names info
   gp_ids=""; gp_cause=""
   if [ "$(jq '(.failedStatuses // []) | length' <<<"$ci")" != 0 ]; then gp_cause="commit status failed"; return 1; fi
   nm=$(jq -r --arg r "$R" "$runid_def"'[.failedRuns[] | select(([runid($r)] | length) == 0) | .name] | first // empty' <<<"$ci" 2>/dev/null) || { gp_cause="read failed"; return 1; }
@@ -169,7 +169,8 @@ green_parents() {
     done <<<"$names"
   done
   for id in $gp_ids; do
-    read -r att rsha <<<"$(run_info "$id")" || { gp_cause="read failed"; return 1; }
+    info=$(run_info "$id") || { gp_cause="read failed"; return 1; }
+    read -r att rsha <<<"$info"
     [ "$att" != none ] || { gp_cause="failed check is not an Actions run"; return 1; }
     [ "$att" = 1 ] || { gp_cause="run_attempt is not 1"; return 1; }
     [ "$rsha" = "$sha" ] || { gp_cause="failed check is not an Actions run"; return 1; }
