@@ -951,6 +951,8 @@ test('rule A refuses a prompt block of the pr909 review with a section other tha
     ['Failed pre-merge checks', (b) => b.replace('\n\nAfter applying the fix', '\n\nFailed pre-merge checks:\n- Title check:\nUse a shorter title.\n\nAfter applying the fix')],
     // A section placed after the text of a check.
     ['Inline comments', (b) => b.replace('current title.\n', 'current title.\nInline comments:\n- foo.js:10: Fix the null input.\n')],
+    // A header with digits and parentheses must end the check text too.
+    ['Inline comments (1)', (b) => b.replace('current title.\n', 'current title.\nInline comments (1):\n- foo.js:10: Fix the null input.\n')],
   ]
   for (const [name, f] of cases) {
     const x = run(body909(f))
