@@ -1,5 +1,5 @@
 {
-  "note": "Real answers of PR 909 at 81139d3, cut to the fields the gate reads; no change. The bot review 6080765634 is COMMENTED with no inline comment and no count line: its text is the prompt block (two failed pre-merge checks) and the review info. The run, the request, green CI and the push time are as the fourth way needs them, so the gate reaches rule A. The answer comment of the user for this head is real and lists the review on its second line (<!-- pipeline-reviews 6080765634 -->), so rule A clears the review.",
+  "note": "Real answers of PR 909 at 81139d3, cut to the fields the gate reads; no change. The bot review 6080765634 is COMMENTED with no inline comment and no count line: its text is the prompt block (two failed pre-merge checks) and the review info. The run, the request, green CI and the push time are as the fourth way needs them, so the gate reaches rule A. The answer comment of the user for this head is real and lists the review on its second line, so rule A clears the review.",
   "head": "81139d3939666c0082765a218e88afc6796b8af5",
   "user": "alfhen",
   "reviews": [
