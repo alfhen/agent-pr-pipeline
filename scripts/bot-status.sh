@@ -49,10 +49,10 @@ open=$(jq --arg user "$user" '. as $in | def answered($t): any($in.comments[]; .
   [.comments[] | select(.in_reply_to_id == null and (.user.login | IN($in.bots[])) and (answered(.) | not))] | length' <<<"$input") || fail "cannot count the threads"
 pending=$(jq -c '. as $in | [.checks[] | select(.status != "completed" and (.app.slug // "") != "" and ((.app.slug + "[bot]") | IN($in.bots[]))) | .name]' <<<"$input") || fail "cannot list the running bot checks"
 answered=$(jq -c --arg prefix "<!-- pipeline-bot-answer head=$head -->" --arg user "$user" --arg all 1 -f "$here/trusted-comment.jq" <<<"$(jq -c .issueComments <<<"$input")") || fail "cannot read the answer comments"
-# The no-finding rule is in review-request.jq. A review counts unless a trusted answer comment lists its id on its second line.
+# The no-finding rule and the listing of review ids are in review-request.jq. A review counts unless a trusted answer comment lists its id.
 bodies=$(jq -L "$here" --arg head "$head" --argjson answered "$answered" 'include "review-request";
   . as $in
-  | [$answered[] | split("\n")[1] // "" | rtrimstr("\r") | capture("^<!-- pipeline-reviews (?<ids>[0-9]+(,[0-9]+)*) -->$") | .ids | split(",")[]] as $listed
+  | listedReviewIds($answered) as $listed
   | [.reviews[] | select(.commit_id == $head and (.user.login | IN($in.bots[]))) | select((.id | tostring) as $id | $listed | index($id) | not) | (.body // "" | stripComments) as $b
     | select(($b | length) > 0 and ($b | nofinding | not))] | length' <<<"$input") || fail "cannot count the review bodies"
 jq -n -c --arg head "$head" --argjson approved "$approved" --argjson seen "$seen" --argjson finished "$finished" --argjson pending "$pending" --argjson open "$open" --argjson bodies "$bodies" '{head: $head, approvedBy: $approved, seenHead: $seen, finishedOnHead: $finished, pending: $pending, openThreads: $open, reviewBodies: $bodies}'

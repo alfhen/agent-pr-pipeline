@@ -1,5 +1,5 @@
 // The fourth way to clear the gate: a clean CodeRabbit review that the session asked for. Runs scripts/merge-pr.sh and
-// scripts/bot-status.sh against test/fake-gh with fixtures from test/fixtures/clean-review/ (real answers of PRs 793, 794, 800, 801, 804 and 805, and one made fixture).
+// scripts/bot-status.sh against test/fake-gh with fixtures from test/fixtures/clean-review/ (real answers of PRs 793, 794, 800, 801, 804, 805 and 909, and one made fixture).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -20,6 +20,7 @@ const pr800 = () => fixture('pr800-3ecb04e.json')
 const pr801 = () => fixture('pr801-da0b70d.json')
 const pr804 = () => fixture('pr804-f57c99a.json')
 const pr805 = () => fixture('pr805-f36bb8e.json')
+const pr909 = () => fixture('pr909-81139d3.json')
 const nit823 = () => fixture('made-pr823-c48a68f.json')
 const mut = (base, f) => { const fx = base(); f(fx); return fx }
 const botRun = (fx) => fx.checks.find((c) => c.app.slug === 'coderabbitai' && c.conclusion === 'success')
@@ -618,7 +619,7 @@ test('rule A refuses a review with no count line, also when the rest of its text
     fx.comments.push({ id: 9, user: { login: 'alfhen' }, in_reply_to_id: 8, pull_request_review_id: 7, body: 'Note, not filed: made reply for the test.', created_at: '2026-11-15T01:59:00Z' })
   })))
   const y = run(mut(pr793, (fx) => { botReview(fx).body = botReview(fx).body.replace('**Actionable comments posted: 2**\n\n', '') }))
-  refused(y, RULE_A); assert.match(y.why, /count/)
+  refused(y, RULE_A); assert.match(y.why, /has a section in its prompt block other than Failed pre-merge checks/)
   const z = run(mut(madeClean, (fx) => { botReview(fx).body = botReview(fx).body.replace('**Actionable comments posted: 1**', '**Actionable comments posted: 0**'); fx.comments = [] }))
   refused(z, RULE_A); assert.match(z.why, /count/)
 })
@@ -650,11 +651,11 @@ test('rule A cuts no picture element outside the summary of a frame block', () =
   for (const b of [pr793, pr800, pr801, pr805]) merged(run(b()))
 })
 
-test('a review whose raw body holds only frame comments is not an empty container and has no count line', () => {
+test('a review whose raw body holds only frame comments is not an empty container and has text outside the frame', () => {
   const x = run(mut(pr794, (fx) => {
     fx.reviews.push({ id: 99, user: { login: BOT }, state: 'COMMENTED', commit_id: fx.head, submitted_at: '2026-11-15T23:00:00Z', body: '<!-- coderabbit-ai-generated:v1 -->\n\n<!-- This is an auto-generated comment by CodeRabbit for review status -->' })
   }))
-  refused(x, RULE_A); assert.match(x.why, /count/)
+  refused(x, RULE_A); assert.match(x.why, /^clean review: rule A: review 99 has text outside the frame of a review, which rule A does not read$/)
   merged(run(pr805()))
 })
 
@@ -880,4 +881,114 @@ test('bot-status lists no clean review for a settings file or an unreadable list
   assert.equal(ok.log.split('\n').filter((l) => l.startsWith('GET /repos/o/r/pulls/7/files')).length, 1, ok.log)
   assert.deepEqual(lastJson(run(pr794(), { script: 'bot-status.sh', files: [{ filename: '.coderabbit.yaml' }] })).approvedBy, [])
   assert.deepEqual(lastJson(run(pr794(), { script: 'bot-status.sh', files: null })).approvedBy, [])
+})
+
+// Review 6080765634 of PR 909: no count line, no inline comment, and a prompt block that holds two failed pre-merge checks only.
+const ID909 = 6080765634
+const LIST909 = '<!-- pipeline-reviews 6080765634 -->'
+const NOLIST = /^clean review: rule A: review 6080765634 has no count line \(Actionable comments posted: N\) and no pipeline-reviews line of a trusted answer comment for the head lists it$/
+const review909 = (fx) => fx.reviews.find((r) => r.id === ID909)
+const answer909 = (fx) => fx.issueComments.find((c) => c.body.startsWith('<!-- pipeline-bot-answer head='))
+const body909 = (f) => mut(pr909, (fx) => { const r = review909(fx); const to = f(r.body); assert.notEqual(to, r.body); r.body = to })
+const ans909 = (f) => mut(pr909, (fx) => { const a = answer909(fx); const to = f(a.body); assert.notEqual(to, a.body); a.body = to })
+const inline909 = (login = BOT) => (fx) => {
+  fx.comments.push({ id: 7001, user: { login }, in_reply_to_id: null, pull_request_review_id: ID909, created_at: '2026-11-26T21:41:00Z', body: '<!-- coderabbit-ai-generated:v1 -->\n\n**<picture><img src="https://example.invalid/minor.svg" alt=""></picture> Minor** · **Quick win**\n\n**Pin the scope.**' })
+  fx.comments.push({ id: 7002, user: { login: fx.user }, in_reply_to_id: 7001, pull_request_review_id: 8000, created_at: '2026-11-26T21:41:30Z', body: 'Note, not filed: pinned.' })
+}
+const NOLIST_ANY = /no pipeline-reviews line of a trusted answer comment for the head lists it/
+const reviewBodies = (fx, scripts) => lastJson(run(fx, { script: 'bot-status.sh', scripts })).reviewBodies
+
+test('rule A clears a count-free review that holds only failed pre-merge checks when a trusted answer comment lists it', () => {
+  const fx0 = pr909()
+  const rv = review909(fx0)
+  assert.doesNotMatch(rv.body, /Actionable comments posted/)
+  assert.equal(fx0.comments.length, 0)
+  assert.equal(answer909(fx0).body.split('\n')[1], LIST909)
+  assert.equal(answer909(fx0).user.login, fx0.user)
+  assert.ok(request(fx0).created_at < botRun(fx0).started_at)
+  merged(run(fx0))
+  const x = run(fx0, { script: 'bot-status.sh' })
+  assert.deepEqual(lastJson(x).approvedBy, [`${BOT} (clean review)`], x.out)
+  assert.equal(lastJson(x).reviewBodies, 0)
+})
+
+test('rule A reads two ids on the pipeline-reviews line, in either order', () => {
+  merged(run(ans909((b) => b.replace('pipeline-reviews 6080765634 -->', 'pipeline-reviews 6080765634,6080765635 -->'))))
+  merged(run(ans909((b) => b.replace('pipeline-reviews 6080765634 -->', 'pipeline-reviews 6080765635,6080765634 -->'))))
+  refused(run(ans909((b) => b.replace('pipeline-reviews 6080765634 -->', 'pipeline-reviews 6080765635,6080765636 -->'))), RULE_A)
+})
+
+test('rule A refuses the pre-merge-only review when no trusted answer comment of the head lists it', () => {
+  const cases = {
+    'no pipeline-reviews line': ans909((b) => b.replace('\n' + LIST909, '')),
+    'another id': ans909((b) => b.replace('pipeline-reviews 6080765634', 'pipeline-reviews 6080765635')),
+    'line 3': ans909((b) => b.replace('\n<!-- pipeline-reviews', '\nAnswer.\n<!-- pipeline-reviews')),
+    'another head': ans909((b) => b.replace('head=81139d3939666c0082765a218e88afc6796b8af5', 'head=0000000000000000000000000000000000000000')),
+    'login of the bot': mut(pr909, (fx) => { answer909(fx).user.login = BOT }),
+    'login of someone': mut(pr909, (fx) => { answer909(fx).user.login = 'someone' }),
+    'no marker line': ans909((b) => b.replace('<!-- pipeline-bot-answer head=81139d3939666c0082765a218e88afc6796b8af5 -->\n', '')),
+  }
+  for (const [name, fx] of Object.entries(cases)) {
+    const x = run(fx)
+    refused(x, RULE_A); assert.match(x.why, NOLIST, name)
+  }
+})
+
+test('rule A refuses text outside the frame of the pr909 review, also when the answer comment lists it', () => {
+  const fx = body909((b) => b.replace('\n---\n', '\nAlso check the null input of foo.js line 10.\n\n---\n'))
+  assert.ok(answer909(fx).body.includes(LIST909))
+  const x = run(fx)
+  refused(x, RULE_A); assert.equal(x.why, 'clean review: rule A: review 6080765634 has text outside the frame of a review, which rule A does not read')
+})
+
+test('rule A refuses a prompt block of the pr909 review with a section other than one Failed pre-merge checks section', () => {
+  const OTHER = /^clean review: rule A: review 6080765634 has a section in its prompt block other than Failed pre-merge checks \(/
+  const cases = [
+    ['Inline comments', (b) => b.replace('Failed pre-merge checks:', 'Inline comments:\n- foo.js:10: Fix the null input.\n\nFailed pre-merge checks:')],
+    ['Nitpick comments', (b) => b.replace('\n\nAfter applying the fix', '\n\nNitpick comments:\n- foo.js:12: Rename x.\n\nAfter applying the fix')],
+    ['Outside diff comments', (b) => b.replace('\n\nAfter applying the fix', '\n\nOutside diff comments:\n- foo.js:12: Rename x.\n\nAfter applying the fix')],
+    ['---', (b) => b.replace('\n\nAfter applying the fix', '\n\n---\n\nAfter applying the fix')],
+    ['Failed pre-merge checks', (b) => b.replace('\n\nAfter applying the fix', '\n\nFailed pre-merge checks:\n- Title check:\nUse a shorter title.\n\nAfter applying the fix')],
+    // A section placed after the text of a check.
+    ['Inline comments', (b) => b.replace('current title.\n', 'current title.\nInline comments:\n- foo.js:10: Fix the null input.\n')],
+  ]
+  for (const [name, f] of cases) {
+    const x = run(body909(f))
+    refused(x, OTHER); assert.ok(x.why.includes('(' + name + ')'), x.why)
+  }
+  // No section, or free text the form does not have: an ordinary review with no count line.
+  const PLAIN = /^clean review: rule A: review 6080765634 has no count line \(Actionable comments posted: N\)/
+  refused(run(body909((b) => b.replace(/Failed pre-merge checks:[\s\S]*?\n\nAfter applying/, 'After applying'))), PLAIN)
+  refused(run(body909((b) => b.replace('\n\nAfter applying the fix', '\n\nFree text.\n\nAfter applying the fix'))), PLAIN)
+  refused(run(body909((b) => b.replace('Failed pre-merge checks:', 'Failed pre-merge checks:\n- foo.js:10: Fix the null input.\n'))), PLAIN)
+})
+
+test('rule A refuses a top-level inline comment of the bot on the pre-merge-only review, and ignores one of another login', () => {
+  const x = run(mut(pr909, inline909()))
+  refused(x, RULE_A); assert.equal(x.why, 'clean review: rule A: review 6080765634 has a top-level inline comment and no count line, which rule A does not read together')
+  merged(run(mut(pr909, inline909('someone'))))
+})
+
+test('rule A still refuses the review of PR 804 with no pipeline-reviews line, and clears a body with a count line and a failed pre-merge check', () => {
+  const fx0 = pr804()
+  assert.equal(fx0.issueComments.filter((c) => c.body.includes('<!-- pipeline-reviews')).length, 0)
+  const x = run(fx0)
+  refused(x, RULE_A); assert.match(x.why, /^clean review: rule A: review 5911879964 has no count line \(Actionable comments posted: N\)/)
+  assert.match(botReview(pr793()).body, /Failed pre-merge checks:/)
+  merged(run(pr793()))
+})
+
+test('the wait counts the pr909 review only when no trusted answer comment lists it', () => {
+  assert.equal(reviewBodies(pr909()), 0)
+  assert.equal(reviewBodies(ans909((b) => b.replace('\n' + LIST909, ''))), 1)
+})
+
+test('the pipeline-reviews parse is only in review-request.jq, and the wait and the gate read it from there', () => {
+  // Comment lines are left out: bot-status.sh describes the line in a comment.
+  const code = spawnSync('grep', ['-rn', '-F', '<!-- pipeline-reviews', join(root, 'scripts')], { encoding: 'utf8' }).stdout.trim().split('\n').filter((l) => l && !/^[^:]+:\d+:\s*#/.test(l))
+  assert.deepEqual([...new Set(code.map((l) => l.split(':')[0].split('/').at(-1)))], ['review-request.jq'])
+  const scripts = changedScripts('capture("^<!-- pipeline-reviews ', 'capture("^<!-- pipeline-reviewsX ')
+  refused(run(pr909(), { scripts }), NOLIST_ANY)
+  assert.equal(reviewBodies(pr909(), scripts), 1)
+  assert.equal(reviewBodies(pr909()), 0)
 })
