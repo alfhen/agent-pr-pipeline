@@ -2252,7 +2252,7 @@ async function runPRSteps(input) {
       if (!end.ok && !end.red) return stopped(end.reason, { ...facts(), headSha: end.head || a.headSha, ci: end.ci, approvedBy: end.approvedBy })
       if (end.openThreads > 0 || end.reviewBodies > 0) return stopped(`nothing was answered: ${end.openThreads} open threads and ${end.reviewBodies} review bodies remain after the answer agent${typeof a.answer.notes === 'string' && a.answer.notes.trim() ? `. Notes: ${a.answer.notes.replace(/\s+/g, ' ').trim()}`.slice(0, ANSWER_NOTES_CUT) : ''}`, { ...facts(), headSha: end.head })
       const landing = await landFor(pr, n, end.head)
-      if (landing.landRefused) return stopped(landing.landWhy, { ...facts(), headSha: end.head })
+      if (landing.landRefused) return stopped(landing.landWhy, { ...facts(), headSha: end.head, ci: end.ci, approvedBy: end.approvedBy, ...landStateOut(end) })
       if (end.red) return stopped(end.reason, { ...facts(), headSha: end.head, ci: end.ci, approvedBy: end.approvedBy, ...landStateOut(end), ...landing })
       return {
         id: pr.id, prNumber: n, ready: true, headSha: end.head, ...landing, untested: untestedOf(pr), notes: a.answer.notes,
@@ -2272,7 +2272,7 @@ async function runPRSteps(input) {
     const end = await endFacts(pr, n, b.headSha)
     if (!end.ok && !end.red) return stopped(end.reason, { headSha: end.head || b.headSha, codeChangedByBots: botCodeChanged(b), ci: end.ci, approvedBy: end.approvedBy, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     const landing = await landFor(pr, n, end.head)
-    if (landing.landRefused) return stopped(landing.landWhy, { headSha: end.head, codeChangedByBots: botCodeChanged(b), notes: r.notes, lateMinors, untested: untestedOf(pr) })
+    if (landing.landRefused) return stopped(landing.landWhy, { headSha: end.head, codeChangedByBots: botCodeChanged(b), ci: end.ci, approvedBy: end.approvedBy, ...landStateOut(end), notes: r.notes, lateMinors, untested: untestedOf(pr) })
     if (end.red) return stopped(end.reason, { headSha: end.head, codeChangedByBots: botCodeChanged(b), ci: end.ci, approvedBy: end.approvedBy, ...landStateOut(end), ...landing, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     return {
       id: pr.id, prNumber: n, ready: true, headSha: end.head, ...landing, untested: untestedOf(pr), notes: r.notes,
