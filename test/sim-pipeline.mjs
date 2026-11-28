@@ -7713,6 +7713,7 @@ await check('an answer run for a quick fix whose stored brief is missing stops w
   assert.equal(get.length, 1)
   assert.equal(res.Q896.ready, false)
   assert.match(res.Q896.reason, /^quick brief not found/)
+  assert.ok(res.Q896.reason.includes('no trusted brief on issue 896'), res.Q896.reason)
   assert.ok(!calls.some(c => aqNoBuild.test(c.label) || c.label.startsWith('botanswer:')), calls.map(c => c.label).join(' '))
 })
 
@@ -7725,9 +7726,9 @@ await check('two answer items of quick fixes with the same touched file both run
     assert.equal(res[id].ready, true, res[id].reason)
     assert.ok(!String(res[id].reason || '').includes('touches overlap'))
   }
-  briefs.QP1 = briefs.QP2 = AQ_BRIEF
+  briefs.Q1 = briefs.Q2 = AQ_BRIEF
   try {
-    const plain = await simulate({ ...quickBase, prs: ['QP1', 'QP2'].map((id, i) => ({ id, quick: { issue: 200 + i }, branch: `fix/${id}` })) })
-    assert.equal(plain.QP2.reason, 'quick fix: touches overlap with QP1 (src/aq.js); run it in a later wave')
-  } finally { delete briefs.QP1; delete briefs.QP2 }
+    const plain = await simulate({ ...quickBase, prs: [aqItem('Q1', 1), aqItem('Q2', 2)].map(it => ({ ...it, answer: undefined })) })
+    assert.equal(plain.Q2.reason, 'quick fix: touches overlap with Q1 (src/aq.js); run it in a later wave')
+  } finally { delete briefs.Q1; delete briefs.Q2 }
 })

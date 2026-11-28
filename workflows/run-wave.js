@@ -85,17 +85,17 @@ const STEPS = Object.assign({
 if (!REPO || !TMP || !Array.isArray(A.prs)) throw new Error('args needs repo, tmp, plan and prs')
 if (!PLAN && !A.prs.every(pr => pr.quick)) throw new Error('args needs plan, unless every PR is a quick fix')
 for (const pr of A.prs) {
-  if (!pr.answer) continue
-  if (!Number.isInteger(pr.prNumber) || pr.prNumber < 1) throw new Error(`prs[${pr.id}].answer needs prNumber: the PR to answer`)
-  for (const field of ['landFix', 'resume', 'skipImpl']) if (pr[field]) throw new Error(`prs[${pr.id}].answer cannot be combined with ${field}`)
-}
-for (const pr of A.prs) {
   if (!pr.quick) continue
   if (!Number.isInteger(pr.quick.issue) || pr.quick.issue < 1) throw new Error(`prs[${pr.id}].quick needs issue: the issue number`)
   pr.id = pr.id || `Q${pr.quick.issue}`
   pr.branch = pr.branch || `fix/issue-${pr.quick.issue}`
   pr.titleFromIssue = !pr.title
   pr.title = pr.title || `Quick fix for issue #${pr.quick.issue}`
+}
+for (const pr of A.prs) {
+  if (!pr.answer) continue
+  if (!Number.isInteger(pr.prNumber) || pr.prNumber < 1) throw new Error(`prs[${pr.id}].answer needs prNumber: the PR to answer`)
+  for (const field of ['landFix', 'resume', 'skipImpl']) if (pr[field]) throw new Error(`prs[${pr.id}].answer cannot be combined with ${field}`)
 }
 // prs[].evals is the raw input: it moves to evalsIn so no prompt shows a list that is not accepted. pr.evals is set only by runPRSteps.
 for (const pr of A.prs) { pr.evalsIn = pr.evals; delete pr.evals }
