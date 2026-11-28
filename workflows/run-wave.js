@@ -85,17 +85,17 @@ const STEPS = Object.assign({
 if (!REPO || !TMP || !Array.isArray(A.prs)) throw new Error('args needs repo, tmp, plan and prs')
 if (!PLAN && !A.prs.every(pr => pr.quick)) throw new Error('args needs plan, unless every PR is a quick fix')
 for (const pr of A.prs) {
-  if (!pr.answer) continue
-  if (!Number.isInteger(pr.prNumber) || pr.prNumber < 1) throw new Error(`prs[${pr.id}].answer needs prNumber: the PR to answer`)
-  for (const field of ['landFix', 'resume', 'skipImpl', 'quick']) if (pr[field]) throw new Error(`prs[${pr.id}].answer cannot be combined with ${field}`)
-}
-for (const pr of A.prs) {
   if (!pr.quick) continue
   if (!Number.isInteger(pr.quick.issue) || pr.quick.issue < 1) throw new Error(`prs[${pr.id}].quick needs issue: the issue number`)
   pr.id = pr.id || `Q${pr.quick.issue}`
   pr.branch = pr.branch || `fix/issue-${pr.quick.issue}`
   pr.titleFromIssue = !pr.title
   pr.title = pr.title || `Quick fix for issue #${pr.quick.issue}`
+}
+for (const pr of A.prs) {
+  if (!pr.answer) continue
+  if (!Number.isInteger(pr.prNumber) || pr.prNumber < 1) throw new Error(`prs[${pr.id}].answer needs prNumber: the PR to answer`)
+  for (const field of ['landFix', 'resume', 'skipImpl']) if (pr[field]) throw new Error(`prs[${pr.id}].answer cannot be combined with ${field}`)
 }
 // prs[].evals is the raw input: it moves to evalsIn so no prompt shows a list that is not accepted. pr.evals is set only by runPRSteps.
 for (const pr of A.prs) { pr.evalsIn = pr.evals; delete pr.evals }
@@ -1260,7 +1260,7 @@ const EDITED = 'quick brief edited by a person'
 async function quickSetup(pr) {
   const stop = (reason, more) => ({ stop: { id: pr.id, ready: false, reason, ...more } })
   if (!PLUGIN_ROOT) return stop('pluginRoot missing: a quick fix needs it to run the brief script')
-  const rerun = !!(pr.skipImpl || pr.resume || pr.landFix)
+  const rerun = !!(pr.skipImpl || pr.resume || pr.landFix || pr.answer)
   const got = await ioCall(pr, `io:${pr.id}#get`, 'quick-brief.sh', `${briefArgs(pr, 'get')} --clear ${briefDir(pr)}`)
   if (got && got.exitCode === 0 && got.output.trim()) return { pr: withBrief(pr, got.output.trim()), minors: [], product: null, triage: null }
   if (got && got.exitCode === 4) return stop(EDITED)
@@ -2491,7 +2491,7 @@ await parallel(A.prs.filter(pr => pr.quick).map(pr => async () => { setupOf[pr.i
 const building = []
 for (const pr of A.prs) {
   const q = setupOf[pr.id]
-  if (!q || q.stop) continue
+  if (!q || q.stop || pr.answer) continue
   const paths = touchesOf(q.pr.quickState.brief)
   const other = building.find(b => b.paths.some(p => paths.includes(p)))
   if (other) {
