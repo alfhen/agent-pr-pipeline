@@ -795,14 +795,14 @@ test('land: a merge head with a red parent is not rerun', () => {
   const s = gpSetup()
   put(s.fx, parentRuns(P0), { check_runs: [{ ...passed('ci'), conclusion: 'failure' }, passed('CodeRabbit')] })
   assert.equal(ciOf(s, P0)[0].conclusion, 'failure')
-  refused(land(s), /^NO RERUN #7: parent 1111111 is failure$/)
+  refused(land(s), /^NO RERUN #7: parent 1111111 is failure; cannot read the jobs of run 55$/)
 })
 
 test('land: a merge head with a parent that has a success and a failure run of the same check is not rerun', () => {
   const s = gpSetup()
   put(s.fx, parentRuns(P0), { check_runs: [passed('ci'), { ...passed('ci'), conclusion: 'failure' }, passed('CodeRabbit')] })
   assert.deepEqual(ciOf(s, P0).map((c) => c.conclusion), ['success', 'failure'])
-  refused(land(s), /^NO RERUN #7: parent 1111111 is failure$/)
+  refused(land(s), /^NO RERUN #7: parent 1111111 is failure; cannot read the jobs of run 55$/)
 })
 
 test('land: a head with a failed commit status is not rerun', () => {
@@ -814,9 +814,9 @@ test('land: a head with a failed commit status is not rerun', () => {
 
 test('land: a failed run with run_attempt 2 is not rerun by the green-parents path', () => {
   const s = gpSetup()
-  put(s.fx, `${P}__actions__runs__55.json`, { run_attempt: 2 })
+  put(s.fx, `${P}__actions__runs__55.json`, { run_attempt: 2, head_sha: SHA })
   assert.equal(readJson(s, `${P}__actions__runs__55.json`).run_attempt, 2)
-  refused(land(s), /^NO RERUN #7: run_attempt is not 1$/)
+  refused(land(s), /^NO RERUN #7: run_attempt is not 1; run 55 has run_attempt 2$/)
 })
 
 test('land: a failed check with no Actions run id is not rerun', () => {
@@ -844,40 +844,40 @@ test('land: a merged-in parent that differs from the default branch head by one 
   const s = gpSetup({ base })
   assert.notEqual(readJson(s, `${P}__branches__main.json`).commit.sha, P1)
   assert.equal(base.length, P1.length)
-  refused(land(s), /^NO RERUN #7: no parent is the default branch head$/)
+  refused(land(s), /^NO RERUN #7: no parent is the default branch head; cannot read the jobs of run 55$/)
 })
 
 test('land: a head whose first parent is the default branch head is not rerun', () => {
   const s = gpSetup({ parents: [P1, P0] })
   assert.equal(readJson(s, `${COMMITS}${SHA}.json`).parents[0].sha, readJson(s, `${P}__branches__main.json`).commit.sha)
-  refused(land(s), /^NO RERUN #7: first parent is the default branch head$/)
+  refused(land(s), /^NO RERUN #7: first parent is the default branch head; cannot read the jobs of run 55$/)
 })
 
 test('land: a head with one parent is not rerun', () => {
   const s = gpSetup({ parents: [P0] })
   assert.equal(readJson(s, `${COMMITS}${SHA}.json`).parents.length, 1)
-  refused(land(s), /^NO RERUN #7: head does not have two parents$/)
+  refused(land(s), /^NO RERUN #7: head does not have two parents; cannot read the jobs of run 55$/)
 })
 
 test('land: a merge head with a pending parent is not rerun', () => {
   const s = gpSetup()
   put(s.fx, parentRuns(P1), { check_runs: [{ name: 'ci', status: 'in_progress', conclusion: null }, passed('CodeRabbit')] })
   assert.equal(ciOf(s, P1)[0].status, 'in_progress')
-  refused(land(s), /^NO RERUN #7: parent 2222222 is pending$/)
+  refused(land(s), /^NO RERUN #7: parent 2222222 is pending; cannot read the jobs of run 55$/)
 })
 
 test('land: a merge head with a parent that has no check runs is not rerun', () => {
   const s = gpSetup()
   put(s.fx, parentRuns(P0), { check_runs: [] })
   assert.deepEqual(readJson(s, parentRuns(P0)).check_runs, [])
-  refused(land(s), /^NO RERUN #7: parent 1111111 has no runs$/)
+  refused(land(s), /^NO RERUN #7: parent 1111111 has no runs; cannot read the jobs of run 55$/)
 })
 
 test('land: a merge head with a parent that has only a bot run is not rerun', () => {
   const s = gpSetup()
   put(s.fx, parentRuns(P0), { check_runs: [passed('CodeRabbit')] })
   assert.equal(ciOf(s, P0).length, 0)
-  refused(land(s), /^NO RERUN #7: parent 1111111 has no run of ci$/)
+  refused(land(s), /^NO RERUN #7: parent 1111111 has no run of ci; cannot read the jobs of run 55$/)
 })
 
 for (const conclusion of ['skipped', 'cancelled', 'timed_out']) {
@@ -886,7 +886,7 @@ for (const conclusion of ['skipped', 'cancelled', 'timed_out']) {
     put(s.fx, parentRuns(P0), { check_runs: [{ ...passed('ci'), conclusion }, passed('CodeRabbit')] })
     assert.equal(ciOf(s, P0)[0].conclusion, conclusion)
     const r = land(s)
-    refused(r, /^NO RERUN #7: parent 1111111 run of ci did not succeed$/)
+    refused(r, /^NO RERUN #7: parent 1111111 run of ci did not succeed; cannot read the jobs of run 55$/)
     assert.doesNotMatch(r.out, /is failure/)
   })
 }
@@ -895,7 +895,7 @@ test('land: a matrix check name with no run of the same full name on a parent is
   const s = gpSetup({ name: 'ci (1/2)' })
   put(s.fx, parentRuns(P1), { check_runs: [passed('ci (2/2)'), passed('CodeRabbit')] })
   assert.equal(readJson(s, parentRuns(P1)).check_runs.some((c) => c.name === 'ci (1/2)'), false)
-  refused(land(s), /^NO RERUN #7: parent 2222222 has no run of ci \(1\/2\)$/)
+  refused(land(s), /^NO RERUN #7: parent 2222222 has no run of ci \(1\/2\); cannot read the jobs of run 55$/)
 })
 
 test('land: a matrix check with green parents of the same full name is rerun once', () => {
@@ -910,7 +910,7 @@ test('land: a failed read of a parent, the head commit or the default branch hea
     const s = gpSetup()
     put(s.fx, `${path}.GET.error`, 'HTTP 500')
     assert.ok(existsSync(join(s.fx, `${path}.GET.error`)))
-    refused(land(s), /^NO RERUN #7: read failed$/)
+    refused(land(s), /^NO RERUN #7: read failed; cannot read the jobs of run 55$/)
   }
 })
 
@@ -941,7 +941,7 @@ test('land: the default branch head is read from the branch the repo names as de
   put(s.fx, `${P}.json`, { default_branch: 'trunk' })
   put(s.fx, `${P}__branches__trunk.json`, { commit: { sha: '3'.repeat(40) } })
   const r = land(s)
-  refused(r, /^NO RERUN #7: no parent is the default branch head$/)
+  refused(r, /^NO RERUN #7: no parent is the default branch head; cannot read the jobs of run 55$/)
   assert.ok(r.log.some((l) => /^GET \/repos\/o\/r\/branches\/trunk/.test(l)), r.log.join('\n'))
   const s2 = gpSetup()
   put(s2.fx, `${P}.json`, { default_branch: 'trunk' })
@@ -968,7 +968,7 @@ test('land: the saved real check runs of PR 805 with a failed ci run on one of t
   assert.equal(copy.find((c) => c.name === 'ci').conclusion, 'failure')
   const s = gpSetup({ parentChecks: checks })
   put(s.fx, parentRuns(P0), { check_runs: copy })
-  refused(land(s), /^NO RERUN #7: parent 1111111 is failure$/)
+  refused(land(s), /^NO RERUN #7: parent 1111111 is failure; cannot read the jobs of run 55$/)
 })
 
 test('land: a failed check whose Actions run belongs to another head is not rerun', () => {

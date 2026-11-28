@@ -55,16 +55,25 @@ const env = (s, extra = {}) => {
   delete e.CLAUDECODE
   return e
 }
-const runIt = (s, extra) => spawnSync('bash', [s.run], { env: env(s, extra), encoding: 'utf8' })
+const logNames = s => {
+  const dir = join(s.guard, 'logs')
+  return existsSync(dir) ? readdirSync(dir).filter(n => n.endsWith('.log')) : []
+}
+// Remember the logs before the run, so newestLog reads what the run added and not a name that sorts last.
+const runIt = (s, extra) => {
+  s.logsBefore = new Set(logNames(s))
+  return spawnSync('bash', [s.run], { env: env(s, extra), encoding: 'utf8' })
+}
 const gh = (s, args, extra) => {
   const before = lines(s.ghLog).length
   const r = spawnSync('bash', [s.wrapper, ...args], { env: env(s, extra), encoding: 'utf8' })
   return { code: r.status, err: r.stderr, out: r.stdout, calls: lines(s.ghLog).slice(before) }
 }
 const newestLog = s => {
-  const dir = join(s.guard, 'logs')
-  const names = readdirSync(dir).filter(n => n.endsWith('.log')).sort()
-  return lines(join(dir, names.at(-1)))
+  assert.ok(s.logsBefore, 'newestLog needs a runIt call before it')
+  const added = logNames(s).filter(n => !s.logsBefore.has(n))
+  assert.equal(added.length, 1, `the last run added ${added.length} logs, expected 1`)
+  return lines(join(s.guard, 'logs', added[0]))
 }
 const started = s => lines(s.claudeLog).length
 
@@ -277,6 +286,13 @@ test('in observe a second run with the same next output starts no claude, and a 
   assert.match(newestLog(s).join('\n'), /same work as the last run/)
   writeFileSync(join(s.dir, 'next.out'), '{"step":"triage","issues":[7,8]}')
   runIt(s); assert.equal(started(s), 2, 'changed output')
+})
+
+test('newestLog reads the log the last run added, not the name that sorts last', () => {
+  const s = setup({ mode: 'observe' })
+  writeFileSync(join(s.guard, 'logs', '99991231T235959Z-1.log'), 'planted\n')
+  runIt(s)
+  assert.match(newestLog(s)[0], /agent-pr-pipeline 9\.9\.9 repo o\/r/)
 })
 
 test('in observe a failed session is tried again on the next run', () => {
