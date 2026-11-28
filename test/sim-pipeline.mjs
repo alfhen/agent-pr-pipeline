@@ -7455,8 +7455,8 @@ await check("RW-13b an answer run that stops with counts above 0 holds the answe
   assert.doesNotMatch(c.reason, /undefined/)
   assert.equal(c.reason, base)
 })
-await check('RW-14 an answer item without prNumber, or with landFix, resume, skipImpl or quick, throws before any agent', async () => {
-  const bad = [[rwItem({ prNumber: undefined }), 'prNumber'], [rwItem({ landFix: true }), 'landFix'], [rwItem({ resume: { history: [] } }), 'resume'], [rwItem({ skipImpl: true }), 'skipImpl'], [rwItem({ quick: { issue: 5 } }), 'quick']]
+await check('RW-14 an answer item without prNumber, or with landFix, resume or skipImpl, throws before any agent', async () => {
+  const bad = [[rwItem({ prNumber: undefined }), 'prNumber'], [rwItem({ landFix: true }), 'landFix'], [rwItem({ resume: { history: [] } }), 'resume'], [rwItem({ skipImpl: true }), 'skipImpl']]
   for (const [item, field] of bad) {
     await assert.rejects(simulate({ ...base, prs: [item] }), e => e.message.includes('AN') && e.message.includes(field), field)
     assert.deepEqual(calls, [])
@@ -7671,4 +7671,63 @@ await check('EW16-8 evalsRules has one real-input rule that the writer and both 
 await check('EW16-9 agents/evals-writer.md states the real-input rule', async () => {
   const t = readFileSync('agents/evals-writer.md', 'utf8')
   assert.ok(t.split(/\n/).some(x => /real file/i.test(x) && /default branch/.test(x) && /behaviour/.test(x) && /error path/.test(x) && /notes/.test(x)))
+})
+
+// AQ: an answer run works for a quick-fix PR; its brief comes from the issue, never from a plan.
+const aqHead = 'c'.repeat(40)
+const aqItem = (id, issue) => ({ id, quick: { issue }, answer: true, prNumber: 800 + issue, headSha: aqHead, branch: `fix/${id}` })
+// rwHook answers for the id AN only, so each item's label is mapped to AN and its result goes back under the real label.
+const aqHook = (items, getOverride) => {
+  const inner = rwHook({ codeChanged: false, start: aqHead, answerHead: aqHead })
+  return (p, o) => {
+    if (getOverride && /^io:[^#]+#get$/.test(o.label)) return ioWrap(o.label, getOverride)
+    const m = /^([a-z]+):(\w+)(#.*)?$/.exec(o.label)
+    if (!m || !items.some(it => it.id === m[2])) return undefined
+    return inner(p, { ...o, label: `${m[1]}:AN${m[3] || ''}` })
+  }
+}
+const aqRun = async (items, stored, getOverride) => {
+  for (const it of items) briefs[it.id] = stored[it.id]
+  try {
+    const out = await hookedOut(items, aqHook(items, getOverride), { plan: undefined, botWaitMinutes: 0 })
+    return Object.fromEntries(out.prs.map(x => [x.id, x]))
+  } finally { for (const it of items) delete briefs[it.id] }
+}
+const AQ_BRIEF = 'Touches: src/aq.js\nAcceptance: a test for the answer run of a quick fix.\nRisk: low'
+const aqNoBuild = /^(triage|product|implement|evals|review|docs):/
+
+await check('an answer run for a quick fix reads the stored brief and answers the bots', async () => {
+  const res = await aqRun([aqItem('Q896', 896)], { Q896: AQ_BRIEF })
+  assert.equal(res.Q896.ready, true, res.Q896.reason)
+  const ans = calls.find(c => c.label === 'botanswer:Q896')
+  assert.ok(ans, 'the answer agent ran')
+  assert.ok(ans.prompt.includes(AQ_BRIEF))
+  assert.equal(calls.filter(c => c.label === 'io:Q896#get').length, 1)
+  assert.ok(!calls.some(c => aqNoBuild.test(c.label)), calls.map(c => c.label).join(' '))
+})
+
+await check('an answer run for a quick fix whose stored brief is missing stops without triage', async () => {
+  const miss = { exitCode: 1, output: 'quick-brief: no trusted brief on issue 896' }
+  const res = await aqRun([aqItem('Q896', 896)], { Q896: undefined }, miss)
+  const get = calls.filter(c => c.label === 'io:Q896#get')
+  assert.equal(get.length, 1)
+  assert.equal(res.Q896.ready, false)
+  assert.match(res.Q896.reason, /^quick brief not found/)
+  assert.ok(!calls.some(c => aqNoBuild.test(c.label) || c.label.startsWith('botanswer:')), calls.map(c => c.label).join(' '))
+})
+
+await check('two answer items of quick fixes with the same touched file both run, while the same items without answer overlap', async () => {
+  const stored = { Q1: AQ_BRIEF, Q2: AQ_BRIEF }
+  assert.ok(Object.values(stored).every(t => /^Touches: .*src\/aq\.js/m.test(t)))
+  const res = await aqRun([aqItem('Q1', 1), aqItem('Q2', 2)], stored)
+  for (const id of ['Q1', 'Q2']) {
+    assert.ok(calls.some(c => c.label === `botanswer:${id}`), id)
+    assert.equal(res[id].ready, true, res[id].reason)
+    assert.ok(!String(res[id].reason || '').includes('touches overlap'))
+  }
+  briefs.QP1 = briefs.QP2 = AQ_BRIEF
+  try {
+    const plain = await simulate({ ...quickBase, prs: ['QP1', 'QP2'].map((id, i) => ({ id, quick: { issue: 200 + i }, branch: `fix/${id}` })) })
+    assert.equal(plain.QP2.reason, 'quick fix: touches overlap with QP1 (src/aq.js); run it in a later wave')
+  } finally { delete briefs.QP1; delete briefs.QP2 }
 })

@@ -87,7 +87,7 @@ if (!PLAN && !A.prs.every(pr => pr.quick)) throw new Error('args needs plan, unl
 for (const pr of A.prs) {
   if (!pr.answer) continue
   if (!Number.isInteger(pr.prNumber) || pr.prNumber < 1) throw new Error(`prs[${pr.id}].answer needs prNumber: the PR to answer`)
-  for (const field of ['landFix', 'resume', 'skipImpl', 'quick']) if (pr[field]) throw new Error(`prs[${pr.id}].answer cannot be combined with ${field}`)
+  for (const field of ['landFix', 'resume', 'skipImpl']) if (pr[field]) throw new Error(`prs[${pr.id}].answer cannot be combined with ${field}`)
 }
 for (const pr of A.prs) {
   if (!pr.quick) continue
@@ -1260,7 +1260,7 @@ const EDITED = 'quick brief edited by a person'
 async function quickSetup(pr) {
   const stop = (reason, more) => ({ stop: { id: pr.id, ready: false, reason, ...more } })
   if (!PLUGIN_ROOT) return stop('pluginRoot missing: a quick fix needs it to run the brief script')
-  const rerun = !!(pr.skipImpl || pr.resume || pr.landFix)
+  const rerun = !!(pr.skipImpl || pr.resume || pr.landFix || pr.answer)
   const got = await ioCall(pr, `io:${pr.id}#get`, 'quick-brief.sh', `${briefArgs(pr, 'get')} --clear ${briefDir(pr)}`)
   if (got && got.exitCode === 0 && got.output.trim()) return { pr: withBrief(pr, got.output.trim()), minors: [], product: null, triage: null }
   if (got && got.exitCode === 4) return stop(EDITED)
@@ -2491,7 +2491,7 @@ await parallel(A.prs.filter(pr => pr.quick).map(pr => async () => { setupOf[pr.i
 const building = []
 for (const pr of A.prs) {
   const q = setupOf[pr.id]
-  if (!q || q.stop) continue
+  if (!q || q.stop || pr.answer) continue
   const paths = touchesOf(q.pr.quickState.brief)
   const other = building.find(b => b.paths.some(p => paths.includes(p)))
   if (other) {
