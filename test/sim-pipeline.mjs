@@ -7672,3 +7672,35 @@ await check('EW16-9 agents/evals-writer.md states the real-input rule', async ()
   const t = readFileSync('agents/evals-writer.md', 'utf8')
   assert.ok(t.split(/\n/).some(x => /real file/i.test(x) && /default branch/.test(x) && /behaviour/.test(x) && /error path/.test(x) && /notes/.test(x)))
 })
+
+// AH: an answer agent that finds a moved head stops the item.
+const AH_NEW = 'b'.repeat(40)
+const AH_PUSHED = 'c'.repeat(40)
+const ahRun = answer => rwRun(rwItem(), { hook: (p, o) => o.label === 'botanswer:AN' ? { codeChanged: true, headSha: RW_H, closesIssues: [], notes: 'n', worktree: '/wt/AN', ...answer } : undefined })
+const ahStopped = x => {
+  const l = rwLabels()
+  const at = l.indexOf('botanswer:AN')
+  assert.ok(at >= 0)
+  assert.equal(x.ready, false)
+  assert.ok(!l.slice(at + 1).some(y => /^(test|verify|botreview):AN/.test(y)), l.join(' '))
+}
+await check('an answer agent that finds a moved head stops the item', async () => {
+  const x = await ahRun({ headMoved: true, newHead: AH_NEW, expectedHead: RW_H })
+  ahStopped(x)
+  assert.equal(x.reason, `bot answer: head moved (${AH_NEW} is not the expected ${RW_H})`)
+  const y = await ahRun({ headMoved: false, newHead: AH_NEW, expectedHead: RW_H })
+  assert.ok(rwLabels().some(l => l === 'test:AN#bots1' || l === 'verify:AN#bots1'), rwLabels().join(' '))
+  assert.doesNotMatch(y.reason || '', /head moved/)
+})
+await check('an answer agent that pushed and then finds a different head stops the item', async () => {
+  const x = await ahRun({ headMoved: true, newHead: AH_NEW, expectedHead: AH_PUSHED })
+  ahStopped(x)
+  assert.equal(x.reason, `bot answer: head moved (${AH_NEW} is not the expected ${AH_PUSHED})`)
+  assert.ok(!x.reason.includes(RW_H))
+})
+await check('an answer agent that finds a moved head and gives no expectedHead stops with the pinned head', async () => {
+  const x = await ahRun({ headMoved: true, newHead: AH_NEW })
+  ahStopped(x)
+  assert.equal(x.reason, `bot answer: head moved (${AH_NEW} is not the expected ${RW_H})`)
+  assert.doesNotMatch(x.reason, /undefined/)
+})
