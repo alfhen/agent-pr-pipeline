@@ -11,6 +11,9 @@
 # Any other failed check is rerun once too, when the head is a merge of the default branch head (second parent) into the previous
 # head (first parent) and each parent has at least one run of each failed check name and every such run succeeded (green parents). A refusal prints
 # "NO RERUN #<pr>: <cause>" before LAND FIX. One land call reruns a head at most once.
+# Last, a failed job that failed in a setup or install step (or lost its runner) is rerun once (infra failure): every failed run of the head
+# must be on its first attempt and hold only such failed jobs (cancelled siblings of a matrix are allowed). When both paths refuse, one line
+# "NO RERUN #<pr>: <green-parents cause>; <infra cause>" is printed.
 # The key reviewOnRequest (true) in .github/pipeline.json on the default branch acts as --review, for a repo whose bot reviews only on request.
 # A settings file that cannot be read, or a value that is not a boolean, acts as false and prints one WARN line.
 # With --review, a PR that no bot has cleared (and has no open bot comment) first gets request-review.sh, which asks CodeRabbit for a
@@ -177,6 +180,46 @@ green_parents() {
   done
   gp_p0=${pa[0]}; gp_p1=${pa[1]}
 }
+# jq program for infra_runs: judges the jobs of one run. Prints "ok<TAB>job<TAB>step" or "no<TAB>cause". Names come from workflow files,
+# so control characters become spaces and a name cannot start a second output line.
+infra_jq='def clean: if type == "string" then explode | map(if . < 32 or (. >= 127 and . < 160) then 32 else . end) | implode | gsub("^ +| +$"; "") else "" end;
+  def fs: [(.steps // [])[] | select(.conclusion == "failure" or .conclusion == "cancelled")] | first;
+  def infra: fs as $s | $s == null or (($s.name // "") | ascii_downcase | test("^(set up|setup|install|checkout|run actions/checkout@|run actions/setup-|run actions/cache@)"));
+  [.[] | .jobs | arrays | .[]] as $j
+  | [$j[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled")] as $f
+  | if ($f | length) == 0 then "no\trun \($id) lists no failed job"
+    else ([$f[] | select(.conclusion == "timed_out" or (.conclusion == "failure" and (infra | not)))] | first) as $bad
+    | if $bad != null then
+        (if $bad.conclusion == "timed_out" then "no\trun \($id) job \($bad.name | clean) ended timed_out"
+         else "no\trun \($id) job \($bad.name | clean) failed in step \($bad | fs | .name | clean)" end)
+      else ([$f[] | select(.conclusion == "failure")] | first) as $i
+      | if $i == null then "no\trun \($id) job \($f[0].name | clean) ended cancelled"
+        else "ok\t\($i.name | clean)\t\($i | fs | if . == null then "(no failed step)" else .name | clean end)" end
+      end
+    end'
+# Returns 0 and sets ir_ids ir_job ir_step when the head may be rerun because every failed run failed only in setup or install steps
+# (see choice 4 of plan 0.10.4); else sets ir_cause and returns 1. The run ids come from the failed checks, never from green_parents.
+infra_runs() {
+  local id info att rsha raw verdict tag a b nm
+  ir_ids=""; ir_job=""; ir_step=""; ir_cause=""
+  [ "$(jq '(.failedStatuses // []) | length' <<<"$ci")" = 0 ] || { ir_cause="commit status failed"; return 1; }
+  nm=$(jq -r --arg r "$R" "$runid_def"'[.failedRuns[] | select(([runid($r)] | length) == 0) | .name] | first // empty' <<<"$ci" 2>/dev/null) || { ir_cause="read failed"; return 1; }
+  [ -z "$nm" ] || { ir_cause="no run id for $nm"; return 1; }
+  ir_ids=$(jq -r --arg r "$R" "$runid_def"'[.failedRuns[] | runid($r)] | unique | .[]' <<<"$ci" 2>/dev/null) || { ir_cause="read failed"; return 1; }
+  [ -n "$ir_ids" ] || { ir_cause="read failed"; return 1; }
+  for id in $ir_ids; do
+    info=$(run_info "$id") || { ir_cause="cannot read run $id"; return 1; }
+    read -r att rsha <<<"$info"
+    # The head is tested first: the details_url of a check is chosen by the App that wrote it.
+    [ "$rsha" = "$sha" ] || { ir_cause="run $id is not a run of the head"; return 1; }
+    [ "$att" = 1 ] || { ir_cause="run $id has run_attempt $att"; return 1; }
+    raw=$(gh api --paginate "repos/$R/actions/runs/$id/jobs?per_page=100" 2>/dev/null) || { ir_cause="cannot read the jobs of run $id"; return 1; }
+    verdict=$(jq -s -r --arg id "$id" "$infra_jq" <<<"$raw" 2>/dev/null) && [ -n "$verdict" ] || { ir_cause="cannot read the jobs of run $id"; return 1; }
+    IFS=$'\t' read -r tag a b <<<"$verdict"
+    [ "$tag" = ok ] || { ir_cause=$a; return 1; }
+    [ -n "$ir_job" ] || { ir_job=$a; ir_step=$b; }
+  done
+}
 here=$(dirname "$0")
 # Read once, when the first PR needs it, from the default branch only: a PR must not turn the request on for itself.
 roq=""
@@ -262,7 +305,15 @@ for arg in "$@"; do
     if [ -z "$ids" ]; then
       # Only when the known-flake path did not apply: a head is rerun at most once per call.
       if green_parents; then ids=$gp_ids; how="green parents ${gp_p0:0:7} ${gp_p1:0:7}"
-      else echo "NO RERUN #$pr: $gp_cause"
+      else
+        case "$gp_cause" in
+          # These are final for the infra path too: a status or a non-Actions check is never rerun.
+          "commit status failed"|"no run id for "*|"failed check is not an Actions run") echo "NO RERUN #$pr: $gp_cause" ;;
+          *)
+            if infra_runs; then ids=$ir_ids; how="infra failure in $ir_job step $ir_step"
+            else echo "NO RERUN #$pr: $gp_cause; $ir_cause"
+            fi ;;
+        esac
       fi
     else
       for id in $ids; do
