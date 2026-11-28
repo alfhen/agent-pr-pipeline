@@ -169,7 +169,7 @@ test('the opener keeps the body of a reused PR, changes only the Review line and
 })
 
 test('the answer prompt and the bot-answerer role reply in the bot thread when code changed', () => {
-  assert.match(src, /6\. If you changed code, reply in the thread of each bot comment that the change answers, with the commit you pushed/)
+  assert.match(src, /6\. If you changed code, run the head check [^\n]*, then reply in the thread of each bot comment that the change answers, with the commit you pushed/)
   assert.match(src, /A bot that gets no reply in its thread does not know the head changed/)
   const role = readFileSync(new URL('../agents/bot-answerer.md', import.meta.url), 'utf8')
   assert.match(role, /When you change code for a bot comment, reply in that bot's thread with the commit you pushed/)
@@ -282,4 +282,19 @@ test('the opener retry names the issues of the first answer and files nothing wi
   assert.match(src, /already filed \$\{retry\.join\(', '\)\}\. Do not file them again/)
   assert.match(src, /login lookup of step 1 fails or prints nothing, file no issue and return the no-login block again/)
   assert.match(src, /openPrompt\(pr, history, \.\.\.openArgs, opened\.issuesCreated \|\| \[\]\)/)
+})
+
+test('the answer prompt pins the head and checks the remote head before each action', () => {
+  const t = /const answerPrompt = [\s\S]*?const botReviewPrompt/.exec(src)[0]
+  assert.match(t, /git checkout -B [^\n`]*\$\{headSha\}/)
+  assert.doesNotMatch(t, /freshBranch\(/)
+  assert.doesNotMatch(t, /git (checkout|reset)[^\n`]*origin\/\$\{pr\.branch\}/)
+  const ls = t.indexOf('git ls-remote origin ${pr.branch}')
+  assert.ok(ls >= 0)
+  assert.ok(ls < t.indexOf('/replies'))
+  assert.ok(ls < t.indexOf('git push'))
+  for (const w of ['headMoved', 'newHead', 'expectedHead']) assert.ok(t.includes(w), w)
+  assert.match(t, /stop: post nothing, push nothing/)
+  assert.match(t, /After your push the expected head is the commit you pushed/)
+  assert.ok(t.slice(t.indexOf('git push')).split('git ls-remote').length - 1 >= 2, 'a head check before the replies and the comment')
 })
