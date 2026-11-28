@@ -1093,6 +1093,19 @@ async function endFacts(pr, n, expected) {
   return { ok: true, ...facts }
 }
 
+// Reads only its argument and must stay free of outer names: the sim evaluates this text alone.
+function landStateOf(end) {
+  const ci = end && end.ci
+  if (!ci) return 'unknown'
+  if (ci.state === 'failure') return 'CI failed'
+  if (ci.state === 'pending') return 'waiting for CI'
+  if (ci.state === 'noRuns') return 'no CI runs'
+  if (ci.state === 'success') return Array.isArray(end.approvedBy) && end.approvedBy.length ? 'CI green and bot cleared' : 'waiting for a bot'
+  return 'unknown'
+}
+// A stop with no readable final facts (end.ci undefined) has no landState.
+const landStateOut = end => end.ci !== undefined ? { landState: landStateOf(end) } : {}
+
 const statusCommand = n => `bash ${PLUGIN_ROOT}/scripts/bot-status.sh ${REPO} ${n}`
 const waitCommand = (n, minutes) => `bash ${PLUGIN_ROOT}/scripts/wait-bots.sh ${REPO} ${n} ${minutes}`
 const waitPrompt = (pr, n) => `Task: wait for the review bots on pull request #${n} in ${REPO}, for at most ${BOT_WAIT_MIN} minutes.
@@ -2240,10 +2253,10 @@ async function runPRSteps(input) {
       if (end.openThreads > 0 || end.reviewBodies > 0) return stopped(`nothing was answered: ${end.openThreads} open threads and ${end.reviewBodies} review bodies remain after the answer agent${typeof a.answer.notes === 'string' && a.answer.notes.trim() ? `. Notes: ${a.answer.notes.replace(/\s+/g, ' ').trim()}`.slice(0, ANSWER_NOTES_CUT) : ''}`, { ...facts(), headSha: end.head })
       const landing = await landFor(pr, n, end.head)
       if (landing.landRefused) return stopped(landing.landWhy, { ...facts(), headSha: end.head })
-      if (end.red) return stopped(end.reason, { ...facts(), headSha: end.head, ci: end.ci, approvedBy: end.approvedBy, ...landing })
+      if (end.red) return stopped(end.reason, { ...facts(), headSha: end.head, ci: end.ci, approvedBy: end.approvedBy, ...landStateOut(end), ...landing })
       return {
         id: pr.id, prNumber: n, ready: true, headSha: end.head, ...landing, untested: untestedOf(pr), notes: a.answer.notes,
-        ci: end.ci, approvedBy: end.approvedBy || a.wait.approvedBy || [], botNotes: a.wait.notes, codeChangedByBots: botCodeChanged(a),
+        ci: end.ci, ...landStateOut(end), approvedBy: end.approvedBy || a.wait.approvedBy || [], botNotes: a.wait.notes, codeChangedByBots: botCodeChanged(a),
         lateMinors, history, ...listOut,
       }
     }
@@ -2260,10 +2273,10 @@ async function runPRSteps(input) {
     if (!end.ok && !end.red) return stopped(end.reason, { headSha: end.head || b.headSha, codeChangedByBots: botCodeChanged(b), ci: end.ci, approvedBy: end.approvedBy, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     const landing = await landFor(pr, n, end.head)
     if (landing.landRefused) return stopped(landing.landWhy, { headSha: end.head, codeChangedByBots: botCodeChanged(b), notes: r.notes, lateMinors, untested: untestedOf(pr) })
-    if (end.red) return stopped(end.reason, { headSha: end.head, codeChangedByBots: botCodeChanged(b), ci: end.ci, approvedBy: end.approvedBy, ...landing, notes: r.notes, lateMinors, untested: untestedOf(pr) })
+    if (end.red) return stopped(end.reason, { headSha: end.head, codeChangedByBots: botCodeChanged(b), ci: end.ci, approvedBy: end.approvedBy, ...landStateOut(end), ...landing, notes: r.notes, lateMinors, untested: untestedOf(pr) })
     return {
       id: pr.id, prNumber: n, ready: true, headSha: end.head, ...landing, untested: untestedOf(pr), notes: r.notes,
-      ci: end.ci, approvedBy: end.approvedBy || b.wait.approvedBy || [], botNotes: b.wait.notes, codeChangedByBots: botCodeChanged(b),
+      ci: end.ci, ...landStateOut(end), approvedBy: end.approvedBy || b.wait.approvedBy || [], botNotes: b.wait.notes, codeChangedByBots: botCodeChanged(b),
       lateMinors, history, ...listOut,
     }
   }
@@ -2375,7 +2388,7 @@ async function runPRSteps(input) {
   const landing = end.ok || end.red ? await landFor(pr, n, end.head) : {}
   const result = {
     id: pr.id, ready: true, prNumber: n, headSha: end.head || headSha,
-    ...landing, untested: untestedOf(pr), ci: end.ci,
+    ...landing, untested: untestedOf(pr), ci: end.ci, ...landStateOut(end),
     approvedBy: end.approvedBy || (wait && wait.approvedBy) || [], botNotes: wait && wait.notes,
     codeChangedByBots: !!(answer && answer.codeChanged), ...afterBots(b), ...report,
     minorPass: pass.report,
