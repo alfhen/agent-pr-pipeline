@@ -1855,7 +1855,7 @@ async function bots(pr, n, headSha, issues, history, minors) {
   if (!(Math.max(status.openThreads || 0, status.reviewBodies || 0) > 0)) return { ok: true, headSha, wait }
   const answer = await call('botAnswer', pr, answerPrompt(pr, n, issues, headSha), `botanswer:${pr.id}`, { schema: ANSWER })
   if (!answer) return { ok: false, reason: 'bot answer failed', headSha, wait }
-  if (answer.headMoved) return { ok: false, reason: `bot answer: head moved (${answer.newHead || 'an unknown head'} is not the expected ${answer.expectedHead || headSha})`, headSha, wait, answer }
+  if (answer.headMoved) return { ok: false, reason: `bot answer: head moved (${answer.newHead || 'an unknown head'} is not the expected ${answer.expectedHead || headSha})`, headSha: answer.headSha || headSha, wait, answer }
   if (!answer.codeChanged) return { ok: true, headSha, wait, answer }
   botChangedState[pr.id] = n
   delete testsOnlyState[pr.id]
