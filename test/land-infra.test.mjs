@@ -317,8 +317,8 @@ const two = (j56) => setup({
 test('land infra: two failed runs that failed in install steps are both rerun', () => {
   const s = two(job('lint', 'failure', 'Install dependencies'))
   done(s, () => {
-    const r = run(s)
     assert.match(readJson(s, `${P}__commits__${SHA}__check-runs.call1.json`).check_runs.map((c) => c.details_url).join(' '), /runs\/55\/.*runs\/56\//)
+    const r = run(s)
     assert.equal(r.code, 0, r.out)
     assert.match(r.out, /^RERUN #7: infra failure in/m)
     assert.ok(jobsGets(r, 55).length > 0 && jobsGets(r, 56).length > 0)
@@ -334,6 +334,7 @@ test('land infra: two failed runs that failed in install steps are both rerun', 
 test('land infra: a second failed run with a test-step job blocks the infra rerun', () => {
   const s = two(job('lint', 'failure', 'Run tests'))
   done(s, () => {
+    assert.match(readJson(s, `${P}__commits__${SHA}__check-runs.call1.json`).check_runs.map((c) => c.details_url).join(' '), /runs\/55\/.*runs\/56\//)
     assert.equal(failedStep(s, 55), 'Install dependencies')
     assert.equal(failedStep(s, 56), 'Run tests')
     refused(run(s), /^NO RERUN #7: .+; run 56 job lint failed in step Run tests$/, { id: 56 })

@@ -180,6 +180,7 @@ green_parents() {
   done
   gp_p0=${pa[0]}; gp_p1=${pa[1]}
 }
+# The job filter below mirrors the green set of ci-state.jq on purpose; test/ci-state.test.mjs bans the other spelling in this file.
 # jq program for infra_runs: judges the jobs of one run. Prints "ok<TAB>job<TAB>step" or "no<TAB>cause". Names come from workflow files,
 # so control characters become spaces and a name cannot start a second output line.
 infra_jq='def clean: if type == "string" then explode | map(if . < 32 or (. >= 127 and . < 160) then 32 else . end) | implode | gsub("^ +| +$"; "") else "" end;
