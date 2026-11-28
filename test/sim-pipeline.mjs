@@ -7748,6 +7748,14 @@ await check('a stop with unreadable final facts has no landState', async () => {
   assert.ok(b.reason.includes('final facts: cannot read the CI state'), b.reason)
   assert.equal('landState' in b, false)
 })
+await check('an answer stop with open reviews left still carries ci and landState', async () => {
+  const a = await rwRun(rwItem(), { codeChanged: false, end: [0, 1] })
+  assert.equal(a.ready, false)
+  assert.match(a.reason, /remain after the answer agent/)
+  assert.equal(a.landState, 'waiting for a bot')
+  assert.ok(a.ci)
+  assert.ok(Array.isArray(a.approvedBy))
+})
 await check('the answer and land-fix results carry landState', async () => {
   const a = await rwRun(rwItem(), {})
   assert.equal(a.ready, true)
