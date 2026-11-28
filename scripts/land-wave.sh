@@ -186,11 +186,11 @@ infra_jq='def clean: if type == "string" then explode | map(if . < 32 or (. >= 1
   def fs: [(.steps // [])[] | select(.conclusion == "failure" or .conclusion == "cancelled")] | first;
   def infra: fs as $s | $s == null or (($s.name // "") | ascii_downcase | test("^(set up|setup|install|checkout|run actions/checkout@|run actions/setup-|run actions/cache@)"));
   [.[] | .jobs | arrays | .[]] as $j
-  | [$j[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled")] as $f
+  | [$j[] | select(.conclusion != null and (.conclusion | test("^(success|skipped|neutral)$") | not))] as $f
   | if ($f | length) == 0 then "no\trun \($id) lists no failed job"
-    else ([$f[] | select(.conclusion == "timed_out" or (.conclusion == "failure" and (infra | not)))] | first) as $bad
+    else ([$f[] | select((.conclusion != "failure" and .conclusion != "cancelled") or (.conclusion == "failure" and (infra | not)))] | first) as $bad
     | if $bad != null then
-        (if $bad.conclusion == "timed_out" then "no\trun \($id) job \($bad.name | clean) ended timed_out"
+        (if $bad.conclusion != "failure" then "no\trun \($id) job \($bad.name | clean) ended \($bad.conclusion | clean)"
          else "no\trun \($id) job \($bad.name | clean) failed in step \($bad | fs | .name | clean)" end)
       else ([$f[] | select(.conclusion == "failure")] | first) as $i
       | if $i == null then "no\trun \($id) job \($f[0].name | clean) ended cancelled"
